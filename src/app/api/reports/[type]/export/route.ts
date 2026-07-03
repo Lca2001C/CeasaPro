@@ -1,0 +1,66 @@
+import { z } from "zod";
+import { withTenantRoute } from "@/lib/http/with-route";
+import { NotFoundError } from "@/lib/http/app-error";
+import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
+import { buildReport } from "@/lib/reports/report.service";
+import { toExcel } from "@/lib/reports/excel.exporter";
+import { REPORT_TYPES, type ReportKind } from "@/lib/reports/report.types";
+import { prisma } from "@/lib/db/prisma";
+import { logger } from "@/lib/logger";
+import type { ReportType } from "@prisma/client";
+
+export const runtime = "nodejs";
+
+const querySchema = z.object({
+  preset: z.string().optional(),
+  from: z.string().optional(),
+  to: z.string().optional(),
+});
+
+export const GET = withTenantRoute({
+  schema: querySchema,
+  source: "query",
+  handler: async (input, ctx) => {
+    const parts = new URL(ctx.req.url).pathname.split("/").filter(Boolean);
+    const kind = (parts[2] ?? "").toUpperCase() as ReportKind; // /api/reports/<kind>/export
+    if (!REPORT_TYPES.includes(kind)) throw new NotFoundError("Relatório inválido");
+
+    const period = resolvePeriod({
+      preset: (input.preset as PeriodPreset) ?? "mes",
+      from: input.from,
+      to: input.to,
+    });
+    const result = await buildReport(kind, {
+      tenantId: ctx.tenantId,
+      from: period.from,
+      to: period.to,
+    });
+    const buffer = await toExcel(result);
+    const fileName = `${kind.toLowerCase()}-${period.from.toISOString().slice(0, 10)}.xlsx`;
+
+    // Histórico de exportações (best-effort — não bloqueia o download).
+    prisma.reportExport
+      .create({
+        data: {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          type: kind as ReportType,
+          format: "EXCEL",
+          status: "CONCLUIDO",
+          periodStart: period.from,
+          periodEnd: period.to,
+          rowCount: result.rows.length,
+          fileName,
+        },
+      })
+      .catch((e) => logger.error({ err: String(e) }, "Falha ao registrar report_export"));
+
+    return new Response(new Uint8Array(buffer), {
+      headers: {
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Disposition": `attachment; filename="${fileName}"`,
+      },
+    });
+  },
+});

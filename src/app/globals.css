@@ -1,0 +1,114 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 240 10% 12%;
+  --card: 0 0% 100%;
+  --card-foreground: 240 10% 12%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 10% 12%;
+  --primary: 142 68% 30%; /* verde CEASA */
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 5% 96%;
+  --secondary-foreground: 240 6% 20%;
+  --muted: 240 5% 96%;
+  --muted-foreground: 240 4% 44%;
+  --accent: 142 45% 94%;
+  --accent-foreground: 142 60% 22%;
+  --destructive: 0 72% 48%;
+  --destructive-foreground: 0 0% 100%;
+  --success: 142 68% 30%;
+  --success-foreground: 0 0% 100%;
+  --warning: 35 92% 45%;
+  --warning-foreground: 0 0% 100%;
+  --border: 240 6% 89%;
+  --input: 240 6% 89%;
+  --ring: 142 68% 30%;
+  --radius: 0.85rem;
+}
+
+.dark {
+  --background: 240 10% 6%;
+  --foreground: 0 0% 96%;
+  --card: 240 8% 10%;
+  --card-foreground: 0 0% 96%;
+  --popover: 240 8% 10%;
+  --popover-foreground: 0 0% 96%;
+  --primary: 142 60% 42%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 240 5% 16%;
+  --secondary-foreground: 0 0% 96%;
+  --muted: 240 5% 16%;
+  --muted-foreground: 240 5% 65%;
+  --accent: 142 30% 18%;
+  --accent-foreground: 142 55% 75%;
+  --destructive: 0 62% 50%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 240 5% 20%;
+  --input: 240 5% 22%;
+  --ring: 142 60% 42%;
+}
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-success: hsl(var(--success));
+  --color-success-foreground: hsl(var(--success-foreground));
+  --color-warning: hsl(var(--warning));
+  --color-warning-foreground: hsl(var(--warning-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 4px);
+  --radius-sm: calc(var(--radius) - 8px);
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+@layer base {
+  * {
+    border-color: hsl(var(--border));
+  }
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background-color: hsl(var(--background));
+    color: hsl(var(--foreground));
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Alvos de toque confortáveis no mobile */
+  button,
+  [role="button"],
+  a {
+    touch-action: manipulation;
+  }
+}
+
+/* Impressão de relatórios */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+}
