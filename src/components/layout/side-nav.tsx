@@ -14,6 +14,9 @@ import {
   Wallet,
   FileBarChart,
   Settings,
+  Container,
+  Droplets,
+  PackageOpen,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 
@@ -27,6 +30,9 @@ const items = [
   { href: "/fiado", label: "Fiado", icon: HandCoins },
   { href: "/estoque", label: "Estoque", icon: Package },
   { href: "/despesas", label: "Despesas", icon: Wallet },
+  { href: "/caixas-plasticas", label: "Caixas plásticas", icon: Container },
+  { href: "/higienizacao", label: "Higienização", icon: Droplets },
+  { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];

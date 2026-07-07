@@ -100,6 +100,24 @@ enum ReportType {
   FORNECEDORES
   DESPESAS
   FLUXO_CAIXA
+  LUCRO_PRODUTO
+  MAIS_VENDIDOS
+  CAIXAS_PLASTICAS
+  HIGIENIZACAO
+  EMBALAGENS
+}
+
+enum PlasticCrateMovementType {
+  ENTRADA // caixas recebidas (com mercadoria comprada ou avulsas)
+  SAIDA // caixas enviadas ao cliente
+  RETORNO // caixas devolvidas pelo cliente
+  QUEBRA // quebrada/perdida/sumida (com cliente ou no estoque)
+}
+
+enum CrateCleaningStatus {
+  ENVIADO
+  DEVOLVIDO
+  PAGO
 }
 
 enum ReportFormat {
@@ -142,6 +160,10 @@ model Tenant {
   expenses          Expense[]
   expenseCategories ExpenseCategory[]
   reportExports     ReportExport[]
+  plasticCrateMovements PlasticCrateMovement[]
+  crateCleanings    CrateCleaning[]
+  packagingTypes    PackagingType[]
+  packagingSales    PackagingSale[]
 
   @@index([status])
   @@map("tenants")
@@ -504,6 +526,90 @@ model ReportExport {
   @@index([tenantId, createdAt])
   @@index([tenantId, type])
   @@map("report_exports")
+}
+
+// ───────────────────── Fase 2: caixas, higienização, embalagens ─────────────────────
+
+// Ledger de caixas plásticas — append-only, saldos são DERIVADOS (soma dos movimentos).
+model PlasticCrateMovement {
+  id           String                   @id @default(cuid())
+  tenantId     String
+  type         PlasticCrateMovementType
+  quantity     Int // sempre positivo; o "sinal" vem do type
+  brokenQty    Int                      @default(0) // caixas que já chegaram quebradas (na ENTRADA)
+  customerName String? // cliente (SAIDA/RETORNO; na QUEBRA indica perda com cliente)
+  supplierName String? // origem/fornecedor (ENTRADA)
+  movementDate DateTime                 @default(now())
+  notes        String?
+  createdAt    DateTime                 @default(now())
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, movementDate])
+  @@index([tenantId, type])
+  @@map("plastic_crate_movements")
+}
+
+model CrateCleaning {
+  id           String              @id @default(cuid())
+  tenantId     String
+  cleanerName  String // higienizador responsável
+  sentDate     DateTime
+  sentQty      Int
+  unitPrice    Decimal             @db.Decimal(14, 2)
+  totalAmount  Decimal             @db.Decimal(14, 2) // sentQty * unitPrice
+  returnedQty  Int                 @default(0)
+  returnedDate DateTime?
+  paidAmount   Decimal             @default(0) @db.Decimal(14, 2)
+  paidDate     DateTime?
+  status       CrateCleaningStatus @default(ENVIADO)
+  notes        String?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+  deletedAt    DateTime?
+
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, sentDate])
+  @@index([tenantId, status])
+  @@map("crate_cleanings")
+}
+
+model PackagingType {
+  id        String    @id @default(cuid())
+  tenantId  String
+  name      String // "Caixa plástica", "Papelão", "Madeira", "Sacaria", ...
+  active    Boolean   @default(true)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  deletedAt DateTime?
+
+  tenant Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sales  PackagingSale[]
+
+  @@unique([tenantId, name])
+  @@map("packaging_types")
+}
+
+model PackagingSale {
+  id              String    @id @default(cuid())
+  tenantId        String
+  packagingTypeId String
+  customerName    String?
+  saleDate        DateTime  @default(now())
+  quantity        Int
+  unitPrice       Decimal   @db.Decimal(14, 2)
+  totalAmount     Decimal   @db.Decimal(14, 2)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+  deletedAt       DateTime?
+
+  tenant Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  type   PackagingType @relation(fields: [packagingTypeId], references: [id], onDelete: Restrict)
+
+  @@index([tenantId, saleDate])
+  @@index([tenantId, packagingTypeId])
+  @@map("packaging_sales")
 }
 
 // AuditLog — trilha imutável; SEM relação/cascade (o log deve sobreviver ao soft-delete do tenant).

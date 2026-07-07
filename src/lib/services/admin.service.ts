@@ -5,6 +5,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
 import { createDefaultExpenseCategories } from "./expense-categories";
+import { createDefaultPackagingTypes } from "./embalagens.service";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { AdminCtx } from "@/lib/http/with-action";
 import type {
@@ -108,6 +109,7 @@ export const AdminService = {
         },
       });
       await createDefaultExpenseCategories(tenant.id, tx);
+      await createDefaultPackagingTypes(tenant.id, tx);
       await audit(
         {
           tenantId: tenant.id,

@@ -17,11 +17,21 @@ export interface ReportResult {
 }
 
 export const REPORT_TYPES = [
+  // Básicos
   "VENDAS",
   "COMPRAS",
   "FIADO",
   "DESPESAS",
   "ESTOQUE",
+  // Avançados (Fase 2)
+  "LUCRO_PRODUTO",
+  "MAIS_VENDIDOS",
+  "INADIMPLENTES",
+  "FORNECEDORES",
+  "FLUXO_CAIXA",
+  "CAIXAS_PLASTICAS",
+  "HIGIENIZACAO",
+  "EMBALAGENS",
 ] as const;
 export type ReportKind = (typeof REPORT_TYPES)[number];
 
@@ -31,4 +41,12 @@ export const REPORT_LABELS: Record<ReportKind, string> = {
   FIADO: "Relatório de fiado",
   DESPESAS: "Relatório de despesas",
   ESTOQUE: "Relatório de estoque",
+  LUCRO_PRODUTO: "Lucro por produto",
+  MAIS_VENDIDOS: "Produtos mais vendidos",
+  INADIMPLENTES: "Clientes inadimplentes",
+  FORNECEDORES: "Relatório de fornecedores",
+  FLUXO_CAIXA: "Fluxo de caixa",
+  CAIXAS_PLASTICAS: "Caixas plásticas",
+  HIGIENIZACAO: "Higienização",
+  EMBALAGENS: "Venda de embalagens",
 };

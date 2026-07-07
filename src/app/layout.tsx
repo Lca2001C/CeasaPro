@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { PwaRegister } from "@/components/pwa-register";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,6 +13,14 @@ export const metadata: Metadata = {
   title: "CeasaPro — Gestão para comercializadores do CEASA",
   description:
     "Sistema simples de gestão de produtos, vendas, fiado, estoque, despesas e financeiro para comerciantes do CEASA.",
+  appleWebApp: {
+    capable: true,
+    title: "CeasaPro",
+    statusBarStyle: "default",
+  },
+  icons: {
+    apple: "/icons/apple-touch-icon.png",
+  },
 };
 
 export const viewport: Viewport = {
@@ -28,6 +37,7 @@ export default function RootLayout({
     <html lang="pt-BR" className={`${geistSans.variable} h-full antialiased`}>
       <body className="min-h-full">
         <Providers>{children}</Providers>
+        <PwaRegister />
       </body>
     </html>
   );

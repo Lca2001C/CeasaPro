@@ -30,6 +30,10 @@ export async function cleanupTenants(ids: string[]) {
   const where = { tenantId: { in: ids } };
   // Ordem respeita as FKs Restrict de Product (movimentos/itens antes dos produtos).
   await prisma.auditLog.deleteMany({ where });
+  await prisma.plasticCrateMovement.deleteMany({ where });
+  await prisma.crateCleaning.deleteMany({ where });
+  await prisma.packagingSale.deleteMany({ where });
+  await prisma.packagingType.deleteMany({ where });
   await prisma.stockMovement.deleteMany({ where });
   await prisma.creditPayment.deleteMany({ where });
   await prisma.creditAccount.deleteMany({ where });

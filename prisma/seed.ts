@@ -1,7 +1,10 @@
 import "dotenv/config";
 import { PrismaClient, Prisma } from "@prisma/client";
 import { hashPassword } from "../src/lib/auth/password";
-import { DEFAULT_EXPENSE_CATEGORIES } from "../src/lib/constants";
+import {
+  DEFAULT_EXPENSE_CATEGORIES,
+  DEFAULT_PACKAGING_TYPES,
+} from "../src/lib/constants";
 
 const prisma = new PrismaClient();
 
@@ -80,6 +83,9 @@ async function main() {
               isDefault: true,
             })),
           },
+          packagingTypes: {
+            create: DEFAULT_PACKAGING_TYPES.map((name) => ({ name })),
+          },
         },
       });
       console.log(`✔ Empresa demo criada: ${tenant.tradeName} (login: ${demoEmail} / demo123)`);
@@ -89,7 +95,17 @@ async function main() {
         where: { users: { some: { email: demoEmail } }, onboardingCompletedAt: null },
         data: { onboardingCompletedAt: new Date() },
       });
-      console.log("• Empresa demo já existe (onboarding marcado como concluído)");
+      // Tipos de embalagem padrão (Fase 2) — idempotente.
+      const demoTenant = await prisma.tenant.findFirst({
+        where: { users: { some: { email: demoEmail } } },
+      });
+      if (demoTenant) {
+        await prisma.packagingType.createMany({
+          data: DEFAULT_PACKAGING_TYPES.map((name) => ({ tenantId: demoTenant.id, name })),
+          skipDuplicates: true,
+        });
+      }
+      console.log("• Empresa demo já existe (tipos de embalagem garantidos)");
     }
   }
 

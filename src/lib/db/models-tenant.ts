@@ -17,6 +17,11 @@ export const TENANT_MODELS = new Set<string>([
   "Expense",
   "ExpenseCategory",
   "ReportExport",
+  // Fase 2
+  "PlasticCrateMovement",
+  "CrateCleaning",
+  "PackagingType",
+  "PackagingSale",
 ]);
 
 export const SOFT_DELETE_MODELS = new Set<string>([
@@ -27,6 +32,10 @@ export const SOFT_DELETE_MODELS = new Set<string>([
   "CreditAccount",
   "Expense",
   "ExpenseCategory",
+  // Fase 2
+  "CrateCleaning",
+  "PackagingType",
+  "PackagingSale",
 ]);
 
 const READ_OPS = new Set([

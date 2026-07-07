@@ -87,6 +87,6 @@ export async function middleware(req: NextRequest) {
 }
 
 export const config = {
-  // Roda em tudo, menos assets estáticos e internos do Next.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|manifest.webmanifest|.*\\.(?:png|jpg|jpeg|svg|ico|webp)).*)"],
+  // Roda em tudo, menos assets estáticos, PWA (sw.js/manifest/ícones) e internos do Next.
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|manifest.webmanifest|sw.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)).*)"],
 };

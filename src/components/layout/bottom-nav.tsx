@@ -15,6 +15,9 @@ import {
   Wallet,
   FileBarChart,
   Settings,
+  Container,
+  Droplets,
+  PackageOpen,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
@@ -40,6 +43,9 @@ const more = [
   { href: "/compras", label: "Compras", icon: ShoppingBag },
   { href: "/vendas", label: "Vendas (histórico)", icon: Receipt },
   { href: "/despesas", label: "Despesas", icon: Wallet },
+  { href: "/caixas-plasticas", label: "Caixas plásticas", icon: Container },
+  { href: "/higienizacao", label: "Higienização", icon: Droplets },
+  { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];

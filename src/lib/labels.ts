@@ -67,6 +67,19 @@ export const PAYMENT_STATUS_LABELS: Record<string, string> = {
   CANCELADO: "Cancelado",
 };
 
+export const CRATE_MOVEMENT_LABELS: Record<string, string> = {
+  ENTRADA: "Entrada",
+  SAIDA: "Saída p/ cliente",
+  RETORNO: "Retorno de cliente",
+  QUEBRA: "Quebra/Perda",
+};
+
+export const CRATE_CLEANING_STATUS_LABELS: Record<string, string> = {
+  ENVIADO: "Enviado",
+  DEVOLVIDO: "Devolvido",
+  PAGO: "Pago",
+};
+
 export function toOptions(map: Record<string, string>) {
   return Object.entries(map).map(([value, label]) => ({ value, label }));
 }
