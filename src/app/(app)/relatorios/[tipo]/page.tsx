@@ -38,13 +38,13 @@ export default async function RelatorioViewPage({
         <h1 className="text-xl font-bold">{report.title}</h1>
       </div>
       <p className="mb-4 text-sm text-muted-foreground">
-        Período: {formatDate(period.from)} a {formatDate(period.to)}
+        Periodo: {formatDate(period.from)} a {formatDate(period.to)}
       </p>
 
       <ReportToolbar kind={kind.toLowerCase()} />
 
       {report.rows.length === 0 ? (
-        <EmptyState title="Nenhum dado no período" description="Ajuste o período no seletor acima." />
+        <EmptyState title="Nenhum dado no periodo" description="Ajuste o periodo no seletor acima." />
       ) : (
         <Table>
           <TableHeader>

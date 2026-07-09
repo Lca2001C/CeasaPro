@@ -4,10 +4,11 @@ import { NotFoundError } from "@/lib/http/app-error";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
 import { buildReport } from "@/lib/reports/report.service";
 import { toExcel } from "@/lib/reports/excel.exporter";
+import { toPdf } from "@/lib/reports/pdf.exporter";
 import { REPORT_TYPES, type ReportKind } from "@/lib/reports/report.types";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
-import type { ReportType } from "@prisma/client";
+import type { ReportFormat, ReportType } from "@prisma/client";
 
 export const runtime = "nodejs";
 
@@ -15,6 +16,7 @@ const querySchema = z.object({
   preset: z.string().optional(),
   from: z.string().optional(),
   to: z.string().optional(),
+  format: z.enum(["excel", "pdf"]).default("excel"),
 });
 
 export const GET = withTenantRoute({
@@ -23,7 +25,7 @@ export const GET = withTenantRoute({
   handler: async (input, ctx) => {
     const parts = new URL(ctx.req.url).pathname.split("/").filter(Boolean);
     const kind = (parts[2] ?? "").toUpperCase() as ReportKind; // /api/reports/<kind>/export
-    if (!REPORT_TYPES.includes(kind)) throw new NotFoundError("Relatório inválido");
+    if (!REPORT_TYPES.includes(kind)) throw new NotFoundError("Relatorio invalido");
 
     const period = resolvePeriod({
       preset: (input.preset as PeriodPreset) ?? "mes",
@@ -35,17 +37,23 @@ export const GET = withTenantRoute({
       from: period.from,
       to: period.to,
     });
-    const buffer = await toExcel(result);
-    const fileName = `${kind.toLowerCase()}-${period.from.toISOString().slice(0, 10)}.xlsx`;
+    const isPdf = input.format === "pdf";
+    const buffer = isPdf ? await toPdf(result) : await toExcel(result);
+    const extension = isPdf ? "pdf" : "xlsx";
+    const fileName = `${kind.toLowerCase()}-${period.from.toISOString().slice(0, 10)}.${extension}`;
+    const format: ReportFormat = isPdf ? "PDF" : "EXCEL";
+    const contentType = isPdf
+      ? "application/pdf"
+      : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
 
-    // Histórico de exportações (best-effort — não bloqueia o download).
+    // Historico de exportacoes (best-effort: nao bloqueia o download).
     prisma.reportExport
       .create({
         data: {
           tenantId: ctx.tenantId,
           userId: ctx.userId,
           type: kind as ReportType,
-          format: "EXCEL",
+          format,
           status: "CONCLUIDO",
           periodStart: period.from,
           periodEnd: period.to,
@@ -57,8 +65,7 @@ export const GET = withTenantRoute({
 
     return new Response(new Uint8Array(buffer), {
       headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        "Content-Type": contentType,
         "Content-Disposition": `attachment; filename="${fileName}"`,
       },
     });

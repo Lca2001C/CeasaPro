@@ -58,14 +58,15 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
         <CardContent className="flex flex-col gap-3 pt-6">
           <p className="font-medium">Empresa criada com sucesso!</p>
           <p className="text-sm text-muted-foreground">
-            Envie estas credenciais ao responsável (a senha deve ser trocada no primeiro acesso):
+            O e-mail de boas-vindas foi disparado quando o Resend esta configurado. Confira as
+            credenciais abaixo; a senha deve ser trocada no primeiro acesso.
           </p>
           <div className="rounded-md border bg-muted/40 p-3 text-sm">
             <div>
               <b>E-mail:</b> {created.email}
             </div>
             <div>
-              <b>Senha temporária:</b> <code>{created.password}</code>
+              <b>Senha temporaria:</b> <code>{created.password}</code>
             </div>
           </div>
           <div className="flex gap-2">

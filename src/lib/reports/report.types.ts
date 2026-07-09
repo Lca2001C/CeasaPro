@@ -17,15 +17,19 @@ export interface ReportResult {
 }
 
 export const REPORT_TYPES = [
-  // Básicos
+  // Basicos
   "VENDAS",
   "COMPRAS",
   "FIADO",
   "DESPESAS",
   "ESTOQUE",
-  // Avançados (Fase 2)
+  // Avancados (Fase 2)
   "LUCRO_PRODUTO",
+  "LUCRO_FORNECEDOR",
   "MAIS_VENDIDOS",
+  "PRODUTOS_PREJUIZO",
+  "ESTOQUE_PARADO",
+  "CAIXAS_PAPELAO",
   "INADIMPLENTES",
   "FORNECEDORES",
   "FLUXO_CAIXA",
@@ -36,17 +40,21 @@ export const REPORT_TYPES = [
 export type ReportKind = (typeof REPORT_TYPES)[number];
 
 export const REPORT_LABELS: Record<ReportKind, string> = {
-  VENDAS: "Relatório de vendas",
-  COMPRAS: "Relatório de compras",
-  FIADO: "Relatório de fiado",
-  DESPESAS: "Relatório de despesas",
-  ESTOQUE: "Relatório de estoque",
+  VENDAS: "Relatorio de vendas",
+  COMPRAS: "Relatorio de compras",
+  FIADO: "Relatorio de fiado",
+  DESPESAS: "Relatorio de despesas",
+  ESTOQUE: "Relatorio de estoque",
   LUCRO_PRODUTO: "Lucro por produto",
+  LUCRO_FORNECEDOR: "Lucro por fornecedor",
   MAIS_VENDIDOS: "Produtos mais vendidos",
+  PRODUTOS_PREJUIZO: "Produtos com prejuizo",
+  ESTOQUE_PARADO: "Estoque parado",
+  CAIXAS_PAPELAO: "Total de caixas de papelao",
   INADIMPLENTES: "Clientes inadimplentes",
-  FORNECEDORES: "Relatório de fornecedores",
+  FORNECEDORES: "Relatorio de fornecedores",
   FLUXO_CAIXA: "Fluxo de caixa",
-  CAIXAS_PLASTICAS: "Caixas plásticas",
-  HIGIENIZACAO: "Higienização",
+  CAIXAS_PLASTICAS: "Caixas plasticas",
+  HIGIENIZACAO: "Higienizacao",
   EMBALAGENS: "Venda de embalagens",
 };

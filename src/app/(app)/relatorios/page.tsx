@@ -7,7 +7,7 @@ import { REPORT_TYPES, REPORT_LABELS } from "@/lib/reports/report.types";
 export default function RelatoriosPage() {
   return (
     <div>
-      <PageHeader title="Relatórios" description="Filtre por período, imprima ou baixe em Excel." />
+      <PageHeader title="Relatorios" description="Filtre por periodo, imprima ou baixe em Excel/PDF." />
       <div className="flex flex-col gap-2">
         {REPORT_TYPES.map((t) => (
           <Link key={t} href={`/relatorios/${t.toLowerCase()}`}>

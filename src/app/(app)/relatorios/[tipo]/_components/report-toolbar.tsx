@@ -7,9 +7,9 @@ import { Select } from "@/components/ui/select";
 
 const PRESETS = [
   { value: "hoje", label: "Hoje" },
-  { value: "semana", label: "Últimos 7 dias" },
-  { value: "mes", label: "Este mês" },
-  { value: "mes_passado", label: "Mês passado" },
+  { value: "semana", label: "Ultimos 7 dias" },
+  { value: "mes", label: "Este mes" },
+  { value: "mes_passado", label: "Mes passado" },
 ];
 
 export function ReportToolbar({ kind }: { kind: string }) {
@@ -22,7 +22,8 @@ export function ReportToolbar({ kind }: { kind: string }) {
     router.push(`${pathname}?preset=${value}`);
   }
 
-  const excelHref = `/api/reports/${kind}/export?preset=${preset}`;
+  const excelHref = `/api/reports/${kind}/export?preset=${preset}&format=excel`;
+  const pdfHref = `/api/reports/${kind}/export?preset=${preset}&format=pdf`;
 
   return (
     <div className="no-print mb-4 flex flex-wrap items-center gap-2">
@@ -41,6 +42,11 @@ export function ReportToolbar({ kind }: { kind: string }) {
       <Button asChild variant="outline">
         <a href={excelHref}>
           <FileDown /> Baixar Excel
+        </a>
+      </Button>
+      <Button asChild variant="outline">
+        <a href={pdfHref}>
+          <FileDown /> Baixar PDF
         </a>
       </Button>
     </div>

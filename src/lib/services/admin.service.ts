@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
+import { sendEmail, welcomeOwnerEmail } from "@/lib/email";
 import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
@@ -125,6 +126,16 @@ export const AdminService = {
       );
       return tenant.id;
     });
+
+    const appUrl = (process.env.APP_URL ?? "http://localhost:3000").replace(/\/$/, "");
+    const { subject, html } = welcomeOwnerEmail({
+      ownerName: input.ownerName,
+      tradeName: input.tradeName,
+      email: input.ownerEmail,
+      temporaryPassword: tempPassword,
+      appUrl: `${appUrl}/login`,
+    });
+    await sendEmail(input.ownerEmail, subject, html);
 
     return { tenantId, tempPassword };
   },

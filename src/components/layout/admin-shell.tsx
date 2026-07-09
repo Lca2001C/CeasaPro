@@ -11,6 +11,7 @@ const nav = [
   { href: "/admin/clientes", label: "Clientes" },
   { href: "/admin/planos", label: "Planos" },
   { href: "/admin/pagamentos", label: "Pagamentos" },
+  { href: "/admin/auditoria", label: "Auditoria" },
 ];
 
 async function logout() {

@@ -15,6 +15,7 @@ import {
   Wallet,
   FileBarChart,
   Settings,
+  ShieldCheck,
   Container,
   Droplets,
   PackageOpen,
@@ -47,6 +48,7 @@ const more = [
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
+  { href: "/auditoria", label: "Auditoria", icon: ShieldCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

@@ -46,7 +46,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         ],
         rows: vendas.map((v) => ({
           saleDate: v.saleDate,
-          customerName: v.customerName ?? "—",
+          customerName: v.customerName ?? "-",
           paymentMethod: PAYMENT_METHOD_LABELS[v.paymentMethod],
           totalAmount: v.totalAmount,
         })),
@@ -70,7 +70,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         ],
         rows: compras.map((c) => ({
           purchaseDate: c.purchaseDate,
-          supplier: c.supplier?.name ?? "—",
+          supplier: c.supplier?.name ?? "-",
           items: c.items.length,
           totalAmount: c.totalAmount,
         })),
@@ -112,15 +112,15 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       return {
         ...base,
         columns: [
-          { key: "description", label: "Descrição" },
+          { key: "description", label: "Descricao" },
           { key: "category", label: "Categoria" },
           { key: "type", label: "Tipo" },
-          { key: "status", label: "Situação" },
+          { key: "status", label: "Situacao" },
           { key: "amount", label: "Valor", align: "right", format: "money" },
         ],
         rows: despesas.map((d) => ({
           description: d.description,
-          category: d.category?.name ?? "—",
+          category: d.category?.name ?? "-",
           type: EXPENSE_TYPE_LABELS[d.type],
           status: EXPENSE_STATUS_LABELS[d.status],
           amount: d.amount,
@@ -147,10 +147,10 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       };
     }
 
-    // ───────────────────────── Avançados (Fase 2) ─────────────────────────
+    // Avancados (Fase 2)
 
     case "LUCRO_PRODUTO": {
-      // Receita, custo (snapshot na venda) e lucro por produto no período.
+      // Receita, custo (snapshot na venda) e lucro por produto no periodo.
       const rows = await prisma.$queryRaw<
         { name: string; qtd: Prisma.Decimal; receita: Prisma.Decimal; custo: Prisma.Decimal }[]
       >`
@@ -224,6 +224,297 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       };
     }
 
+    case "LUCRO_FORNECEDOR": {
+      const rows = await prisma.$queryRaw<
+        {
+          supplier: string;
+          compras: Prisma.Decimal;
+          receita: Prisma.Decimal;
+          custo: Prisma.Decimal;
+        }[]
+      >`
+        WITH last_supplier AS (
+          SELECT DISTINCT ON (pi."productId")
+                 pi."productId",
+                 COALESCE(pu."supplierId", '__sem_fornecedor__') AS supplier_key,
+                 COALESCE(su.name, 'Sem fornecedor') AS supplier
+          FROM purchase_items pi
+          JOIN purchases pu ON pu.id = pi."purchaseId"
+          LEFT JOIN suppliers su ON su.id = pu."supplierId"
+          WHERE pi."tenantId" = ${p.tenantId}
+            AND pu."deletedAt" IS NULL
+            AND pu."purchaseDate" <= ${p.to}
+          ORDER BY pi."productId", pu."purchaseDate" DESC, pu."createdAt" DESC
+        ),
+        sales_by_supplier AS (
+          SELECT ls.supplier_key,
+                 ls.supplier,
+                 COALESCE(SUM(si."lineTotal"), 0) AS receita,
+                 COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS custo
+          FROM sale_items si
+          JOIN sales sa ON sa.id = si."saleId"
+          JOIN last_supplier ls ON ls."productId" = si."productId"
+          WHERE si."tenantId" = ${p.tenantId}
+            AND sa."deletedAt" IS NULL
+            AND sa."saleDate" >= ${p.from}
+            AND sa."saleDate" <= ${p.to}
+          GROUP BY ls.supplier_key, ls.supplier
+        ),
+        purchases_by_supplier AS (
+          SELECT COALESCE(pu."supplierId", '__sem_fornecedor__') AS supplier_key,
+                 COALESCE(su.name, 'Sem fornecedor') AS supplier,
+                 COALESCE(SUM(pi."lineTotal" + pi."freightShare"), 0) AS compras
+          FROM purchase_items pi
+          JOIN purchases pu ON pu.id = pi."purchaseId"
+          LEFT JOIN suppliers su ON su.id = pu."supplierId"
+          WHERE pi."tenantId" = ${p.tenantId}
+            AND pu."deletedAt" IS NULL
+            AND pu."purchaseDate" >= ${p.from}
+            AND pu."purchaseDate" <= ${p.to}
+          GROUP BY COALESCE(pu."supplierId", '__sem_fornecedor__'), COALESCE(su.name, 'Sem fornecedor')
+        )
+        SELECT COALESCE(pb.supplier, sb.supplier, 'Sem fornecedor') AS supplier,
+               COALESCE(pb.compras, 0) AS compras,
+               COALESCE(sb.receita, 0) AS receita,
+               COALESCE(sb.custo, 0) AS custo
+        FROM purchases_by_supplier pb
+        FULL OUTER JOIN sales_by_supplier sb ON sb.supplier_key = pb.supplier_key
+        ORDER BY (COALESCE(sb.receita, 0) - COALESCE(sb.custo, 0)) DESC,
+                 COALESCE(pb.compras, 0) DESC
+      `;
+      const mapped = rows.map((r) => ({
+        supplier: r.supplier,
+        compras: money(toDecimal(r.compras)),
+        receita: money(toDecimal(r.receita)),
+        custo: money(toDecimal(r.custo)),
+        lucro: money(sub(r.receita, r.custo)),
+      }));
+      return {
+        ...base,
+        columns: [
+          { key: "supplier", label: "Fornecedor" },
+          { key: "compras", label: "Comprado", align: "right", format: "money" },
+          { key: "receita", label: "Receita vendida", align: "right", format: "money" },
+          { key: "custo", label: "Custo vendido", align: "right", format: "money" },
+          { key: "lucro", label: "Lucro bruto", align: "right", format: "money" },
+        ],
+        rows: mapped,
+        totals: {
+          supplier: "TOTAL",
+          compras: add(...mapped.map((r) => r.compras)),
+          receita: add(...mapped.map((r) => r.receita)),
+          custo: add(...mapped.map((r) => r.custo)),
+          lucro: add(...mapped.map((r) => r.lucro)),
+        },
+      };
+    }
+
+    case "PRODUTOS_PREJUIZO": {
+      const rows = await prisma.$queryRaw<
+        { name: string; qtd: Prisma.Decimal; receita: Prisma.Decimal; custo: Prisma.Decimal }[]
+      >`
+        SELECT pr.name AS name,
+               COALESCE(SUM(si.quantity), 0) AS qtd,
+               COALESCE(SUM(si."lineTotal"), 0) AS receita,
+               COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS custo
+        FROM sale_items si
+        JOIN sales s ON s.id = si."saleId"
+        JOIN products pr ON pr.id = si."productId"
+        WHERE si."tenantId" = ${p.tenantId}
+          AND s."deletedAt" IS NULL
+          AND s."saleDate" >= ${p.from}
+          AND s."saleDate" <= ${p.to}
+        GROUP BY pr.name
+        HAVING (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) < 0
+        ORDER BY (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) ASC
+      `;
+      const mapped = rows.map((r) => ({
+        name: r.name,
+        qtd: toDecimal(r.qtd),
+        receita: money(toDecimal(r.receita)),
+        custo: money(toDecimal(r.custo)),
+        prejuizo: money(sub(r.receita, r.custo)),
+      }));
+      return {
+        ...base,
+        columns: [
+          { key: "name", label: "Produto" },
+          { key: "qtd", label: "Qtd. vendida", align: "right", format: "qty" },
+          { key: "receita", label: "Receita", align: "right", format: "money" },
+          { key: "custo", label: "Custo", align: "right", format: "money" },
+          { key: "prejuizo", label: "Resultado", align: "right", format: "money" },
+        ],
+        rows: mapped,
+        totals: {
+          name: "TOTAL",
+          receita: add(...mapped.map((r) => r.receita)),
+          custo: add(...mapped.map((r) => r.custo)),
+          prejuizo: add(...mapped.map((r) => r.prejuizo)),
+        },
+      };
+    }
+
+    case "ESTOQUE_PARADO": {
+      const rows = await prisma.$queryRaw<
+        {
+          name: string;
+          quantity: Prisma.Decimal;
+          value: Prisma.Decimal;
+          lastMovementAt: Date | null;
+          lastSaleAt: Date | null;
+        }[]
+      >`
+        WITH saldo AS (
+          SELECT "productId",
+                 COALESCE(SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END), 0) AS quantity,
+                 COALESCE(SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END * COALESCE("unitCost", 0)), 0) AS value,
+                 MAX("movedAt") AS "lastMovementAt"
+          FROM stock_movements
+          WHERE "tenantId" = ${p.tenantId}
+          GROUP BY "productId"
+        ),
+        last_sale AS (
+          SELECT si."productId", MAX(sa."saleDate") AS "lastSaleAt"
+          FROM sale_items si
+          JOIN sales sa ON sa.id = si."saleId"
+          WHERE si."tenantId" = ${p.tenantId}
+            AND sa."deletedAt" IS NULL
+          GROUP BY si."productId"
+        )
+        SELECT pr.name AS name,
+               saldo.quantity AS quantity,
+               saldo.value AS value,
+               saldo."lastMovementAt" AS "lastMovementAt",
+               last_sale."lastSaleAt" AS "lastSaleAt"
+        FROM saldo
+        JOIN products pr ON pr.id = saldo."productId"
+        LEFT JOIN last_sale ON last_sale."productId" = saldo."productId"
+        WHERE pr."tenantId" = ${p.tenantId}
+          AND pr."deletedAt" IS NULL
+          AND saldo.quantity > 0
+          AND (last_sale."lastSaleAt" IS NULL OR last_sale."lastSaleAt" < ${p.from})
+        ORDER BY last_sale."lastSaleAt" ASC NULLS FIRST, saldo."lastMovementAt" ASC NULLS FIRST, pr.name ASC
+      `;
+      const mapped = rows.map((r) => ({
+        name: r.name,
+        quantity: toDecimal(r.quantity),
+        value: money(toDecimal(r.value)),
+        lastSaleAt: r.lastSaleAt,
+        lastMovementAt: r.lastMovementAt,
+      }));
+      return {
+        ...base,
+        columns: [
+          { key: "name", label: "Produto" },
+          { key: "quantity", label: "Saldo", align: "right", format: "qty" },
+          { key: "value", label: "Valor em estoque", align: "right", format: "money" },
+          { key: "lastSaleAt", label: "Ultima venda", format: "date" },
+          { key: "lastMovementAt", label: "Ultimo movimento", format: "date" },
+        ],
+        rows: mapped,
+        totals: {
+          name: "TOTAL",
+          value: add(...mapped.map((r) => r.value)),
+        },
+      };
+    }
+
+    case "CAIXAS_PAPELAO": {
+      const rows = await prisma.$queryRaw<
+        {
+          date: Date;
+          source: string;
+          product: string;
+          party: string;
+          entrada: Prisma.Decimal;
+          saida: Prisma.Decimal;
+          total: Prisma.Decimal;
+        }[]
+      >`
+        SELECT pu."purchaseDate" AS date,
+               'Compra' AS source,
+               pr.name AS product,
+               COALESCE(su.name, 'Sem fornecedor') AS party,
+               COALESCE(pi.quantity, 0) AS entrada,
+               0::numeric AS saida,
+               COALESCE(pi."lineTotal", 0) AS total
+        FROM purchase_items pi
+        JOIN purchases pu ON pu.id = pi."purchaseId"
+        JOIN products pr ON pr.id = pi."productId"
+        LEFT JOIN suppliers su ON su.id = pu."supplierId"
+        WHERE pi."tenantId" = ${p.tenantId}
+          AND pu."deletedAt" IS NULL
+          AND pu."purchaseDate" >= ${p.from}
+          AND pu."purchaseDate" <= ${p.to}
+          AND COALESCE(pi."recipientType", pr."recipientType") = 'PAPELAO'
+
+        UNION ALL
+
+        SELECT sa."saleDate" AS date,
+               'Venda' AS source,
+               pr.name AS product,
+               COALESCE(sa."customerName", 'Sem cliente') AS party,
+               0::numeric AS entrada,
+               COALESCE(si.quantity, 0) AS saida,
+               COALESCE(si."lineTotal", 0) AS total
+        FROM sale_items si
+        JOIN sales sa ON sa.id = si."saleId"
+        JOIN products pr ON pr.id = si."productId"
+        WHERE si."tenantId" = ${p.tenantId}
+          AND sa."deletedAt" IS NULL
+          AND sa."saleDate" >= ${p.from}
+          AND sa."saleDate" <= ${p.to}
+          AND COALESCE(si."recipientType", pr."recipientType") = 'PAPELAO'
+
+        UNION ALL
+
+        SELECT ps."saleDate" AS date,
+               'Venda embalagem' AS source,
+               pt.name AS product,
+               COALESCE(ps."customerName", 'Sem cliente') AS party,
+               0::numeric AS entrada,
+               COALESCE(ps.quantity, 0)::numeric AS saida,
+               COALESCE(ps."totalAmount", 0) AS total
+        FROM packaging_sales ps
+        JOIN packaging_types pt ON pt.id = ps."packagingTypeId"
+        WHERE ps."tenantId" = ${p.tenantId}
+          AND ps."deletedAt" IS NULL
+          AND ps."saleDate" >= ${p.from}
+          AND ps."saleDate" <= ${p.to}
+          AND pt.name ILIKE '%papel%'
+
+        ORDER BY date ASC, source ASC, product ASC
+      `;
+      const mapped = rows.map((r) => ({
+        date: r.date,
+        source: r.source,
+        product: r.product,
+        party: r.party,
+        entrada: toDecimal(r.entrada),
+        saida: toDecimal(r.saida),
+        total: money(toDecimal(r.total)),
+      }));
+      return {
+        ...base,
+        columns: [
+          { key: "date", label: "Data", format: "date" },
+          { key: "source", label: "Origem" },
+          { key: "product", label: "Produto/tipo" },
+          { key: "party", label: "Fornecedor/cliente" },
+          { key: "entrada", label: "Entradas", align: "right", format: "qty" },
+          { key: "saida", label: "Saidas", align: "right", format: "qty" },
+          { key: "total", label: "Valor", align: "right", format: "money" },
+        ],
+        rows: mapped,
+        totals: {
+          source: "TOTAL",
+          entrada: add(...mapped.map((r) => r.entrada)),
+          saida: add(...mapped.map((r) => r.saida)),
+          total: add(...mapped.map((r) => r.total)),
+        },
+      };
+    }
+
     case "INADIMPLENTES": {
       // Fiado em aberto com vencimento passado (ou sem vencimento e antigo).
       const contas = await db.creditAccount.findMany({
@@ -281,7 +572,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "FLUXO_CAIXA": {
       // Entradas = vendas à vista + recebimentos de fiado + venda de embalagens.
-      // Saídas = compras + despesas pagas + pagamentos de higienização.
+      // Saidas = compras + despesas pagas + pagamentos de higienizacao.
       const dayExpr = (col: string) => Prisma.raw(`DATE_TRUNC('day', ${col})::date`);
       const [vendasVista, recebFiado, vendEmb, compras, despesasPagas, pagHig] =
         await Promise.all([
@@ -340,7 +631,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         columns: [
           { key: "date", label: "Dia", format: "date" },
           { key: "entradas", label: "Entradas", align: "right", format: "money" },
-          { key: "saidas", label: "Saídas", align: "right", format: "money" },
+          { key: "saidas", label: "Saidas", align: "right", format: "money" },
           { key: "saldo", label: "Saldo do dia", align: "right", format: "money" },
         ],
         rows,
@@ -404,7 +695,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         columns: [
           { key: "sentDate", label: "Envio", format: "date" },
           { key: "cleanerName", label: "Higienizador" },
-          { key: "status", label: "Situação" },
+          { key: "status", label: "Situacao" },
           { key: "sentQty", label: "Enviadas", align: "right", format: "int" },
           { key: "returnedQty", label: "Devolvidas", align: "right", format: "int" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
@@ -442,7 +733,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "type", label: "Tipo" },
           { key: "customerName", label: "Cliente" },
           { key: "quantity", label: "Qtd.", align: "right", format: "int" },
-          { key: "unitPrice", label: "Unitário", align: "right", format: "money" },
+          { key: "unitPrice", label: "Unitario", align: "right", format: "money" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
         ],
         rows,
