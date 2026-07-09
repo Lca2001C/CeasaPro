@@ -2,7 +2,7 @@ import type { ZodType } from "zod";
 import { ZodError } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
-import { AppError, PaymentRequiredError } from "./app-error";
+import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { clientIp } from "./request";
 import { logger } from "@/lib/logger";
 
@@ -54,6 +54,12 @@ async function parseInput<I>(
   return schema.parse(body);
 }
 
+function assertPasswordReady(session: Session) {
+  if (session.mustChangePassword) {
+    throw new ForbiddenError("Troque sua senha para continuar.");
+  }
+}
+
 /** Wrapper de Route Handler da EMPRESA (áreas transacionais / export). */
 export function withTenantRoute<I, O>(opts: {
   schema?: ZodType<I>;
@@ -64,6 +70,7 @@ export function withTenantRoute<I, O>(opts: {
   return async (req: Request): Promise<Response> => {
     try {
       const { session, tenantId } = await requireTenant();
+      assertPasswordReady(session);
       if (
         !opts.allowInactive &&
         accessDecision(session.tenantStatus, session.subStatus) === "blocked"
@@ -93,6 +100,7 @@ export function withAdminRoute<I, O>(opts: {
   return async (req: Request): Promise<Response> => {
     try {
       const session = await requireSuperAdmin();
+      assertPasswordReady(session);
       const input = await parseInput(req, opts.schema, opts.source ?? "json");
       const ip = await clientIp();
       const out = await opts.handler(input, { session, userId: session.sub, ip, req });

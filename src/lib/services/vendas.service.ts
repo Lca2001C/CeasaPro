@@ -2,7 +2,7 @@ import { Prisma } from "@prisma/client";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { add, mul, money, toDecimal, gt } from "@/lib/money";
-import { BusinessRuleError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { VendaInput } from "@/lib/validations/venda";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -23,6 +23,14 @@ export const VendasService = {
     const productIds = [...new Set(input.items.map((i) => i.productId))];
 
     return db.$transaction(async (tx) => {
+      const products = await tx.product.findMany({
+        where: { id: { in: productIds }, active: true },
+        select: { id: true },
+      });
+      if (products.length !== productIds.length) {
+        throw new NotFoundError("Um ou mais produtos nao foram encontrados");
+      }
+
       // 1. Saldo atual por produto + custo médio (custo dos produtos que entraram)
       const [grouped, costs] = await Promise.all([
         tx.stockMovement.groupBy({

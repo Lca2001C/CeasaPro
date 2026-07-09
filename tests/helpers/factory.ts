@@ -12,6 +12,7 @@ export function makeCtx(tenantId: string, userId = "test-user"): TenantCtx {
       tenantId,
       email: "teste@ceasapro.com.br",
       name: "Teste",
+      mustChangePassword: false,
       tenantStatus: "ACTIVE",
       subStatus: "ATIVO",
     },

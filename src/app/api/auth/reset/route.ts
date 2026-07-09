@@ -4,11 +4,24 @@ import { hashPassword } from "@/lib/auth/password";
 import { revokeAllForUser } from "@/lib/auth/refresh";
 import { resetSchema } from "@/lib/validations/auth";
 import { audit } from "@/lib/audit";
+import { rateLimit } from "@/lib/security/rate-limit";
 import { clientIp } from "@/lib/http/request";
 
 export const runtime = "nodejs";
 
 export async function POST(req: Request) {
+  const ip = (await clientIp()) ?? "unknown";
+  const rl = rateLimit(`reset:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });
+  if (!rl.ok) {
+    return Response.json(
+      {
+        ok: false,
+        error: { code: "RATE_LIMIT", message: "Muitas tentativas. Tente novamente em alguns minutos." },
+      },
+      { status: 429 },
+    );
+  }
+
   const body = await req.json().catch(() => ({}));
   const parsed = resetSchema.safeParse(body);
   if (!parsed.success) {
@@ -51,7 +64,7 @@ export async function POST(req: Request) {
     entity: "User",
     entityId: user.id,
     newData: { passwordReset: true },
-    ip: await clientIp(),
+    ip,
   });
   return Response.json({ ok: true, data: null });
 }

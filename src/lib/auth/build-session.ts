@@ -37,6 +37,7 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     tenantId: user.tenantId,
     email: user.email,
     name: user.name,
+    mustChangePassword: user.mustChangePassword,
     tenantStatus,
     subStatus,
   };

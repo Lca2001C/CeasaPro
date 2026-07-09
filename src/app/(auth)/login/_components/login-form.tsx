@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { loginSchema, type LoginInput } from "@/lib/validations/auth";
 import { apiPost } from "@/lib/api-client";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -26,14 +27,17 @@ export function LoginForm() {
 
   async function onSubmit(values: LoginInput) {
     setLoading(true);
-    const res = await apiPost<{ redirectTo: string }>("/api/auth/login", values);
+    const res = await apiPost<{ redirectTo: string; mustChangePassword: boolean }>("/api/auth/login", values);
     setLoading(false);
     if (!res.ok) {
       toast.error(res.error.message);
       return;
     }
     const next = params.get("next");
-    router.push(next || res.data.redirectTo);
+    const redirectTo = res.data.mustChangePassword
+      ? "/alterar-senha"
+      : safeRedirectPath(next, res.data.redirectTo);
+    router.push(redirectTo);
     router.refresh();
   }
 

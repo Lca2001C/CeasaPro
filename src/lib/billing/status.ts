@@ -7,8 +7,8 @@ import type {
 export type AccessDecision = "ok" | "warn" | "blocked";
 
 /**
- * Decisão de acesso a partir do status da empresa e da assinatura.
- * Fonte única usada pelo middleware (Edge), pelo wrapper de ações e pelas telas.
+ * Decisao de acesso a partir do status da empresa e da assinatura.
+ * Fonte unica usada pelo proxy, pelo wrapper de acoes e pelas telas.
  *  - blocked: bloqueio total (redireciona para /conta/suspensa)
  *  - warn:    acesso liberado com aviso de vencimento
  *  - ok:      acesso normal

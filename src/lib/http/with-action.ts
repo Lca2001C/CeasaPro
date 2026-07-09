@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
-import { PaymentRequiredError } from "./app-error";
+import { ForbiddenError, PaymentRequiredError } from "./app-error";
 import { ok, toActionResult, type ActionResult } from "./action-result";
 import { clientIp } from "./request";
 
@@ -19,8 +19,17 @@ export interface AdminCtx {
 }
 
 function assertActive(session: Session) {
+  if (session.mustChangePassword) {
+    throw new ForbiddenError("Troque sua senha para continuar.");
+  }
   if (accessDecision(session.tenantStatus, session.subStatus) === "blocked") {
     throw new PaymentRequiredError();
+  }
+}
+
+function assertPasswordReady(session: Session) {
+  if (session.mustChangePassword) {
+    throw new ForbiddenError("Troque sua senha para continuar.");
   }
 }
 
@@ -60,6 +69,7 @@ export function withAdminAction<I, O>(opts: {
   return async (raw?: unknown): Promise<ActionResult<O>> => {
     try {
       const session = await requireSuperAdmin();
+      assertPasswordReady(session);
       const input = (opts.schema ? opts.schema.parse(raw) : (raw as I)) as I;
       const ip = await clientIp();
       const data = await opts.handler(input, { session, userId: session.sub, ip });

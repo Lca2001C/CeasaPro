@@ -189,7 +189,7 @@ model User {
   id                  String    @id @default(cuid())
   tenantId            String? // NULL apenas para SUPER_ADMIN
   name                String
-  email               String
+  email               String    @unique
   passwordHash        String
   role                UserRole  @default(OWNER)
   active              Boolean   @default(true)

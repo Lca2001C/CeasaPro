@@ -3,7 +3,6 @@ import { requireTenant } from "@/lib/auth/session";
 import { BillingService } from "@/lib/services/billing.service";
 import { formatBRL, formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS_LABELS } from "@/lib/labels";
-import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { AssinaturaClient } from "./_components/assinatura-client";

@@ -67,7 +67,7 @@ export const AdminService = {
 
   async createTenantWithOwner(input: NovaEmpresaInput, ctx: AdminCtx) {
     const existing = await prisma.user.findFirst({
-      where: { email: input.ownerEmail, tenantId: { not: null } },
+      where: { email: input.ownerEmail, deletedAt: null },
     });
     if (existing) throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
 

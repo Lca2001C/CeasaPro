@@ -11,6 +11,7 @@ export default async function AppLayout({
 }) {
   const session = await getSession();
   if (!session) redirect("/login");
+  if (session.mustChangePassword) redirect("/alterar-senha");
   if (session.role === "SUPER_ADMIN") redirect("/admin");
   if (!session.tenantId) redirect("/login");
 

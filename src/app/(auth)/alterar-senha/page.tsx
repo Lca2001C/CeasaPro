@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, use } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -16,21 +16,18 @@ import { Card, CardContent } from "@/components/ui/card";
 
 const schema = z
   .object({
-    password: passwordPolicy,
+    currentPassword: z.string().min(1, "Informe a senha atual"),
+    newPassword: passwordPolicy,
     confirm: z.string(),
   })
-  .refine((d) => d.password === d.confirm, {
-    message: "As senhas não conferem",
+  .refine((d) => d.newPassword === d.confirm, {
+    message: "As senhas nao conferem",
     path: ["confirm"],
   });
+
 type FormValues = z.infer<typeof schema>;
 
-export default function ResetPage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = use(params);
+export default function ChangePasswordPage() {
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const {
@@ -41,17 +38,18 @@ export default function ResetPage({
 
   async function onSubmit(values: FormValues) {
     setLoading(true);
-    const res = await apiPost("/api/auth/reset", {
-      token,
-      password: values.password,
+    const res = await apiPost<{ redirectTo: string }>("/api/auth/change-password", {
+      currentPassword: values.currentPassword,
+      newPassword: values.newPassword,
     });
     setLoading(false);
-    if (res.ok) {
-      toast.success("Senha redefinida! Faça login.");
-      router.push("/login");
-    } else {
+    if (!res.ok) {
       toast.error(res.error.message);
+      return;
     }
+    toast.success("Senha alterada com sucesso.");
+    router.push(res.data.redirectTo);
+    router.refresh();
   }
 
   return (
@@ -59,22 +57,40 @@ export default function ResetPage({
       <CardContent className="pt-6">
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password">Nova senha</Label>
-            <Input id="password" type="password" autoFocus {...register("password")} />
-            {errors.password && (
-              <span className="text-xs text-destructive">{errors.password.message}</span>
+            <Label htmlFor="currentPassword">Senha atual</Label>
+            <Input
+              id="currentPassword"
+              type="password"
+              autoComplete="current-password"
+              autoFocus
+              {...register("currentPassword")}
+            />
+            {errors.currentPassword && (
+              <span className="text-xs text-destructive">{errors.currentPassword.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="confirm">Confirmar senha</Label>
-            <Input id="confirm" type="password" {...register("confirm")} />
+            <Label htmlFor="newPassword">Nova senha</Label>
+            <Input
+              id="newPassword"
+              type="password"
+              autoComplete="new-password"
+              {...register("newPassword")}
+            />
+            {errors.newPassword && (
+              <span className="text-xs text-destructive">{errors.newPassword.message}</span>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="confirm">Confirmar nova senha</Label>
+            <Input id="confirm" type="password" autoComplete="new-password" {...register("confirm")} />
             {errors.confirm && (
               <span className="text-xs text-destructive">{errors.confirm.message}</span>
             )}
           </div>
           <Button type="submit" size="lg" disabled={loading}>
             {loading && <Loader2 className="animate-spin" />}
-            Redefinir senha
+            Alterar senha
           </Button>
         </form>
       </CardContent>

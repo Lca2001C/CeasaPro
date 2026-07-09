@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { ACCESS_COOKIE, REFRESH_COOKIE } from "./jwt";
+import { ACCESS_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
 
 const isProd = process.env.NODE_ENV === "production";
 const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? "30");
@@ -13,7 +13,7 @@ const base = {
 
 export async function setAuthCookies(accessToken: string, refreshToken: string) {
   const c = await cookies();
-  c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: 15 * 60 });
+  c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessTokenMaxAgeSeconds() });
   c.set(REFRESH_COOKIE, refreshToken, {
     ...base,
     maxAge: refreshDays * 24 * 60 * 60,
@@ -22,7 +22,7 @@ export async function setAuthCookies(accessToken: string, refreshToken: string) 
 
 export async function setAccessCookie(accessToken: string) {
   const c = await cookies();
-  c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: 15 * 60 });
+  c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessTokenMaxAgeSeconds() });
 }
 
 export async function clearAuthCookies() {

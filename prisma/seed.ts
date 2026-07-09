@@ -10,12 +10,10 @@ const prisma = new PrismaClient();
 
 async function main() {
   // 1) Super-admin
-  const adminEmail = process.env.SEED_SUPERADMIN_EMAIL ?? "admin@ceasapro.com.br";
+  const adminEmail = (process.env.SEED_SUPERADMIN_EMAIL ?? "admin@ceasapro.com.br").trim().toLowerCase();
   const adminPassword = process.env.SEED_SUPERADMIN_PASSWORD ?? "ceasapro123";
 
-  const existingAdmin = await prisma.user.findFirst({
-    where: { email: adminEmail, tenantId: null },
-  });
+  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
   if (!existingAdmin) {
     await prisma.user.create({
       data: {
@@ -48,7 +46,7 @@ async function main() {
   // 3) Empresa demo (opcional)
   if (process.env.SEED_DEMO === "true") {
     const demoEmail = "demo@ceasapro.com.br";
-    const existingDemo = await prisma.user.findFirst({ where: { email: demoEmail } });
+    const existingDemo = await prisma.user.findUnique({ where: { email: demoEmail } });
     if (!existingDemo) {
       const now = new Date();
       const trialEnd = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);

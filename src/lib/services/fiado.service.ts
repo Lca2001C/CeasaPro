@@ -1,4 +1,3 @@
-import { Prisma } from "@prisma/client";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";

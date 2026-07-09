@@ -2,6 +2,7 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { add, mul, money } from "@/lib/money";
+import { NotFoundError } from "@/lib/http/app-error";
 import type { CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -17,6 +18,7 @@ export const ComprasService = {
 
   async registrarCompra(input: CompraInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
+    const productIds = [...new Set(input.items.map((i) => i.productId))];
 
     const lineTotals = input.items.map((i) => mul(i.quantity, i.unitPrice));
     const freightShares = FinancialCalc.ratearFrete(lineTotals, input.freight);
@@ -35,6 +37,22 @@ export const ComprasService = {
     }));
 
     return db.$transaction(async (tx) => {
+      if (input.supplierId) {
+        const supplier = await tx.supplier.findFirst({
+          where: { id: input.supplierId, active: true },
+          select: { id: true },
+        });
+        if (!supplier) throw new NotFoundError("Fornecedor nao encontrado");
+      }
+
+      const products = await tx.product.findMany({
+        where: { id: { in: productIds }, active: true },
+        select: { id: true },
+      });
+      if (products.length !== productIds.length) {
+        throw new NotFoundError("Um ou mais produtos nao foram encontrados");
+      }
+
       const purchase = await tx.purchase.create({
         data: {
           tenantId: ctx.tenantId,

@@ -1,14 +1,15 @@
 import { z } from "zod";
+import { emailSchema } from "./auth";
 
 export const novaEmpresaSchema = z.object({
   tradeName: z.string().trim().min(1, "Informe o nome da empresa").max(120),
   legalName: z.string().trim().max(160).nullable().optional(),
   cnpj: z.string().trim().max(20).nullable().optional(),
   phone: z.string().trim().max(20).nullable().optional(),
-  ownerName: z.string().trim().min(1, "Informe o nome do responsável").max(120),
-  ownerEmail: z.string().email("E-mail inválido"),
+  ownerName: z.string().trim().min(1, "Informe o nome do responsavel").max(120),
+  ownerEmail: emailSchema,
   planId: z.string().min(1, "Selecione o plano"),
-  monthlyAmount: z.number().nonnegative("Valor inválido"),
+  monthlyAmount: z.number().nonnegative("Valor invalido"),
   trialDays: z.number().int().nonnegative(),
   graceDays: z.number().int().nonnegative(),
 });
@@ -28,7 +29,7 @@ export const monthlyAmountSchema = z.object({
 
 export const planoSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome").max(80),
-  priceMonthly: z.number().nonnegative("Valor inválido"),
+  priceMonthly: z.number().nonnegative("Valor invalido"),
   maxUsers: z.number().int().positive().nullable().optional(),
   active: z.boolean(),
 });

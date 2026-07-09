@@ -9,6 +9,7 @@ export default async function AdminLayout({
 }) {
   const session = await getSession();
   if (!session) redirect("/login");
+  if (session.mustChangePassword) redirect("/alterar-senha");
   if (session.role !== "SUPER_ADMIN") redirect("/dashboard");
   return <AdminShell userName={session.name}>{children}</AdminShell>;
 }

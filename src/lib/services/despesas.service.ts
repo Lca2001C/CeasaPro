@@ -12,6 +12,16 @@ function toDate(v?: string | null): Date | null {
   return v ? new Date(v) : null;
 }
 
+async function assertCategory(db: ReturnType<typeof getTenantPrisma>, categoryId?: string | null) {
+  if (!categoryId) return null;
+  const category = await db.expenseCategory.findFirst({
+    where: { id: categoryId },
+    select: { id: true },
+  });
+  if (!category) throw new NotFoundError("Categoria nao encontrada");
+  return category.id;
+}
+
 export const DespesasService = {
   async listCategories(tenantId: string) {
     const db = getTenantPrisma(tenantId);
@@ -44,6 +54,7 @@ export const DespesasService = {
 
   async create(input: DespesaInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
+    const categoryId = await assertCategory(db, input.categoryId);
     const e = await db.expense.create({
       data: {
         tenantId: ctx.tenantId,
@@ -51,7 +62,7 @@ export const DespesasService = {
         amount: input.amount,
         type: input.type,
         status: input.status,
-        categoryId: input.categoryId || null,
+        categoryId,
         dueDate: toDate(input.dueDate),
         paidDate: toDate(input.paidDate),
       },
@@ -73,6 +84,7 @@ export const DespesasService = {
     const db = getTenantPrisma(ctx.tenantId);
     const before = await db.expense.findFirst({ where: { id: input.id } });
     if (!before) throw new NotFoundError("Despesa não encontrada");
+    const categoryId = await assertCategory(db, input.categoryId);
     const e = await db.expense.update({
       where: { id: input.id },
       data: {
@@ -80,7 +92,7 @@ export const DespesasService = {
         amount: input.amount,
         type: input.type,
         status: input.status,
-        categoryId: input.categoryId || null,
+        categoryId,
         dueDate: toDate(input.dueDate),
         paidDate: toDate(input.paidDate),
       },
