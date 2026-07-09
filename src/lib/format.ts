@@ -33,18 +33,18 @@ export function formatQty(v: Numeric | null | undefined): string {
 }
 
 export function formatDate(d: Date | string | null | undefined): string {
-  if (!d) return "—";
+  if (!d) return "-";
   return DATE.format(new Date(d));
 }
 
 export function formatDateTime(d: Date | string | null | undefined): string {
-  if (!d) return "—";
+  if (!d) return "-";
   return DATETIME.format(new Date(d));
 }
 
 /** (31) 99999-9999 */
 export function formatPhone(v: string | null | undefined): string {
-  if (!v) return "—";
+  if (!v) return "-";
   const digits = v.replace(/\D/g, "");
   if (digits.length === 11)
     return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
@@ -54,7 +54,7 @@ export function formatPhone(v: string | null | undefined): string {
 }
 
 export function formatCNPJ(v: string | null | undefined): string {
-  if (!v) return "—";
+  if (!v) return "-";
   const d = v.replace(/\D/g, "");
   if (d.length !== 14) return v;
   return `${d.slice(0, 2)}.${d.slice(2, 5)}.${d.slice(5, 8)}/${d.slice(8, 12)}-${d.slice(12)}`;
