@@ -1,4 +1,5 @@
 import Link from "next/link";
+<<<<<<< HEAD
 import type { ReactNode } from "react";
 import {
   AlertTriangle,
@@ -21,6 +22,23 @@ import { StatCard } from "@/components/data/stat-card";
 import { SalesChart } from "@/components/data/sales-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+=======
+import {
+  ShoppingCart,
+  HandCoins,
+  Package,
+  TrendingUp,
+  AlertTriangle,
+  ChevronRight,
+} from "lucide-react";
+import { requireTenant } from "@/lib/auth/session";
+import { DashboardService } from "@/lib/services/dashboard.service";
+import { AvisosService } from "@/lib/services/avisos.service";
+import { formatBRL, formatQty } from "@/lib/format";
+import { StatCard } from "@/components/data/stat-card";
+import { SalesChart } from "@/components/data/sales-chart";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -66,6 +84,29 @@ export default async function DashboardPage() {
         </Card>
       )}
 
+      {/* Avisos — o que precisa de atenção */}
+      {avisos.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {avisos.map((a) => (
+            <Link key={a.tipo} href={a.href}>
+              <Card className="flex items-center justify-between border-warning/40 bg-warning/10 p-3 hover:bg-warning/15">
+                <div className="flex items-center gap-2">
+                  <AlertTriangle className="size-4 shrink-0 text-warning" />
+                  <span className="text-sm font-medium">{a.label}</span>
+                </div>
+                <div className="flex items-center gap-1">
+                  <span className="text-sm font-semibold tabular-nums">
+                    {formatBRL(a.total)}
+                  </span>
+                  <ChevronRight className="size-4 text-muted-foreground" />
+                </div>
+              </Card>
+            </Link>
+          ))}
+        </div>
+      )}
+
+      {/* Os 4 números principais */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Hoje vendi"
@@ -197,6 +238,83 @@ export default async function DashboardPage() {
           <ShoppingCart /> Nova venda
         </Link>
       </Button>
+
+      {/* Mais indicadores (Fase 3) */}
+      <h2 className="mt-2 text-sm font-semibold text-muted-foreground">
+        Mais indicadores
+      </h2>
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="Vendas na semana" value={formatBRL(s.faturamentoSemana)} />
+        <StatCard label="Vendas no mês" value={formatBRL(s.faturamentoMes)} />
+        <StatCard
+          label="Margem líquida (mês)"
+          value={`${s.margemMes.toFixed(1)}%`}
+          tone={s.margemMes.isNegative() ? "destructive" : "default"}
+        />
+        <StatCard label="Contas a pagar" value={formatBRL(s.contasAPagar)} tone="warning" />
+      </div>
+
+      {(s.topVendidos.length > 0 || s.prejuizo.length > 0 || s.estoqueParado.length > 0) && (
+        <div className="grid gap-3 md:grid-cols-2">
+          {s.topVendidos.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Mais vendidos no mês</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1.5 text-sm">
+                {s.topVendidos.map((p, i) => (
+                  <div key={p.name} className="flex justify-between">
+                    <span className="truncate">
+                      {i + 1}. {p.name}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {formatQty(p.qtd)}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {s.prejuizo.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm text-destructive">
+                  Produtos com prejuízo (mês)
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1.5 text-sm">
+                {s.prejuizo.map((p) => (
+                  <div key={p.name} className="flex justify-between">
+                    <span className="truncate">{p.name}</span>
+                    <span className="tabular-nums text-destructive">
+                      {formatBRL(p.lucro)}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+
+          {s.estoqueParado.length > 0 && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Estoque parado (30+ dias sem venda)</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-1.5 text-sm">
+                {s.estoqueParado.map((p) => (
+                  <div key={p.name} className="flex justify-between">
+                    <span className="truncate">{p.name}</span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {formatQty(p.qtd)}
+                    </span>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
     </div>
   );
 }

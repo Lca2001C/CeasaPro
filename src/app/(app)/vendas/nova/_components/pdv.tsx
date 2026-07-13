@@ -141,7 +141,12 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
             <Card key={i.productId} className="p-3">
               <div className="flex items-center justify-between gap-2">
                 <span className="min-w-0 flex-1 truncate font-medium">{i.name}</span>
-                <Button variant="ghost" size="icon" onClick={() => removeItem(i.productId)}>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remover ${i.name}`}
+                  onClick={() => removeItem(i.productId)}
+                >
                   <Trash2 className="size-4 text-destructive" />
                 </Button>
               </div>
@@ -152,6 +157,7 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
                     variant="outline"
                     size="icon"
                     className="size-9"
+                    aria-label="Diminuir quantidade"
                     onClick={() =>
                       updateItem(i.productId, { quantity: Math.max(0.001, i.quantity - 1) })
                     }
@@ -164,6 +170,7 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
                     variant="outline"
                     size="icon"
                     className="size-9"
+                    aria-label="Aumentar quantidade"
                     onClick={() => updateItem(i.productId, { quantity: i.quantity + 1 })}
                   >
                     <Plus className="size-4" />

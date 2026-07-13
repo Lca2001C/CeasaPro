@@ -1,11 +1,16 @@
 import { z } from "zod";
 import { withTenantRoute } from "@/lib/http/with-route";
 import { NotFoundError } from "@/lib/http/app-error";
+import { requireModule } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
 import { buildReport } from "@/lib/reports/report.service";
 import { toExcel } from "@/lib/reports/excel.exporter";
+<<<<<<< HEAD
 import { toPdf } from "@/lib/reports/pdf.exporter";
 import { REPORT_TYPES, type ReportKind } from "@/lib/reports/report.types";
+=======
+import { REPORT_TYPES, isAdvancedReport, type ReportKind } from "@/lib/reports/report.types";
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import type { ReportFormat, ReportType } from "@prisma/client";
@@ -26,6 +31,9 @@ export const GET = withTenantRoute({
     const parts = new URL(ctx.req.url).pathname.split("/").filter(Boolean);
     const kind = (parts[2] ?? "").toUpperCase() as ReportKind; // /api/reports/<kind>/export
     if (!REPORT_TYPES.includes(kind)) throw new NotFoundError("Relatorio invalido");
+
+    // Relatórios avançados exigem o módulo no plano (barreira de servidor).
+    if (isAdvancedReport(kind)) requireModule(ctx.session.modules, "relatorios_avancados");
 
     const period = resolvePeriod({
       preset: (input.preset as PeriodPreset) ?? "mes",

@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyAccess, ACCESS_COOKIE } from "@/lib/auth/jwt";
 import { accessDecision } from "@/lib/billing/status";
+import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 
 // Rotas publicas (sem sessao).
 const PUBLIC_PREFIXES = [
@@ -110,6 +111,18 @@ export async function proxy(req: NextRequest) {
       }
       return NextResponse.redirect(new URL("/conta/suspensa", req.url));
     }
+  }
+
+  // Bloqueio por módulo do plano (recurso fora do plano contratado).
+  const mod = moduleForPath(pathname);
+  if (mod && !isModuleEnabled(session.modules, mod)) {
+    if (isApi) {
+      return NextResponse.json(
+        { ok: false, error: { code: "FORBIDDEN", message: "Recurso não incluído no seu plano" } },
+        { status: 403 },
+      );
+    }
+    return NextResponse.redirect(new URL(`/plano?bloqueado=${mod}`, req.url));
   }
 
   return NextResponse.next();

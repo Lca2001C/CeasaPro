@@ -9,6 +9,7 @@ interface Props {
   companyName: string;
   userName: string;
   billingWarning?: string | null;
+  modules?: string[];
   children: React.ReactNode;
 }
 
@@ -17,10 +18,10 @@ async function logout() {
   window.location.href = "/login";
 }
 
-export function AppShell({ companyName, userName, billingWarning, children }: Props) {
+export function AppShell({ companyName, userName, billingWarning, modules, children }: Props) {
   return (
     <div className="flex min-h-screen">
-      <SideNav />
+      <SideNav modules={modules} />
       <div className="flex min-h-screen flex-1 flex-col">
         <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/95 px-4 backdrop-blur">
           <div className="min-w-0">
@@ -45,7 +46,7 @@ export function AppShell({ companyName, userName, billingWarning, children }: Pr
           {children}
         </main>
 
-        <BottomNav />
+        <BottomNav modules={modules} />
       </div>
     </div>
   );

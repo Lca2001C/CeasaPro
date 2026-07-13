@@ -39,6 +39,31 @@ export const REPORT_TYPES = [
 ] as const;
 export type ReportKind = (typeof REPORT_TYPES)[number];
 
+/** Relatórios inclusos no núcleo (sempre disponíveis). */
+export const BASIC_REPORTS: ReportKind[] = [
+  "VENDAS",
+  "COMPRAS",
+  "FIADO",
+  "DESPESAS",
+  "ESTOQUE",
+];
+
+/** Relatórios do módulo opcional `relatorios_avancados`. */
+export const ADVANCED_REPORTS: ReportKind[] = [
+  "LUCRO_PRODUTO",
+  "MAIS_VENDIDOS",
+  "INADIMPLENTES",
+  "FORNECEDORES",
+  "FLUXO_CAIXA",
+  "CAIXAS_PLASTICAS",
+  "HIGIENIZACAO",
+  "EMBALAGENS",
+];
+
+export function isAdvancedReport(kind: ReportKind): boolean {
+  return ADVANCED_REPORTS.includes(kind);
+}
+
 export const REPORT_LABELS: Record<ReportKind, string> = {
   VENDAS: "Relatorio de vendas",
   COMPRAS: "Relatorio de compras",

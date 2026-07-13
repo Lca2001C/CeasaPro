@@ -8,6 +8,8 @@ export default defineConfig({
     testTimeout: 30000,
     hookTimeout: 30000,
     fileParallelism: false, // integração usa o mesmo banco — roda arquivos em série
+    // Os testes E2E (Playwright, *.spec.ts em tests/e2e) NÃO são do Vitest.
+    exclude: ["node_modules/**", "tests/e2e/**", ".next/**"],
   },
   resolve: {
     alias: {

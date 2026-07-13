@@ -39,7 +39,6 @@ export function HigienizacaoForm() {
     if (res.ok) {
       toast.success("Envio registrado.");
       router.push("/higienizacao");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

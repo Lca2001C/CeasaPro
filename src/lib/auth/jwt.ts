@@ -10,6 +10,8 @@ export interface AccessPayload {
   mustChangePassword: boolean;
   tenantStatus?: TenantStatus | null;
   subStatus?: SubscriptionStatus | null;
+  /** Módulos opcionais habilitados pelo plano. `undefined` = token legado (tudo liberado). */
+  modules?: string[];
 }
 
 const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL ?? "15m";
@@ -54,6 +56,9 @@ export async function verifyAccess(token: string): Promise<AccessPayload | null>
       mustChangePassword: Boolean(payload.mustChangePassword),
       tenantStatus: (payload.tenantStatus as TenantStatus | null) ?? null,
       subStatus: (payload.subStatus as SubscriptionStatus | null) ?? null,
+      modules: Array.isArray(payload.modules)
+        ? (payload.modules as string[])
+        : undefined,
     };
   } catch {
     return null;

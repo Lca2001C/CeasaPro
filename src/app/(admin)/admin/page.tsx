@@ -20,6 +20,10 @@ export default async function AdminHomePage() {
         <StatCard label="Receita mensal (MRR)" value={formatBRL(m.mrr)} tone="success" />
         <StatCard label="Ativas" value={String(ativos)} />
         <StatCard label="Inadimplentes" value={String(suspensos + vencidos)} tone="warning" />
+        <StatCard label="Novos clientes no mês" value={String(m.novosNoMes)} />
+        <StatCard label="Recebido no mês" value={formatBRL(m.receitaMes)} tone="success" />
+        <StatCard label="Em teste grátis" value={String(m.byStatus["TRIAL"] ?? 0)} />
+        <StatCard label="Pagamentos aprovados" value={String(m.paymentsApproved)} />
       </div>
 
       <div className="mt-6">

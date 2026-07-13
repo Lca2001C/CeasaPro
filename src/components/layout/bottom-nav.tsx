@@ -19,9 +19,12 @@ import {
   Container,
   Droplets,
   PackageOpen,
+  History,
+  BadgeCheck,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
+import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 import {
   Sheet,
   SheetContent,
@@ -48,15 +51,25 @@ const more = [
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
+<<<<<<< HEAD
   { href: "/auditoria", label: "Auditoria", icon: ShieldCheck },
+=======
+  { href: "/atividades", label: "Atividades", icon: History },
+  { href: "/plano", label: "Meu plano", icon: BadgeCheck },
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
-export function BottomNav() {
+export function BottomNav({ modules }: { modules?: string[] }) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
+  const allowed = (href: string) => {
+    const m = moduleForPath(href);
+    return !m || isModuleEnabled(modules, m);
+  };
+  const moreItems = more.filter((item) => allowed(item.href));
 
   return (
     <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur md:hidden">
@@ -88,7 +101,7 @@ export function BottomNav() {
               <SheetTitle>Menu</SheetTitle>
             </SheetHeader>
             <div className="grid grid-cols-3 gap-3 pb-4">
-              {more.map((item) => {
+              {moreItems.map((item) => {
                 const Icon = item.icon;
                 return (
                   <SheetClose asChild key={item.href}>

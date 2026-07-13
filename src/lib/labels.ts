@@ -80,6 +80,35 @@ export const CRATE_CLEANING_STATUS_LABELS: Record<string, string> = {
   PAGO: "Pago",
 };
 
+export const AUDIT_ACTION_LABELS: Record<string, string> = {
+  CREATE: "cadastrou",
+  UPDATE: "alterou",
+  DELETE: "excluiu",
+  PAYMENT: "registrou pagamento em",
+  LOGIN: "entrou no sistema",
+  STATUS_CHANGE: "alterou a situação de",
+};
+
+export const AUDIT_ENTITY_LABELS: Record<string, string> = {
+  Product: "produto",
+  Supplier: "fornecedor",
+  Purchase: "compra",
+  Sale: "venda",
+  CreditAccount: "conta de fiado",
+  CreditPayment: "pagamento de fiado",
+  StockMovement: "movimentação de estoque",
+  Expense: "despesa",
+  ExpenseCategory: "categoria de despesa",
+  PlasticCrateMovement: "movimentação de caixas",
+  CrateCleaning: "higienização",
+  PackagingType: "tipo de embalagem",
+  PackagingSale: "venda de embalagem",
+  Tenant: "empresa",
+  User: "usuário",
+  TenantSubscription: "assinatura",
+  SubscriptionPayment: "pagamento de mensalidade",
+};
+
 export function toOptions(map: Record<string, string>) {
   return Object.entries(map).map(([value, label]) => ({ value, label }));
 }

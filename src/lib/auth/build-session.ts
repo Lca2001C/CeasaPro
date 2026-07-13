@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { computeStatus } from "@/lib/billing/status";
+import { planModules, ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
 import type { AccessPayload } from "./jwt";
 
 /**
@@ -11,7 +12,7 @@ import type { AccessPayload } from "./jwt";
 export async function buildAccessPayload(userId: string): Promise<AccessPayload | null> {
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    include: { tenant: { include: { subscription: true } } },
+    include: { tenant: { include: { subscription: { include: { plan: true } } } } },
   });
 
   if (!user || !user.active || user.deletedAt) return null;
@@ -20,6 +21,8 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
   const tenantStatus = user.tenant?.status ?? null;
 
   const sub = user.tenant?.subscription;
+  // Super-admin não tem tenant/plano → mantém undefined (não gateia nada).
+  let modules: string[] | undefined;
   if (sub) {
     const effective = computeStatus(sub);
     if (effective !== sub.status) {
@@ -29,6 +32,7 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
       });
     }
     subStatus = effective;
+    modules = sub.plan ? planModules(sub.plan.features) : [...ALL_OPTIONAL_KEYS];
   }
 
   return {
@@ -40,5 +44,6 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     mustChangePassword: user.mustChangePassword,
     tenantStatus,
     subStatus,
+    modules,
   };
 }

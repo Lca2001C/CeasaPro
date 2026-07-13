@@ -17,6 +17,7 @@
     "test:watch": "vitest",
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
+    "test:e2e": "playwright test",
     "postinstall": "prisma generate"
   },
   "prisma": {
@@ -51,6 +52,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pdfmake": "^0.3.3",

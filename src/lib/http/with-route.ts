@@ -2,7 +2,13 @@ import type { ZodType } from "zod";
 import { ZodError } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
+<<<<<<< HEAD
 import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
+=======
+import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
+import { rateLimit } from "@/lib/security/rate-limit";
+import { AppError, PaymentRequiredError } from "./app-error";
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 import { clientIp } from "./request";
 import { logger } from "@/lib/logger";
 
@@ -65,18 +71,33 @@ export function withTenantRoute<I, O>(opts: {
   schema?: ZodType<I>;
   source?: "json" | "query";
   allowInactive?: boolean; // rotas de regularização (billing) continuam acessíveis quando bloqueado
+  /** Se informado, exige que o plano da empresa inclua este módulo (defense in depth). */
+  module?: OptionalModuleKey;
   handler: (input: I, ctx: RouteTenantCtx) => Promise<O | Response>;
 }) {
   return async (req: Request): Promise<Response> => {
     try {
       const { session, tenantId } = await requireTenant();
+<<<<<<< HEAD
       assertPasswordReady(session);
+=======
+      // Proteção contra abuso de requisições (por empresa).
+      const rl = rateLimit(`route:${tenantId}`, { limit: 120, windowMs: 60_000 });
+      if (!rl.ok) {
+        throw new AppError(
+          "RATE_LIMIT",
+          "Muitas requisições em pouco tempo. Aguarde alguns segundos.",
+          429,
+        );
+      }
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       if (
         !opts.allowInactive &&
         accessDecision(session.tenantStatus, session.subStatus) === "blocked"
       ) {
         throw new PaymentRequiredError();
       }
+      if (opts.module) requireModule(session.modules, opts.module);
       const input = await parseInput(req, opts.schema, opts.source ?? "json");
       const ip = await clientIp();
       const out = await opts.handler(input, { session, tenantId, userId: session.sub, ip, req });

@@ -1,5 +1,9 @@
 import { z } from "zod";
+<<<<<<< HEAD
 import { emailSchema } from "./auth";
+=======
+import { OPTIONAL_MODULE_KEYS } from "@/lib/plan/modules";
+>>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 
 export const novaEmpresaSchema = z.object({
   tradeName: z.string().trim().min(1, "Informe o nome da empresa").max(120),
@@ -32,6 +36,7 @@ export const planoSchema = z.object({
   priceMonthly: z.number().nonnegative("Valor invalido"),
   maxUsers: z.number().int().positive().nullable().optional(),
   active: z.boolean(),
+  modules: z.array(z.enum(OPTIONAL_MODULE_KEYS)),
 });
 export type PlanoInput = z.infer<typeof planoSchema>;
 

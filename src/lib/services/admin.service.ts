@@ -27,15 +27,27 @@ function slugify(s: string): string {
 
 export const AdminService = {
   async metrics() {
-    const [subs, tenants, recentPayments] = await Promise.all([
-      prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
-      prisma.tenant.count({ where: { deletedAt: null } }),
-      prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
-    ]);
-    const mrrRows = await prisma.tenantSubscription.aggregate({
-      _sum: { monthlyAmount: true },
-      where: { status: { in: ["ATIVO"] } },
-    });
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes] =
+      await Promise.all([
+        prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
+        prisma.tenant.count({ where: { deletedAt: null } }),
+        prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
+        prisma.tenantSubscription.aggregate({
+          _sum: { monthlyAmount: true },
+          where: { status: { in: ["ATIVO"] } },
+        }),
+        prisma.tenant.count({
+          where: { deletedAt: null, createdAt: { gte: monthStart } },
+        }),
+        prisma.subscriptionPayment.aggregate({
+          _sum: { amount: true },
+          where: { status: "APROVADO", paidAt: { gte: monthStart } },
+        }),
+      ]);
     const byStatus: Record<string, number> = {};
     for (const s of subs) byStatus[s.status] = s._count;
     return {
@@ -43,6 +55,8 @@ export const AdminService = {
       byStatus,
       mrr: mrrRows._sum.monthlyAmount ?? new Prisma.Decimal(0),
       paymentsApproved: recentPayments,
+      novosNoMes,
+      receitaMes: receitaMes._sum.amount ?? new Prisma.Decimal(0),
     };
   },
 
@@ -200,6 +214,7 @@ export const AdminService = {
         priceMonthly: input.priceMonthly,
         maxUsers: input.maxUsers ?? null,
         active: input.active,
+        features: { modules: input.modules },
       },
     });
   },
@@ -212,6 +227,7 @@ export const AdminService = {
         priceMonthly: input.priceMonthly,
         maxUsers: input.maxUsers ?? null,
         active: input.active,
+        features: { modules: input.modules },
       },
     });
   },
