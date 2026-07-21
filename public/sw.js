@@ -1,9 +1,14 @@
-// Service worker LEVE do CeasaPro: cacheia apenas assets estáticos (app shell).
-// Dados/páginas NUNCA são cacheados — sem risco de informação financeira desatualizada.
-const CACHE = "ceasapro-static-v1";
+// Service worker LEVE do CeasaPro: cacheia apenas assets estáticos (app shell) e
+// serve uma página offline de fallback em navegações sem rede.
+// Dados/páginas dinâmicas NUNCA são cacheados — sem risco de informação desatualizada.
+const CACHE = "ceasapro-static-v3";
+const OFFLINE_URL = "/offline";
+const PRECACHE = [OFFLINE_URL, "/icons/icon-192.png"];
 
-self.addEventListener("install", () => {
-  self.skipWaiting();
+self.addEventListener("install", (event) => {
+  event.waitUntil(
+    caches.open(CACHE).then((cache) => cache.addAll(PRECACHE)).then(() => self.skipWaiting()),
+  );
 });
 
 self.addEventListener("activate", (event) => {
@@ -19,10 +24,18 @@ self.addEventListener("fetch", (event) => {
   const req = event.request;
   if (req.method !== "GET") return;
   const url = new URL(req.url);
+
+  // Navegações (trocar de página): tenta a rede; sem rede, mostra a página offline.
+  if (req.mode === "navigate") {
+    event.respondWith(fetch(req).catch(() => caches.match(OFFLINE_URL)));
+    return;
+  }
+
+  // Assets estáticos (cache-first). Demais requisições vão sempre à rede.
   const isStatic =
     url.origin === self.location.origin &&
     (url.pathname.startsWith("/_next/static/") || url.pathname.startsWith("/icons/"));
-  if (!isStatic) return; // páginas e APIs vão sempre à rede
+  if (!isStatic) return;
 
   event.respondWith(
     caches.open(CACHE).then(async (cache) => {

@@ -5,12 +5,8 @@ import { requireModule } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
 import { buildReport } from "@/lib/reports/report.service";
 import { toExcel } from "@/lib/reports/excel.exporter";
-<<<<<<< HEAD
 import { toPdf } from "@/lib/reports/pdf.exporter";
-import { REPORT_TYPES, type ReportKind } from "@/lib/reports/report.types";
-=======
 import { REPORT_TYPES, isAdvancedReport, type ReportKind } from "@/lib/reports/report.types";
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import type { ReportFormat, ReportType } from "@prisma/client";

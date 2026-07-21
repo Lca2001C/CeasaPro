@@ -25,6 +25,7 @@
   },
   "dependencies": {
     "@hookform/resolvers": "^5.4.0",
+    "@mercadopago/sdk-react": "^1.0.7",
     "@node-rs/argon2": "^2.0.2",
     "@prisma/client": "^6.19.3",
     "@radix-ui/react-dialog": "^1.1.18",

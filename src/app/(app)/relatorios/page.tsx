@@ -14,12 +14,8 @@ export default async function RelatoriosPage() {
 
   return (
     <div>
-<<<<<<< HEAD
-      <PageHeader title="Relatorios" description="Filtre por periodo, imprima ou baixe em Excel/PDF." />
-=======
-      <PageHeader title="Relatórios" description="Filtre por período, imprima ou baixe em Excel." />
+      <PageHeader title="Relatórios" description="Filtre por período, imprima ou baixe em Excel/PDF." />
 
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       <div className="flex flex-col gap-2">
         {BASIC_REPORTS.map((t) => (
           <Link key={t} href={`/relatorios/${t.toLowerCase()}`}>

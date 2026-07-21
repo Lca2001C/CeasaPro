@@ -1,5 +1,4 @@
 import Link from "next/link";
-<<<<<<< HEAD
 import type { ReactNode } from "react";
 import {
   AlertTriangle,
@@ -22,23 +21,6 @@ import { StatCard } from "@/components/data/stat-card";
 import { SalesChart } from "@/components/data/sales-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
-=======
-import {
-  ShoppingCart,
-  HandCoins,
-  Package,
-  TrendingUp,
-  AlertTriangle,
-  ChevronRight,
-} from "lucide-react";
-import { requireTenant } from "@/lib/auth/session";
-import { DashboardService } from "@/lib/services/dashboard.service";
-import { AvisosService } from "@/lib/services/avisos.service";
-import { formatBRL, formatQty } from "@/lib/format";
-import { StatCard } from "@/components/data/stat-card";
-import { SalesChart } from "@/components/data/sales-chart";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 import { Button } from "@/components/ui/button";
 
 export const dynamic = "force-dynamic";
@@ -55,7 +37,7 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-bold">Inicio</h1>
+        <h1 className="text-xl font-bold">Início</h1>
         {avisos.length > 0 && (
           <Badge variant="warning" className="gap-1">
             <Bell className="size-3" />
@@ -84,29 +66,7 @@ export default async function DashboardPage() {
         </Card>
       )}
 
-      {/* Avisos — o que precisa de atenção */}
-      {avisos.length > 0 && (
-        <div className="flex flex-col gap-2">
-          {avisos.map((a) => (
-            <Link key={a.tipo} href={a.href}>
-              <Card className="flex items-center justify-between border-warning/40 bg-warning/10 p-3 hover:bg-warning/15">
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="size-4 shrink-0 text-warning" />
-                  <span className="text-sm font-medium">{a.label}</span>
-                </div>
-                <div className="flex items-center gap-1">
-                  <span className="text-sm font-semibold tabular-nums">
-                    {formatBRL(a.total)}
-                  </span>
-                  <ChevronRight className="size-4 text-muted-foreground" />
-                </div>
-              </Card>
-            </Link>
-          ))}
-        </div>
-      )}
-
-      {/* Os 4 números principais */}
+      {/* Números principais */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Hoje vendi"
@@ -121,7 +81,7 @@ export default async function DashboardPage() {
           tone="success"
         />
         <StatCard
-          label="Mes"
+          label="Mês"
           value={formatBRL(s.mesVendi)}
           icon={<WalletCards className="size-4" />}
           tone="success"
@@ -155,7 +115,7 @@ export default async function DashboardPage() {
           tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
         />
         <StatCard
-          label="Lucro liquido"
+          label="Lucro líquido"
           value={formatBRL(s.lucroMes)}
           icon={<TrendingUp className="size-4" />}
           tone={lucroTone}
@@ -172,7 +132,7 @@ export default async function DashboardPage() {
           icon={<ReceiptText className="size-4" />}
         />
         <StatCard
-          label="Variaveis"
+          label="Variáveis"
           value={formatBRL(s.despesasVariaveisMes)}
           icon={<ReceiptText className="size-4" />}
         />
@@ -198,7 +158,7 @@ export default async function DashboardPage() {
           mode="profit"
         />
         <ProductList
-          title="Com prejuizo"
+          title="Com prejuízo"
           icon={<TrendingDown className="size-4" />}
           rows={s.produtosComPrejuizo}
           mode="profit"
@@ -219,7 +179,7 @@ export default async function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{row.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        Ultimo movimento: {formatDate(row.lastMovementAt)}
+                        Último movimento: {formatDate(row.lastMovementAt)}
                       </p>
                     </div>
                     <span className="shrink-0 text-sm font-semibold tabular-nums">
@@ -238,83 +198,6 @@ export default async function DashboardPage() {
           <ShoppingCart /> Nova venda
         </Link>
       </Button>
-
-      {/* Mais indicadores (Fase 3) */}
-      <h2 className="mt-2 text-sm font-semibold text-muted-foreground">
-        Mais indicadores
-      </h2>
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Vendas na semana" value={formatBRL(s.faturamentoSemana)} />
-        <StatCard label="Vendas no mês" value={formatBRL(s.faturamentoMes)} />
-        <StatCard
-          label="Margem líquida (mês)"
-          value={`${s.margemMes.toFixed(1)}%`}
-          tone={s.margemMes.isNegative() ? "destructive" : "default"}
-        />
-        <StatCard label="Contas a pagar" value={formatBRL(s.contasAPagar)} tone="warning" />
-      </div>
-
-      {(s.topVendidos.length > 0 || s.prejuizo.length > 0 || s.estoqueParado.length > 0) && (
-        <div className="grid gap-3 md:grid-cols-2">
-          {s.topVendidos.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Mais vendidos no mês</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1.5 text-sm">
-                {s.topVendidos.map((p, i) => (
-                  <div key={p.name} className="flex justify-between">
-                    <span className="truncate">
-                      {i + 1}. {p.name}
-                    </span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatQty(p.qtd)}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {s.prejuizo.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm text-destructive">
-                  Produtos com prejuízo (mês)
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1.5 text-sm">
-                {s.prejuizo.map((p) => (
-                  <div key={p.name} className="flex justify-between">
-                    <span className="truncate">{p.name}</span>
-                    <span className="tabular-nums text-destructive">
-                      {formatBRL(p.lucro)}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {s.estoqueParado.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">Estoque parado (30+ dias sem venda)</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-1.5 text-sm">
-                {s.estoqueParado.map((p) => (
-                  <div key={p.name} className="flex justify-between">
-                    <span className="truncate">{p.name}</span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatQty(p.qtd)}
-                    </span>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-        </div>
-      )}
     </div>
   );
 }
@@ -340,7 +223,7 @@ function ProductList({
           {title}
         </div>
         {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sem dados no mes.</p>
+          <p className="text-sm text-muted-foreground">Sem dados no mês.</p>
         ) : (
           <div className="flex flex-col divide-y">
             {rows.map((row) => (

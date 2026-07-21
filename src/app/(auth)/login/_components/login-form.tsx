@@ -37,8 +37,10 @@ export function LoginForm() {
     const redirectTo = res.data.mustChangePassword
       ? "/alterar-senha"
       : safeRedirectPath(next, res.data.redirectTo);
+    // Sem router.refresh() aqui: ele dispara um refetch RSC da rota atual que
+    // corre com o push e cancela a navegação ("Failed to fetch RSC payload").
+    // O push já renderiza o destino do zero (outro route group) com a sessão nova.
     router.push(redirectTo);
-    router.refresh();
   }
 
   return (

@@ -1,19 +1,9 @@
 name: CI
 
 on:
-<<<<<<< HEAD
-  pull_request:
-  push:
-    branches:
-      - main
-
-jobs:
-  verify:
-=======
   push:
     branches: [main]
   pull_request:
-    branches: [main]
 
 # Cancela execuções antigas do mesmo branch/PR.
 concurrency:
@@ -27,7 +17,6 @@ jobs:
   # ─────────────────────────────────────────────────────────────
   ci:
     name: Lint · Typecheck · Build · Testes · E2E
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
     runs-on: ubuntu-latest
 
     services:
@@ -36,15 +25,14 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-<<<<<<< HEAD
           POSTGRES_DB: ceasapro_test
         ports:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d ceasapro_test"
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 20
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ceasapro_test?schema=public
@@ -52,12 +40,14 @@ jobs:
       JWT_ACCESS_SECRET: ci-access-secret-change-in-production-32-bytes
       JWT_REFRESH_SECRET: ci-refresh-secret-change-in-production-32-bytes
       ACCESS_TOKEN_TTL: 15m
-      REFRESH_TOKEN_TTL_DAYS: 30
+      REFRESH_TOKEN_TTL_DAYS: "30"
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       CRON_SECRET: ci-cron-secret
       MP_WEBHOOK_SECRET: ci-webhook-secret
+      SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
       SEED_SUPERADMIN_PASSWORD: ci-superadmin-password-123
+      SEED_DEMO: "true"
 
     steps:
       - name: Checkout
@@ -69,62 +59,11 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Validate Prisma schema
-        run: npx prisma validate
-
-      - name: Apply migrations
-        run: npx prisma migrate deploy
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Unit tests
-        run: npm run test:unit
-
-      - name: Integration tests
-        run: npm run test:integration
-
-      - name: Production build
-        run: npm run build
-=======
-          POSTGRES_DB: ceasapro
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 20
-
-    env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ceasapro
-      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ceasapro
-      JWT_ACCESS_SECRET: ci-access-secret-please-change-0123456789abcd
-      JWT_REFRESH_SECRET: ci-refresh-secret-please-change-abcdef012345
-      ACCESS_TOKEN_TTL: 15m
-      REFRESH_TOKEN_TTL_DAYS: "30"
-      SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
-      SEED_SUPERADMIN_PASSWORD: ceasapro123
-      SEED_DEMO: "true"
-      APP_URL: http://localhost:3000
-      NEXT_PUBLIC_APP_URL: http://localhost:3000
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
       - name: Instalar dependências
         run: npm ci
+
+      - name: Validar schema Prisma
+        run: npx prisma validate
 
       - name: Lint (zero avisos)
         run: npm run lint -- --max-warnings=0
@@ -138,11 +77,14 @@ jobs:
       - name: Seed inicial
         run: npm run db:seed
 
+      - name: Testes unitários
+        run: npm run test:unit
+
+      - name: Testes de integração
+        run: npm run test:integration
+
       - name: Build de produção
         run: npm run build
-
-      - name: Testes unitários e de integração
-        run: npm test
 
       - name: Instalar navegador do Playwright
         run: npx playwright install --with-deps chromium
@@ -177,7 +119,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: "22"
           cache: npm
 
       - name: Aplicar migrations em produção (se configurado)
@@ -199,4 +141,3 @@ jobs:
           vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
           vercel build --prod --token="$VERCEL_TOKEN"
           vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)

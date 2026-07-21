@@ -2,13 +2,9 @@ import type { ZodType } from "zod";
 import { ZodError } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
-<<<<<<< HEAD
-import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
-=======
 import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
 import { rateLimit } from "@/lib/security/rate-limit";
-import { AppError, PaymentRequiredError } from "./app-error";
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
+import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { clientIp } from "./request";
 import { logger } from "@/lib/logger";
 
@@ -78,9 +74,7 @@ export function withTenantRoute<I, O>(opts: {
   return async (req: Request): Promise<Response> => {
     try {
       const { session, tenantId } = await requireTenant();
-<<<<<<< HEAD
       assertPasswordReady(session);
-=======
       // Proteção contra abuso de requisições (por empresa).
       const rl = rateLimit(`route:${tenantId}`, { limit: 120, windowMs: 60_000 });
       if (!rl.ok) {
@@ -90,7 +84,6 @@ export function withTenantRoute<I, O>(opts: {
           429,
         );
       }
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       if (
         !opts.allowInactive &&
         accessDecision(session.tenantStatus, session.subStatus) === "blocked"

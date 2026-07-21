@@ -3,6 +3,7 @@ import { Geist } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
 import { PwaRegister } from "@/components/pwa-register";
+import { iosSplashLinks } from "@/lib/pwa/ios-splash";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -36,6 +37,10 @@ export default function RootLayout({
   return (
     <html lang="pt-BR" className={`${geistSans.variable} h-full antialiased`}>
       <body className="min-h-full">
+        {/* Splash screens do iOS (React 19 faz o hoist para o <head>). */}
+        {iosSplashLinks.map((s) => (
+          <link key={s.href + s.media} rel="apple-touch-startup-image" media={s.media} href={s.href} />
+        ))}
         <Providers>{children}</Providers>
         <PwaRegister />
       </body>

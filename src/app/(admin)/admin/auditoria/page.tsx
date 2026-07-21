@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 import Link from "next/link";
 import { AdminService } from "@/lib/services/admin.service";
 import { AuditLogService } from "@/lib/services/audit-log.service";
@@ -7,21 +6,12 @@ import { AuditLogTable } from "@/components/data/audit-log-table";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-=======
-import { AuditoriaService } from "@/lib/services/auditoria.service";
-import { AUDIT_ENTITY_LABELS } from "@/lib/labels";
-import { PageHeader } from "@/components/data/page-header";
-import { AuditList, type AuditEntry } from "@/components/data/audit-list";
-import { Select } from "@/components/ui/select";
-import { Button } from "@/components/ui/button";
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminAuditoriaPage({
   searchParams,
 }: {
-<<<<<<< HEAD
   searchParams: Promise<{
     tenantId?: string;
     action?: string;
@@ -39,21 +29,12 @@ export default async function AdminAuditoriaPage({
   const [rows, tenants] = await Promise.all([
     AuditLogService.listForAdmin(filters),
     AdminService.listTenants(),
-=======
-  searchParams: Promise<{ entidade?: string }>;
-}) {
-  const { entidade } = await searchParams;
-  const [logs, entities] = await Promise.all([
-    AuditoriaService.listGlobal(entidade || undefined),
-    AuditoriaService.listEntities(),
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
   ]);
 
   return (
     <div>
       <PageHeader
         title="Auditoria"
-<<<<<<< HEAD
         description="Ultimos 100 eventos da plataforma. Payloads sensiveis nao sao exibidos."
       />
       <AdminAuditFilters defaultValues={filters} tenants={tenants} />
@@ -102,28 +83,3 @@ function AdminAuditFilters({
     </form>
   );
 }
-=======
-        description="Trilha completa de atividades de todas as empresas e da plataforma."
-      />
-
-      <form method="GET" className="mb-4 flex gap-2">
-        <div className="w-56">
-          <Select name="entidade" defaultValue={entidade ?? ""}>
-            <option value="">Todas as áreas</option>
-            {entities.map((e) => (
-              <option key={e} value={e}>
-                {AUDIT_ENTITY_LABELS[e] ?? e}
-              </option>
-            ))}
-          </Select>
-        </div>
-        <Button type="submit" variant="outline">
-          Filtrar
-        </Button>
-      </form>
-
-      <AuditList logs={logs as AuditEntry[]} />
-    </div>
-  );
-}
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)

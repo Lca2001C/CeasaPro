@@ -29,6 +29,7 @@ export default async function AssinaturaPage() {
 
       <AssinaturaClient
         mpConfigured={BillingService.mpConfigured()}
+        monthlyAmount={sub ? Number(sub.monthlyAmount) : 0}
         initialCharge={
           charge?.qrCode
             ? {

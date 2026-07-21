@@ -11,6 +11,7 @@ import { StatCard } from "@/components/data/stat-card";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
+import { TrocarPlano } from "./_components/trocar-plano";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +22,10 @@ export default async function MeuPlanoPage({
 }) {
   const { tenantId } = await requireTenant();
   const sp = await searchParams;
-  const view = await PlanoService.getPlanoView(tenantId);
+  const [view, availablePlans] = await Promise.all([
+    PlanoService.getPlanoView(tenantId),
+    PlanoService.listAvailablePlans(tenantId),
+  ]);
 
   const bloqueadoLabel =
     sp.bloqueado && isOptionalModuleKey(sp.bloqueado)
@@ -107,6 +111,8 @@ export default async function MeuPlanoPage({
           </p>
         </CardContent>
       </Card>
+
+      <TrocarPlano plans={availablePlans} />
     </div>
   );
 }

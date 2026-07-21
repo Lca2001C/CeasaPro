@@ -69,8 +69,8 @@ export const AdminService = {
   },
 
   async getTenant(id: string) {
-    const t = await prisma.tenant.findUnique({
-      where: { id },
+    const t = await prisma.tenant.findFirst({
+      where: { id, deletedAt: null },
       include: {
         subscription: { include: { plan: true, payments: { orderBy: { createdAt: "desc" }, take: 20 } } },
         users: { where: { deletedAt: null } },
@@ -177,6 +177,35 @@ export const AdminService = {
       ip: ctx.ip,
     });
     return { status: input.status };
+  },
+
+  /**
+   * Exclui uma empresa (SOFT DELETE): marca deletedAt, bloqueia e derruba as sessões.
+   * Preserva dados/histórico/auditoria (o AuditLog não tem FK com Tenant, por design).
+   * listTenants/metrics já filtram deletedAt, então some da UI automaticamente.
+   */
+  async deleteTenant(id: string, ctx: AdminCtx) {
+    const t = await prisma.tenant.findUnique({ where: { id } });
+    if (!t) throw new NotFoundError("Empresa não encontrada");
+    if (t.deletedAt) return { id }; // idempotente
+
+    await prisma.tenant.update({
+      where: { id },
+      data: { deletedAt: new Date(), status: "BLOCKED" },
+    });
+    await revokeAllForTenant(id);
+
+    await audit({
+      tenantId: id,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "DELETE",
+      entity: "Tenant",
+      entityId: id,
+      oldData: { status: t.status, tradeName: t.tradeName },
+      ip: ctx.ip,
+    });
+    return { id };
   },
 
   async updateMonthlyAmount(tenantId: string, monthlyAmount: number, ctx: AdminCtx) {

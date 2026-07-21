@@ -3,9 +3,16 @@ import { audit } from "@/lib/audit";
 import { computeStatus } from "@/lib/billing/status";
 import {
   createPixPayment,
+  createCardPayment,
   getPayment,
   isMercadoPagoConfigured,
 } from "@/lib/payments/mercadopago";
+
+export interface CardInput {
+  token: string;
+  paymentMethodId: string;
+  installments: number;
+}
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import { logger } from "@/lib/logger";
 
@@ -23,15 +30,31 @@ export const BillingService = {
     });
     if (!sub) return null;
     const refMonth = currentRefMonth();
-    const pendingCharge = await prisma.subscriptionPayment.findFirst({
-      where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
-      orderBy: { createdAt: "desc" },
-    });
-    return { sub, pendingCharge };
+    const [pendingCharge, paidCharge] = await Promise.all([
+      prisma.subscriptionPayment.findFirst({
+        where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
+        orderBy: { createdAt: "desc" },
+      }),
+      prisma.subscriptionPayment.findFirst({
+        where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
+        orderBy: { paidAt: "desc" },
+      }),
+    ]);
+    return { sub, pendingCharge, paidCharge, refMonth };
   },
 
-  /** Cria (ou retorna) a cobrança PIX do mês atual — idempotente por mês de referência. */
-  async createOrGetMonthlyCharge(tenantId: string) {
+  /**
+   * Cria (ou retorna) a cobrança da mensalidade do mês atual — idempotente por mês.
+   * - PIX: reusa a cobrança pendente (renova o QR se expirou).
+   * - Cartão: cria o pagamento a partir do token do Brick (à vista) e resolve o status
+   *   pelo mesmo caminho do webhook (handleWebhook) — ativa na hora se aprovado.
+   * Guarda: se a mensalidade do mês já foi paga, recusa (não gera cobrança duplicada).
+   */
+  async createOrGetMonthlyCharge(
+    tenantId: string,
+    method: "pix" | "card" = "pix",
+    card?: CardInput,
+  ) {
     if (!isMercadoPagoConfigured()) {
       throw new BusinessRuleError(
         "Pagamento online ainda não configurado. Fale com o suporte para regularizar.",
@@ -44,22 +67,82 @@ export const BillingService = {
     if (!sub) throw new NotFoundError("Assinatura não encontrada");
 
     const refMonth = currentRefMonth();
-    const existing = await prisma.subscriptionPayment.findFirst({
-      where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
-      orderBy: { createdAt: "desc" },
+    const now = new Date();
+
+    // Guarda: mensalidade do mês já paga → não cria outra cobrança.
+    const alreadyPaid = await prisma.subscriptionPayment.findFirst({
+      where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
     });
-    if (existing?.qrCode) return existing;
+    if (alreadyPaid) {
+      throw new BusinessRuleError("A mensalidade deste mês já está paga.");
+    }
 
     const payerEmail = sub.tenant.users[0]?.email ?? "sememail@ceasapro.com.br";
     const externalRef = `sub:${sub.id}:${refMonth}`;
     const amount = Number(sub.monthlyAmount);
+    const description = `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`;
 
-    const charge = await createPixPayment({
-      amount,
-      description: `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`,
-      payerEmail,
-      externalReference: externalRef,
+    if (method === "card") {
+      if (!card) throw new BusinessRuleError("Dados do cartão ausentes.");
+
+      // Cancela uma cobrança PIX pendente do mês (mantém uma cobrança viva por mês).
+      await prisma.subscriptionPayment.updateMany({
+        where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
+        data: { status: "CANCELADO" },
+      });
+
+      const paid = await createCardPayment({
+        amount,
+        description,
+        payerEmail,
+        externalReference: externalRef,
+        token: card.token,
+        paymentMethodId: card.paymentMethodId,
+        installments: 1, // mensalidade sempre à vista (servidor manda)
+      });
+
+      await prisma.subscriptionPayment.create({
+        data: {
+          subscriptionId: sub.id,
+          tenantId,
+          amount,
+          status: "PENDENTE",
+          method: "card",
+          referenceMonth: refMonth,
+          mpPaymentId: paid.mpPaymentId,
+          mpExternalRef: externalRef,
+        },
+      });
+
+      // Fonte única de status/ativação (idempotente com o webhook real).
+      await this.handleWebhook(paid.mpPaymentId);
+      const row = await prisma.subscriptionPayment.findUnique({
+        where: { mpPaymentId: paid.mpPaymentId },
+      });
+      return row!;
+    }
+
+    // ── PIX ──
+    const existing = await prisma.subscriptionPayment.findFirst({
+      where: { tenantId, referenceMonth: refMonth, status: "PENDENTE", method: "pix" },
+      orderBy: { createdAt: "desc" },
     });
+
+    if (existing?.qrCode) {
+      const expired = existing.expiresAt ? existing.expiresAt <= now : false;
+      if (!expired) return existing;
+      // QR vencido: cancela a cobrança antiga e gera uma nova.
+      await prisma.subscriptionPayment.update({
+        where: { id: existing.id },
+        data: { status: "CANCELADO" },
+      });
+      logger.info(
+        { tenantId, chargeId: existing.id },
+        "Cobrança PIX expirada cancelada — gerando nova",
+      );
+    }
+
+    const charge = await createPixPayment({ amount, description, payerEmail, externalReference: externalRef });
 
     return prisma.subscriptionPayment.create({
       data: {
@@ -74,6 +157,7 @@ export const BillingService = {
         qrCode: charge.qrCode,
         qrCodeBase64: charge.qrCodeBase64,
         ticketUrl: charge.ticketUrl,
+        expiresAt: charge.expiresAt,
       },
     });
   },

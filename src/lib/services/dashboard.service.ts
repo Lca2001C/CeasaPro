@@ -39,15 +39,6 @@ export interface DashboardSummary {
   produtosComPrejuizo: DashboardProductRow[];
   estoqueParado: DashboardIdleProduct[];
   chart: { date: string; total: number }[];
-  // Métricas avançadas (Fase 3)
-  faturamentoSemana: Prisma.Decimal;
-  faturamentoMes: Prisma.Decimal;
-  margemMes: Prisma.Decimal; // %
-  despesasMes: Prisma.Decimal;
-  contasAPagar: Prisma.Decimal;
-  topVendidos: { name: string; qtd: Prisma.Decimal }[];
-  prejuizo: { name: string; lucro: Prisma.Decimal }[];
-  estoqueParado: { name: string; qtd: Prisma.Decimal }[];
 }
 
 export const DashboardService = {
@@ -58,17 +49,12 @@ export const DashboardService = {
     const weekStart = startOfDay(addDays(now, -6));
     const monthStart = startOfMonth(now);
     const chartStart = startOfDay(addDays(now, -29));
-<<<<<<< HEAD
     const idleCutoff = startOfDay(addDays(now, -30));
-=======
-    const cutoff30 = startOfDay(addDays(now, -30));
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
 
     const [
       hoje,
       semana,
       cred,
-<<<<<<< HEAD
       contasPagar,
       comprasMes,
       vendasMes,
@@ -80,17 +66,6 @@ export const DashboardService = {
       topLucrativosRows,
       prejuizoRows,
       estoqueParadoRows,
-=======
-      vendasMes,
-      cmvRows,
-      despRows,
-      contasPagar,
-      chartRows,
-      estoqueValor,
-      topRows,
-      prejuizoRows,
-      paradoRows,
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
@@ -104,7 +79,6 @@ export const DashboardService = {
         _sum: { totalAmount: true, paidAmount: true },
         where: { status: "EM_ABERTO" },
       }),
-<<<<<<< HEAD
       db.expense.aggregate({
         _sum: { amount: true },
         where: { status: "PENDENTE" },
@@ -113,8 +87,6 @@ export const DashboardService = {
         _sum: { totalAmount: true },
         where: { purchaseDate: { gte: monthStart } },
       }),
-=======
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       db.sale.aggregate({
         _sum: { totalAmount: true },
         where: { saleDate: { gte: monthStart } },
@@ -125,7 +97,6 @@ export const DashboardService = {
         JOIN sales s ON s.id = si."saleId"
         WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."deletedAt" IS NULL
       `,
-<<<<<<< HEAD
       prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
         FROM expenses
@@ -133,25 +104,12 @@ export const DashboardService = {
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
         GROUP BY type
       `,
-=======
-      prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
-        SELECT COALESCE(SUM(amount), 0) AS total
-        FROM expenses
-        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
-          AND COALESCE("dueDate", "createdAt") >= ${monthStart}
-      `,
-      db.expense.aggregate({
-        _sum: { amount: true },
-        where: { status: "PENDENTE" },
-      }),
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       prisma.$queryRaw<{ d: Date; total: Prisma.Decimal | string }[]>`
         SELECT DATE_TRUNC('day', "saleDate") AS d, SUM("totalAmount") AS total
         FROM sales
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "saleDate" >= ${chartStart}
         GROUP BY d ORDER BY d ASC
       `,
-<<<<<<< HEAD
       EstoqueService.getTotalValue(tenantId),
       prisma.$queryRaw<ProductMetricRow[]>`
         SELECT p.id AS "productId",
@@ -225,45 +183,6 @@ export const DashboardService = {
           )
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
         LIMIT 5
-=======
-      EstoqueTotalValue(tenantId),
-      // Top 5 mais vendidos no mês
-      prisma.$queryRaw<{ name: string; qtd: Prisma.Decimal }[]>`
-        SELECT pr.name AS name, COALESCE(SUM(si.quantity), 0) AS qtd
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."saleDate" >= ${monthStart}
-        GROUP BY pr.name ORDER BY 2 DESC LIMIT 5
-      `,
-      // Produtos com prejuízo no mês (receita < custo)
-      prisma.$queryRaw<{ name: string; lucro: Prisma.Decimal }[]>`
-        SELECT pr.name AS name,
-               COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS lucro
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."saleDate" >= ${monthStart}
-        GROUP BY pr.name
-        HAVING COALESCE(SUM(si."lineTotal"), 0) < COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)
-        ORDER BY 2 ASC LIMIT 5
-      `,
-      // Estoque parado: saldo > 0 e sem venda nos últimos 30 dias
-      prisma.$queryRaw<{ name: string; qtd: Prisma.Decimal }[]>`
-        SELECT p.name AS name,
-               COALESCE(SUM(CASE WHEN m.type IN ('ENTRADA','AJUSTE') THEN m.quantity ELSE -m.quantity END), 0) AS qtd
-        FROM products p
-        LEFT JOIN stock_movements m ON m."productId" = p.id AND m."tenantId" = ${tenantId}
-        WHERE p."tenantId" = ${tenantId} AND p."deletedAt" IS NULL
-          AND NOT EXISTS (
-            SELECT 1 FROM sale_items si JOIN sales s ON s.id = si."saleId"
-            WHERE si."productId" = p.id AND si."tenantId" = ${tenantId}
-              AND s."deletedAt" IS NULL AND s."saleDate" >= ${cutoff30}
-          )
-        GROUP BY p.name
-        HAVING COALESCE(SUM(CASE WHEN m.type IN ('ENTRADA','AJUSTE') THEN m.quantity ELSE -m.quantity END), 0) > 0
-        ORDER BY 2 DESC LIMIT 5
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
       `,
     ]);
 
@@ -314,14 +233,6 @@ export const DashboardService = {
         lastMovementAt: r.lastMovementAt,
       })),
       chart,
-      faturamentoSemana: money(toDecimal(semana._sum.totalAmount ?? 0)),
-      faturamentoMes: money(vendasMesTotal),
-      margemMes: FinancialCalc.margemLiquida(lucroMes, vendasMesTotal),
-      despesasMes: money(despMes),
-      contasAPagar: money(toDecimal(contasPagar._sum.amount ?? 0)),
-      topVendidos: topRows.map((r) => ({ name: r.name, qtd: toDecimal(r.qtd) })),
-      prejuizo: prejuizoRows.map((r) => ({ name: r.name, lucro: money(toDecimal(r.lucro)) })),
-      estoqueParado: paradoRows.map((r) => ({ name: r.name, qtd: toDecimal(r.qtd) })),
     };
   },
 };

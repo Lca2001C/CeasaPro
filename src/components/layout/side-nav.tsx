@@ -18,7 +18,6 @@ import {
   Container,
   Droplets,
   PackageOpen,
-  History,
   BadgeCheck,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -38,12 +37,8 @@ const items = [
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
-<<<<<<< HEAD
   { href: "/auditoria", label: "Auditoria", icon: ShieldCheck },
-=======
-  { href: "/atividades", label: "Atividades", icon: History },
   { href: "/plano", label: "Meu plano", icon: BadgeCheck },
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

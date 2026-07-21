@@ -43,12 +43,27 @@ Mostra ao dono:
 - plano atual (nome, preço, situação, vencimento);
 - **todos** os módulos opcionais com ✓ (incluído) ou ✗ (não incluído) e a descrição de cada um;
 - limite de usuários do plano e **uso atual** (nº de produtos e usuários);
-- quando chega aqui por um bloqueio (`?bloqueado=`), um aviso explicando qual recurso não está no plano, com atalho para a assinatura.
+- quando chega aqui por um bloqueio (`?bloqueado=`), um aviso explicando qual recurso não está no plano, com atalho para a assinatura;
+- **Trocar de plano:** lista os demais planos **ativos** (nome, preço, limite de usuários e módulos incluídos) e permite mudar com um clique (confirmação em diálogo).
+
+### Troca de plano (autoritativa no servidor)
+
+A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de módulo) → `PlanoService.changePlan`, que aplica as regras **no servidor** (o cliente só envia o `planId` alvo):
+- só planos **existentes e ativos**; nunca o plano atual;
+- o **valor mensal vem sempre do plano** (nunca do cliente);
+- o novo plano precisa **comportar o número atual de usuários** (`maxUsers`); senão a troca é recusada com mensagem clara;
+- **não** altera status, vencimento nem `statusSource` (respeita eventual bloqueio manual do super-admin e o período já pago).
+
+A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/auth/refresh` após a troca, então o claim `modules` do token é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
 
 ## Assinatura e cobrança (Mercado Pago)
 
 - **Trial:** empresas novas nascem em período de teste (`TRIAL`, padrão 15 dias) — acesso liberado.
-- **Cobrança PIX:** na tela `/assinatura`, gera-se a cobrança do mês; o Mercado Pago devolve QR Code + copia-e-cola. O pagamento é confirmado por **webhook** (validado por assinatura HMAC), que é **idempotente** (chave `mpPaymentId`). Ao aprovar, a assinatura vira **ATIVO** e o vencimento avança 1 mês.
+- **Métodos de pagamento (tela `/assinatura`, abas PIX | Cartão):**
+  - **PIX:** gera a cobrança do mês; o Mercado Pago devolve QR Code + copia-e-cola. A criação usa **Idempotency-Key** (sem cobrança duplicada em retry), envia a **`notification_url`** automaticamente (quando `APP_URL` é https) e define **validade de 24h** para o QR — cobranças vencidas são canceladas e renovadas sozinhas.
+  - **Cartão (Card Brick):** formulário do MP embutido; o cartão é **tokenizado no browser** (o servidor recebe só o token — PCI-safe) e cobrado **à vista (1x)**. Aprovação costuma ser imediata (libera na hora); pendências (3DS/análise) são resolvidas pelo webhook. A rota é `POST /api/billing/checkout/card`. Requer `NEXT_PUBLIC_MP_PUBLIC_KEY` (senão a aba Cartão nem aparece).
+  - **Uma cobrança viva por mês:** pagar por cartão cancela um PIX pendente do mês; e se a mensalidade do mês já está paga, novas cobranças são recusadas.
+  - Ambos confirmam por **webhook** (HMAC, idempotente por `mpPaymentId`); ao aprovar, a assinatura vira **ATIVO**, o vencimento avança 1 mês e a **tela detecta sozinha** (polling em `/api/billing/status`) — renova a sessão e libera o acesso sem recarregar.
 - **Status da assinatura** (calculado em [`src/lib/billing/status.ts`](../src/lib/billing/status.ts)):
   - `TRIAL` — em teste;
   - `ATIVO` — em dia;

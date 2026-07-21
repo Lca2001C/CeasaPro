@@ -1,12 +1,8 @@
 import type { ZodType } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
-<<<<<<< HEAD
-import { ForbiddenError, PaymentRequiredError } from "./app-error";
-=======
 import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
-import { PaymentRequiredError } from "./app-error";
->>>>>>> 3dd6880 (feat/adicionando teste e CI/CD)
+import { ForbiddenError, PaymentRequiredError } from "./app-error";
 import { ok, toActionResult, type ActionResult } from "./action-result";
 import { clientIp } from "./request";
 
