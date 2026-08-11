@@ -32,12 +32,15 @@ const PAYMENTS = [
   { value: "FIADO", label: "Fiado" },
 ] as const;
 
-export function Pdv({ produtos }: { produtos: Produto[] }) {
+export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLimpas: number }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
   const [payment, setPayment] = useState<(typeof PAYMENTS)[number]["value"]>("DINHEIRO");
   const [customer, setCustomer] = useState("");
+  const [dueDate, setDueDate] = useState("");
+  const [usaCaixaPlastica, setUsaCaixaPlastica] = useState(false);
+  const [crateQty, setCrateQty] = useState("");
   const [saving, setSaving] = useState(false);
 
   const filtered = useMemo(() => {
@@ -71,10 +74,18 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
     if (payment === "FIADO" && !customer.trim())
       return toast.error("Informe o cliente para venda fiada.");
 
+    const caixas = usaCaixaPlastica ? parseInt(crateQty, 10) || 0 : 0;
+    if (usaCaixaPlastica && caixas <= 0)
+      return toast.error("Informe a quantidade de caixas plásticas.");
+    if (caixas > 0 && !customer.trim())
+      return toast.error("Informe o cliente para controlar as caixas plásticas.");
+
     setSaving(true);
     const res = await apiPost<{ id: string }>("/api/vendas", {
       customerName: customer.trim() || null,
       paymentMethod: payment,
+      dueDate: payment === "FIADO" && dueDate ? dueDate : null,
+      plasticCrateQty: caixas,
       items: cart.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
@@ -86,6 +97,9 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
       toast.success(`Venda registrada: ${formatBRL(total)}`);
       setCart([]);
       setCustomer("");
+      setDueDate("");
+      setUsaCaixaPlastica(false);
+      setCrateQty("");
       setPayment("DINHEIRO");
       router.refresh();
     } else {
@@ -199,13 +213,61 @@ export function Pdv({ produtos }: { produtos: Produto[] }) {
         ))}
       </div>
 
-      {payment === "FIADO" && (
-        <Input
-          placeholder="Nome do cliente (fiado)"
-          value={customer}
-          onChange={(e) => setCustomer(e.target.value)}
-        />
+      {payment === "FIADO" ? (
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <Input
+            placeholder="Nome do cliente (fiado)"
+            value={customer}
+            onChange={(e) => setCustomer(e.target.value)}
+          />
+          <div className="flex flex-col gap-1">
+            <Input
+              type="date"
+              aria-label="Vencimento do fiado"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">Vencimento (opcional)</span>
+          </div>
+        </div>
+      ) : (
+        usaCaixaPlastica && (
+          <Input
+            placeholder="Nome do cliente (controle de caixas)"
+            value={customer}
+            onChange={(e) => setCustomer(e.target.value)}
+          />
+        )
       )}
+
+      {/* Caixas plásticas que saem com a mercadoria */}
+      <div className="flex flex-col gap-2 rounded-lg border p-3">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="size-4"
+            checked={usaCaixaPlastica}
+            onChange={(e) => setUsaCaixaPlastica(e.target.checked)}
+          />
+          Saiu em caixa plástica
+        </label>
+        {usaCaixaPlastica && (
+          <>
+            <Input
+              type="number"
+              inputMode="numeric"
+              min={1}
+              aria-label="Quantidade de caixas plásticas"
+              placeholder="Quantidade de caixas"
+              value={crateQty}
+              onChange={(e) => setCrateQty(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              {caixasLimpas} caixa(s) limpa(s) em estoque.
+            </span>
+          </>
+        )}
+      </div>
 
       {/* Total + finalizar (rodapé fixo no mobile) */}
       <div className="sticky bottom-16 z-10 mt-2 rounded-lg border bg-background p-3 shadow-lg md:bottom-0">

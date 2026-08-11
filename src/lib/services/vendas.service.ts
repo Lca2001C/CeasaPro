@@ -3,10 +3,20 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { add, mul, money, toDecimal, gt } from "@/lib/money";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import { CaixasService } from "./caixas.service";
 import type { VendaInput } from "@/lib/validations/venda";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 const IN_TYPES = new Set(["ENTRADA", "AJUSTE"]);
+
+/** Caixas plásticas da venda: valor informado ou soma dos itens em caixa plástica. */
+export function resolvePlasticCrateQty(input: VendaInput): number {
+  if (input.plasticCrateQty !== undefined) return input.plasticCrateQty;
+  return input.items.reduce(
+    (total, i) => total + (i.recipientType === "PLASTICA" ? (i.crateQty ?? 0) : 0),
+    0,
+  );
+}
 
 export const VendasService = {
   async list(tenantId: string) {
@@ -21,6 +31,11 @@ export const VendasService = {
   async registrarVenda(input: VendaInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const productIds = [...new Set(input.items.map((i) => i.productId))];
+    const saleDate = input.saleDate ? new Date(input.saleDate) : new Date();
+    const plasticCrateQty = resolvePlasticCrateQty(input);
+    // Saldo lido fora da transação (igual ao fluxo de CaixasService.registrar).
+    const crateSaldo =
+      plasticCrateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
 
     return db.$transaction(async (tx) => {
       const products = await tx.product.findMany({
@@ -83,14 +98,18 @@ export const VendasService = {
         data: {
           tenantId: ctx.tenantId,
           customerName: input.customerName || null,
+          saleDate,
           paymentMethod: input.paymentMethod,
           totalAmount,
+          plasticCrateQty,
           items: {
             create: input.items.map((i, idx) => ({
               tenantId: ctx.tenantId,
               productId: i.productId,
               quantity: i.quantity,
               unitPrice: i.unitPrice,
+              recipientType: i.recipientType ?? null,
+              crateQty: i.crateQty ?? 0,
               lineTotal: money(lineTotals[idx]),
               unitCostAtSale: costMap.get(i.productId) ?? new Prisma.Decimal(0),
             })),
@@ -112,7 +131,24 @@ export const VendasService = {
         })),
       });
 
-      // 5. Fiado → conta a receber
+      // 5. Caixas plásticas que saíram com a mercadoria (livro-razão de caixas)
+      if (plasticCrateQty > 0 && crateSaldo) {
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "SAIDA",
+            quantity: plasticCrateQty,
+            customerName: input.customerName!,
+            movementDate: saleDate.toISOString(),
+            saleId: sale.id,
+            notes: "Saída automática pela venda",
+          },
+          ctx,
+          crateSaldo,
+        );
+      }
+
+      // 6. Fiado → conta a receber
       if (input.paymentMethod === "FIADO") {
         await tx.creditAccount.create({
           data: {
@@ -127,7 +163,7 @@ export const VendasService = {
         });
       }
 
-      // 6. Auditoria
+      // 7. Auditoria
       await audit(
         {
           tenantId: ctx.tenantId,
@@ -140,6 +176,7 @@ export const VendasService = {
             totalAmount: totalAmount.toString(),
             paymentMethod: sale.paymentMethod,
             items: sale.items.length,
+            plasticCrateQty,
           },
           ip: ctx.ip,
         },

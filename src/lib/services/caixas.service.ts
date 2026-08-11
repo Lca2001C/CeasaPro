@@ -1,3 +1,4 @@
+import type { Prisma, PlasticCrateMovement } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
@@ -6,47 +7,195 @@ import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 export interface CrateSaldo {
-  vazias: number; // no estoque
+  limpas: number; // no estoque, prontas para vender
+  sujas: number; // no estoque, aguardando higienização
+  emHigienizacao: number; // com o higienizador
   comClientes: number;
   perdidas: number; // quebradas/sumidas (inclui as que chegaram quebradas)
+  vazias: number; // limpas + sujas — total no estoque (mantido por compatibilidade)
+}
+
+/** Dados internos do movimento — nunca vêm do cliente, só de outros serviços. */
+export interface CrateMovementLink {
+  saleId?: string | null;
+  crateCleaningId?: string | null;
+}
+
+/** Cliente mínimo aceito por `registrarInTx` (prisma base ou `tx` de transação). */
+type CrateTxClient = {
+  plasticCrateMovement: {
+    create(args: {
+      data: Prisma.PlasticCrateMovementUncheckedCreateInput;
+    }): Promise<PlasticCrateMovement>;
+  };
+  auditLog: {
+    create(args: { data: Prisma.AuditLogUncheckedCreateInput }): Promise<unknown>;
+  };
+};
+
+interface SaldoRow {
+  entrada_limpa: number;
+  entrada_suja: number;
+  entrada_quebrada: number;
+  saida: number;
+  retorno: number;
+  saida_hig: number;
+  retorno_hig: number;
+  quebra_cliente: number;
+  quebra_higienizador: number;
+  quebra_limpa: number;
+  quebra_suja: number;
+}
+
+const ZERO_ROW: SaldoRow = {
+  entrada_limpa: 0,
+  entrada_suja: 0,
+  entrada_quebrada: 0,
+  saida: 0,
+  retorno: 0,
+  saida_hig: 0,
+  retorno_hig: 0,
+  quebra_cliente: 0,
+  quebra_higienizador: 0,
+  quebra_limpa: 0,
+  quebra_suja: 0,
+};
+
+/**
+ * Em qual "pote" do estoque o movimento mexe:
+ *  - false → caixas limpas (prontas para vender)
+ *  - true  → caixas sujas (aguardando higienização)
+ * Na ENTRADA e na QUEBRA quem decide é o usuário; nos outros tipos é o próprio tipo.
+ */
+function resolveDirty(input: CaixaMovimentoInput): boolean {
+  switch (input.type) {
+    case "RETORNO": // cliente devolve — volta suja
+    case "SAIDA_HIGIENIZACAO": // sai do pote das sujas
+      return true;
+    case "SAIDA": // sai do pote das limpas
+    case "RETORNO_HIGIENIZACAO": // volta limpa do higienizador
+      return false;
+    default: // ENTRADA | QUEBRA
+      return input.dirty ?? false;
+  }
+}
+
+/**
+ * Consistência do livro-razão: nenhum pote pode ficar negativo.
+ * Função pura — o saldo é lido antes e passado aqui, para poder rodar dentro de transações.
+ */
+export function assertCrateMovement(saldo: CrateSaldo, input: CaixaMovimentoInput): void {
+  switch (input.type) {
+    case "SAIDA":
+      if (input.quantity > saldo.limpas) {
+        throw new BusinessRuleError(
+          saldo.sujas > 0
+            ? `Você tem ${saldo.limpas} caixa(s) limpa(s) e ${saldo.sujas} suja(s). Envie as sujas para higienização ou registre uma ENTRADA.`
+            : `Você tem ${saldo.limpas} caixa(s) limpa(s) em estoque. Registre uma ENTRADA antes.`,
+        );
+      }
+      return;
+    case "RETORNO":
+      if (input.quantity > saldo.comClientes) {
+        throw new BusinessRuleError(
+          `Há ${saldo.comClientes} caixa(s) com clientes. Confira as saídas registradas.`,
+        );
+      }
+      return;
+    case "SAIDA_HIGIENIZACAO":
+      if (input.quantity > saldo.sujas) {
+        throw new BusinessRuleError(
+          `Há ${saldo.sujas} caixa(s) suja(s) em estoque para higienizar.`,
+        );
+      }
+      return;
+    case "RETORNO_HIGIENIZACAO":
+      if (input.quantity > saldo.emHigienizacao) {
+        throw new BusinessRuleError(
+          `Há ${saldo.emHigienizacao} caixa(s) no higienizador.`,
+        );
+      }
+      return;
+    case "QUEBRA": {
+      if (input.customerName) {
+        if (input.quantity > saldo.comClientes) {
+          throw new BusinessRuleError(`Há apenas ${saldo.comClientes} caixa(s) com clientes.`);
+        }
+        return;
+      }
+      if (input.cleanerName) {
+        if (input.quantity > saldo.emHigienizacao) {
+          throw new BusinessRuleError(
+            `Há apenas ${saldo.emHigienizacao} caixa(s) no higienizador.`,
+          );
+        }
+        return;
+      }
+      const limite = input.dirty ? saldo.sujas : saldo.limpas;
+      if (input.quantity > limite) {
+        throw new BusinessRuleError(
+          input.dirty
+            ? `Há apenas ${saldo.sujas} caixa(s) suja(s) em estoque.`
+            : `Há apenas ${saldo.limpas} caixa(s) limpa(s) em estoque.`,
+        );
+      }
+      return;
+    }
+    default:
+      return; // ENTRADA sempre pode
+  }
 }
 
 /**
  * Caixas plásticas — livro-razão (append-only). Saldos são DERIVADOS:
- *   vazias      = ENTRADA − SAIDA + RETORNO − QUEBRA(sem cliente)
- *   comClientes = SAIDA − RETORNO − QUEBRA(com cliente)
- *   perdidas    = QUEBRA(todas) + ENTRADA.brokenQty
- * QUEBRA com cliente = caixa perdida/sumida na mão do cliente.
+ *   limpas         = ENTRADA(limpa) + RETORNO_HIGIENIZACAO − SAIDA − QUEBRA(limpa, no estoque)
+ *   sujas          = ENTRADA(suja)  + RETORNO             − SAIDA_HIGIENIZACAO − QUEBRA(suja, no estoque)
+ *   emHigienizacao = SAIDA_HIGIENIZACAO − RETORNO_HIGIENIZACAO − QUEBRA(no higienizador)
+ *   comClientes    = SAIDA − RETORNO − QUEBRA(com cliente)
+ *   perdidas       = QUEBRA(todas) + ENTRADA.brokenQty
+ *   vazias         = limpas + sujas
+ * Para dados anteriores à higienização integrada (dirty=false, cleanerName=null),
+ * `limpas + sujas` reproduz exatamente a fórmula antiga de `vazias`.
  */
 export const CaixasService = {
   async getSaldo(tenantId: string): Promise<CrateSaldo> {
-    const rows = await prisma.$queryRaw<
-      { type: string; semcliente: number; comcliente: number; broken: number }[]
-    >`
-      SELECT type::text AS type,
-             COALESCE(SUM(CASE WHEN "customerName" IS NULL THEN quantity ELSE 0 END), 0)::int AS semcliente,
-             COALESCE(SUM(CASE WHEN "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS comcliente,
-             COALESCE(SUM("brokenQty"), 0)::int AS broken
+    const rows = await prisma.$queryRaw<SaldoRow[]>`
+      SELECT
+        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS entrada_limpa,
+        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::int AS entrada_suja,
+        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada,
+        COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::int AS saida,
+        COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::int AS retorno,
+        COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS saida_hig,
+        COALESCE(SUM(CASE WHEN type::text = 'RETORNO_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS retorno_hig,
+        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_cliente,
+        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_higienizador,
+        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS quebra_limpa,
+        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja
       FROM plastic_crate_movements
       WHERE "tenantId" = ${tenantId}
-      GROUP BY type
     `;
-    const get = (t: string) =>
-      rows.find((r) => r.type === t) ?? { semcliente: 0, comcliente: 0, broken: 0 };
-    const entrada = get("ENTRADA");
-    const saida = get("SAIDA");
-    const retorno = get("RETORNO");
-    const quebra = get("QUEBRA");
+    return computeCrateSaldo(rows[0] ?? ZERO_ROW);
+  },
 
-    const entradaTotal = entrada.semcliente + entrada.comcliente;
-    const saidaTotal = saida.semcliente + saida.comcliente;
-    const retornoTotal = retorno.semcliente + retorno.comcliente;
-
-    return {
-      vazias: entradaTotal - saidaTotal + retornoTotal - quebra.semcliente,
-      comClientes: saidaTotal - retornoTotal - quebra.comcliente,
-      perdidas: quebra.semcliente + quebra.comcliente + entrada.broken,
-    };
+  /** Saldo de caixas em poder de cada cliente (SAIDA − RETORNO − QUEBRA com cliente). */
+  async saldoPorCliente(tenantId: string): Promise<Map<string, number>> {
+    const rows = await prisma.$queryRaw<{ customer: string; saldo: number }[]>`
+      SELECT "customerName" AS customer,
+             COALESCE(SUM(
+               CASE WHEN type::text = 'SAIDA' THEN quantity
+                    WHEN type::text IN ('RETORNO', 'QUEBRA') THEN -quantity
+                    ELSE 0 END
+             ), 0)::int AS saldo
+      FROM plastic_crate_movements
+      WHERE "tenantId" = ${tenantId} AND "customerName" IS NOT NULL
+      GROUP BY "customerName"
+    `;
+    const map = new Map<string, number>();
+    for (const r of rows) {
+      if (r.saldo > 0) map.set(r.customer, r.saldo);
+    }
+    return map;
   },
 
   async list(tenantId: string, take = 100) {
@@ -57,64 +206,89 @@ export const CaixasService = {
     });
   },
 
-  async registrar(input: CaixaMovimentoInput, ctx: TenantCtx) {
-    const saldo = await this.getSaldo(ctx.tenantId);
-
-    // Consistência: não deixa o saldo ficar negativo.
-    if (input.type === "SAIDA" && input.quantity > saldo.vazias) {
-      throw new BusinessRuleError(
-        `Você tem ${saldo.vazias} caixa(s) vazia(s) em estoque. Registre uma ENTRADA antes.`,
-      );
-    }
-    if (input.type === "RETORNO" && input.quantity > saldo.comClientes) {
-      throw new BusinessRuleError(
-        `Há ${saldo.comClientes} caixa(s) com clientes. Confira as saídas registradas.`,
-      );
-    }
-    if (input.type === "QUEBRA") {
-      const isComCliente = Boolean(input.customerName);
-      const limite = isComCliente ? saldo.comClientes : saldo.vazias;
-      if (input.quantity > limite) {
-        throw new BusinessRuleError(
-          isComCliente
-            ? `Há apenas ${saldo.comClientes} caixa(s) com clientes.`
-            : `Há apenas ${saldo.vazias} caixa(s) vazia(s) em estoque.`,
-        );
-      }
-    }
-
-    const db = getTenantPrisma(ctx.tenantId);
-    return db.$transaction(async (tx) => {
-      const movement = await tx.plasticCrateMovement.create({
-        data: {
-          tenantId: ctx.tenantId,
-          type: input.type,
-          quantity: input.quantity,
-          brokenQty: input.type === "ENTRADA" ? (input.brokenQty ?? 0) : 0,
-          customerName: input.customerName || null,
-          supplierName: input.type === "ENTRADA" ? input.supplierName || null : null,
-          movementDate: new Date(input.movementDate),
-          notes: input.notes ?? null,
-        },
-      });
-      await audit(
-        {
-          tenantId: ctx.tenantId,
-          userId: ctx.userId,
-          actorEmail: ctx.session.email,
-          action: "CREATE",
-          entity: "PlasticCrateMovement",
-          entityId: movement.id,
-          newData: {
-            type: input.type,
-            quantity: input.quantity,
-            customerName: input.customerName,
-          },
-          ip: ctx.ip,
-        },
-        tx,
-      );
-      return movement;
+  /** Movimentos ligados a uma venda ou a um lote de higienização. */
+  async listByLink(tenantId: string, link: CrateMovementLink) {
+    const db = getTenantPrisma(tenantId);
+    return db.plasticCrateMovement.findMany({
+      where: {
+        ...(link.saleId ? { saleId: link.saleId } : {}),
+        ...(link.crateCleaningId ? { crateCleaningId: link.crateCleaningId } : {}),
+      },
+      orderBy: { movementDate: "asc" },
     });
   },
+
+  /**
+   * Grava o movimento dentro de uma transação já aberta (venda, higienização).
+   * O `saldo` deve ser lido antes de abrir a transação e repassado aqui.
+   */
+  async registrarInTx(
+    tx: CrateTxClient,
+    input: CaixaMovimentoInput & CrateMovementLink,
+    ctx: TenantCtx,
+    saldo: CrateSaldo,
+  ) {
+    assertCrateMovement(saldo, input);
+
+    const movement = await tx.plasticCrateMovement.create({
+      data: {
+        tenantId: ctx.tenantId,
+        type: input.type,
+        quantity: input.quantity,
+        brokenQty: input.type === "ENTRADA" ? (input.brokenQty ?? 0) : 0,
+        dirty: resolveDirty(input),
+        customerName: input.customerName || null,
+        supplierName: input.type === "ENTRADA" ? input.supplierName || null : null,
+        cleanerName: input.cleanerName || null,
+        saleId: input.saleId ?? null,
+        crateCleaningId: input.crateCleaningId ?? null,
+        movementDate: new Date(input.movementDate),
+        notes: input.notes ?? null,
+      },
+    });
+
+    await audit(
+      {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        actorEmail: ctx.session.email,
+        action: "CREATE",
+        entity: "PlasticCrateMovement",
+        entityId: movement.id,
+        newData: {
+          type: input.type,
+          quantity: input.quantity,
+          customerName: input.customerName,
+          cleanerName: input.cleanerName,
+        },
+        ip: ctx.ip,
+      },
+      tx,
+    );
+    return movement;
+  },
+
+  async registrar(input: CaixaMovimentoInput & CrateMovementLink, ctx: TenantCtx) {
+    const saldo = await this.getSaldo(ctx.tenantId);
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction((tx) => this.registrarInTx(tx, input, ctx, saldo));
+  },
 };
+
+/** Exposta para teste unitário das fórmulas de saldo. */
+export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
+  const limpas = r.entrada_limpa + r.retorno_hig - r.saida - r.quebra_limpa;
+  const sujas = r.entrada_suja + r.retorno - r.saida_hig - r.quebra_suja;
+  const quebraTotal =
+    r.quebra_cliente + r.quebra_higienizador + r.quebra_limpa + r.quebra_suja;
+  return {
+    limpas,
+    sujas,
+    emHigienizacao: r.saida_hig - r.retorno_hig - r.quebra_higienizador,
+    comClientes: r.saida - r.retorno - r.quebra_cliente,
+    perdidas: quebraTotal + r.entrada_quebrada,
+    vazias: limpas + sujas,
+  };
+}
+
+export type { SaldoRow };

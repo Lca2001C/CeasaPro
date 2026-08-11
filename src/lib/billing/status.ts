@@ -7,6 +7,23 @@ import type {
 export type AccessDecision = "ok" | "warn" | "blocked";
 
 /**
+ * Avança exatamente um mês, em UTC, sem "vazar" para o mês seguinte.
+ * `setMonth` nativo transformaria 31/08 em 01/10 (e 31/01 em 03/03), dando
+ * dias grátis a cada renovação. Aqui o dia é limitado ao último dia do mês
+ * de destino: 31/08 → 30/09, 31/01 → 28/02.
+ * Usa UTC para o resultado não depender do fuso do servidor.
+ */
+export function addOneMonth(from: Date): Date {
+  const year = from.getUTCFullYear();
+  const month = from.getUTCMonth();
+  const day = from.getUTCDate();
+  const lastDayOfNextMonth = new Date(Date.UTC(year, month + 2, 0)).getUTCDate();
+  const next = new Date(from);
+  next.setUTCFullYear(year, month + 1, Math.min(day, lastDayOfNextMonth));
+  return next;
+}
+
+/**
  * Decisao de acesso a partir do status da empresa e da assinatura.
  * Fonte unica usada pelo proxy, pelo wrapper de acoes e pelas telas.
  *  - blocked: bloqueio total (redireciona para /conta/suspensa)

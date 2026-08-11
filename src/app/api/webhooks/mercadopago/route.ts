@@ -31,10 +31,13 @@ export async function POST(req: Request) {
   if (!dataId) return Response.json({ ok: true });
 
   try {
-    await BillingService.handleWebhook(String(dataId));
+    const result = await BillingService.handleWebhook(String(dataId));
+    // "nao_encontrado" é conclusivo (cobrança de outra instalação): 200 encerra.
+    return Response.json({ ok: true, result });
   } catch (e) {
+    // Erro transiente (rede/MP/banco): devolve 500 para o Mercado Pago reenviar.
+    // O cron de reconciliação é a segunda rede de segurança.
     logger.error({ err: e instanceof Error ? e.message : String(e) }, "Erro no webhook MP");
-    // Responde 200 mesmo assim para o MP não reenviar em loop; o erro fica logado.
+    return Response.json({ ok: false }, { status: 500 });
   }
-  return Response.json({ ok: true });
 }
