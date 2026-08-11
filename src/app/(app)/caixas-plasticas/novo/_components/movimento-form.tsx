@@ -72,7 +72,6 @@ export function MovimentoCaixaForm({ saldo }: { saldo: CrateSaldo }) {
     if (res.ok) {
       toast.success("Movimentação registrada.");
       router.push("/caixas-plasticas");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

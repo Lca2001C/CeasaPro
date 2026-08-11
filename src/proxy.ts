@@ -1,11 +1,13 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { verifyAccess, ACCESS_COOKIE } from "@/lib/auth/jwt";
 import { accessDecision } from "@/lib/billing/status";
+import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 
 // Rotas publicas (sem sessao).
 const PUBLIC_PREFIXES = [
   "/login",
   "/recuperar-senha",
+  "/offline", // fallback do PWA (o SW pré-cacheia; não pode redirecionar p/ login)
   "/api/auth",
   "/api/webhooks",
   "/api/cron",
@@ -70,7 +72,13 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  if (session.mustChangePassword && !isPasswordChangeAllowed(pathname)) {
+  // Enquanto a senha nao for trocada, a UNICA area acessivel e a troca de senha
+  // (+ logout/refresh). Vale para OWNER e SUPER_ADMIN, por isso o early-return ANTES
+  // dos redirecionamentos por papel — senao /alterar-senha <-> /admin entram em loop
+  // (ERR_TOO_MANY_REDIRECTS): o super-admin era mandado de volta para /admin e /admin
+  // exigia a troca de senha de novo.
+  if (session.mustChangePassword) {
+    if (isPasswordChangeAllowed(pathname)) return NextResponse.next();
     if (isApi) {
       return NextResponse.json(
         {
@@ -112,10 +120,25 @@ export async function proxy(req: NextRequest) {
     }
   }
 
+  // Bloqueio por módulo do plano (recurso fora do plano contratado).
+  const mod = moduleForPath(pathname);
+  if (mod && !isModuleEnabled(session.modules, mod)) {
+    if (isApi) {
+      return NextResponse.json(
+        { ok: false, error: { code: "FORBIDDEN", message: "Recurso não incluído no seu plano" } },
+        { status: 403 },
+      );
+    }
+    return NextResponse.redirect(new URL(`/plano?bloqueado=${mod}`, req.url));
+  }
+
   return NextResponse.next();
 }
 
 export const config = {
-  // Roda em tudo, menos assets estaticos, PWA (sw.js/manifest/icones) e internos do Next.
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|icons|manifest.webmanifest|sw.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)).*)"],
+  // Roda em tudo, menos TODOS os internos do Next (_next/*, incluindo o WebSocket do
+  // HMR em dev — _next/webpack-hmr), assets estaticos e PWA (sw.js/manifest/icones).
+  // Excluir só _next/static|_next/image deixava o proxy responder um redirect 307 ao
+  // handshake do WebSocket do HMR → "WebSocket handshake: ERR_INVALID_HTTP_RESPONSE".
+  matcher: ["/((?!_next/|favicon.ico|icons|manifest.webmanifest|sw.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)).*)"],
 };

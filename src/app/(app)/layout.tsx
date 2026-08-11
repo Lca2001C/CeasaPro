@@ -36,6 +36,7 @@ export default async function AppLayout({
       companyName={tenant?.tradeName ?? "Minha empresa"}
       userName={session.name}
       billingWarning={billingWarning}
+      modules={session.modules}
     >
       {children}
     </AppShell>

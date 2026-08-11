@@ -42,7 +42,6 @@ export function DespesaForm({ categories, initial }: Props) {
     if (res.ok) {
       toast.success(initial ? "Despesa atualizada" : "Despesa cadastrada");
       router.push("/despesas");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

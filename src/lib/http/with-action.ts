@@ -1,6 +1,7 @@
 import type { ZodType } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
+import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
 import { ForbiddenError, PaymentRequiredError } from "./app-error";
 import { ok, toActionResult, type ActionResult } from "./action-result";
 import { clientIp } from "./request";
@@ -40,12 +41,15 @@ function assertPasswordReady(session: Session) {
  */
 export function withTenantAction<I, O>(opts: {
   schema?: ZodType<I>;
+  /** Se informado, exige que o plano da empresa inclua este módulo (defense in depth). */
+  module?: OptionalModuleKey;
   handler: (input: I, ctx: TenantCtx) => Promise<O>;
 }) {
   return async (raw?: unknown): Promise<ActionResult<O>> => {
     try {
       const { session, tenantId } = await requireTenant();
       assertActive(session);
+      if (opts.module) requireModule(session.modules, opts.module);
       const input = (opts.schema ? opts.schema.parse(raw) : (raw as I)) as I;
       const ip = await clientIp();
       const data = await opts.handler(input, {

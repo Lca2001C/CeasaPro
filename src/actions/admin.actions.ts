@@ -1,5 +1,6 @@
 "use server";
 
+import { z } from "zod";
 import { withAdminAction } from "@/lib/http/with-action";
 import { AdminService } from "@/lib/services/admin.service";
 import {
@@ -18,6 +19,11 @@ export const criarEmpresa = withAdminAction({
 export const alterarStatusEmpresa = withAdminAction({
   schema: tenantStatusSchema,
   handler: (input, ctx) => AdminService.setTenantStatus(input, ctx),
+});
+
+export const excluirEmpresa = withAdminAction({
+  schema: z.string().min(1),
+  handler: (id, ctx) => AdminService.deleteTenant(id, ctx),
 });
 
 export const alterarMensalidade = withAdminAction({

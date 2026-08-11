@@ -59,9 +59,14 @@ export function HigienizacaoForm({
       : await criarHigienizacao(values);
     setSaving(false);
     if (res.ok) {
+<<<<<<< HEAD
       toast.success(initial ? "Envio atualizado." : "Envio registrado.");
       router.push(initial ? `/higienizacao/${initial.id}` : "/higienizacao");
       router.refresh();
+=======
+      toast.success("Envio registrado.");
+      router.push("/higienizacao");
+>>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
     } else {
       toast.error(res.error.message);
     }

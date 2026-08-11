@@ -83,7 +83,6 @@ export function OnboardingWizard({ initialName }: { initialName: string }) {
     if (res.ok) {
       toast.success("Tudo pronto! Bem-vindo ao CeasaPro.");
       router.push("/dashboard");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

@@ -40,7 +40,6 @@ export function FornecedorForm({ initial }: Props) {
     if (res.ok) {
       toast.success(initial ? "Fornecedor atualizado" : "Fornecedor cadastrado");
       router.push("/fornecedores");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

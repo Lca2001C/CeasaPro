@@ -1,13 +1,22 @@
 name: CI
 
 on:
-  pull_request:
   push:
-    branches:
-      - main
+    branches: [main]
+  pull_request:
+
+# Cancela execuções antigas do mesmo branch/PR.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  verify:
+  # ─────────────────────────────────────────────────────────────
+  # Gate de qualidade: lint + typecheck + build + testes + E2E.
+  # O deploy só acontece se este job passar por completo.
+  # ─────────────────────────────────────────────────────────────
+  ci:
+    name: Lint · Typecheck · Build · Testes · E2E
     runs-on: ubuntu-latest
 
     services:
@@ -21,9 +30,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d ceasapro_test"
-          --health-interval 10s
+          --health-interval 5s
           --health-timeout 5s
-          --health-retries 5
+          --health-retries 20
 
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ceasapro_test?schema=public
@@ -31,12 +40,14 @@ jobs:
       JWT_ACCESS_SECRET: ci-access-secret-change-in-production-32-bytes
       JWT_REFRESH_SECRET: ci-refresh-secret-change-in-production-32-bytes
       ACCESS_TOKEN_TTL: 15m
-      REFRESH_TOKEN_TTL_DAYS: 30
+      REFRESH_TOKEN_TTL_DAYS: "30"
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       CRON_SECRET: ci-cron-secret
       MP_WEBHOOK_SECRET: ci-webhook-secret
+      SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
       SEED_SUPERADMIN_PASSWORD: ci-superadmin-password-123
+      SEED_DEMO: "true"
 
     steps:
       - name: Checkout
@@ -48,26 +59,85 @@ jobs:
           node-version: "22"
           cache: npm
 
-      - name: Install dependencies
+      - name: Instalar dependências
         run: npm ci
 
-      - name: Validate Prisma schema
+      - name: Validar schema Prisma
         run: npx prisma validate
 
-      - name: Apply migrations
-        run: npx prisma migrate deploy
+      - name: Lint (zero avisos)
+        run: npm run lint -- --max-warnings=0
 
-      - name: Typecheck
+      - name: Checagem de tipos
         run: npm run typecheck
 
-      - name: Lint
-        run: npm run lint
+      - name: Migrations (banco de teste)
+        run: npx prisma migrate deploy
 
-      - name: Unit tests
+      - name: Seed inicial
+        run: npm run db:seed
+
+      - name: Testes unitários
         run: npm run test:unit
 
-      - name: Integration tests
+      - name: Testes de integração
         run: npm run test:integration
 
-      - name: Production build
+      - name: Build de produção
         run: npm run build
+
+      - name: Instalar navegador do Playwright
+        run: npx playwright install --with-deps chromium
+
+      - name: Testes E2E (Playwright)
+        run: npm run test:e2e
+
+      - name: Publicar relatório do Playwright
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────
+  # Deploy de produção — só em push na main e SÓ se o job "ci" passou.
+  # Requer os secrets VERCEL_TOKEN / VERCEL_ORG_ID / VERCEL_PROJECT_ID.
+  # Sem os secrets, o passo é ignorado (a integração Git da Vercel assume).
+  # ─────────────────────────────────────────────────────────────
+  deploy:
+    name: Deploy (Vercel)
+    needs: ci
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+      PROD_DIRECT_URL: ${{ secrets.PROD_DIRECT_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Aplicar migrations em produção (se configurado)
+        run: |
+          if [ -z "$PROD_DIRECT_URL" ]; then
+            echo "PROD_DIRECT_URL não configurado — pulando migrations (rode via Vercel/manual)."
+            exit 0
+          fi
+          npm ci
+          DATABASE_URL="$PROD_DIRECT_URL" DIRECT_URL="$PROD_DIRECT_URL" npx prisma migrate deploy
+
+      - name: Deploy na Vercel (se configurado)
+        run: |
+          if [ -z "$VERCEL_TOKEN" ]; then
+            echo "VERCEL_TOKEN não configurado — deploy delegado à integração Git da Vercel."
+            exit 0
+          fi
+          npm i -g vercel@latest
+          vercel pull --yes --environment=production --token="$VERCEL_TOKEN"
+          vercel build --prod --token="$VERCEL_TOKEN"
+          vercel deploy --prebuilt --prod --token="$VERCEL_TOKEN"

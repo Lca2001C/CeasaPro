@@ -75,7 +75,6 @@ export function CompraForm({
     if (res.ok) {
       toast.success("Compra registrada. Estoque atualizado.");
       router.push("/compras");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

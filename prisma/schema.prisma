@@ -270,7 +270,11 @@ model SubscriptionPayment {
   qrCode         String?       @db.Text
   qrCodeBase64   String?       @db.Text
   ticketUrl      String?
+<<<<<<< HEAD
   expiresAt      DateTime? // validade do QR PIX / da preferência de cartão
+=======
+  expiresAt      DateTime? // validade do QR PIX (renovado pelo app quando vence)
+>>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
   paidAt         DateTime?
   periodStart    DateTime?
   periodEnd      DateTime?

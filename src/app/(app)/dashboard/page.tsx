@@ -37,7 +37,7 @@ export default async function DashboardPage() {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-3">
-        <h1 className="text-xl font-bold">Inicio</h1>
+        <h1 className="text-xl font-bold">Início</h1>
         {avisos.length > 0 && (
           <Badge variant="warning" className="gap-1">
             <Bell className="size-3" />
@@ -66,6 +66,7 @@ export default async function DashboardPage() {
         </Card>
       )}
 
+      {/* Números principais */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Hoje vendi"
@@ -80,7 +81,7 @@ export default async function DashboardPage() {
           tone="success"
         />
         <StatCard
-          label="Mes"
+          label="Mês"
           value={formatBRL(s.mesVendi)}
           icon={<WalletCards className="size-4" />}
           tone="success"
@@ -114,7 +115,7 @@ export default async function DashboardPage() {
           tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
         />
         <StatCard
-          label="Lucro liquido"
+          label="Lucro líquido"
           value={formatBRL(s.lucroMes)}
           icon={<TrendingUp className="size-4" />}
           tone={lucroTone}
@@ -131,7 +132,7 @@ export default async function DashboardPage() {
           icon={<ReceiptText className="size-4" />}
         />
         <StatCard
-          label="Variaveis"
+          label="Variáveis"
           value={formatBRL(s.despesasVariaveisMes)}
           icon={<ReceiptText className="size-4" />}
         />
@@ -157,7 +158,7 @@ export default async function DashboardPage() {
           mode="profit"
         />
         <ProductList
-          title="Com prejuizo"
+          title="Com prejuízo"
           icon={<TrendingDown className="size-4" />}
           rows={s.produtosComPrejuizo}
           mode="profit"
@@ -178,7 +179,7 @@ export default async function DashboardPage() {
                     <div className="min-w-0">
                       <p className="truncate text-sm font-medium">{row.name}</p>
                       <p className="text-xs text-muted-foreground">
-                        Ultimo movimento: {formatDate(row.lastMovementAt)}
+                        Último movimento: {formatDate(row.lastMovementAt)}
                       </p>
                     </div>
                     <span className="shrink-0 text-sm font-semibold tabular-nums">
@@ -222,7 +223,7 @@ function ProductList({
           {title}
         </div>
         {rows.length === 0 ? (
-          <p className="text-sm text-muted-foreground">Sem dados no mes.</p>
+          <p className="text-sm text-muted-foreground">Sem dados no mês.</p>
         ) : (
           <div className="flex flex-col divide-y">
             {rows.map((row) => (

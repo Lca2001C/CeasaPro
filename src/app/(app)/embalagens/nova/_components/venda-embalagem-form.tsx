@@ -40,7 +40,6 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
     if (res.ok) {
       toast.success("Venda de embalagem registrada.");
       router.push("/embalagens");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

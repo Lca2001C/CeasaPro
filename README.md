@@ -32,8 +32,9 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 |---|---|
 | Operação | Produtos · Fornecedores · Compras (entrada de estoque + frete rateado) · Vendas/PDV · Fiado (pagamento parcial) · Estoque (quebra/perda/doação) |
 | Fase 2 | Caixas plásticas (entrada/saída/retorno/quebra + saldos) · Higienização (envio/devolução/pagamento) · Venda de embalagens (tipos + vendas) |
-| Financeiro | Despesas (fixas/variáveis + categorias) · Dashboard · 13 relatórios (básicos + lucro por produto, mais vendidos, inadimplentes, fornecedores, fluxo de caixa, caixas, higienização, embalagens) |
-| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (PIX Mercado Pago, trial, bloqueio) · Painel super-admin (clientes, planos, pagamentos) |
+| Financeiro | Despesas (fixas/variáveis + categorias) · Dashboard (com avisos + indicadores avançados) · 13 relatórios (básicos + lucro por produto, mais vendidos, inadimplentes, fornecedores, fluxo de caixa, caixas, higienização, embalagens) |
+| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (PIX Mercado Pago, trial, bloqueio) · Painel super-admin (clientes, planos, pagamentos, auditoria) |
+| Fase 3 | **PWA instalável** (manifest + service worker leve) · **Avisos** no painel (fiado vencido, despesas a vencer, higienização a pagar) · **Atividades/Auditoria** (empresa e plataforma) · Métricas avançadas (margem, mais vendidos, prejuízo, estoque parado, MRR, novos no mês) |
 
 ---
 
@@ -43,7 +44,35 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 - **Docker** (para o PostgreSQL local) — ou um PostgreSQL já instalado
 - Contas (para produção): Neon, Vercel, Resend, Mercado Pago
 
-## Instalação (desenvolvimento)
+## Início rápido (scripts prontos)
+
+Os scripts abaixo fazem **tudo sozinhos**: sobem o banco (Docker), instalam dependências, geram o Prisma, aplicam migrations, populam os dados iniciais (só na 1ª vez) e então iniciam o sistema. Rode-os a partir da raiz do projeto.
+
+**Modo desenvolvimento** (com recarga automática):
+
+```powershell
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1
+```
+```bash
+# Linux / macOS / Git Bash
+bash scripts/dev.sh
+```
+
+**Modo produção** (build + servidor otimizado):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\start.ps1   # Windows
+```
+```bash
+bash scripts/start.sh                                        # Linux/macOS/Git Bash
+```
+
+> Feche qualquer servidor já rodando antes de iniciar outro (no Windows, um `dev` aberto trava a geração do Prisma). Se `DATABASE_URL` apontar para um banco remoto (ex.: Neon), o passo do Docker é ignorado automaticamente.
+
+---
+
+## Instalação manual (passo a passo)
 
 ```bash
 # 1. Instalar dependências
@@ -123,4 +152,5 @@ Os testes de integração exigem o banco de pé (`docker compose up -d`). Eles c
 ## Observações desta versão
 
 - **Relatórios:** exportação em **Excel (.xlsx)** e **impressão / salvar como PDF** pelo navegador (botão *Imprimir / PDF*). Filtro por período em todos.
-- **Fase 3** (ainda não incluída): PWA, notificações, telas de consulta de auditoria e métricas avançadas do dashboard/super-admin.
+- **PWA:** o app é instalável na tela inicial do celular (Chrome/Android: "Adicionar à tela inicial"). O service worker cacheia apenas assets estáticos — dados financeiros vão sempre à rede (sem risco de informação desatualizada). Para regenerar os ícones: `node scripts/generate-icons.mjs`.
+- **Notificações:** avisos em tempo real dentro do painel (fiado vencido, despesas a vencer/vencidas, higienização a pagar). Push externo (WhatsApp/web push) fica como evolução futura.

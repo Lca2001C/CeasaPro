@@ -41,7 +41,6 @@ export function ProdutoForm({ initial }: Props) {
     if (res.ok) {
       toast.success(initial ? "Produto atualizado" : "Produto cadastrado");
       router.push("/produtos");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

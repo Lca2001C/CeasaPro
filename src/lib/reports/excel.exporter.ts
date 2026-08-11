@@ -1,7 +1,12 @@
 import ExcelJS from "exceljs";
 import { formatDate } from "@/lib/format";
-import { formatCell } from "./format-cell";
+import { formatCell, spreadsheetSafe } from "./format-cell";
 import type { ReportResult } from "./report.types";
+
+/** Formata a célula e neutraliza fórmulas (CSV/Excel injection). */
+function cell(value: unknown, format?: ReportResult["columns"][number]["format"]) {
+  return spreadsheetSafe(formatCell(value, format));
+}
 
 /** Gera um arquivo .xlsx real a partir de um ReportResult. */
 export async function toExcel(r: ReportResult): Promise<Buffer> {
@@ -22,13 +27,13 @@ export async function toExcel(r: ReportResult): Promise<Buffer> {
   });
 
   for (const row of r.rows) {
-    ws.addRow(r.columns.map((c) => formatCell(row[c.key], c.format)));
+    ws.addRow(r.columns.map((c) => cell(row[c.key], c.format)));
   }
 
   if (r.totals) {
     const totalsRow = ws.addRow(
       r.columns.map((c) =>
-        r.totals![c.key] !== undefined ? formatCell(r.totals![c.key], c.format) : "",
+        r.totals![c.key] !== undefined ? cell(r.totals![c.key], c.format) : "",
       ),
     );
     totalsRow.font = { bold: true };

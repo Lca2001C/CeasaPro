@@ -39,7 +39,6 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
     if (res.ok) {
       toast.success("Movimentação registrada.");
       router.push("/estoque");
-      router.refresh();
     } else {
       toast.error(res.error.message);
     }

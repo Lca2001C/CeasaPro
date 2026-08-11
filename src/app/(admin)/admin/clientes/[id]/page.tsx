@@ -10,6 +10,7 @@ import { PageHeader } from "@/components/data/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { StatusActions } from "./_components/status-actions";
+import { ExcluirEmpresa } from "./_components/excluir-empresa";
 
 export const dynamic = "force-dynamic";
 
@@ -105,6 +106,19 @@ export default async function ClienteDetailPage({
           </CardContent>
         </Card>
       )}
+
+      <Card className="border-destructive/40">
+        <CardHeader>
+          <CardTitle className="text-base text-destructive">Zona de perigo</CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-3">
+          <ExcluirEmpresa tenantId={t.id} tradeName={t.tradeName} />
+          <p className="text-xs text-muted-foreground">
+            A exclusão bloqueia a empresa, encerra as sessões e a remove da lista. Os dados
+            e o histórico são preservados (reversível pelo suporte).
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

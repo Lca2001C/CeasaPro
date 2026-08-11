@@ -1,8 +1,9 @@
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { requireTenant } from "@/lib/auth/session";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
 import { buildReport } from "@/lib/reports/report.service";
-import { REPORT_TYPES, type ReportKind } from "@/lib/reports/report.types";
+import { REPORT_TYPES, isAdvancedReport, type ReportKind } from "@/lib/reports/report.types";
 import { formatCell } from "@/lib/reports/format-cell";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/cn";
@@ -24,7 +25,11 @@ export default async function RelatorioViewPage({
   const kind = tipo.toUpperCase() as ReportKind;
   if (!REPORT_TYPES.includes(kind)) notFound();
 
-  const { tenantId } = await requireTenant();
+  const { tenantId, session } = await requireTenant();
+  // Relatórios avançados exigem o módulo no plano.
+  if (isAdvancedReport(kind) && !isModuleEnabled(session.modules, "relatorios_avancados")) {
+    redirect("/plano?bloqueado=relatorios_avancados");
+  }
   const period = resolvePeriod({
     preset: (sp.preset as PeriodPreset) ?? "mes",
     from: sp.from,

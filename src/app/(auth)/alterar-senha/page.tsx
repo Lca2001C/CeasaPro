@@ -48,8 +48,9 @@ export default function ChangePasswordPage() {
       return;
     }
     toast.success("Senha alterada com sucesso.");
+    // Sem router.refresh(): evitaria o refetch RSC concorrente que cancela o push
+    // ("Failed to fetch RSC payload"). O push já renderiza o destino com a sessão nova.
     router.push(res.data.redirectTo);
-    router.refresh();
   }
 
   return (

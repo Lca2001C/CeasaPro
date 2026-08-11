@@ -27,15 +27,27 @@ function slugify(s: string): string {
 
 export const AdminService = {
   async metrics() {
-    const [subs, tenants, recentPayments] = await Promise.all([
-      prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
-      prisma.tenant.count({ where: { deletedAt: null } }),
-      prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
-    ]);
-    const mrrRows = await prisma.tenantSubscription.aggregate({
-      _sum: { monthlyAmount: true },
-      where: { status: { in: ["ATIVO"] } },
-    });
+    const monthStart = new Date();
+    monthStart.setDate(1);
+    monthStart.setHours(0, 0, 0, 0);
+
+    const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes] =
+      await Promise.all([
+        prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
+        prisma.tenant.count({ where: { deletedAt: null } }),
+        prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
+        prisma.tenantSubscription.aggregate({
+          _sum: { monthlyAmount: true },
+          where: { status: { in: ["ATIVO"] } },
+        }),
+        prisma.tenant.count({
+          where: { deletedAt: null, createdAt: { gte: monthStart } },
+        }),
+        prisma.subscriptionPayment.aggregate({
+          _sum: { amount: true },
+          where: { status: "APROVADO", paidAt: { gte: monthStart } },
+        }),
+      ]);
     const byStatus: Record<string, number> = {};
     for (const s of subs) byStatus[s.status] = s._count;
     return {
@@ -43,6 +55,8 @@ export const AdminService = {
       byStatus,
       mrr: mrrRows._sum.monthlyAmount ?? new Prisma.Decimal(0),
       paymentsApproved: recentPayments,
+      novosNoMes,
+      receitaMes: receitaMes._sum.amount ?? new Prisma.Decimal(0),
     };
   },
 
@@ -55,8 +69,8 @@ export const AdminService = {
   },
 
   async getTenant(id: string) {
-    const t = await prisma.tenant.findUnique({
-      where: { id },
+    const t = await prisma.tenant.findFirst({
+      where: { id, deletedAt: null },
       include: {
         subscription: { include: { plan: true, payments: { orderBy: { createdAt: "desc" }, take: 20 } } },
         users: { where: { deletedAt: null } },
@@ -165,6 +179,35 @@ export const AdminService = {
     return { status: input.status };
   },
 
+  /**
+   * Exclui uma empresa (SOFT DELETE): marca deletedAt, bloqueia e derruba as sessões.
+   * Preserva dados/histórico/auditoria (o AuditLog não tem FK com Tenant, por design).
+   * listTenants/metrics já filtram deletedAt, então some da UI automaticamente.
+   */
+  async deleteTenant(id: string, ctx: AdminCtx) {
+    const t = await prisma.tenant.findUnique({ where: { id } });
+    if (!t) throw new NotFoundError("Empresa não encontrada");
+    if (t.deletedAt) return { id }; // idempotente
+
+    await prisma.tenant.update({
+      where: { id },
+      data: { deletedAt: new Date(), status: "BLOCKED" },
+    });
+    await revokeAllForTenant(id);
+
+    await audit({
+      tenantId: id,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "DELETE",
+      entity: "Tenant",
+      entityId: id,
+      oldData: { status: t.status, tradeName: t.tradeName },
+      ip: ctx.ip,
+    });
+    return { id };
+  },
+
   async updateMonthlyAmount(tenantId: string, monthlyAmount: number, ctx: AdminCtx) {
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundError("Assinatura não encontrada");
@@ -200,6 +243,7 @@ export const AdminService = {
         priceMonthly: input.priceMonthly,
         maxUsers: input.maxUsers ?? null,
         active: input.active,
+        features: { modules: input.modules },
       },
     });
   },
@@ -212,6 +256,7 @@ export const AdminService = {
         priceMonthly: input.priceMonthly,
         maxUsers: input.maxUsers ?? null,
         active: input.active,
+        features: { modules: input.modules },
       },
     });
   },

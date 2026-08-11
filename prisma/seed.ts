@@ -11,9 +11,18 @@ const prisma = new PrismaClient();
 async function main() {
   // 1) Super-admin
   const adminEmail = (process.env.SEED_SUPERADMIN_EMAIL ?? "admin@ceasapro.com.br").trim().toLowerCase();
-  const adminPassword = process.env.SEED_SUPERADMIN_PASSWORD ?? "ceasapro123";
+  // Sem senha hardcoded no código (evita vazar credencial no repositório).
+  const adminPassword = process.env.SEED_SUPERADMIN_PASSWORD;
+  if (!adminPassword) {
+    throw new Error(
+      "Defina SEED_SUPERADMIN_PASSWORD no .env antes de rodar o seed (nao ha senha padrao no codigo).",
+    );
+  }
 
-  const existingAdmin = await prisma.user.findUnique({ where: { email: adminEmail } });
+  // E-mail é único por (tenantId, email) — super-admin não tem tenant, então findFirst.
+  const existingAdmin = await prisma.user.findFirst({
+    where: { email: adminEmail, tenantId: null },
+  });
   if (!existingAdmin) {
     await prisma.user.create({
       data: {
@@ -29,7 +38,8 @@ async function main() {
     console.log(`• Super-admin já existe: ${adminEmail}`);
   }
 
-  // 2) Plano padrão
+  // 2) Planos (o Padrão inclui todos os módulos; o Básico só o núcleo).
+  //    Ter 2+ planos ativos habilita a troca de plano na tela "Meu plano".
   const plan = await prisma.plan.upsert({
     where: { slug: "padrao" },
     update: {},
@@ -39,14 +49,30 @@ async function main() {
       priceMonthly: new Prisma.Decimal("49.90"),
       maxUsers: 3,
       active: true,
+      // sem features.modules ⇒ todos os módulos opcionais liberados (retrocompat).
     },
   });
-  console.log(`✔ Plano padrão: ${plan.name} (R$ ${plan.priceMonthly})`);
+  console.log(`✔ Plano: ${plan.name} (R$ ${plan.priceMonthly})`);
 
-  // 3) Empresa demo (opcional)
+  const planoBasico = await prisma.plan.upsert({
+    where: { slug: "basico" },
+    update: {},
+    create: {
+      name: "Plano Básico",
+      slug: "basico",
+      priceMonthly: new Prisma.Decimal("29.90"),
+      maxUsers: 2,
+      active: true,
+      features: { modules: [] }, // só os recursos básicos (núcleo)
+    },
+  });
+  console.log(`✔ Plano: ${planoBasico.name} (R$ ${planoBasico.priceMonthly})`);
+
+  // 3) Empresa demo (opcional) — conta de EXEMPLO para dev/E2E, sem dados reais.
   if (process.env.SEED_DEMO === "true") {
     const demoEmail = "demo@ceasapro.com.br";
-    const existingDemo = await prisma.user.findUnique({ where: { email: demoEmail } });
+    const demoPassword = process.env.SEED_DEMO_PASSWORD ?? "demo123";
+    const existingDemo = await prisma.user.findFirst({ where: { email: demoEmail } });
     if (!existingDemo) {
       const now = new Date();
       const trialEnd = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
@@ -71,7 +97,7 @@ async function main() {
             create: {
               email: demoEmail,
               name: "Dono Demo",
-              passwordHash: await hashPassword("demo123"),
+              passwordHash: await hashPassword(demoPassword),
               role: "OWNER",
             },
           },
@@ -86,7 +112,7 @@ async function main() {
           },
         },
       });
-      console.log(`✔ Empresa demo criada: ${tenant.tradeName} (login: ${demoEmail} / demo123)`);
+      console.log(`✔ Empresa demo criada: ${tenant.tradeName} (login: ${demoEmail})`);
     } else {
       // Garante que o demo pule o onboarding (empresa de exemplo já configurada).
       await prisma.tenant.updateMany({
