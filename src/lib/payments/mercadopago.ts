@@ -1,24 +1,8 @@
-<<<<<<< HEAD
-import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
-import { createHmac, timingSafeEqual } from "node:crypto";
-=======
 import { MercadoPagoConfig, Payment } from "mercadopago";
 import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
 import { logger } from "@/lib/logger";
 
-/**
- * Integração Mercado Pago — PIX (cobrança direta) + Checkout Pro (cartão).
- * O token é lido a cada chamada (e não no import) para não congelar a
- * configuração no cold start de ambientes serverless.
- */
-
-/** Tolerância do timestamp do webhook — protege contra replay de assinatura. */
-export const WEBHOOK_MAX_SKEW_SECONDS = 300;
-
-function accessToken(): string | undefined {
-  return process.env.MP_ACCESS_TOKEN;
-}
+const accessToken = process.env.MP_ACCESS_TOKEN;
 
 /** Validade do QR Code PIX gerado (depois disso o app gera uma nova cobrança). */
 export const PIX_EXPIRATION_HOURS = 24;
@@ -96,24 +80,9 @@ export interface PixCharge {
   qrCode: string | null;
   qrCodeBase64: string | null;
   ticketUrl: string | null;
-<<<<<<< HEAD
-  expiresAt: Date | null;
-=======
-  expiresAt: Date;
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
 }
 
-/**
- * Cria uma cobrança PIX no Mercado Pago.
-<<<<<<< HEAD
- * `externalReference` é usado como chave de idempotência: repetir a chamada
- * devolve a MESMA cobrança em vez de criar uma segunda.
-=======
- * - Idempotency-Key por chamada: evita cobrança duplicada se a requisição HTTP for repetida.
- * - notification_url: garante o webhook mesmo sem configurar o painel do MP (apenas em https).
- * - date_of_expiration: o QR expira em PIX_EXPIRATION_HOURS; o app renova cobranças vencidas.
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
- */
+/** Cria uma cobrança PIX no Mercado Pago. */
 export async function createPixPayment(args: {
   amount: number;
   description: string;
@@ -130,17 +99,7 @@ export async function createPixPayment(args: {
       payment_method_id: "pix",
       payer: { email: args.payerEmail },
       external_reference: args.externalReference,
-<<<<<<< HEAD
-      notification_url: webhookUrl(),
-      date_of_expiration: args.expiresAt.toISOString(),
     },
-    requestOptions: { idempotencyKey: `pix:${args.externalReference}` },
-=======
-      notification_url: notificationUrl(),
-      date_of_expiration: expiration.iso,
-    },
-    requestOptions: { idempotencyKey: randomUUID() },
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
   });
   const tx = res.point_of_interaction?.transaction_data;
   return {
@@ -149,96 +108,6 @@ export async function createPixPayment(args: {
     qrCode: tx?.qr_code ?? null,
     qrCodeBase64: tx?.qr_code_base64 ?? null,
     ticketUrl: tx?.ticket_url ?? null,
-<<<<<<< HEAD
-    expiresAt: res.date_of_expiration ? new Date(res.date_of_expiration) : args.expiresAt,
-  };
-}
-
-export interface CardCheckout {
-  preferenceId: string;
-  initPoint: string | null;
-}
-
-/**
- * Cria uma preferência de Checkout Pro (cartão de crédito/débito).
- * O pagamento resultante chega pelo mesmo webhook, correlacionado por
- * `external_reference`.
- */
-export async function createCardPreference(args: {
-=======
-    expiresAt: expiration.date,
-  };
-}
-
-/**
- * Cria um pagamento com CARTÃO no Mercado Pago a partir do token do Card Brick.
- * PCI: o servidor recebe apenas o `token` (gerado no browser) — nunca número/CVV/validade.
- * O status pode vir "approved" na hora, ou "in_process"/"pending" (3DS/análise) → o webhook resolve.
- */
-export async function createCardPayment(args: {
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
-  amount: number;
-  description: string;
-  payerEmail: string;
-  externalReference: string;
-<<<<<<< HEAD
-  expiresAt: Date;
-}): Promise<CardCheckout> {
-  const client = preferenceClient();
-  const base = appUrl();
-  const res = await client.create({
-    body: {
-      items: [
-        {
-          id: args.externalReference,
-          title: args.description,
-          quantity: 1,
-          currency_id: "BRL",
-          unit_price: args.amount,
-        },
-      ],
-      payer: { email: args.payerEmail },
-      external_reference: args.externalReference,
-      notification_url: webhookUrl(),
-      back_urls: {
-        success: `${base}/assinatura?pagamento=sucesso`,
-        pending: `${base}/assinatura?pagamento=pendente`,
-        failure: `${base}/assinatura?pagamento=falha`,
-      },
-      auto_return: "approved",
-      binary_mode: true,
-      expires: true,
-      expiration_date_to: args.expiresAt.toISOString(),
-      payment_methods: { excluded_payment_types: [{ id: "ticket" }] },
-    },
-    requestOptions: { idempotencyKey: `card:${args.externalReference}` },
-  });
-  return {
-    preferenceId: String(res.id),
-    initPoint: res.init_point ?? res.sandbox_init_point ?? null,
-=======
-  token: string;
-  paymentMethodId: string;
-  installments: number;
-}): Promise<{ mpPaymentId: string; status: string }> {
-  const client = paymentClient();
-  const res = await client.create({
-    body: {
-      transaction_amount: args.amount,
-      token: args.token,
-      description: args.description,
-      installments: args.installments,
-      payment_method_id: args.paymentMethodId,
-      payer: { email: args.payerEmail },
-      external_reference: args.externalReference,
-      notification_url: notificationUrl(),
-    },
-    requestOptions: { idempotencyKey: randomUUID() },
-  });
-  return {
-    mpPaymentId: String(res.id),
-    status: String(res.status ?? "pending"),
->>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
   };
 }
 
