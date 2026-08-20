@@ -13,6 +13,8 @@ Documentação completa do **CeasaPro** — SaaS de gestão para comercializador
 7. [Instalação e deploy](07-instalacao-e-deploy.md) — rodar local, deploy de baixo custo, backup.
 8. [Desenvolvimento](08-desenvolvimento.md) — estrutura de pastas, scripts, testes, convenções.
 
+> Prefere ler tudo de uma vez? [PROJETO.md](PROJETO.md) descreve o sistema inteiro em um único documento.
+
 > A **especificação original** do produto (requisitos brutos) está em [ESPECIFICACAO.md](ESPECIFICACAO.md).
 > O guia rápido de uso está no [README](../README.md) da raiz.
 
