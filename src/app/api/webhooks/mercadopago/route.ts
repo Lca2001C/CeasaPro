@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import { verifyWebhookSignature } from "@/lib/payments/mercadopago";
 import { BillingService } from "@/lib/services/billing.service";
 import { logger } from "@/lib/logger";
@@ -30,14 +31,19 @@ export async function POST(req: Request) {
   if (type && type !== "payment") return Response.json({ ok: true });
   if (!dataId) return Response.json({ ok: true });
 
-  try {
-    const result = await BillingService.handleWebhook(String(dataId));
-    // "nao_encontrado" é conclusivo (cobrança de outra instalação): 200 encerra.
-    return Response.json({ ok: true, result });
-  } catch (e) {
-    // Erro transiente (rede/MP/banco): devolve 500 para o Mercado Pago reenviar.
-    // O cron de reconciliação é a segunda rede de segurança.
-    logger.error({ err: e instanceof Error ? e.message : String(e) }, "Erro no webhook MP");
-    return Response.json({ ok: false }, { status: 500 });
-  }
+  // Confirma a entrega na hora e processa depois da resposta: o Mercado Pago
+  // reenvia o evento se demorarmos, e o cron de reconciliação cura o que falhar.
+  const mpPaymentId = String(dataId);
+  after(async () => {
+    try {
+      const result = await BillingService.handleWebhook(mpPaymentId);
+      logger.info({ mpPaymentId, result }, "Webhook Mercado Pago processado");
+    } catch (e) {
+      logger.error(
+        { mpPaymentId, err: e instanceof Error ? e.message : String(e) },
+        "Erro no webhook MP — será tratado pela reconciliação",
+      );
+    }
+  });
+  return Response.json({ ok: true });
 }

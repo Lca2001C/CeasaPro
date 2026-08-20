@@ -27,7 +27,7 @@ async function handle(req: Request): Promise<Response> {
     return new Response("unauthorized", { status: 401 });
   }
   try {
-    const reconciliacao = await BillingService.reconcilePending();
+    const reconciliacao = await BillingService.reconcilePendingPayments();
     const statuses = await BillingService.recomputeStatuses();
     return Response.json({ ok: true, reconciliacao, statuses });
   } catch (e) {

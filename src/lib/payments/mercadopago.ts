@@ -1,9 +1,9 @@
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
-import { createHmac, timingSafeEqual, randomUUID } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { logger } from "@/lib/logger";
 
 /**
- * Integração Mercado Pago — PIX (cobrança direta) + Checkout Pro (cartão).
+ * Integração Mercado Pago — PIX, cartão de crédito e cartão de débito (com 3DS).
  * O token é lido a cada chamada (e não no import) para não congelar a
  * configuração no cold start de ambientes serverless.
  */
@@ -115,6 +115,10 @@ export interface CardCheckout {
  * Cria uma preferência de Checkout Pro (cartão de crédito/débito).
  * O pagamento resultante chega pelo mesmo webhook, correlacionado por
  * `external_reference`.
+ *
+ * INATIVA: o checkout de cartão hoje é feito pelo Payment Brick
+ * (`createCardPayment`). Mantida para o caso de o Checkout Pro voltar como
+ * alternativa de fallback — nenhuma rota a importa no momento.
  */
 export async function createCardPreference(args: {
   amount: number;
@@ -158,20 +162,74 @@ export async function createCardPreference(args: {
   };
 }
 
+/** Tipo de cartão aceito — define se o Mercado Pago negocia o desafio 3DS. */
+export type CardPaymentTypeId = "credit_card" | "debit_card";
+
+/** Desafio 3-D Secure devolvido pelo emissor (débito). */
+export interface ThreeDsChallenge {
+  externalResourceUrl: string;
+  creq: string;
+}
+
+export interface CardCharge {
+  mpPaymentId: string;
+  status: string;
+  statusDetail: string | null;
+  threeDs: ThreeDsChallenge | null;
+}
+
+export interface CardPayer {
+  email: string;
+  firstName?: string;
+  lastName?: string;
+  identification?: { type: string; number: string };
+}
+
 /**
- * Cria um pagamento com CARTÃO a partir do token do Card Brick.
+ * Extrai o desafio 3DS da resposta do Mercado Pago.
+ * O SDK declara `three_ds_info` apontando para um tipo que não exporta, então
+ * a leitura é feita sobre `unknown` com type guard — sem `any`.
+ */
+function extractThreeDs(payment: unknown): ThreeDsChallenge | null {
+  if (typeof payment !== "object" || payment === null) return null;
+  const info = (payment as { three_ds_info?: unknown }).three_ds_info;
+  if (typeof info !== "object" || info === null) return null;
+  const { external_resource_url: url, creq } = info as {
+    external_resource_url?: unknown;
+    creq?: unknown;
+  };
+  if (typeof url !== "string" || url.length === 0) return null;
+  return { externalResourceUrl: url, creq: typeof creq === "string" ? creq : "" };
+}
+
+/**
+ * Chave de idempotência determinística do cartão: retentar o MESMO cartão na
+ * mesma cobrança não duplica o débito; trocar de cartão gera uma nova tentativa.
+ * (`randomUUID` anularia a proteção, já que toda chamada seria "nova".)
+ */
+function cardIdempotencyKey(externalReference: string, token: string): string {
+  return createHash("sha256").update(`${externalReference}:${token}`).digest("hex");
+}
+
+/**
+ * Cria um pagamento com CARTÃO (crédito ou débito) a partir do token do Brick.
  * PCI: o servidor recebe apenas o `token` — nunca número/CVV/validade.
+ * No débito enviamos `three_d_secure_mode: "optional"`: o Mercado Pago devolve
+ * o desafio 3DS quando o emissor exige e aprova direto quando não exige.
  */
 export async function createCardPayment(args: {
   amount: number;
   description: string;
-  payerEmail: string;
   externalReference: string;
   token: string;
   paymentMethodId: string;
+  paymentTypeId: CardPaymentTypeId;
+  issuerId?: string;
   installments: number;
-}): Promise<{ mpPaymentId: string; status: string }> {
+  payer: CardPayer;
+}): Promise<CardCharge> {
   const client = paymentClient();
+  const issuer = args.issuerId ? Number(args.issuerId) : NaN;
   const res = await client.create({
     body: {
       transaction_amount: args.amount,
@@ -179,15 +237,26 @@ export async function createCardPayment(args: {
       description: args.description,
       installments: args.installments,
       payment_method_id: args.paymentMethodId,
-      payer: { email: args.payerEmail },
+      ...(Number.isFinite(issuer) ? { issuer_id: issuer } : {}),
+      ...(args.paymentTypeId === "debit_card" ? { three_d_secure_mode: "optional" } : {}),
+      payer: {
+        email: args.payer.email,
+        ...(args.payer.firstName ? { first_name: args.payer.firstName } : {}),
+        ...(args.payer.lastName ? { last_name: args.payer.lastName } : {}),
+        ...(args.payer.identification ? { identification: args.payer.identification } : {}),
+      },
       external_reference: args.externalReference,
       notification_url: webhookUrl(),
     },
-    requestOptions: { idempotencyKey: randomUUID() },
+    requestOptions: {
+      idempotencyKey: cardIdempotencyKey(args.externalReference, args.token),
+    },
   });
   return {
     mpPaymentId: String(res.id),
     status: String(res.status ?? "pending"),
+    statusDetail: res.status_detail ?? null,
+    threeDs: extractThreeDs(res),
   };
 }
 
@@ -198,9 +267,11 @@ export async function getPayment(id: string) {
   return {
     id: String(res.id),
     status: String(res.status ?? ""),
+    statusDetail: res.status_detail ?? null,
     externalReference: res.external_reference ?? null,
     amount: res.transaction_amount ?? 0,
     method: res.payment_method_id ?? null,
+    paymentTypeId: res.payment_type_id ?? null,
     paidAt: res.date_approved ? new Date(res.date_approved) : null,
   };
 }

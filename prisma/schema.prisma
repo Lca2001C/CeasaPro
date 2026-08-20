@@ -91,6 +91,14 @@ enum PaymentStatus {
   CANCELADO
 }
 
+/// Forma de pagamento da mensalidade (assinatura do SaaS).
+/// Não confundir com `PaymentMethod`, que é a forma de pagamento de uma VENDA.
+enum ChargeMethod {
+  PIX
+  CREDIT_CARD
+  DEBIT_CARD
+}
+
 enum ReportType {
   VENDAS
   COMPRAS
@@ -262,7 +270,8 @@ model SubscriptionPayment {
   tenantId       String
   amount         Decimal       @db.Decimal(10, 2)
   status         PaymentStatus @default(PENDENTE)
-  method         String?
+  method         ChargeMethod?
+  statusDetail   String? // status_detail do Mercado Pago (accredited, pending_challenge, cc_rejected_*)
   referenceMonth String // "2026-07"
   mpPaymentId    String?       @unique
   mpPreferenceId String?
@@ -270,6 +279,7 @@ model SubscriptionPayment {
   qrCode         String?       @db.Text
   qrCodeBase64   String?       @db.Text
   ticketUrl      String?
+  threeDsUrl     String?       @db.Text // desafio 3DS do débito (three_ds_info.external_resource_url)
   expiresAt      DateTime? // validade do QR PIX / da preferência de cartão (renovado pelo app quando vence)
   paidAt         DateTime?
   periodStart    DateTime?

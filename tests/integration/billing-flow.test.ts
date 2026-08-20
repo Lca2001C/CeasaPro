@@ -1,13 +1,16 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
+import type { CardPaymentInput } from "@/lib/validations/billing";
 
 // ── Mock do gateway Mercado Pago (a integração real é coberta pela sandbox/produção) ──
 const gw = vi.hoisted(() => ({
   createCalls: 0,
   cardCalls: 0,
   nextCardStatus: "approved", // status que o próximo createCardPayment devolve
+  nextThreeDs: null as { externalResourceUrl: string; creq: string } | null,
   paymentStatus: new Map<string, string>(), // mpPaymentId -> status no "MP"
+  paymentType: new Map<string, string>(), // mpPaymentId -> payment_type_id no "MP"
 }));
 
 vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
@@ -20,6 +23,7 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
       gw.createCalls += 1;
       const id = `mp-${gw.createCalls}`;
       gw.paymentStatus.set(id, "pending");
+      gw.paymentType.set(id, "bank_transfer");
       return {
         mpPaymentId: id,
         status: "pending",
@@ -29,20 +33,29 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
         expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
       };
     }),
-    createCardPayment: vi.fn(async () => {
+    createCardPayment: vi.fn(async (args: { paymentTypeId: string }) => {
       gw.cardCalls += 1;
       const id = `mpc-${gw.cardCalls}`;
-      gw.paymentStatus.set(id, gw.nextCardStatus);
-      return { mpPaymentId: id, status: gw.nextCardStatus };
+      gw.paymentStatus.set(id, gw.nextThreeDs ? "pending" : gw.nextCardStatus);
+      gw.paymentType.set(id, args.paymentTypeId);
+      return {
+        mpPaymentId: id,
+        status: gw.nextThreeDs ? "pending" : gw.nextCardStatus,
+        statusDetail: gw.nextThreeDs ? "pending_challenge" : "accredited",
+        threeDs: gw.nextThreeDs,
+      };
     }),
     getPayment: vi.fn(async (id: string) => {
       const status = gw.paymentStatus.get(id) ?? "pending";
+      const paymentTypeId = gw.paymentType.get(id) ?? "bank_transfer";
       return {
         id,
         status,
+        statusDetail: status === "approved" ? "accredited" : "pending_waiting_transfer",
         externalReference: null,
         amount: 49.9,
-        method: id.startsWith("mpc-") ? "card" : "pix",
+        method: paymentTypeId === "bank_transfer" ? "pix" : "visa",
+        paymentTypeId,
         paidAt: status === "approved" ? new Date("2026-08-20T12:00:00.000Z") : null,
       };
     }),
@@ -57,6 +70,25 @@ let tenantId = "";
 let planId = "";
 const periodEndInicial = new Date("2026-08-01T00:00:00Z");
 const cardTenants: string[] = [];
+
+const creditoInput: CardPaymentInput = {
+  method: "CREDIT_CARD",
+  token: "tok_fake",
+  paymentMethodId: "visa",
+  installments: 1,
+  payer: { email: "pagador@teste.com" },
+};
+
+const debitoInput: CardPaymentInput = {
+  method: "DEBIT_CARD",
+  token: "tok_debito",
+  paymentMethodId: "debvisa",
+  installments: 1,
+  payer: {
+    email: "pagador@teste.com",
+    identification: { type: "CPF", number: "12345678909" },
+  },
+};
 
 // Cria um tenant isolado (com assinatura TRIAL + OWNER) para um cenário de cartão.
 async function createCardTenant(): Promise<string> {
@@ -125,8 +157,9 @@ afterAll(async () => {
 
 describe("Cobrança mensal PIX (Mercado Pago)", () => {
   it("gera a cobrança do mês com QR Code e validade", async () => {
-    const charge = await BillingService.createOrGetMonthlyCharge(tenantId);
+    const charge = await BillingService.createCheckout(tenantId);
     expect(charge.status).toBe("PENDENTE");
+    expect(charge.method).toBe("PIX");
     expect(charge.qrCode).toContain("PIXCOPIAECOLA");
     expect(charge.qrCodeBase64).toBeTruthy();
     expect(charge.expiresAt).toBeTruthy();
@@ -134,7 +167,7 @@ describe("Cobrança mensal PIX (Mercado Pago)", () => {
   });
 
   it("é idempotente no mês: segunda chamada devolve a MESMA cobrança sem chamar o MP", async () => {
-    const again = await BillingService.createOrGetMonthlyCharge(tenantId);
+    const again = await BillingService.createCheckout(tenantId);
     expect(gw.createCalls).toBe(1); // não criou outra no MP
     const all = await prisma.subscriptionPayment.count({ where: { tenantId } });
     expect(all).toBe(1);
@@ -146,12 +179,18 @@ describe("Cobrança mensal PIX (Mercado Pago)", () => {
       where: { tenantId, status: "PENDENTE" },
       data: { expiresAt: new Date(Date.now() - 60_000) }, // força expirar
     });
-    const renewed = await BillingService.createOrGetMonthlyCharge(tenantId);
+    const renewed = await BillingService.createCheckout(tenantId);
     expect(gw.createCalls).toBe(2);
     expect(renewed.mpPaymentId).toBe("mp-2");
 
     const old = await prisma.subscriptionPayment.findUnique({ where: { mpPaymentId: "mp-1" } });
     expect(old?.status).toBe("CANCELADO");
+  });
+
+  it("cartão não passa pelo checkout PIX (exige token do Brick)", async () => {
+    await expect(
+      BillingService.createCheckout(tenantId, { method: "CREDIT_CARD" }),
+    ).rejects.toThrow(/cartão/i);
   });
 });
 
@@ -163,6 +202,7 @@ describe("Webhook de pagamento (idempotente, ativa a assinatura)", () => {
     const payment = await prisma.subscriptionPayment.findUnique({ where: { mpPaymentId: "mp-2" } });
     expect(payment?.status).toBe("APROVADO");
     expect(payment?.paidAt).toBeTruthy();
+    expect(payment?.statusDetail).toBe("accredited");
 
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     expect(sub?.status).toBe("ATIVO");
@@ -218,15 +258,20 @@ describe("Status para a tela de assinatura (polling)", () => {
   });
 });
 
-describe("Cobrança com CARTÃO (Card Brick)", () => {
-  const card = { token: "tok_fake", paymentMethodId: "visa", installments: 1 };
-
-  it("aprovado na hora: cria pagamento method=card APROVADO e ativa a assinatura (+1 mês)", async () => {
+describe("Cobrança com CARTÃO (Payment Brick)", () => {
+  it("crédito aprovado na hora: grava CREDIT_CARD APROVADO e ativa a assinatura (+1 mês)", async () => {
     const t = await createCardTenant();
     gw.nextCardStatus = "approved";
-    const row = await BillingService.createOrGetMonthlyCharge(t, "card", card);
-    expect(row.method).toBe("card");
-    expect(row.status).toBe("APROVADO");
+    gw.nextThreeDs = null;
+
+    const result = await BillingService.processCardPayment(t, creditoInput);
+    expect(result.status).toBe("APROVADO");
+    expect(result.threeDsUrl).toBeNull();
+
+    const row = await prisma.subscriptionPayment.findUnique({
+      where: { mpPaymentId: result.mpPaymentId! },
+    });
+    expect(row?.method).toBe("CREDIT_CARD");
 
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("ATIVO");
@@ -238,15 +283,19 @@ describe("Cobrança com CARTÃO (Card Brick)", () => {
   it("em análise (pending) → só o webhook aprova depois, ativando a assinatura", async () => {
     const t = await createCardTenant();
     gw.nextCardStatus = "in_process";
-    const row = await BillingService.createOrGetMonthlyCharge(t, "card", card);
-    expect(row.status).toBe("PENDENTE");
+    gw.nextThreeDs = null;
+
+    const result = await BillingService.processCardPayment(t, creditoInput);
+    expect(result.status).toBe("PENDENTE");
     let sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("TRIAL"); // ainda não ativou
 
     // Webhook aprova depois.
-    gw.paymentStatus.set(row.mpPaymentId!, "approved");
-    await BillingService.handleWebhook(row.mpPaymentId!);
-    const paid = await prisma.subscriptionPayment.findUnique({ where: { mpPaymentId: row.mpPaymentId! } });
+    gw.paymentStatus.set(result.mpPaymentId!, "approved");
+    await BillingService.handleWebhook(result.mpPaymentId!);
+    const paid = await prisma.subscriptionPayment.findUnique({
+      where: { mpPaymentId: result.mpPaymentId! },
+    });
     expect(paid?.status).toBe("APROVADO");
     sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("ATIVO");
@@ -255,20 +304,22 @@ describe("Cobrança com CARTÃO (Card Brick)", () => {
   it("recusado: marca RECUSADO e NÃO ativa a assinatura", async () => {
     const t = await createCardTenant();
     gw.nextCardStatus = "rejected";
-    const row = await BillingService.createOrGetMonthlyCharge(t, "card", card);
-    expect(row.status).toBe("RECUSADO");
+    gw.nextThreeDs = null;
+
+    const result = await BillingService.processCardPayment(t, creditoInput);
+    expect(result.status).toBe("RECUSADO");
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("TRIAL");
   });
 
   it("cartão aprovado cancela um PIX PENDENTE do mesmo mês", async () => {
     const t = await createCardTenant();
-    // Gera um PIX pendente primeiro.
-    const pix = await BillingService.createOrGetMonthlyCharge(t, "pix");
+    const pix = await BillingService.createCheckout(t);
     expect(pix.status).toBe("PENDENTE");
-    // Paga no cartão.
+
     gw.nextCardStatus = "approved";
-    await BillingService.createOrGetMonthlyCharge(t, "card", card);
+    gw.nextThreeDs = null;
+    await BillingService.processCardPayment(t, creditoInput);
 
     const pixRow = await prisma.subscriptionPayment.findUnique({ where: { id: pix.id } });
     expect(pixRow?.status).toBe("CANCELADO");
@@ -277,20 +328,56 @@ describe("Cobrança com CARTÃO (Card Brick)", () => {
   it("guarda: mensalidade do mês já paga recusa nova cobrança (pix ou cartão)", async () => {
     const t = await createCardTenant();
     gw.nextCardStatus = "approved";
-    await BillingService.createOrGetMonthlyCharge(t, "card", card);
+    gw.nextThreeDs = null;
+    await BillingService.processCardPayment(t, creditoInput);
 
-    await expect(BillingService.createOrGetMonthlyCharge(t, "card", card)).rejects.toThrow(
+    await expect(BillingService.processCardPayment(t, creditoInput)).rejects.toThrow(
       /já está paga/i,
     );
-    await expect(BillingService.createOrGetMonthlyCharge(t, "pix")).rejects.toThrow(
-      /já está paga/i,
-    );
+    await expect(BillingService.createCheckout(t)).rejects.toThrow(/já está paga/i);
+  });
+});
+
+describe("Cartão de DÉBITO com autenticação 3DS", () => {
+  it("desafio 3DS: cobrança fica PENDENTE com a URL do desafio e só o webhook aprova", async () => {
+    const t = await createCardTenant();
+    gw.nextThreeDs = {
+      externalResourceUrl: "https://acs.banco.fake/challenge",
+      creq: "eyJjcmVxIjoiZmFrZSJ9",
+    };
+
+    const result = await BillingService.processCardPayment(t, debitoInput);
+    expect(result.status).toBe("PENDENTE");
+    expect(result.threeDsUrl).toBe("https://acs.banco.fake/challenge");
+    expect(result.threeDsCreq).toBe("eyJjcmVxIjoiZmFrZSJ9");
+
+    const row = await prisma.subscriptionPayment.findUnique({
+      where: { mpPaymentId: result.mpPaymentId! },
+    });
+    expect(row?.method).toBe("DEBIT_CARD");
+    expect(row?.threeDsUrl).toBe("https://acs.banco.fake/challenge");
+    expect(row?.statusDetail).toBe("pending_challenge");
+
+    let sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
+    expect(sub?.status).toBe("TRIAL"); // ainda não autenticou
+
+    // Portador autentica → o Mercado Pago aprova e avisa pelo webhook.
+    gw.paymentStatus.set(result.mpPaymentId!, "approved");
+    await BillingService.handleWebhook(result.mpPaymentId!);
+
+    const paid = await prisma.subscriptionPayment.findUnique({
+      where: { mpPaymentId: result.mpPaymentId! },
+    });
+    expect(paid?.status).toBe("APROVADO");
+    expect(paid?.threeDsUrl).toBeNull(); // desafio consumido
+    sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
+    expect(sub?.status).toBe("ATIVO");
   });
 
-  it("cartão sem dados lança erro de negócio", async () => {
+  it("débito sem CPF do titular é recusado antes de chamar o Mercado Pago", async () => {
     const t = await createCardTenant();
-    await expect(BillingService.createOrGetMonthlyCharge(t, "card")).rejects.toThrow(
-      /cartão/i,
-    );
+    gw.nextThreeDs = null;
+    const semCpf = { ...debitoInput, payer: { email: "pagador@teste.com" } };
+    await expect(BillingService.processCardPayment(t, semCpf)).rejects.toThrow(/CPF/i);
   });
 });

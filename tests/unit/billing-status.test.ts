@@ -45,6 +45,24 @@ describe("computeStatus — ciclo de vida da assinatura", () => {
     ).toBe("SUSPENSO");
   });
 
+  it("exatamente no vencimento ainda é ATIVO (o dia do vencimento é do cliente)", () => {
+    expect(computeStatus(sub({ currentPeriodEnd: NOW }), NOW)).toBe("ATIVO");
+  });
+
+  it("exatamente no fim da tolerância ainda é VENCIDO; um dia depois, SUSPENSO", () => {
+    expect(computeStatus(sub({ currentPeriodEnd: days(-5), graceDays: 5 }), NOW)).toBe("VENCIDO");
+    expect(computeStatus(sub({ currentPeriodEnd: days(-6), graceDays: 5 }), NOW)).toBe("SUSPENSO");
+  });
+
+  it("sem tolerância (graceDays 0): vence e suspende no mesmo instante", () => {
+    expect(computeStatus(sub({ currentPeriodEnd: days(-1), graceDays: 0 }), NOW)).toBe("SUSPENSO");
+    expect(computeStatus(sub({ currentPeriodEnd: NOW, graceDays: 0 }), NOW)).toBe("ATIVO");
+  });
+
+  it("trial que termina exatamente agora ainda é TRIAL", () => {
+    expect(computeStatus(sub({ trialEndsAt: NOW, currentPeriodEnd: days(-30) }), NOW)).toBe("TRIAL");
+  });
+
   it("override MANUAL do super-admin prevalece sobre as datas", () => {
     expect(
       computeStatus(

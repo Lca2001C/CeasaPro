@@ -1,7 +1,8 @@
-import type { PaymentStatus, SubscriptionPayment } from "@prisma/client";
+import type { ChargeMethod, PaymentStatus, SubscriptionPayment } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { addOneMonth, computeStatus } from "@/lib/billing/status";
+import { money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
   assertMercadoPagoConfig,
@@ -9,24 +10,33 @@ import {
   createPixPayment,
   getPayment,
   isMercadoPagoConfigured,
+  type CardPaymentTypeId,
   type MpPayment,
 } from "@/lib/payments/mercadopago";
-import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import {
+  BusinessRuleError,
+  NotFoundError,
+  ValidationError,
+} from "@/lib/http/app-error";
+import type { TenantCtx } from "@/lib/http/with-action";
+import type {
+  CardPaymentInput,
+  CardPaymentResult,
+  CheckoutInput,
+} from "@/lib/validations/billing";
+import { PlanoService } from "./plano.service";
 import { sendEmail, paymentApprovedEmail } from "@/lib/email";
 import { logger } from "@/lib/logger";
-
-export interface CardInput {
-  token: string;
-  paymentMethodId: string;
-  installments: number;
-}
 
 /** Validade da cobrança do mês (QR PIX e preferência de cartão). */
 const CHARGE_TTL_HOURS = 48;
 /** Só reconcilia cobranças com alguns minutos de vida, para não competir com o webhook. */
 const RECONCILE_MIN_AGE_MINUTES = 10;
 
-export type ChargeMethod = "pix" | "card";
+const CARD_PAYMENT_TYPE: Record<"CREDIT_CARD" | "DEBIT_CARD", CardPaymentTypeId> = {
+  CREDIT_CARD: "credit_card",
+  DEBIT_CARD: "debit_card",
+};
 
 function currentRefMonth(d = new Date()): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
@@ -54,10 +64,87 @@ export function mapMpStatus(mpStatus: string): PaymentStatus {
   }
 }
 
+/** Mapeia a forma de pagamento do Mercado Pago para o enum `ChargeMethod`. */
+export function mapMpMethod(mp: Pick<MpPayment, "method" | "paymentTypeId">): ChargeMethod | null {
+  switch (mp.paymentTypeId) {
+    case "credit_card":
+      return "CREDIT_CARD";
+    case "debit_card":
+      return "DEBIT_CARD";
+    case "bank_transfer":
+      return "PIX";
+    default:
+      return mp.method === "pix" ? "PIX" : null;
+  }
+}
+
 function isUsable(charge: SubscriptionPayment | null, now = new Date()): boolean {
   if (!charge) return false;
   if (charge.expiresAt && charge.expiresAt <= now) return false;
   return true;
+}
+
+function assertGatewayReady(): void {
+  if (!isMercadoPagoConfigured()) {
+    throw new BusinessRuleError(
+      "Pagamento online ainda não configurado. Fale com o suporte para regularizar.",
+    );
+  }
+  assertMercadoPagoConfig();
+}
+
+interface ChargeContext {
+  subscriptionId: string;
+  refMonth: string;
+  amount: Decimal;
+  description: string;
+  payerEmail: string;
+  externalRefPrefix: string;
+}
+
+/**
+ * Contexto comum a PIX e cartão: assinatura, valor do mês e guarda de
+ * "mensalidade já paga". Opcionalmente troca o plano antes de cobrar.
+ */
+async function prepareCharge(
+  tenantId: string,
+  planId: string | undefined,
+  ctx: TenantCtx | undefined,
+  now: Date,
+): Promise<ChargeContext> {
+  assertGatewayReady();
+
+  let sub = await prisma.tenantSubscription.findUnique({
+    where: { tenantId },
+    include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
+  });
+  if (!sub) throw new NotFoundError("Assinatura não encontrada");
+
+  // Contratar outro plano no ato do pagamento: a validação de plano ativo e de
+  // limite de usuários é do PlanoService — não duplicamos a regra aqui.
+  if (planId && planId !== sub.planId) {
+    if (!ctx) throw new ValidationError("Troca de plano exige um usuário autenticado.");
+    await PlanoService.changePlan(planId, ctx);
+    sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { tenantId },
+      include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
+    });
+  }
+
+  const refMonth = currentRefMonth(now);
+  const alreadyPaid = await prisma.subscriptionPayment.findFirst({
+    where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
+  });
+  if (alreadyPaid) throw new BusinessRuleError("A mensalidade deste mês já está paga.");
+
+  return {
+    subscriptionId: sub.id,
+    refMonth,
+    amount: money(sub.monthlyAmount),
+    description: `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`,
+    payerEmail: sub.tenant.users[0]?.email ?? "sememail@ceasapro.com.br",
+    externalRefPrefix: `sub:${sub.id}:${refMonth}`,
+  };
 }
 
 export const BillingService = {
@@ -84,128 +171,154 @@ export const BillingService = {
   },
 
   /**
-   * Cria (ou retorna) a cobrança da mensalidade do mês atual — idempotente por mês.
-   * - PIX: reusa a cobrança pendente (renova o QR se expirou).
-   * - Cartão: cria o pagamento a partir do token do Brick e resolve o status
-   *   pelo mesmo caminho do webhook (handleWebhook) — ativa na hora se aprovado.
+   * Cria (ou retorna) a cobrança PIX da mensalidade do mês — idempotente por mês:
+   * reusa a cobrança pendente e só renova o QR quando ele expirou.
+   * Cartão não passa por aqui: precisa do token do Brick (ver `processCardPayment`).
    */
-  async createOrGetMonthlyCharge(
+  async createCheckout(
     tenantId: string,
-    method: ChargeMethod = "pix",
-    card?: CardInput,
-  ) {
-    if (!isMercadoPagoConfigured()) {
-      throw new BusinessRuleError(
-        "Pagamento online ainda não configurado. Fale com o suporte para regularizar.",
-      );
+    input: CheckoutInput = { method: "PIX" },
+    ctx?: TenantCtx,
+  ): Promise<SubscriptionPayment> {
+    if (input.method !== "PIX") {
+      throw new ValidationError("Pagamento com cartão exige os dados do cartão.");
     }
-    assertMercadoPagoConfig();
-
-    const sub = await prisma.tenantSubscription.findUnique({
-      where: { tenantId },
-      include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
-    });
-    if (!sub) throw new NotFoundError("Assinatura não encontrada");
 
     const now = new Date();
-    const refMonth = currentRefMonth(now);
-
-    const alreadyPaid = await prisma.subscriptionPayment.findFirst({
-      where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
-    });
-    if (alreadyPaid) {
-      throw new BusinessRuleError("A mensalidade deste mês já está paga.");
-    }
-
-    const payerEmail = sub.tenant.users[0]?.email ?? "sememail@ceasapro.com.br";
-    const externalRef = `sub:${sub.id}:${refMonth}:${method}`;
-    const amount = Number(sub.monthlyAmount);
-    const description = `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`;
+    const charge = await prepareCharge(tenantId, input.planId, ctx, now);
+    const externalRef = `${charge.externalRefPrefix}:pix`;
     const expiresAt = new Date(now.getTime() + CHARGE_TTL_HOURS * 60 * 60 * 1000);
 
-    if (method === "card") {
-      if (!card) throw new BusinessRuleError("Dados do cartão ausentes.");
-
-      await prisma.subscriptionPayment.updateMany({
-        where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
-        data: { status: "CANCELADO" },
-      });
-
-      const paid = await createCardPayment({
-        amount,
-        description,
-        payerEmail,
-        externalReference: externalRef,
-        token: card.token,
-        paymentMethodId: card.paymentMethodId,
-        installments: card.installments,
-      });
-
-      await prisma.subscriptionPayment.create({
-        data: {
-          subscriptionId: sub.id,
-          tenantId,
-          amount,
-          status: "PENDENTE",
-          method: "card",
-          referenceMonth: refMonth,
-          mpPaymentId: paid.mpPaymentId,
-          mpExternalRef: externalRef,
-        },
-      });
-
-      await this.handleWebhook(paid.mpPaymentId);
-      const row = await prisma.subscriptionPayment.findUnique({
-        where: { mpPaymentId: paid.mpPaymentId },
-      });
-      return row!;
-    }
-
     const existing = await prisma.subscriptionPayment.findFirst({
-      where: { tenantId, referenceMonth: refMonth, status: "PENDENTE", method: "pix" },
+      where: { tenantId, referenceMonth: charge.refMonth, status: "PENDENTE", method: "PIX" },
       orderBy: { createdAt: "desc" },
     });
     if (existing?.qrCode && isUsable(existing, now)) return existing;
-    if (existing?.qrCode && !isUsable(existing, now)) {
+    if (existing?.qrCode) {
       await prisma.subscriptionPayment.update({
         where: { id: existing.id },
         data: { status: "CANCELADO" },
       });
-      logger.info({ tenantId, chargeId: existing.id }, "Cobrança PIX expirada cancelada — gerando nova");
+      logger.info(
+        { tenantId, chargeId: existing.id },
+        "Cobrança PIX expirada cancelada — gerando nova",
+      );
     }
 
-    const charge = await createPixPayment({
-      amount,
-      description,
-      payerEmail,
+    const pix = await createPixPayment({
+      amount: toNumber(charge.amount),
+      description: charge.description,
+      payerEmail: charge.payerEmail,
       externalReference: externalRef,
       expiresAt,
     });
 
     // Idempotente também do nosso lado: o mpPaymentId é único.
     return prisma.subscriptionPayment.upsert({
-      where: { mpPaymentId: charge.mpPaymentId },
+      where: { mpPaymentId: pix.mpPaymentId },
       create: {
-        subscriptionId: sub.id,
+        subscriptionId: charge.subscriptionId,
         tenantId,
-        amount,
+        amount: charge.amount,
         status: "PENDENTE",
-        method,
-        referenceMonth: refMonth,
-        mpPaymentId: charge.mpPaymentId,
+        method: "PIX",
+        referenceMonth: charge.refMonth,
+        mpPaymentId: pix.mpPaymentId,
         mpExternalRef: externalRef,
-        qrCode: charge.qrCode,
-        qrCodeBase64: charge.qrCodeBase64,
-        ticketUrl: charge.ticketUrl,
-        expiresAt: charge.expiresAt ?? expiresAt,
+        qrCode: pix.qrCode,
+        qrCodeBase64: pix.qrCodeBase64,
+        ticketUrl: pix.ticketUrl,
+        expiresAt: pix.expiresAt ?? expiresAt,
       },
       update: {
-        qrCode: charge.qrCode,
-        qrCodeBase64: charge.qrCodeBase64,
-        ticketUrl: charge.ticketUrl,
-        expiresAt: charge.expiresAt ?? expiresAt,
+        qrCode: pix.qrCode,
+        qrCodeBase64: pix.qrCodeBase64,
+        ticketUrl: pix.ticketUrl,
+        expiresAt: pix.expiresAt ?? expiresAt,
       },
     });
+  },
+
+  /**
+   * Cobra no CARTÃO (crédito ou débito) com o token do Payment Brick.
+   * Débito pode exigir autenticação 3DS: nesse caso a cobrança fica PENDENTE e
+   * devolvemos a URL do desafio para o browser abrir; o webhook conclui depois.
+   * Sem desafio, o status é resolvido pelo mesmo caminho do webhook (idempotente).
+   */
+  async processCardPayment(
+    tenantId: string,
+    input: CardPaymentInput,
+    ctx?: TenantCtx,
+  ): Promise<CardPaymentResult> {
+    // A maioria dos emissores brasileiros recusa débito sem CPF do portador.
+    if (input.method === "DEBIT_CARD" && !input.payer.identification) {
+      throw new ValidationError("Informe o CPF do titular para pagar no débito.", {
+        "payer.identification": "Obrigatório para cartão de débito",
+      });
+    }
+
+    const now = new Date();
+    const charge = await prepareCharge(tenantId, input.planId, ctx, now);
+    const externalRef = `${charge.externalRefPrefix}:${input.method.toLowerCase()}`;
+
+    // O cartão substitui qualquer PIX ainda em aberto do mesmo mês.
+    await prisma.subscriptionPayment.updateMany({
+      where: { tenantId, referenceMonth: charge.refMonth, status: "PENDENTE" },
+      data: { status: "CANCELADO" },
+    });
+
+    const paid = await createCardPayment({
+      amount: toNumber(charge.amount),
+      description: charge.description,
+      externalReference: externalRef,
+      token: input.token,
+      paymentMethodId: input.paymentMethodId,
+      paymentTypeId: CARD_PAYMENT_TYPE[input.method],
+      issuerId: input.issuerId,
+      installments: input.installments,
+      payer: input.payer,
+    });
+
+    await prisma.subscriptionPayment.create({
+      data: {
+        subscriptionId: charge.subscriptionId,
+        tenantId,
+        amount: charge.amount,
+        status: "PENDENTE",
+        method: input.method,
+        statusDetail: paid.statusDetail,
+        threeDsUrl: paid.threeDs?.externalResourceUrl ?? null,
+        referenceMonth: charge.refMonth,
+        mpPaymentId: paid.mpPaymentId,
+        mpExternalRef: externalRef,
+      },
+    });
+
+    // Desafio 3DS: o pagamento só se resolve depois que o portador autenticar.
+    if (paid.threeDs) {
+      logger.info({ tenantId, mpPaymentId: paid.mpPaymentId }, "Cartão exigiu desafio 3DS");
+      return {
+        status: "PENDENTE",
+        statusDetail: paid.statusDetail,
+        mpPaymentId: paid.mpPaymentId,
+        referenceMonth: charge.refMonth,
+        threeDsUrl: paid.threeDs.externalResourceUrl,
+        threeDsCreq: paid.threeDs.creq,
+      };
+    }
+
+    await this.handleWebhook(paid.mpPaymentId);
+    const row = await prisma.subscriptionPayment.findUniqueOrThrow({
+      where: { mpPaymentId: paid.mpPaymentId },
+    });
+    return {
+      status: row.status,
+      statusDetail: row.statusDetail,
+      mpPaymentId: row.mpPaymentId,
+      referenceMonth: row.referenceMonth,
+      threeDsUrl: null,
+      threeDsCreq: null,
+    };
   },
 
   /**
@@ -213,8 +326,8 @@ export const BillingService = {
    * Retorna o que aconteceu, para o webhook e o cron logarem de forma útil.
    */
   async applyPaymentStatus(mp: MpPayment): Promise<"aplicado" | "ignorado" | "nao_encontrado"> {
-    // Cartão nasce de uma Preference: o pagamento só ganha id na hora do pagamento,
-    // então correlacionamos pela referência externa e anexamos o mpPaymentId.
+    // Cobranças criadas por Preference só ganham id na hora do pagamento:
+    // correlacionamos pela referência externa e anexamos o mpPaymentId.
     let payment = await prisma.subscriptionPayment.findUnique({
       where: { mpPaymentId: mp.id },
     });
@@ -244,8 +357,11 @@ export const BillingService = {
         where: { id: payment.id, status: { not: newStatus } },
         data: {
           status: newStatus,
+          statusDetail: mp.statusDetail ?? payment.statusDetail,
+          // Saiu de pendente: o desafio 3DS não vale mais nada.
+          threeDsUrl: newStatus === "PENDENTE" ? payment.threeDsUrl : null,
           paidAt: newStatus === "APROVADO" ? (mp.paidAt ?? new Date()) : payment.paidAt,
-          method: payment.method ?? mp.method,
+          method: payment.method ?? mapMpMethod(mp),
           rawPayload: mp as unknown as object,
         },
       });
@@ -311,7 +427,7 @@ export const BillingService = {
    * Rede de segurança para webhook perdido: consulta no Mercado Pago as cobranças
    * ainda PENDENTES do mês atual e do anterior e aplica o status real.
    */
-  async reconcilePending(now = new Date()) {
+  async reconcilePendingPayments(now = new Date()) {
     if (!isMercadoPagoConfigured()) return { verificados: 0, atualizados: 0 };
 
     const cutoff = new Date(now.getTime() - RECONCILE_MIN_AGE_MINUTES * 60 * 1000);
@@ -328,8 +444,9 @@ export const BillingService = {
 
     let atualizados = 0;
     for (const p of pendentes) {
+      if (!p.mpPaymentId) continue;
       try {
-        const mp = await getPayment(p.mpPaymentId!);
+        const mp = await getPayment(p.mpPaymentId);
         const r = await this.applyPaymentStatus(mp);
         if (r === "aplicado") atualizados++;
       } catch (e) {

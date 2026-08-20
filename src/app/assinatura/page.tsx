@@ -10,7 +10,7 @@ import { AssinaturaClient } from "./_components/assinatura-client";
 export const dynamic = "force-dynamic";
 
 export default async function AssinaturaPage() {
-  const { tenantId } = await requireTenant();
+  const { session, tenantId } = await requireTenant();
   const status = await BillingService.getStatus(tenantId);
   const sub = status?.sub;
   const charge = status?.pendingCharge ?? null;
@@ -30,6 +30,7 @@ export default async function AssinaturaPage() {
       <AssinaturaClient
         mpConfigured={BillingService.mpConfigured()}
         monthlyAmount={sub ? Number(sub.monthlyAmount) : 0}
+        payerEmail={session.email || undefined}
         initialCharge={
           charge?.qrCode
             ? {
