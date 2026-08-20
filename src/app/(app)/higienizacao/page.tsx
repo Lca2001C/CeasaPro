@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Plus, ChevronRight } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
+import { higienizacaoStatusEnum } from "@/lib/validations/higienizacao";
 import { formatBRL, formatDate } from "@/lib/format";
 import { CRATE_CLEANING_STATUS_LABELS } from "@/lib/labels";
 import { PageHeader } from "@/components/data/page-header";
@@ -19,16 +20,30 @@ const STATUS_VARIANT: Record<string, "success" | "warning" | "secondary"> = {
   PAGO: "success",
 };
 
-export default async function HigienizacaoPage() {
+const FILTROS = [
+  { value: "", label: "Todos" },
+  { value: "ENVIADO", label: "Enviados" },
+  { value: "DEVOLVIDO", label: "Devolvidos" },
+  { value: "PAGO", label: "Pagos" },
+] as const;
+
+export default async function HigienizacaoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ status?: string }>;
+}) {
+  const { status: rawStatus } = await searchParams;
+  const status = higienizacaoStatusEnum.safeParse(rawStatus).data;
+
   const { tenantId } = await requireTenant();
-  const { registros, caixasAReceber, totalAPagar } =
-    await HigienizacaoService.list(tenantId);
+  const { registros, caixasAReceber, totalAPagar, saldo } =
+    await HigienizacaoService.list(tenantId, status);
 
   return (
     <div>
       <PageHeader
         title="Higienização"
-        description="Caixas enviadas para higienização e o financeiro do serviço."
+        description="Fila de lavagem das caixas e o financeiro do serviço."
         action={
           <Button asChild size="sm">
             <Link href="/higienizacao/nova">
@@ -38,9 +53,42 @@ export default async function HigienizacaoPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-2">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <StatCard
+          label="Sujas"
+          value={String(saldo.sujas)}
+          hint="Aguardando lavagem"
+          tone="warning"
+        />
+        <StatCard
+          label="Em higienização"
+          value={String(saldo.emHigienizacao)}
+          hint="Com o higienizador"
+        />
+        <StatCard
+          label="Limpas"
+          value={String(saldo.limpas)}
+          hint="Prontas para vender"
+          tone="success"
+        />
+        <StatCard label="Com clientes" value={String(saldo.comClientes)} />
         <StatCard label="Caixas a receber" value={String(caixasAReceber)} tone="warning" />
         <StatCard label="Total a pagar" value={formatBRL(totalAPagar)} tone="destructive" />
+      </div>
+
+      <div className="mb-4 flex flex-wrap gap-2">
+        {FILTROS.map((f) => (
+          <Button
+            key={f.value}
+            asChild
+            size="sm"
+            variant={(status ?? "") === f.value ? "default" : "outline"}
+          >
+            <Link href={f.value ? `/higienizacao?status=${f.value}` : "/higienizacao"}>
+              {f.label}
+            </Link>
+          </Button>
+        ))}
       </div>
 
       {registros.length === 0 ? (

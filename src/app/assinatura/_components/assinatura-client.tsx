@@ -9,10 +9,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
-interface Charge {
+export interface Charge {
+  method: string | null;
   qrCode: string | null;
   qrCodeBase64: string | null;
   ticketUrl: string | null;
+  preferenceId?: string | null;
   amount: string;
 }
 
@@ -54,79 +56,13 @@ export function AssinaturaClient({
 }) {
   const [charge, setCharge] = useState<Charge | null>(initialCharge);
   const [loading, setLoading] = useState(false);
-  const [paid, setPaid] = useState(false);
-  // Enquanto true, faz polling do status (QR PIX exibido ou cartão enviado/pendente).
-  const [awaiting, setAwaiting] = useState(Boolean(initialCharge?.qrCodeBase64));
-  const confirmed = useRef(false);
 
-  const cardEnabled = Boolean(PUBLIC_KEY);
-
-  // Inicializa o SDK do Mercado Pago no browser (uma vez).
-  useEffect(() => {
-    if (!cardEnabled) return;
-    import("@mercadopago/sdk-react").then(({ initMercadoPago }) => {
-      initMercadoPago(PUBLIC_KEY!, { locale: "pt-BR" });
-    });
-  }, [cardEnabled]);
-
-  const confirmPaid = useCallback(async () => {
-    if (confirmed.current) return;
-    confirmed.current = true;
-    setPaid(true);
-    toast.success("Pagamento confirmado! Liberando o acesso...");
-    await apiPost("/api/auth/refresh", {}); // renova o token com o novo status
-    setTimeout(() => window.location.assign("/dashboard"), 1200);
-  }, []);
-
-  // Polling do status enquanto aguardando confirmação.
-  useEffect(() => {
-    if (!awaiting || paid) return;
-    const timer = setInterval(async () => {
-      const res = await apiGet<BillingStatus>("/api/billing/status");
-      if (res.ok && res.data.paidThisMonth && !confirmed.current) {
-        clearInterval(timer);
-        void confirmPaid();
-      }
-    }, POLL_MS);
-    return () => clearInterval(timer);
-  }, [awaiting, paid, confirmPaid]);
-
-  async function gerarPix() {
+  async function gerar() {
     setLoading(true);
     const res = await apiPost<Charge>("/api/billing/checkout", {});
     setLoading(false);
-    if (res.ok) {
-      setCharge(res.data);
-      setAwaiting(true);
-    } else {
-      toast.error(res.error.message);
-    }
-  }
-
-  // Card Brick → envia o token ao backend. Retorna Promise (contrato do Brick).
-  async function onCardSubmit(formData: {
-    token: string;
-    payment_method_id: string;
-    installments: number;
-  }) {
-    const res = await apiPost<CardCheckout>("/api/billing/checkout/card", {
-      token: formData.token,
-      paymentMethodId: formData.payment_method_id,
-      installments: 1,
-    });
-    if (!res.ok) {
-      toast.error(res.error.message);
-      return;
-    }
-    if (res.data.status === "approved") {
-      await confirmPaid();
-    } else if (res.data.status === "rejected") {
-      toast.error("Pagamento recusado. Tente outro cartão.");
-    } else {
-      // in_process / pending (ex.: 3DS/análise) — o webhook confirma; começa o polling.
-      toast.info("Pagamento em análise. Aguarde a confirmação.");
-      setAwaiting(true);
-    }
+    if (res.ok) setCharge(res.data);
+    else toast.error(res.error.message);
   }
 
   if (!mpConfigured) {
@@ -140,47 +76,38 @@ export function AssinaturaClient({
     );
   }
 
-  if (paid) {
+  if (charge?.qrCodeBase64) {
     return (
       <Card>
         <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
-          <CheckCircle2 className="size-12 text-success" />
-          <p className="font-medium">Pagamento confirmado!</p>
-          <p className="text-sm text-muted-foreground">Liberando o seu acesso...</p>
+          <p className="font-medium">Pague com PIX para ativar/renovar</p>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={`data:image/png;base64,${charge.qrCodeBase64}`}
+            alt="QR Code PIX"
+            className="size-56 rounded-lg border"
+          />
+          {charge.qrCode && (
+            <Button
+              variant="outline"
+              onClick={() => {
+                navigator.clipboard.writeText(charge.qrCode!);
+                toast.success("Código PIX copiado");
+              }}
+            >
+              <Copy /> Copiar código PIX
+            </Button>
+          )}
+          <p className="text-xs text-muted-foreground">
+            Após o pagamento, o acesso é liberado automaticamente em alguns instantes.
+          </p>
         </CardContent>
       </Card>
     );
   }
 
-  const pixPanel = charge?.qrCodeBase64 ? (
-    <Card>
-      <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
-        <p className="font-medium">Pague com PIX para ativar/renovar</p>
-        {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img
-          src={`data:image/png;base64,${charge.qrCodeBase64}`}
-          alt="QR Code PIX"
-          className="size-56 rounded-lg border"
-        />
-        {charge.qrCode && (
-          <Button
-            variant="outline"
-            onClick={() => {
-              navigator.clipboard.writeText(charge.qrCode!);
-              toast.success("Código PIX copiado");
-            }}
-          >
-            <Copy /> Copiar código PIX
-          </Button>
-        )}
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 className="size-3 animate-spin" />
-          Aguardando o pagamento — o acesso libera sozinho após a confirmação.
-        </p>
-      </CardContent>
-    </Card>
-  ) : (
-    <Button size="lg" className="w-full" onClick={gerarPix} disabled={loading}>
+  return (
+    <Button size="lg" className="w-full" onClick={gerar} disabled={loading}>
       {loading ? <Loader2 className="animate-spin" /> : <QrCode />} Gerar cobrança PIX
     </Button>
   );

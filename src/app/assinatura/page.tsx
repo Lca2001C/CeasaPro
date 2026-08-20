@@ -33,9 +33,11 @@ export default async function AssinaturaPage() {
         initialCharge={
           charge?.qrCode
             ? {
+                method: charge.method,
                 qrCode: charge.qrCode,
                 qrCodeBase64: charge.qrCodeBase64,
                 ticketUrl: charge.ticketUrl,
+                preferenceId: charge.mpPreferenceId,
                 amount: charge.amount.toString(),
               }
             : null

@@ -53,6 +53,9 @@ export default async function VendasPage() {
                     <Badge variant={v.paymentMethod === "FIADO" ? "warning" : "secondary"}>
                       {PAYMENT_METHOD_LABELS[v.paymentMethod]}
                     </Badge>
+                    {v.plasticCrateQty > 0 && (
+                      <Badge variant="outline">{v.plasticCrateQty} cx</Badge>
+                    )}
                   </div>
                   <span className="text-xs text-muted-foreground">
                     {formatDateTime(v.saleDate)} · {v.items.length} item(ns)

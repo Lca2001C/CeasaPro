@@ -9,6 +9,14 @@ export const higienizacaoSchema = z.object({
 });
 export type HigienizacaoInput = z.infer<typeof higienizacaoSchema>;
 
+export const higienizacaoUpdateSchema = higienizacaoSchema.extend({
+  id: z.string().min(1),
+});
+export type HigienizacaoUpdateInput = z.infer<typeof higienizacaoUpdateSchema>;
+
+export const higienizacaoStatusEnum = z.enum(["ENVIADO", "DEVOLVIDO", "PAGO"]);
+export type HigienizacaoStatus = z.infer<typeof higienizacaoStatusEnum>;
+
 export const higienizacaoDevolucaoSchema = z.object({
   id: z.string().min(1),
   quantity: z.number().int().positive("Quantidade inválida"),

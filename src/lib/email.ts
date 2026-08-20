@@ -177,6 +177,37 @@ export function welcomeOwnerEmail(args: {
   };
 }
 
+export function paymentApprovedEmail(args: {
+  ownerName: string;
+  tradeName: string;
+  amount: string;
+  referenceMonth: string;
+  nextDueDate: Date;
+  appUrl: string;
+}): { subject: string; html: string } {
+  const valor = new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(args.amount));
+  const vencimento = new Intl.DateTimeFormat("pt-BR").format(args.nextDueDate);
+  return {
+    subject: `CeasaPro - Pagamento confirmado (${args.referenceMonth})`,
+    html: `
+      <div style="font-family:sans-serif;max-width:520px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>Ola, ${escapeHtml(args.ownerName)}.</p>
+        <p>Recebemos o pagamento da mensalidade de <strong>${escapeHtml(args.tradeName)}</strong>.</p>
+        <div style="background:#f6f7f8;border:1px solid #e1e4e8;border-radius:8px;padding:12px;margin:16px 0">
+          <p style="margin:0 0 8px"><strong>Mes de referencia:</strong> ${escapeHtml(args.referenceMonth)}</p>
+          <p style="margin:0 0 8px"><strong>Valor pago:</strong> ${escapeHtml(valor)}</p>
+          <p style="margin:0"><strong>Proximo vencimento:</strong> ${escapeHtml(vencimento)}</p>
+        </div>
+        <p><a href="${escapeHtml(args.appUrl)}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Acessar CeasaPro</a></p>
+        <p style="color:#666;font-size:13px">Seu acesso ja esta liberado. Obrigado!</p>
+      </div>`,
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

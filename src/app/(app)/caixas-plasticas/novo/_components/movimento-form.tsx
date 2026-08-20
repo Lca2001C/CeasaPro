@@ -5,39 +5,66 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { registrarMovimentoCaixa } from "@/actions/caixas.actions";
+import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
+import type { CrateSaldo } from "@/lib/services/caixas.service";
 import { CRATE_MOVEMENT_LABELS, toOptions } from "@/lib/labels";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-export function MovimentoCaixaForm() {
+type Tipo = CaixaMovimentoInput["type"];
+
+/** Quantas caixas o tipo escolhido pode consumir — orienta o usuário antes do erro. */
+function disponivel(type: Tipo, saldo: CrateSaldo): string | null {
+  switch (type) {
+    case "SAIDA":
+      return `${saldo.limpas} caixa(s) limpa(s) em estoque`;
+    case "RETORNO":
+      return `${saldo.comClientes} caixa(s) com clientes`;
+    case "SAIDA_HIGIENIZACAO":
+      return `${saldo.sujas} caixa(s) suja(s) em estoque`;
+    case "RETORNO_HIGIENIZACAO":
+      return `${saldo.emHigienizacao} caixa(s) no higienizador`;
+    default:
+      return null;
+  }
+}
+
+export function MovimentoCaixaForm({ saldo }: { saldo: CrateSaldo }) {
   const router = useRouter();
-  const [type, setType] = useState("ENTRADA");
+  const [type, setType] = useState<Tipo>("ENTRADA");
   const [quantity, setQuantity] = useState("");
   const [brokenQty, setBrokenQty] = useState("");
+  const [dirty, setDirty] = useState(false);
   const [customerName, setCustomerName] = useState("");
   const [supplierName, setSupplierName] = useState("");
+  const [cleanerName, setCleanerName] = useState("");
   const [movementDate, setMovementDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   const needsCustomer = type === "SAIDA" || type === "RETORNO";
+  const needsCleaner = type === "SAIDA_HIGIENIZACAO" || type === "RETORNO_HIGIENIZACAO";
   const isEntrada = type === "ENTRADA";
   const isQuebra = type === "QUEBRA";
+  const hint = disponivel(type, saldo);
 
   async function submit() {
     const qty = parseInt(quantity, 10);
     if (!qty || qty <= 0) return toast.error("Informe a quantidade.");
     if (needsCustomer && !customerName.trim()) return toast.error("Informe o cliente.");
+    if (needsCleaner && !cleanerName.trim()) return toast.error("Informe o higienizador.");
 
     setSaving(true);
     const res = await registrarMovimentoCaixa({
-      type: type as "ENTRADA",
+      type,
       quantity: qty,
       brokenQty: isEntrada && brokenQty ? parseInt(brokenQty, 10) : undefined,
+      dirty: isEntrada || isQuebra ? dirty : undefined,
       customerName: customerName.trim() || null,
       supplierName: supplierName.trim() || null,
+      cleanerName: cleanerName.trim() || null,
       movementDate,
       notes: notes.trim() || null,
     });
@@ -54,13 +81,14 @@ export function MovimentoCaixaForm() {
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label>Tipo de movimentação</Label>
-        <Select value={type} onChange={(e) => setType(e.target.value)}>
+        <Select value={type} onChange={(e) => setType(e.target.value as Tipo)}>
           {toOptions(CRATE_MOVEMENT_LABELS).map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
           ))}
         </Select>
+        {hint && <span className="text-xs text-muted-foreground">Disponível: {hint}</span>}
       </div>
 
       <div className="grid grid-cols-2 gap-3">
@@ -99,12 +127,37 @@ export function MovimentoCaixaForm() {
         </>
       )}
 
+      {(isEntrada || isQuebra) && (
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            className="size-4"
+            checked={dirty}
+            onChange={(e) => setDirty(e.target.checked)}
+          />
+          {isEntrada
+            ? "As caixas chegaram sujas (vão para a fila de higienização)"
+            : "A caixa quebrada estava suja (aguardando higienização)"}
+        </label>
+      )}
+
       {(needsCustomer || isQuebra) && (
         <div className="flex flex-col gap-1.5">
           <Label>
             {isQuebra ? "Cliente (se a caixa sumiu com um cliente — opcional)" : "Cliente"}
           </Label>
           <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+        </div>
+      )}
+
+      {(needsCleaner || isQuebra) && (
+        <div className="flex flex-col gap-1.5">
+          <Label>
+            {isQuebra
+              ? "Higienizador (se a caixa sumiu na lavagem — opcional)"
+              : "Higienizador"}
+          </Label>
+          <Input value={cleanerName} onChange={(e) => setCleanerName(e.target.value)} />
         </div>
       )}
 

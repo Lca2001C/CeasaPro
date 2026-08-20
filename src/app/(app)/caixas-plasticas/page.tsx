@@ -18,6 +18,8 @@ const BADGE_VARIANT: Record<string, "success" | "warning" | "secondary" | "destr
   SAIDA: "warning",
   RETORNO: "secondary",
   QUEBRA: "destructive",
+  SAIDA_HIGIENIZACAO: "warning",
+  RETORNO_HIGIENIZACAO: "success",
 };
 
 export default async function CaixasPlasticasPage() {
@@ -41,10 +43,26 @@ export default async function CaixasPlasticasPage() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-3 gap-2">
-        <StatCard label="Vazias no estoque" value={String(saldo.vazias)} />
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
+        <StatCard
+          label="Limpas (prontas)"
+          value={String(saldo.limpas)}
+          tone="success"
+          hint="Disponíveis para vender"
+        />
+        <StatCard
+          label="Sujas"
+          value={String(saldo.sujas)}
+          hint="Aguardando higienização"
+        />
+        <StatCard
+          label="Em higienização"
+          value={String(saldo.emHigienizacao)}
+          hint="Com o higienizador"
+        />
         <StatCard label="Com clientes" value={String(saldo.comClientes)} tone="warning" />
         <StatCard label="Perdidas/quebradas" value={String(saldo.perdidas)} tone="destructive" />
+        <StatCard label="Total no estoque" value={String(saldo.vazias)} hint="Limpas + sujas" />
       </div>
 
       {movimentos.length === 0 ? (

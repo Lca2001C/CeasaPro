@@ -5,6 +5,7 @@ import { EstoqueService } from "@/lib/services/estoque.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { add, sub, toDecimal, money } from "@/lib/money";
+import { formatQty } from "@/lib/format";
 import {
   PAYMENT_METHOD_LABELS,
   EXPENSE_TYPE_LABELS,
@@ -79,12 +80,22 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "FIADO": {
-      const contas = await db.creditAccount.findMany({
-        where: { status: "EM_ABERTO" },
-        orderBy: { createdAt: "asc" },
-      });
+      const [contas, caixasPorCliente] = await Promise.all([
+        db.creditAccount.findMany({
+          where: { status: "EM_ABERTO" },
+          include: { sale: { include: { items: { include: { product: true } } } } },
+          orderBy: { createdAt: "asc" },
+        }),
+        CaixasService.saldoPorCliente(p.tenantId),
+      ]);
       const rows = contas.map((c) => ({
+        saleDate: c.sale?.saleDate ?? c.createdAt,
         customerName: c.customerName,
+        produtos:
+          c.sale?.items.map((i) => `${i.product.name} (${formatQty(i.quantity)})`).join(", ") ||
+          "—",
+        caixas: c.sale?.plasticCrateQty ?? 0,
+        aDevolver: caixasPorCliente.get(c.customerName) ?? 0,
         totalAmount: c.totalAmount,
         paidAmount: c.paidAmount,
         saldo: FinancialCalc.saldoFiado(c.totalAmount, c.paidAmount),
@@ -93,13 +104,22 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       return {
         ...base,
         columns: [
+          { key: "saleDate", label: "Venda", format: "date" },
           { key: "customerName", label: "Cliente" },
+          { key: "produtos", label: "Produtos" },
+          { key: "caixas", label: "Caixas", align: "right", format: "int" },
+          { key: "aDevolver", label: "A devolver", align: "right", format: "int" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
           { key: "paidAmount", label: "Pago", align: "right", format: "money" },
           { key: "saldo", label: "Saldo", align: "right", format: "money" },
         ],
         rows,
-        totals: { customerName: "TOTAL", saldo: add(...rows.map((r) => r.saldo)) },
+        totals: {
+          customerName: "TOTAL",
+          caixas: rows.reduce((a, r) => a + r.caixas, 0),
+          aDevolver: rows.reduce((a, r) => a + r.aDevolver, 0),
+          saldo: add(...rows.map((r) => r.saldo)),
+        },
       };
     }
 
@@ -657,35 +677,42 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         type: CRATE_MOVEMENT_LABELS[m.type],
         quantity: m.quantity,
         brokenQty: m.brokenQty,
-        who: m.customerName ?? m.supplierName ?? "—",
+        who: m.customerName ?? m.cleanerName ?? m.supplierName ?? "—",
       }));
       return {
         ...base,
         columns: [
           { key: "movementDate", label: "Data", format: "date" },
           { key: "type", label: "Tipo" },
-          { key: "who", label: "Cliente/Origem" },
+          { key: "who", label: "Cliente/Higienizador/Origem" },
           { key: "quantity", label: "Qtd.", align: "right", format: "int" },
           { key: "brokenQty", label: "Quebradas", align: "right", format: "int" },
         ],
         rows,
         totals: {
-          type: `Saldo: ${saldo.vazias} vazias · ${saldo.comClientes} c/ clientes · ${saldo.perdidas} perdidas`,
+          type:
+            `Saldo: ${saldo.limpas} limpas · ${saldo.sujas} sujas · ` +
+            `${saldo.emHigienizacao} em higienização · ${saldo.comClientes} c/ clientes · ` +
+            `${saldo.perdidas} perdidas`,
         },
       };
     }
 
     case "HIGIENIZACAO": {
-      const registros = await db.crateCleaning.findMany({
-        where: { sentDate: { gte: p.from, lte: p.to } },
-        orderBy: { sentDate: "asc" },
-      });
+      const [registros, saldo] = await Promise.all([
+        db.crateCleaning.findMany({
+          where: { sentDate: { gte: p.from, lte: p.to } },
+          orderBy: { sentDate: "asc" },
+        }),
+        CaixasService.getSaldo(p.tenantId),
+      ]);
       const rows = registros.map((c) => ({
         sentDate: c.sentDate,
         cleanerName: c.cleanerName,
         status: CRATE_CLEANING_STATUS_LABELS[c.status],
         sentQty: c.sentQty,
         returnedQty: c.returnedQty,
+        aReceber: Math.max(0, c.sentQty - c.returnedQty),
         totalAmount: c.totalAmount,
         paidAmount: c.paidAmount,
         aPagar: money(sub(c.totalAmount, c.paidAmount)),
@@ -698,6 +725,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "status", label: "Situacao" },
           { key: "sentQty", label: "Enviadas", align: "right", format: "int" },
           { key: "returnedQty", label: "Devolvidas", align: "right", format: "int" },
+          { key: "aReceber", label: "A receber", align: "right", format: "int" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
           { key: "paidAmount", label: "Pago", align: "right", format: "money" },
           { key: "aPagar", label: "A pagar", align: "right", format: "money" },
@@ -705,6 +733,10 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         rows,
         totals: {
           cleanerName: "TOTAL",
+          status: `Estoque: ${saldo.sujas} sujas · ${saldo.emHigienizacao} em higienização · ${saldo.limpas} limpas`,
+          sentQty: rows.reduce((a, r) => a + r.sentQty, 0),
+          returnedQty: rows.reduce((a, r) => a + r.returnedQty, 0),
+          aReceber: rows.reduce((a, r) => a + r.aReceber, 0),
           totalAmount: add(...rows.map((r) => r.totalAmount)),
           paidAmount: add(...rows.map((r) => r.paidAmount)),
           aPagar: add(...rows.map((r) => r.aPagar)),

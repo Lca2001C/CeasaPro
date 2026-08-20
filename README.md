@@ -138,8 +138,8 @@ Os testes de integração exigem o banco de pé (`docker compose up -d`). Eles c
 2. **Vercel:** importe o repositório. Configure todas as variáveis do `.env.example` em *Production* (e *Preview*). Gere segredos com `openssl rand -base64 32`.
 3. **Migrations em produção:** rode `npm run prisma:deploy` no pipeline de release (usa `DIRECT_URL`) — nunca `migrate dev` em produção.
 4. **Seed inicial** (uma vez): `npm run db:seed` apontando para o banco de produção (defina `SEED_SUPERADMIN_*`).
-5. **Mercado Pago:** configure `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET`. No painel do Mercado Pago, aponte o webhook para `https://SEU_DOMINIO/api/webhooks/mercadopago`.
-6. **Cron de cobrança:** o [`vercel.json`](vercel.json) já agenda `/api/cron/billing` (protegido por `CRON_SECRET`) diariamente.
+5. **Mercado Pago:** configure `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `APP_URL` (as três são **obrigatórias em produção** — a aplicação recusa gerar cobrança sem elas). No painel do Mercado Pago, em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MP_WEBHOOK_SECRET`. O mesmo endpoint atende PIX e cartão (Checkout Pro). `MP_PUBLIC_KEY` não é usada no fluxo por redirecionamento.
+6. **Cron de cobrança:** o [`vercel.json`](vercel.json) já agenda `/api/cron/billing` (protegido por `CRON_SECRET`) diariamente. Ele **reconcilia as cobranças pendentes** direto na API do Mercado Pago antes de recalcular os status — é a rede de segurança para webhook perdido.
 7. **E-mail:** verifique o domínio no Resend e configure `RESEND_API_KEY` / `EMAIL_FROM`.
 
 ## Backup (recomendado)

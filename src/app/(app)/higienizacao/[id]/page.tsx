@@ -1,11 +1,14 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
+import { Pencil } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { formatBRL, formatDate } from "@/lib/format";
-import { CRATE_CLEANING_STATUS_LABELS } from "@/lib/labels";
+import { CRATE_CLEANING_STATUS_LABELS, CRATE_MOVEMENT_LABELS } from "@/lib/labels";
 import { PageHeader } from "@/components/data/page-header";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { AcoesHigienizacao } from "./_components/acoes-higienizacao";
 
 export const dynamic = "force-dynamic";
@@ -20,15 +23,26 @@ export default async function HigienizacaoDetailPage({
   const c = await HigienizacaoService.get(tenantId, id).catch(() => null);
   if (!c) notFound();
 
+  const editavel = c.returnedQty === 0 && Number(c.paidAmount) === 0;
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
         title={c.cleanerName}
         description={`Envio de ${formatDate(c.sentDate)}`}
         action={
-          <Badge variant={c.status === "PAGO" ? "success" : "warning"}>
-            {CRATE_CLEANING_STATUS_LABELS[c.status]}
-          </Badge>
+          <div className="flex items-center gap-2">
+            <Badge variant={c.status === "PAGO" ? "success" : "warning"}>
+              {CRATE_CLEANING_STATUS_LABELS[c.status]}
+            </Badge>
+            {editavel && (
+              <Button asChild variant="ghost" size="icon" aria-label="Editar envio">
+                <Link href={`/higienizacao/${c.id}/editar`}>
+                  <Pencil className="size-4" />
+                </Link>
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -74,6 +88,37 @@ export default async function HigienizacaoDetailPage({
       </Card>
 
       {c.notes && <p className="text-sm text-muted-foreground">Obs.: {c.notes}</p>}
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">
+            Movimentação de caixas ({c.movimentos.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-2">
+          {c.movimentos.length === 0 ? (
+            <p className="text-sm text-muted-foreground">
+              Nenhum movimento de estoque vinculado a este envio.
+            </p>
+          ) : (
+            c.movimentos.map((m) => (
+              <div
+                key={m.id}
+                className="flex items-center justify-between border-b pb-2 text-sm last:border-0 last:pb-0"
+              >
+                <div className="min-w-0">
+                  <span className="block font-medium">{CRATE_MOVEMENT_LABELS[m.type]}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {formatDate(m.movementDate)}
+                    {m.notes ? ` · ${m.notes}` : ""}
+                  </span>
+                </div>
+                <span className="font-semibold tabular-nums">{m.quantity}</span>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
 
       <AcoesHigienizacao
         id={c.id}

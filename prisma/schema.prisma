@@ -114,8 +114,10 @@ enum ReportType {
 enum PlasticCrateMovementType {
   ENTRADA // caixas recebidas (com mercadoria comprada ou avulsas)
   SAIDA // caixas enviadas ao cliente
-  RETORNO // caixas devolvidas pelo cliente
-  QUEBRA // quebrada/perdida/sumida (com cliente ou no estoque)
+  RETORNO // caixas devolvidas pelo cliente (voltam sujas)
+  QUEBRA // quebrada/perdida/sumida (com cliente, no higienizador ou no estoque)
+  SAIDA_HIGIENIZACAO // caixas sujas enviadas ao higienizador
+  RETORNO_HIGIENIZACAO // caixas devolvidas limpas pelo higienizador
 }
 
 enum CrateCleaningStatus {
@@ -139,35 +141,35 @@ enum ReportStatus {
 // ───────────────────────── Plataforma / SaaS ─────────────────────────
 
 model Tenant {
-  id                  String       @id @default(cuid())
-  tradeName           String // nome fantasia
-  legalName           String? // razão social
-  cnpj                String?      @unique
-  phone               String?
-  address             String?
-  logoUrl             String?
-  businessHours       String?
-  status              TenantStatus @default(ACTIVE)
+  id                    String       @id @default(cuid())
+  tradeName             String // nome fantasia
+  legalName             String? // razão social
+  cnpj                  String?      @unique
+  phone                 String?
+  address               String?
+  logoUrl               String?
+  businessHours         String?
+  status                TenantStatus @default(ACTIVE)
   onboardingCompletedAt DateTime?
-  createdAt           DateTime     @default(now())
-  updatedAt           DateTime     @updatedAt
-  deletedAt           DateTime?
+  createdAt             DateTime     @default(now())
+  updatedAt             DateTime     @updatedAt
+  deletedAt             DateTime?
 
-  users             User[]
-  subscription      TenantSubscription?
-  products          Product[]
-  suppliers         Supplier[]
-  purchases         Purchase[]
-  sales             Sale[]
-  creditAccounts    CreditAccount[]
-  stockMovements    StockMovement[]
-  expenses          Expense[]
-  expenseCategories ExpenseCategory[]
-  reportExports     ReportExport[]
+  users                 User[]
+  subscription          TenantSubscription?
+  products              Product[]
+  suppliers             Supplier[]
+  purchases             Purchase[]
+  sales                 Sale[]
+  creditAccounts        CreditAccount[]
+  stockMovements        StockMovement[]
+  expenses              Expense[]
+  expenseCategories     ExpenseCategory[]
+  reportExports         ReportExport[]
   plasticCrateMovements PlasticCrateMovement[]
-  crateCleanings    CrateCleaning[]
-  packagingTypes    PackagingType[]
-  packagingSales    PackagingSale[]
+  crateCleanings        CrateCleaning[]
+  packagingTypes        PackagingType[]
+  packagingSales        PackagingSale[]
 
   @@index([status])
   @@map("tenants")
@@ -268,7 +270,11 @@ model SubscriptionPayment {
   qrCode         String?       @db.Text
   qrCodeBase64   String?       @db.Text
   ticketUrl      String?
+<<<<<<< HEAD
+  expiresAt      DateTime? // validade do QR PIX / da preferência de cartão
+=======
   expiresAt      DateTime? // validade do QR PIX (renovado pelo app quando vence)
+>>>>>>> f644e783a382991bbaf54b13f72f4aa83dfb88c6
   paidAt         DateTime?
   periodStart    DateTime?
   periodEnd      DateTime?
@@ -372,19 +378,21 @@ model PurchaseItem {
 }
 
 model Sale {
-  id            String        @id @default(cuid())
-  tenantId      String
-  customerName  String?
-  saleDate      DateTime      @default(now())
-  paymentMethod PaymentMethod
-  totalAmount   Decimal       @db.Decimal(14, 2)
-  createdAt     DateTime      @default(now())
-  updatedAt     DateTime      @updatedAt
-  deletedAt     DateTime?
+  id              String        @id @default(cuid())
+  tenantId        String
+  customerName    String?
+  saleDate        DateTime      @default(now())
+  paymentMethod   PaymentMethod
+  totalAmount     Decimal       @db.Decimal(14, 2)
+  plasticCrateQty Int           @default(0) // caixas plásticas que saíram nesta venda
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+  deletedAt       DateTime?
 
-  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  items         SaleItem[]
-  creditAccount CreditAccount?
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  items          SaleItem[]
+  creditAccount  CreditAccount?
+  crateMovements PlasticCrateMovement[]
 
   @@index([tenantId, saleDate])
   @@index([tenantId, paymentMethod])
@@ -399,6 +407,7 @@ model SaleItem {
   quantity       Decimal        @db.Decimal(14, 3)
   unitPrice      Decimal        @db.Decimal(14, 2)
   recipientType  RecipientType?
+  crateQty       Int            @default(0) // caixas/vasilhames deste item
   lineTotal      Decimal        @db.Decimal(14, 2)
   unitCostAtSale Decimal        @default(0) @db.Decimal(14, 4)
   createdAt      DateTime       @default(now())
@@ -422,6 +431,7 @@ model CreditAccount {
   paidAmount    Decimal      @default(0) @db.Decimal(14, 2)
   status        CreditStatus @default(EM_ABERTO)
   dueDate       DateTime?
+  notes         String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   deletedAt     DateTime?
@@ -537,21 +547,30 @@ model ReportExport {
 
 // Ledger de caixas plásticas — append-only, saldos são DERIVADOS (soma dos movimentos).
 model PlasticCrateMovement {
-  id           String                   @id @default(cuid())
-  tenantId     String
-  type         PlasticCrateMovementType
-  quantity     Int // sempre positivo; o "sinal" vem do type
-  brokenQty    Int                      @default(0) // caixas que já chegaram quebradas (na ENTRADA)
-  customerName String? // cliente (SAIDA/RETORNO; na QUEBRA indica perda com cliente)
-  supplierName String? // origem/fornecedor (ENTRADA)
-  movementDate DateTime                 @default(now())
-  notes        String?
-  createdAt    DateTime                 @default(now())
+  id              String                   @id @default(cuid())
+  tenantId        String
+  type            PlasticCrateMovementType
+  quantity        Int // sempre positivo; o "sinal" vem do type
+  brokenQty       Int                      @default(0) // caixas que já chegaram quebradas (na ENTRADA)
+  dirty           Boolean                  @default(false) // false = pote "limpas"; true = pote "sujas"
+  customerName    String? // cliente (SAIDA/RETORNO; na QUEBRA indica perda com cliente)
+  supplierName    String? // origem/fornecedor (ENTRADA)
+  cleanerName     String? // higienizador (SAIDA/RETORNO_HIGIENIZACAO; na QUEBRA indica perda no higienizador)
+  saleId          String? // venda que originou a saída de caixas
+  crateCleaningId String? // lote de higienização que originou o movimento
+  movementDate    DateTime                 @default(now())
+  notes           String?
+  createdAt       DateTime                 @default(now())
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant        Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  sale          Sale?          @relation(fields: [saleId], references: [id], onDelete: SetNull)
+  crateCleaning CrateCleaning? @relation(fields: [crateCleaningId], references: [id], onDelete: SetNull)
 
   @@index([tenantId, movementDate])
   @@index([tenantId, type])
+  @@index([tenantId, customerName])
+  @@index([saleId])
+  @@index([crateCleaningId])
   @@map("plastic_crate_movements")
 }
 
@@ -573,7 +592,8 @@ model CrateCleaning {
   updatedAt    DateTime            @updatedAt
   deletedAt    DateTime?
 
-  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  crateMovements PlasticCrateMovement[]
 
   @@index([tenantId, sentDate])
   @@index([tenantId, status])

@@ -72,6 +72,8 @@ export const CRATE_MOVEMENT_LABELS: Record<string, string> = {
   SAIDA: "Saída p/ cliente",
   RETORNO: "Retorno de cliente",
   QUEBRA: "Quebra/Perda",
+  SAIDA_HIGIENIZACAO: "Enviada p/ higienização",
+  RETORNO_HIGIENIZACAO: "Voltou da higienização",
 };
 
 export const CRATE_CLEANING_STATUS_LABELS: Record<string, string> = {

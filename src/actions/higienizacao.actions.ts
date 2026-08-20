@@ -5,6 +5,7 @@ import { withTenantAction } from "@/lib/http/with-action";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import {
   higienizacaoSchema,
+  higienizacaoUpdateSchema,
   higienizacaoDevolucaoSchema,
   higienizacaoPagamentoSchema,
 } from "@/lib/validations/higienizacao";
@@ -13,6 +14,11 @@ export const criarHigienizacao = withTenantAction({
   schema: higienizacaoSchema,
   module: "higienizacao",
   handler: (input, ctx) => HigienizacaoService.create(input, ctx),
+});
+
+export const atualizarHigienizacao = withTenantAction({
+  schema: higienizacaoUpdateSchema,
+  handler: (input, ctx) => HigienizacaoService.update(input, ctx),
 });
 
 export const registrarDevolucaoHigienizacao = withTenantAction({
