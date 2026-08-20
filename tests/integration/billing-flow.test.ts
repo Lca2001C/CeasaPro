@@ -10,39 +10,48 @@ const gw = vi.hoisted(() => ({
   paymentStatus: new Map<string, string>(), // mpPaymentId -> status no "MP"
 }));
 
-vi.mock("@/lib/payments/mercadopago", () => ({
-  isMercadoPagoConfigured: () => true,
-  PIX_EXPIRATION_HOURS: 24,
-  createPixPayment: vi.fn(async () => {
-    gw.createCalls += 1;
-    const id = `mp-${gw.createCalls}`;
-    gw.paymentStatus.set(id, "pending");
-    return {
-      mpPaymentId: id,
-      status: "pending",
-      qrCode: `PIXCOPIAECOLA-${id}`,
-      qrCodeBase64: "aW1hZ2VtLWZha2U=",
-      ticketUrl: `https://mp.fake/${id}`,
-      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
-    };
-  }),
-  createCardPayment: vi.fn(async () => {
-    gw.cardCalls += 1;
-    const id = `mpc-${gw.cardCalls}`;
-    gw.paymentStatus.set(id, gw.nextCardStatus);
-    return { mpPaymentId: id, status: gw.nextCardStatus };
-  }),
-  getPayment: vi.fn(async (id: string) => ({
-    id,
-    status: gw.paymentStatus.get(id) ?? "pending",
-    externalReference: null,
-    amount: 49.9,
-    method: id.startsWith("mpc-") ? "card" : "pix",
-  })),
-  verifyWebhookSignature: () => true,
-}));
+vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/payments/mercadopago")>();
+  return {
+    ...actual,
+    isMercadoPagoConfigured: () => true,
+    assertMercadoPagoConfig: vi.fn(),
+    createPixPayment: vi.fn(async () => {
+      gw.createCalls += 1;
+      const id = `mp-${gw.createCalls}`;
+      gw.paymentStatus.set(id, "pending");
+      return {
+        mpPaymentId: id,
+        status: "pending",
+        qrCode: `PIXCOPIAECOLA-${id}`,
+        qrCodeBase64: "aW1hZ2VtLWZha2U=",
+        ticketUrl: `https://mp.fake/${id}`,
+        expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000),
+      };
+    }),
+    createCardPayment: vi.fn(async () => {
+      gw.cardCalls += 1;
+      const id = `mpc-${gw.cardCalls}`;
+      gw.paymentStatus.set(id, gw.nextCardStatus);
+      return { mpPaymentId: id, status: gw.nextCardStatus };
+    }),
+    getPayment: vi.fn(async (id: string) => {
+      const status = gw.paymentStatus.get(id) ?? "pending";
+      return {
+        id,
+        status,
+        externalReference: null,
+        amount: 49.9,
+        method: id.startsWith("mpc-") ? "card" : "pix",
+        paidAt: status === "approved" ? new Date("2026-08-20T12:00:00.000Z") : null,
+      };
+    }),
+    verifyWebhookSignature: () => true,
+  };
+});
 
 import { BillingService } from "@/lib/services/billing.service";
+import { addOneMonth } from "@/lib/billing/status";
 
 let tenantId = "";
 let planId = "";
@@ -158,16 +167,14 @@ describe("Webhook de pagamento (idempotente, ativa a assinatura)", () => {
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     expect(sub?.status).toBe("ATIVO");
     expect(sub?.trialEndsAt).toBeNull();
-    const expected = new Date(periodEndInicial);
-    expected.setMonth(expected.getMonth() + 1);
+    const expected = addOneMonth(periodEndInicial);
     expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
   });
 
   it("reentrega do mesmo webhook NÃO avança o vencimento de novo (idempotência)", async () => {
     await BillingService.handleWebhook("mp-2");
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    const expected = new Date(periodEndInicial);
-    expected.setMonth(expected.getMonth() + 1);
+    const expected = addOneMonth(periodEndInicial);
     expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
   });
 
@@ -198,7 +205,7 @@ describe("Webhook de pagamento (idempotente, ativa a assinatura)", () => {
 
   it("webhook de pagamento desconhecido não explode (loga e segue)", async () => {
     gw.paymentStatus.set("mp-fantasma", "approved");
-    await expect(BillingService.handleWebhook("mp-fantasma")).resolves.toBeUndefined();
+    await expect(BillingService.handleWebhook("mp-fantasma")).resolves.toBe("nao_encontrado");
   });
 });
 
@@ -224,8 +231,7 @@ describe("Cobrança com CARTÃO (Card Brick)", () => {
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("ATIVO");
     expect(sub?.trialEndsAt).toBeNull();
-    const expected = new Date(periodEndInicial);
-    expected.setMonth(expected.getMonth() + 1);
+    const expected = addOneMonth(periodEndInicial);
     expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
   });
 
