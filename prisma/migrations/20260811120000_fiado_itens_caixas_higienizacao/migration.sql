@@ -16,9 +16,6 @@ ALTER TABLE "sale_items" ADD COLUMN     "crateQty" INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE "credit_accounts" ADD COLUMN     "notes" TEXT;
 
 -- AlterTable
-ALTER TABLE "subscription_payments" ADD COLUMN     "expiresAt" TIMESTAMP(3);
-
--- AlterTable
 ALTER TABLE "plastic_crate_movements" ADD COLUMN     "cleanerName" TEXT,
 ADD COLUMN     "crateCleaningId" TEXT,
 ADD COLUMN     "dirty" BOOLEAN NOT NULL DEFAULT false,

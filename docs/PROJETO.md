@@ -741,6 +741,4 @@ Todas as fases planejadas foram entregues: **Fase 1** (MVP: auth multi-empresa, 
 
 Pendências conhecidas no working tree no momento em que este documento foi escrito:
 
-- **Marcadores de conflito de merge não resolvidos** em três arquivos, que impedem o typecheck e a suíte de testes de passarem: `prisma/schema.prisma` (comentário do campo `SubscriptionPayment.expiresAt`), `src/app/(app)/higienizacao/nova/_components/higienizacao-form.tsx` (redirecionamento após salvar, criação vs. edição) e `tests/unit/mp-webhook-signature.test.ts`.
 - **`docs/ESPECIFICACAO.md` está referenciado** pelo README da raiz e pelo índice de `docs/`, mas **não existe** no repositório.
-- As migrations 5 e 6 **ambas** adicionam `expiresAt` a `subscription_payments`; em bancos já migrados o Prisma não reaplica, mas a sobreposição merece atenção em uma base nova.

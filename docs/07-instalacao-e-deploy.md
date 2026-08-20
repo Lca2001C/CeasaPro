@@ -2,7 +2,7 @@
 
 ## Pré-requisitos
 
-- **Node.js 20+**
+- **Node.js 22+**
 - **Docker** (para o PostgreSQL local) — ou um PostgreSQL já instalado
 - Para produção: contas em **Vercel**, **Neon** (Postgres), **Resend** (e-mail) e **Mercado Pago**
 

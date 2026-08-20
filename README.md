@@ -40,7 +40,7 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 
 ## Pré-requisitos
 
-- **Node.js 20+**
+- **Node.js 22+**
 - **Docker** (para o PostgreSQL local) — ou um PostgreSQL já instalado
 - Contas (para produção): Neon, Vercel, Resend, Mercado Pago
 
