@@ -4,6 +4,7 @@ import { forgotSchema } from "@/lib/validations/auth";
 import { sendEmail, passwordResetEmail } from "@/lib/email";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { clientIp } from "@/lib/http/request";
+import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -35,6 +36,11 @@ export async function POST(req: Request) {
       },
     });
     const link = `${process.env.APP_URL ?? "http://localhost:3000"}/recuperar-senha/${raw}`;
+    // Em dev, sem RESEND_API_KEY o e-mail não é enviado (no-op). Logamos o link
+    // para permitir testar o fluxo de redefinição localmente sem caixa de e-mail.
+    if (!process.env.RESEND_API_KEY) {
+      logger.info({ link }, "[DEV] Link de redefinição de senha");
+    }
     const { subject, html } = passwordResetEmail(link);
     await sendEmail(user.email, subject, html);
   }
