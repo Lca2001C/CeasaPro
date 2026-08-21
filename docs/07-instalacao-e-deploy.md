@@ -63,16 +63,11 @@ Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toStr
 
 ## Deploy de baixo custo (Vercel + Neon + Resend)
 
-1. **Banco (Neon):** crie um projeto Postgres. Copie a *connection string* **pooled** para `DATABASE_URL` e a **direct** para `DIRECT_URL`.
-2. **Vercel:** importe o repositório. Configure **todas** as variáveis do `.env.example` em *Production* (e *Preview*).
-3. **Migrations em produção:** rode `npm run prisma:deploy` (`prisma migrate deploy`, usa `DIRECT_URL`) no pipeline de release — **nunca** `migrate dev` em produção.
-4. **Seed inicial** (uma vez), apontando para o banco de produção, com `SEED_SUPERADMIN_*` definidos.
-5. **Mercado Pago:** configure `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET`; no painel do Mercado Pago aponte o webhook para `https://SEU_DOMINIO/api/webhooks/mercadopago`.
-6. **Cron:** o [`vercel.json`](../vercel.json) já agenda `/api/cron/billing` diariamente (protegido por `CRON_SECRET`).
-7. **E-mail:** verifique o domínio no Resend e configure `RESEND_API_KEY`/`EMAIL_FROM`.
-8. **Pré-flight:** rode `npm run preflight` apontando para o ambiente de destino antes de liberar o deploy. Ele falha se faltar variável, se o banco não responder ou se sobrar resíduo de período gratuito.
+O procedimento **completo** (contas, variáveis, migrations, seed, webhook, cron, domínio e troubleshooting) está em:
 
-> O `build` roda `prisma generate` antes do `next build` (necessário na Vercel).
+**[09 — Deploy na Vercel e no Render](09-deploy-render-e-vercel.md)**
+
+Resumo: app na Vercel (região São Paulo) + Postgres no Neon, **ou** app + Postgres no Render. Sempre `prisma migrate deploy` no build; seed uma vez com `SEED_DEMO=false`; webhook em `https://SEU-DOMINIO/api/webhooks/mercadopago`.
 
 ## Backup
 

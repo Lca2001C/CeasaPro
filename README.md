@@ -118,6 +118,7 @@ Acesse http://localhost:3000.
 | `npm run prisma:deploy` | Aplicar migrations (produção) |
 | `npm run db:seed` | Popular dados iniciais |
 | `npm run preflight` | Valida env, banco e ausência de resíduo de trial |
+| `npm run cron:billing` | Dispara o cron de cobrança (usado no Render) |
 
 ## Testes
 
@@ -131,17 +132,13 @@ Os testes de integração exigem o banco de pé (`docker compose up -d`). Eles c
 
 ---
 
-## Deploy (baixo custo)
+## Deploy (produção)
 
-**App na Vercel + Banco no Neon + E-mail no Resend.**
+Guia completo, passo a passo, para **Vercel + Neon** e para **Render** (web + Postgres + cron):
 
-1. **Banco (Neon):** crie um projeto Postgres. Copie a *connection string* **pooled** para `DATABASE_URL` e a **direct** para `DIRECT_URL`.
-2. **Vercel:** importe o repositório. Configure todas as variáveis do `.env.example` em *Production* (e *Preview*). Gere segredos com `openssl rand -base64 32`.
-3. **Migrations em produção:** rode `npm run prisma:deploy` no pipeline de release (usa `DIRECT_URL`) — nunca `migrate dev` em produção.
-4. **Seed inicial** (uma vez): `npm run db:seed` apontando para o banco de produção (defina `SEED_SUPERADMIN_*`).
-5. **Mercado Pago:** configure `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` e `APP_URL` (as três são **obrigatórias em produção** — a aplicação recusa gerar cobrança sem elas). No painel do Mercado Pago, em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MERCADOPAGO_WEBHOOK_SECRET`. O mesmo endpoint atende PIX, crédito, débito e as notificações de estorno/chargeback. Sem `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` a tela de assinatura cai no fallback somente-PIX. **Atualize esses nomes na Vercel** se ainda estiverem como `MP_*` / `JWT_ACCESS_SECRET`.
-6. **Cron de cobrança:** o [`vercel.json`](vercel.json) já agenda `/api/cron/billing` (protegido por `CRON_SECRET`) diariamente. Ele **reconcilia as cobranças pendentes** direto na API do Mercado Pago antes de recalcular os status — é a rede de segurança para webhook perdido.
-7. **E-mail:** verifique o domínio no Resend e configure `RESEND_API_KEY` / `EMAIL_FROM`.
+**[docs/09-deploy-render-e-vercel.md](docs/09-deploy-render-e-vercel.md)**
+
+Resumo: não use o plano free do Render (adormece e quebra PIX/webhook). Na Vercel, `DATABASE_URL` do Neon precisa de `pgbouncer=true&connection_limit=1`. Seed só uma vez, com `SEED_DEMO=false`.
 
 ## Backup (recomendado)
 

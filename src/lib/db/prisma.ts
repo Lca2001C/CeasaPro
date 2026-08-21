@@ -11,9 +11,8 @@ export const prisma =
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
-if (process.env.NODE_ENV !== "production") {
-  globalForPrisma.prisma = prisma;
-}
+// Reusa o client em hot-reload (dev) e em instâncias quentes (Vercel/Render).
+globalForPrisma.prisma = prisma;
 
 /**
  * `prisma` (cru) só deve ser usado em auth, super-admin, billing/webhooks e testes.

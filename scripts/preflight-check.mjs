@@ -89,6 +89,15 @@ const ENV_RULES = [
     },
   },
   {
+    name: "NEXT_PUBLIC_APP_URL",
+    description: "URL pública exposta ao browser (precisa existir no build)",
+    validate: (v) => {
+      if (!/^https?:\/\//.test(v)) return 'deveria ser uma URL (http:// ou https://)';
+      if (isProd && !v.startsWith("https://")) return "em produção precisa ser https://";
+      return null;
+    },
+  },
+  {
     name: "MERCADOPAGO_ACCESS_TOKEN",
     description: "Token privado do Mercado Pago",
     prodOnly: true,

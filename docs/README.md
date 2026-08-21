@@ -10,8 +10,9 @@ Documentação completa do **CeasaPro** — SaaS de gestão para comercializador
 4. [Modelo de dados](04-modelo-de-dados.md) — todas as tabelas, campos, relações e enums.
 5. [Planos e módulos](05-planos-e-modulos.md) — assinatura, gating de módulos, tela "Meu plano".
 6. [Segurança](06-seguranca.md) — autenticação, isolamento por empresa, auditoria, boas práticas.
-7. [Instalação e deploy](07-instalacao-e-deploy.md) — rodar local, deploy de baixo custo, backup.
+7. [Instalação local](07-instalacao-e-deploy.md) — rodar na máquina, variáveis, backup.
 8. [Desenvolvimento](08-desenvolvimento.md) — estrutura de pastas, scripts, testes, convenções.
+9. [Deploy na Vercel e no Render](09-deploy-render-e-vercel.md) — passo a passo para colocar no ar.
 
 > Prefere ler tudo de uma vez? [PROJETO.md](PROJETO.md) descreve o sistema inteiro em um único documento.
 

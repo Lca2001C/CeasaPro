@@ -21,6 +21,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  poweredByHeader: false,
   // Next 16 bloqueia por padrão o acesso a recursos de DEV (_next/*, incluindo o
   // WebSocket do HMR e os chunks de JS) vindo de origem != localhost. Ao acessar o
   // dev server por IP da LAN (ex.: celular/outro PC em http://192.168.x.x:3000) sem

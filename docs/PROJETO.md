@@ -726,17 +726,20 @@ npm run dev                   # http://localhost:3000
 
 ## 19. Deploy e operação
 
-Arquitetura de baixo custo: **app na Vercel, banco no Neon, e-mail no Resend**.
+O passo a passo completo (Vercel + Neon **ou** Render) está em [`docs/09-deploy-render-e-vercel.md`](09-deploy-render-e-vercel.md).
 
-1. **Neon** — crie o projeto Postgres; use a connection string *pooled* em `DATABASE_URL` e a *direct* em `DIRECT_URL`.
-2. **Vercel** — importe o repositório e configure todas as variáveis em Production e Preview. Gere segredos com `openssl rand -base64 32`.
-3. **Migrations** — rode `npm run prisma:deploy` no pipeline de release. **Nunca** `migrate dev` em produção.
-4. **Seed inicial** — uma única vez, apontando para o banco de produção, com `SEED_SUPERADMIN_*` definidos.
-5. **Mercado Pago** — em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MERCADOPAGO_WEBHOOK_SECRET`. O mesmo endpoint atende PIX, cartão e as notificações de estorno/chargeback.
-6. **Cron** — já agendado em `vercel.json`; garanta o `CRON_SECRET`.
-7. **Resend** — verifique o domínio e configure `RESEND_API_KEY` e `EMAIL_FROM`.
+Arquitetura típica de baixo custo: **app na Vercel (região `gru1`)**, **banco no Neon**, **e-mail no Resend**. Alternativa: **web + Postgres + cron no Render** (`render.yaml`).
 
-**Backup:** ative o backup automático diário e o point-in-time restore no Neon, e agende um `pg_dump` mensal para um storage frio (R2 ou S3) como cópia independente.
+1. **Banco** — Neon: URL *pooled* (`pgbouncer=true&connection_limit=1`) em `DATABASE_URL` e *direct* em `DIRECT_URL`. Render: as duas iguais à Internal URL.
+2. **App** — importe o GitHub; configure todas as variáveis (as `NEXT_PUBLIC_*` precisam existir **no build**).
+3. **Migrations** — `prisma migrate deploy` no comando de build. **Nunca** `migrate dev` em produção.
+4. **Seed** — uma vez, `SEED_DEMO=false`, com `SEED_SUPERADMIN_*`.
+5. **Mercado Pago** — webhook `https://SEU_DOMINIO/api/webhooks/mercadopago` (evento Pagamentos).
+6. **Cron** — Vercel via `vercel.json`; Render via Cron Job que chama `scripts/run-billing-cron.mjs`.
+7. **Resend** — domínio verificado + `RESEND_API_KEY` / `EMAIL_FROM`.
+8. **Pré-flight** — `NODE_ENV=production npm run preflight` contra o banco de destino.
+
+**Backup:** PITR/automático no provedor do Postgres + `pg_dump` periódico.
 
 ---
 

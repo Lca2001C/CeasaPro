@@ -14,6 +14,7 @@ const PUBLIC_PREFIXES = [
   "/api/auth",
   "/api/webhooks",
   "/api/cron",
+  "/api/health",
 ];
 
 // Rotas sempre acessiveis mesmo com assinatura bloqueada.
