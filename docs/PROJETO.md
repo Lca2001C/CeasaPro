@@ -52,7 +52,7 @@ Um `SUPER_ADMIN` tem `tenantId = null` e é o único usuário sem empresa vincul
 - **Estoque derivado** — o saldo de estoque nunca é uma coluna que se sobrescreve; é a soma de um livro-razão append-only (`stock_movements`). O mesmo vale para caixas plásticas (`plastic_crate_movements`). Isso torna qualquer número auditável até a origem.
 - **Fiado** — venda a prazo com pagamentos parciais, saldo devedor e vencimento; central para o negócio do CEASA.
 - **Caixa plástica retornável** — ativo que circula (sai com o cliente, volta suja, vai para higienização, volta limpa, quebra). Não confundir com **embalagem vendida** (papelão, sacaria), que é receita avulsa.
-- **Assinatura** — cada tenant tem uma assinatura mensal com trial, período de graça e bloqueio automático.
+- **Assinatura** — cada tenant tem uma assinatura mensal pré-paga: sem período gratuito, com tolerância pós-vencimento e bloqueio automático.
 
 ---
 
@@ -234,10 +234,12 @@ A tela `/plano` mostra o plano contratado, o consumo (produtos, usuários), os m
 
 1. `cancelledAt` preenchido → **CANCELADO**
 2. `statusSource === MANUAL` → respeita o override do super-admin (permite liberar ou bloquear um cliente à mão)
-3. `now ≤ trialEndsAt` → **TRIAL**
+3. `activatedAt` nulo (nunca houve pagamento aprovado) → **SUSPENSO**
 4. `now ≤ currentPeriodEnd` → **ATIVO**
 5. `now ≤ currentPeriodEnd + graceDays` → **VENCIDO** (ainda acessa, com aviso)
 6. caso contrário → **SUSPENSO**
+
+Não existe período gratuito. O passo 3 é o que garante isso: a tolerância de `graceDays` só é avaliada depois da primeira ativação, então uma empresa recém-cadastrada não ganha nenhum dia de uso antes de pagar.
 
 `accessDecision` traduz isso em três resultados: `ok`, `warn` (banner de cobrança pendente, acesso liberado) e `blocked` (redireciona para `/conta/suspensa` ou responde 402).
 
@@ -247,7 +249,8 @@ A tela `/plano` mostra o plano contratado, o consumo (produtos, usuários), os m
 2. `POST /api/billing/checkout` cria — ou reaproveita — a cobrança do mês. A operação é **idempotente por mês de referência**, então recarregar a página não gera cobrança duplicada. Essa rota é `allowInactive: true`, pois precisa funcionar com a conta já suspensa.
 3. A tela faz polling em `GET /api/billing/status`.
 4. Quando o pagamento é aprovado, o Mercado Pago chama `POST /api/webhooks/mercadopago`. A assinatura HMAC-SHA256 do manifest (`id:...;request-id:...;ts:...;`) é verificada, com proteção anti-replay por timestamp.
-5. `applyPaymentStatus` é idempotente e resistente a corrida: marca o pagamento como APROVADO, coloca a assinatura em **ATIVO**, estende `currentPeriodEnd` em um mês (aritmética UTC-safe, que evita o "vazamento" de dias entre meses de 28/30/31 dias), zera o trial e dispara o recibo por e-mail.
+5. `applyPaymentStatus` é idempotente e resistente a corrida: marca o pagamento como APROVADO, coloca a assinatura em **ATIVO**, preenche `activatedAt` na primeira vez e estende `currentPeriodEnd` em um mês (aritmética UTC-safe, que evita o "vazamento" de dias entre meses de 28/30/31 dias). Quando o vencimento anterior já passou — caso da empresa nova ou de quem ficou muito tempo suspenso — o novo ciclo começa **hoje**, e não na data velha, senão o mês recém-pago já nasceria vencido. Ao final, dispara o recibo por e-mail.
+6. O caminho inverso também é tratado: `refunded`, `charged_back` e `cancelled` sobre um pagamento aprovado revertem o `currentPeriodEnd`, bloqueiam a assinatura, **revogam as sessões ativas da empresa** e gravam `ACCESS_REVOKED` na auditoria.
 
 ### Rede de segurança
 
@@ -274,7 +277,7 @@ Webhooks se perdem. Por isso `vercel.json` agenda `GET /api/cron/billing` diaria
 
 | Model | Papel |
 |---|---|
-| `TenantSubscription` | Uma assinatura por tenant: plano, status, `statusSource`, valor, trial, `currentPeriodEnd`, `graceDays` |
+| `TenantSubscription` | Uma assinatura por tenant: plano, status, `statusSource`, valor, `activatedAt` (1º pagamento), `currentPeriodEnd`, `graceDays` |
 | `SubscriptionPayment` | Cobrança mensal: valor, status, método, mês de referência, IDs e QR do Mercado Pago, `rawPayload` |
 
 **Cadastros**
@@ -308,7 +311,7 @@ Webhooks se perdem. Por isso `vercel.json` agenda `GET /api/cron/billing` diaria
 - `CrateCleaningStatus`: ENVIADO, DEVOLVIDO, PAGO
 - `ExpenseType` / `ExpenseStatus`: FIXA/VARIAVEL, PENDENTE/PAGO
 - `TenantStatus`: ACTIVE, SUSPENDED, BLOCKED
-- `SubscriptionStatus`: TRIAL, ATIVO, VENCIDO, SUSPENSO, BLOQUEADO, CANCELADO
+- `SubscriptionStatus`: ATIVO, VENCIDO, SUSPENSO, BLOQUEADO, CANCELADO
 - `PaymentStatus`: PENDENTE, APROVADO, RECUSADO, ESTORNADO, CANCELADO
 - `ReportType`: 17 valores (ver [Relatórios](#12-relatórios-e-exportação))
 
@@ -349,7 +352,7 @@ erDiagram
 
 ### Seed (`prisma/seed.ts`)
 
-Sempre cria (de forma idempotente) o **super-admin** com `mustChangePassword: true` e **dois planos**: *Padrão* (R$ 49,90, até 3 usuários, todos os módulos) e *Básico* (R$ 29,90, até 2 usuários, `modules: []` ⇒ só o núcleo). Com `SEED_DEMO=true`, cria também a empresa **Hortifruti Demo** com assinatura em trial de 15 dias, usuário OWNER, 14 categorias de despesa padrão e 4 tipos de embalagem. Não cria produtos, vendas nem movimentos.
+Sempre cria (de forma idempotente) o **super-admin** com `mustChangePassword: true` e **dois planos**: *Padrão* (R$ 49,90, até 3 usuários, todos os módulos) e *Básico* (R$ 29,90, até 2 usuários, `modules: []` ⇒ só o núcleo). Com `SEED_DEMO=true`, cria também a empresa **Hortifruti Demo** com a assinatura já ativa (fixture de dev/E2E, não é período gratuito), usuário OWNER, 14 categorias de despesa padrão e 4 tipos de embalagem. Não cria produtos, vendas nem movimentos.
 
 ---
 
@@ -434,7 +437,7 @@ Fixas ou variáveis, com categoria, vencimento, data de pagamento e status. Cate
 
 ### Painel do super-admin
 
-`/admin` mostra **MRR**, total de empresas e assinaturas por status. As telas permitem cadastrar uma empresa (criando tenant + usuário OWNER + assinatura em trial + categorias e embalagens padrão + e-mail de boas-vindas), alterar status (ACTIVE/SUSPENDED/BLOCKED — revogando as sessões ao bloquear), customizar o valor da mensalidade, gerenciar planos e módulos, acompanhar todos os pagamentos e consultar a auditoria global filtrada por empresa.
+`/admin` mostra **MRR**, total de empresas e assinaturas por status. As telas permitem cadastrar uma empresa (criando tenant + usuário OWNER + assinatura bloqueada até o 1º pagamento + categorias e embalagens padrão + e-mail de boas-vindas), alterar status (ACTIVE/SUSPENDED/BLOCKED — revogando as sessões ao bloquear), customizar o valor da mensalidade, gerenciar planos e módulos, acompanhar todos os pagamentos e consultar a auditoria global filtrada por empresa.
 
 ---
 
@@ -621,7 +624,8 @@ Componentes de domínio específico (PDV, formulário de fiado, higienização) 
 | Arquivo | Cobertura |
 |---|---|
 | `financial-calc.test.ts` | Todas as fórmulas: frete rateado, CMV, lucro, margem, fiado, estoque, precisão decimal |
-| `billing-status.test.ts` | Ciclo TRIAL → ATIVO → VENCIDO → SUSPENSO, override manual, cancelamento, bloqueio |
+| `billing-status.test.ts` | Ciclo ATIVO → VENCIDO → SUSPENSO, override manual, cancelamento, bloqueio |
+| `billing-no-trial.test.ts` | Garante que nenhuma empresa ganha acesso antes do 1º pagamento aprovado |
 | `plan-modules.test.ts` | Gating de módulos, retrocompatibilidade, `ForbiddenError` |
 | `crate-balance.test.ts` | Saldos de caixas e validações do ledger |
 | `mp-webhook-signature.test.ts` | HMAC do webhook Mercado Pago |
@@ -656,22 +660,23 @@ npm run test:e2e          # exige build + seed com SEED_DEMO=true
 | `APP_URL` / `NEXT_PUBLIC_APP_URL` | URL base do servidor (webhooks, links) e a exposta ao browser |
 | `DATABASE_URL` | PostgreSQL — connection string *pooled* |
 | `DIRECT_URL` | Conexão direta, usada pelas migrations do Prisma |
-| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Segredos dos tokens (32+ bytes) |
+| `JWT_SECRET` | Segredo do access token (32+ bytes). O refresh token é opaco e guardado com hash no banco, então não tem segredo próprio |
 | `ACCESS_TOKEN_TTL` | Validade do access token (padrão `15m`) |
 | `REFRESH_TOKEN_TTL_DAYS` | Validade do refresh token, em dias |
 | `SEED_SUPERADMIN_EMAIL` / `SEED_SUPERADMIN_PASSWORD` | Super-admin criado pelo seed (a senha é **obrigatória**, sem default no código) |
 | `SEED_DEMO` / `SEED_DEMO_PASSWORD` | Cria a empresa demo e define sua senha |
-| `MP_ACCESS_TOKEN` | Token do Mercado Pago — **obrigatório em produção** |
-| `MP_WEBHOOK_SECRET` | Segredo HMAC do webhook — **obrigatório em produção** |
-| `MP_PUBLIC_KEY` / `NEXT_PUBLIC_MP_PUBLIC_KEY` | Public key do MP (servidor e Card Brick no browser) |
+| `MERCADOPAGO_ACCESS_TOKEN` | Token do Mercado Pago — **obrigatório em produção** |
+| `MERCADOPAGO_WEBHOOK_SECRET` | Segredo HMAC do webhook — **obrigatório em produção** |
+| `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | Public key do MP usada pelo Payment Brick no browser |
 | `RESEND_API_KEY` / `EMAIL_FROM` / `EMAIL_REPLY_TO` | E-mail transacional |
 | `RESEND_WEBHOOK_SECRET` | Assinatura do webhook de e-mail |
 | `CRON_SECRET` | Bearer que protege `/api/cron/billing` |
+| `NEXT_PUBLIC_SUPPORT_WHATSAPP` | WhatsApp do suporte (DDI+DDD+número, só dígitos). Ausente = botão flutuante oculto |
 | `R2_*` | Cloudflare R2, opcional (assets/backup) |
 
 Há ainda `DEV_ORIGIN`, lida por `next.config.ts` para liberar acesso pela LAN em desenvolvimento — útil para testar no celular real, mas ausente do `.env.example`.
 
-A aplicação **recusa gerar cobrança** se `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `APP_URL` não estiverem configuradas em produção.
+A aplicação **recusa gerar cobrança** se `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` e `APP_URL` não estiverem configuradas em produção. Antes de qualquer deploy, `npm run preflight` ([`scripts/preflight-check.mjs`](../scripts/preflight-check.mjs)) confere presença e formato de todas as variáveis, a conexão com o banco e a ausência de resíduo de período gratuito.
 
 ### Outros arquivos de configuração
 
@@ -727,7 +732,7 @@ Arquitetura de baixo custo: **app na Vercel, banco no Neon, e-mail no Resend**.
 2. **Vercel** — importe o repositório e configure todas as variáveis em Production e Preview. Gere segredos com `openssl rand -base64 32`.
 3. **Migrations** — rode `npm run prisma:deploy` no pipeline de release. **Nunca** `migrate dev` em produção.
 4. **Seed inicial** — uma única vez, apontando para o banco de produção, com `SEED_SUPERADMIN_*` definidos.
-5. **Mercado Pago** — em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MP_WEBHOOK_SECRET`. O mesmo endpoint atende PIX e cartão.
+5. **Mercado Pago** — em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MERCADOPAGO_WEBHOOK_SECRET`. O mesmo endpoint atende PIX, cartão e as notificações de estorno/chargeback.
 6. **Cron** — já agendado em `vercel.json`; garanta o `CRON_SECRET`.
 7. **Resend** — verifique o domínio e configure `RESEND_API_KEY` e `EMAIL_FROM`.
 

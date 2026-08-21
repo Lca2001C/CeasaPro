@@ -48,14 +48,15 @@ Arquivo modelo: [`.env.example`](../.env.example).
 | `APP_URL`, `NEXT_PUBLIC_APP_URL` | URL pública do app |
 | `DATABASE_URL` | Postgres (em produção, a URL **pooled** do Neon) |
 | `DIRECT_URL` | Conexão **direta** (usada em migrations) |
-| `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET` | Segredos dos tokens (32+ bytes) |
+| `JWT_SECRET` | Segredo do access token (32+ bytes) |
 | `ACCESS_TOKEN_TTL` | Duração do access token (ex.: `15m`) |
 | `REFRESH_TOKEN_TTL_DAYS` | Dias de validade do refresh token |
 | `SEED_SUPERADMIN_EMAIL`, `SEED_SUPERADMIN_PASSWORD` | Credenciais do super-admin no seed |
 | `SEED_DEMO` | `true` cria uma empresa de exemplo |
-| `MP_ACCESS_TOKEN`, `MP_PUBLIC_KEY`, `MP_WEBHOOK_SECRET` | Mercado Pago |
+| `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`, `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | Mercado Pago |
 | `RESEND_API_KEY`, `EMAIL_FROM` | E-mail transacional |
 | `CRON_SECRET` | Protege `/api/cron/billing` |
+| `NEXT_PUBLIC_SUPPORT_WHATSAPP` | WhatsApp do suporte (só dígitos, com DDI) |
 | `R2_*` | Cloudflare R2 (armazenamento — logo/anexos, futuro) |
 
 Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` ou `openssl rand -base64 32`.
@@ -66,9 +67,10 @@ Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toStr
 2. **Vercel:** importe o repositório. Configure **todas** as variáveis do `.env.example` em *Production* (e *Preview*).
 3. **Migrations em produção:** rode `npm run prisma:deploy` (`prisma migrate deploy`, usa `DIRECT_URL`) no pipeline de release — **nunca** `migrate dev` em produção.
 4. **Seed inicial** (uma vez), apontando para o banco de produção, com `SEED_SUPERADMIN_*` definidos.
-5. **Mercado Pago:** configure `MP_ACCESS_TOKEN` e `MP_WEBHOOK_SECRET`; no painel do Mercado Pago aponte o webhook para `https://SEU_DOMINIO/api/webhooks/mercadopago`.
+5. **Mercado Pago:** configure `MERCADOPAGO_ACCESS_TOKEN` e `MERCADOPAGO_WEBHOOK_SECRET`; no painel do Mercado Pago aponte o webhook para `https://SEU_DOMINIO/api/webhooks/mercadopago`.
 6. **Cron:** o [`vercel.json`](../vercel.json) já agenda `/api/cron/billing` diariamente (protegido por `CRON_SECRET`).
 7. **E-mail:** verifique o domínio no Resend e configure `RESEND_API_KEY`/`EMAIL_FROM`.
+8. **Pré-flight:** rode `npm run preflight` apontando para o ambiente de destino antes de liberar o deploy. Ele falha se faltar variável, se o banco não responder ou se sobrar resíduo de período gratuito.
 
 > O `build` roda `prisma generate` antes do `next build` (necessário na Vercel).
 

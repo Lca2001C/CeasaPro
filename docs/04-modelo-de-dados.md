@@ -23,7 +23,7 @@ Banco **PostgreSQL** modelado com **Prisma**. O schema-fonte é [`prisma/schema.
 | `ExpenseType` | FIXA, VARIAVEL |
 | `ExpenseStatus` | PENDENTE, PAGO |
 | `TenantStatus` | ACTIVE, SUSPENDED, BLOCKED |
-| `SubscriptionStatus` | TRIAL, ATIVO, VENCIDO, SUSPENSO, BLOQUEADO, CANCELADO |
+| `SubscriptionStatus` | ATIVO, VENCIDO, SUSPENSO, BLOQUEADO, CANCELADO |
 | `StatusSource` | AUTO, MANUAL |
 | `PaymentStatus` | PENDENTE, APROVADO, RECUSADO, ESTORNADO, CANCELADO |
 | `PlasticCrateMovementType` | ENTRADA, SAIDA, RETORNO, QUEBRA |
@@ -47,7 +47,7 @@ Dados da empresa assinante. **Não** tem `tenantId` (é a própria empresa). Cam
 Sessões: `userId`, `tokenHash` (único — guarda-se o hash, nunca o token), `expiresAt`, `revokedAt`, `userAgent`, `ip`.
 
 ### `tenant_subscriptions` (assinatura — 1 por empresa)
-`planId`, `status` (`SubscriptionStatus`), `statusSource` (AUTO/MANUAL — override do super-admin), `statusReason`, `monthlyAmount`, `startedAt`, `trialEndsAt`, `currentPeriodEnd`, `graceDays` (tolerância), `mpCustomerId`, `cancelledAt`.
+`planId`, `status` (`SubscriptionStatus`), `statusSource` (AUTO/MANUAL — override do super-admin), `statusReason`, `monthlyAmount`, `startedAt`, `activatedAt` (data do 1º pagamento aprovado; nulo = nunca pagou, sem acesso), `currentPeriodEnd`, `graceDays` (tolerância pós-vencimento, só vale após a 1ª ativação), `mpCustomerId`, `cancelledAt`.
 
 ### `subscription_payments` (cobranças de mensalidade — append-only)
 `subscriptionId`, `tenantId`, `amount`, `status` (`PaymentStatus`), `method`, `referenceMonth` ("2026-07"), `mpPaymentId` (único — idempotência do webhook), `mpPreferenceId`, `mpExternalRef`, `qrCode`, `qrCodeBase64`, `ticketUrl`, `paidAt`, `periodStart/End`, `rawPayload` (Json de auditoria).

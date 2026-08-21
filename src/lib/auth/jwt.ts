@@ -30,8 +30,8 @@ export function accessTokenMaxAgeSeconds(): number {
 }
 
 function accessSecret(): Uint8Array {
-  const s = process.env.JWT_ACCESS_SECRET;
-  if (!s) throw new Error("JWT_ACCESS_SECRET não configurado");
+  const s = process.env.JWT_SECRET;
+  if (!s) throw new Error("JWT_SECRET não configurado");
   return new TextEncoder().encode(s);
 }
 

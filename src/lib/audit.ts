@@ -8,7 +8,9 @@ export type AuditAction =
   | "DELETE"
   | "LOGIN"
   | "PAYMENT"
-  | "STATUS_CHANGE";
+  | "STATUS_CHANGE"
+  /** Acesso cortado e sessões revogadas (estorno, chargeback, bloqueio). */
+  | "ACCESS_REVOKED";
 
 export interface AuditInput {
   tenantId?: string | null;

@@ -1,6 +1,12 @@
-import type { ChargeMethod, PaymentStatus, SubscriptionPayment } from "@prisma/client";
+import type {
+  ChargeMethod,
+  PaymentStatus,
+  SubscriptionPayment,
+  SubscriptionStatus,
+} from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
+import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { addOneMonth, computeStatus } from "@/lib/billing/status";
 import { money, toNumber, type Decimal } from "@/lib/money";
 import {
@@ -27,6 +33,7 @@ import type {
 import { PlanoService } from "./plano.service";
 import { sendEmail, paymentApprovedEmail } from "@/lib/email";
 import { logger } from "@/lib/logger";
+import { TERMS_VERSION } from "@/lib/legal";
 
 /** Validade da cobrança do mês (QR PIX e preferência de cartão). */
 const CHARGE_TTL_HOURS = 48;
@@ -64,6 +71,16 @@ export function mapMpStatus(mpStatus: string): PaymentStatus {
   }
 }
 
+/**
+ * Status da assinatura quando um pagamento JÁ APROVADO é revertido.
+ * Chargeback é mais grave que estorno: o titular contestou a cobrança junto ao
+ * emissor, então a conta fica BLOQUEADA (e não apenas suspensa) até o
+ * super-admin analisar o caso.
+ */
+export function reversalSubscriptionStatus(mpStatus: string): SubscriptionStatus {
+  return mpStatus === "charged_back" ? "BLOQUEADO" : "SUSPENSO";
+}
+
 /** Mapeia a forma de pagamento do Mercado Pago para o enum `ChargeMethod`. */
 export function mapMpMethod(mp: Pick<MpPayment, "method" | "paymentTypeId">): ChargeMethod | null {
   switch (mp.paymentTypeId) {
@@ -91,6 +108,33 @@ function assertGatewayReady(): void {
     );
   }
   assertMercadoPagoConfig();
+}
+
+/**
+ * Guarda a prova de aceite dos Termos (LGPD): data, IP e versão do documento.
+ * Só grava quando ainda não há aceite ou quando a versão publicada mudou —
+ * assim o histórico registra a revisão que o cliente de fato leu. A validação de
+ * que o aceite foi marcado é do schema Zod, na borda.
+ */
+async function registerTermsAcceptance(
+  tenantId: string,
+  ctx: TenantCtx | undefined,
+  now: Date,
+): Promise<void> {
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: { termsVersion: true },
+  });
+  if (tenant?.termsVersion === TERMS_VERSION) return;
+
+  await prisma.tenant.update({
+    where: { id: tenantId },
+    data: {
+      termsAcceptedAt: now,
+      termsAcceptedIp: ctx?.ip ?? null,
+      termsVersion: TERMS_VERSION,
+    },
+  });
 }
 
 interface ChargeContext {
@@ -137,6 +181,8 @@ async function prepareCharge(
   });
   if (alreadyPaid) throw new BusinessRuleError("A mensalidade deste mês já está paga.");
 
+  await registerTermsAcceptance(tenantId, ctx, now);
+
   return {
     subscriptionId: sub.id,
     refMonth,
@@ -177,7 +223,9 @@ export const BillingService = {
    */
   async createCheckout(
     tenantId: string,
-    input: CheckoutInput = { method: "PIX" },
+    // O default só atende chamadas internas: as rotas sempre passam o input já
+    // validado por `checkoutSchema`, que exige o aceite explícito dos termos.
+    input: CheckoutInput = { method: "PIX", acceptedTerms: true },
     ctx?: TenantCtx,
   ): Promise<SubscriptionPayment> {
     if (input.method !== "PIX") {
@@ -351,6 +399,11 @@ export const BillingService = {
     const newStatus = mapMpStatus(mp.status);
     if (payment.status === newStatus) return "ignorado"; // idempotente
 
+    const now = new Date();
+    // Estorno, chargeback ou cancelamento de uma cobrança que já estava aprovada:
+    // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
+    const isReversal = payment.status === "APROVADO" && newStatus !== "APROVADO";
+
     const aplicado = await prisma.$transaction(async (tx) => {
       // Guarda contra corrida: só um webhook concorrente consegue a transição.
       const { count } = await tx.subscriptionPayment.updateMany({
@@ -360,7 +413,7 @@ export const BillingService = {
           statusDetail: mp.statusDetail ?? payment.statusDetail,
           // Saiu de pendente: o desafio 3DS não vale mais nada.
           threeDsUrl: newStatus === "PENDENTE" ? payment.threeDsUrl : null,
-          paidAt: newStatus === "APROVADO" ? (mp.paidAt ?? new Date()) : payment.paidAt,
+          paidAt: newStatus === "APROVADO" ? (mp.paidAt ?? now) : payment.paidAt,
           method: payment.method ?? mapMpMethod(mp),
           rawPayload: mp as unknown as object,
         },
@@ -372,21 +425,66 @@ export const BillingService = {
           where: { id: payment.subscriptionId },
         });
         if (sub) {
-          const periodStart = new Date(sub.currentPeriodEnd);
-          const periodEnd = addOneMonth(sub.currentPeriodEnd);
+          // Assinatura nova (nunca ativada) ou vencida há tempos tem
+          // `currentPeriodEnd` no passado: o ciclo recomeça hoje, senão o mês
+          // recém-pago já nasceria vencido e a empresa seguiria bloqueada.
+          const periodStart = sub.currentPeriodEnd > now ? new Date(sub.currentPeriodEnd) : now;
+          const periodEnd = addOneMonth(periodStart);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
             data: {
               status: "ATIVO",
+              // Volta ao cálculo automático: um pagamento aprovado encerra
+              // qualquer bloqueio manual herdado de estorno/chargeback anterior.
               statusSource: "AUTO",
+              statusReason: null,
               currentPeriodEnd: periodEnd,
-              trialEndsAt: null,
+              // Marca a primeira ativação; nas renovações o valor é preservado.
+              activatedAt: sub.activatedAt ?? mp.paidAt ?? now,
             },
           });
           await tx.subscriptionPayment.update({
             where: { id: payment.id },
             data: { periodStart, periodEnd },
           });
+        }
+      }
+
+      if (isReversal) {
+        const sub = await tx.tenantSubscription.findUnique({
+          where: { id: payment.subscriptionId },
+        });
+        if (sub) {
+          const blockedStatus = reversalSubscriptionStatus(mp.status);
+          await tx.tenantSubscription.update({
+            where: { id: sub.id },
+            data: {
+              status: blockedStatus,
+              // MANUAL trava o recálculo do cron: sem isto, a tolerância de
+              // `graceDays` devolveria o acesso (status VENCIDO) logo após o
+              // estorno. Um novo pagamento aprovado volta a fonte para AUTO.
+              statusSource: "MANUAL",
+              statusReason: `Pagamento ${mp.status} no Mercado Pago (${mp.id})`,
+              // O mês estornado deixa de valer: o período volta ao que era antes.
+              currentPeriodEnd: payment.periodStart ?? sub.currentPeriodEnd,
+            },
+          });
+          await audit(
+            {
+              tenantId: payment.tenantId,
+              action: "ACCESS_REVOKED",
+              entity: "TenantSubscription",
+              entityId: sub.id,
+              oldData: { status: sub.status, currentPeriodEnd: sub.currentPeriodEnd },
+              newData: {
+                status: blockedStatus,
+                mpStatus: mp.status,
+                mpPaymentId: mp.id,
+                sessionsRevoked: true,
+              },
+            },
+            tx,
+          );
         }
       }
 
@@ -404,6 +502,16 @@ export const BillingService = {
     });
 
     if (!aplicado) return "ignorado";
+
+    if (isReversal) {
+      // Derruba as sessões abertas: o access token expira em minutos e o
+      // refresh já não renova, então o acesso cai sem depender de novo login.
+      await revokeAllForTenant(payment.tenantId);
+      logger.warn(
+        { tenantId: payment.tenantId, mpPaymentId: mp.id, mpStatus: mp.status },
+        "Pagamento revertido — assinatura bloqueada e sessões revogadas",
+      );
+    }
 
     if (newStatus === "APROVADO") {
       // Recibo por e-mail: best-effort, nunca derruba o processamento.

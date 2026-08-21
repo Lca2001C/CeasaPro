@@ -22,7 +22,7 @@ export default async function AdminHomePage() {
         <StatCard label="Inadimplentes" value={String(suspensos + vencidos)} tone="warning" />
         <StatCard label="Novos clientes no mês" value={String(m.novosNoMes)} />
         <StatCard label="Recebido no mês" value={formatBRL(m.receitaMes)} tone="success" />
-        <StatCard label="Em teste grátis" value={String(m.byStatus["TRIAL"] ?? 0)} />
+        <StatCard label="Aguardando 1º pagamento" value={String(m.aguardandoAtivacao)} />
         <StatCard label="Pagamentos aprovados" value={String(m.paymentsApproved)} />
       </div>
 

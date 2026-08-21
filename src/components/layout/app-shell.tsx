@@ -4,6 +4,7 @@ import { LogOut } from "lucide-react";
 import { BottomNav } from "./bottom-nav";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
+import { SupportButton } from "@/components/support-button";
 
 interface Props {
   companyName: string;
@@ -46,6 +47,7 @@ export function AppShell({ companyName, userName, billingWarning, modules, child
           {children}
         </main>
 
+        <SupportButton companyName={companyName} />
         <BottomNav modules={modules} />
       </div>
     </div>

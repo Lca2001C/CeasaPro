@@ -35,7 +35,6 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
     defaultValues: {
       planId: planos[0]?.id ?? "",
       monthlyAmount: planos[0]?.priceMonthly ?? 0,
-      trialDays: 15,
       graceDays: 5,
     },
   });
@@ -137,7 +136,7 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
           ))}
         </Select>
       </div>
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label>Mensalidade</Label>
           <Controller
@@ -149,14 +148,14 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="trialDays">Dias grátis</Label>
-          <Input id="trialDays" type="number" {...register("trialDays", { valueAsNumber: true })} />
-        </div>
-        <div className="flex flex-col gap-1.5">
           <Label htmlFor="graceDays">Tolerância (dias)</Label>
           <Input id="graceDays" type="number" {...register("graceDays", { valueAsNumber: true })} />
         </div>
       </div>
+      <p className="text-xs text-muted-foreground">
+        A empresa é criada bloqueada e só libera o acesso após o primeiro pagamento aprovado. A
+        tolerância vale apenas para os vencimentos seguintes.
+      </p>
 
       <Button type="submit" size="lg" disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}

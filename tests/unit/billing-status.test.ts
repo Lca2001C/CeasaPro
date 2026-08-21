@@ -5,10 +5,12 @@ import type { SubscriptionStatus, StatusSource } from "@prisma/client";
 const NOW = new Date("2026-07-15T12:00:00Z");
 const days = (n: number) => new Date(NOW.getTime() + n * 24 * 60 * 60 * 1000);
 
+/** Fixture de assinatura JÁ ATIVADA — `activatedAt` no passado. O caso de quem
+ *  nunca pagou tem suíte própria em `billing-no-trial.test.ts`. */
 function sub(over: Partial<{
   status: SubscriptionStatus;
   statusSource: StatusSource;
-  trialEndsAt: Date | null;
+  activatedAt: Date | null;
   currentPeriodEnd: Date;
   graceDays: number;
   cancelledAt: Date | null;
@@ -16,7 +18,7 @@ function sub(over: Partial<{
   return {
     status: "ATIVO" as SubscriptionStatus,
     statusSource: "AUTO" as StatusSource,
-    trialEndsAt: null,
+    activatedAt: days(-60),
     currentPeriodEnd: days(10),
     graceDays: 5,
     cancelledAt: null,
@@ -25,10 +27,6 @@ function sub(over: Partial<{
 }
 
 describe("computeStatus — ciclo de vida da assinatura", () => {
-  it("trial vigente → TRIAL", () => {
-    expect(computeStatus(sub({ trialEndsAt: days(3) }), NOW)).toBe("TRIAL");
-  });
-
   it("dentro do vencimento → ATIVO", () => {
     expect(computeStatus(sub({ currentPeriodEnd: days(1) }), NOW)).toBe("ATIVO");
   });
@@ -59,10 +57,6 @@ describe("computeStatus — ciclo de vida da assinatura", () => {
     expect(computeStatus(sub({ currentPeriodEnd: NOW, graceDays: 0 }), NOW)).toBe("ATIVO");
   });
 
-  it("trial que termina exatamente agora ainda é TRIAL", () => {
-    expect(computeStatus(sub({ trialEndsAt: NOW, currentPeriodEnd: days(-30) }), NOW)).toBe("TRIAL");
-  });
-
   it("override MANUAL do super-admin prevalece sobre as datas", () => {
     expect(
       computeStatus(
@@ -80,9 +74,8 @@ describe("computeStatus — ciclo de vida da assinatura", () => {
 });
 
 describe("accessDecision — o que cada status permite", () => {
-  it("ATIVO/TRIAL → ok", () => {
+  it("ATIVO → ok", () => {
     expect(accessDecision("ACTIVE", "ATIVO")).toBe("ok");
-    expect(accessDecision("ACTIVE", "TRIAL")).toBe("ok");
   });
   it("VENCIDO → warn (acesso com aviso de pagamento)", () => {
     expect(accessDecision("ACTIVE", "VENCIDO")).toBe("warn");

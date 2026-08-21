@@ -9,7 +9,7 @@ export type AccessDecision = "ok" | "warn" | "blocked";
 /**
  * Avança exatamente um mês, em UTC, sem "vazar" para o mês seguinte.
  * `setMonth` nativo transformaria 31/08 em 01/10 (e 31/01 em 03/03), dando
- * dias grátis a cada renovação. Aqui o dia é limitado ao último dia do mês
+ * dias de uso não pagos a cada renovação. Aqui o dia é limitado ao último dia do mês
  * de destino: 31/08 → 30/09, 31/01 → 28/02.
  * Usa UTC para o resultado não depender do fuso do servidor.
  */
@@ -49,12 +49,17 @@ export function accessDecision(
 /**
  * Recalcula o status da assinatura a partir das datas (usado pelo cron e no refresh).
  * Respeita override manual (statusSource = MANUAL).
+ *
+ * O CeasaPro não tem período gratuito: sem um pagamento aprovado (`activatedAt`)
+ * a empresa fica SUSPENSA, e nem a tolerância de `graceDays` se aplica — ela existe
+ * apenas para cobrir a compensação do pagamento de quem já é cliente, não para
+ * liberar uso antecipado.
  */
 export function computeStatus(
   sub: {
     status: SubscriptionStatus;
     statusSource: StatusSource;
-    trialEndsAt: Date | null;
+    activatedAt: Date | null;
     currentPeriodEnd: Date;
     graceDays: number;
     cancelledAt: Date | null;
@@ -64,7 +69,8 @@ export function computeStatus(
   if (sub.cancelledAt) return "CANCELADO";
   if (sub.statusSource === "MANUAL") return sub.status; // override do super-admin
 
-  if (sub.trialEndsAt && now <= sub.trialEndsAt) return "TRIAL";
+  // Nunca houve pagamento aprovado → sem acesso e sem tolerância.
+  if (!sub.activatedAt) return "SUSPENSO";
 
   const graceEnd = new Date(sub.currentPeriodEnd);
   graceEnd.setDate(graceEnd.getDate() + sub.graceDays);

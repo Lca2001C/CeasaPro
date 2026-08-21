@@ -15,7 +15,11 @@ export async function POST(req: Request) {
     (body as { data?: { id?: string } }).data?.id ??
     url.searchParams.get("data.id") ??
     url.searchParams.get("id");
-  const type = (body as { type?: string }).type ?? url.searchParams.get("type");
+  // O Mercado Pago identifica o evento em `type` (webhooks) ou `topic` (IPN legado).
+  const type =
+    (body as { type?: string }).type ??
+    url.searchParams.get("type") ??
+    url.searchParams.get("topic");
 
   const valid = verifyWebhookSignature({
     xSignature: req.headers.get("x-signature"),
@@ -23,11 +27,16 @@ export async function POST(req: Request) {
     dataId: dataId ? String(dataId) : null,
   });
   if (!valid) {
-    logger.warn("Webhook Mercado Pago com assinatura inválida");
+    // Assinatura HMAC inválida ou timestamp fora da janela (replay).
+    logger.warn(
+      { dataId, type, hasSignature: Boolean(req.headers.get("x-signature")) },
+      "Webhook Mercado Pago rejeitado: assinatura inválida ou expirada",
+    );
     return new Response("invalid signature", { status: 401 });
   }
 
-  // Só nos interessa evento de pagamento.
+  // Só nos interessa evento de pagamento — aprovação, estorno e chargeback
+  // chegam todos como "payment", mudando apenas o status consultado na API.
   if (type && type !== "payment") return Response.json({ ok: true });
   if (!dataId) return Response.json({ ok: true });
 

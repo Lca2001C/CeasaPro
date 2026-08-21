@@ -16,7 +16,7 @@ function assinar(ts: number, secret = SECRET, dataId = DATA_ID, requestId = REQU
 }
 
 beforeEach(() => {
-  vi.stubEnv("MP_WEBHOOK_SECRET", SECRET);
+  vi.stubEnv("MERCADOPAGO_WEBHOOK_SECRET", SECRET);
 });
 
 afterEach(() => {
@@ -116,7 +116,7 @@ describe("verifyWebhookSignature", () => {
   });
 
   it("sem segredo: bloqueia em produção e libera em desenvolvimento", () => {
-    vi.stubEnv("MP_WEBHOOK_SECRET", "");
+    vi.stubEnv("MERCADOPAGO_WEBHOOK_SECRET", "");
 
     vi.stubEnv("NODE_ENV", "production");
     expect(

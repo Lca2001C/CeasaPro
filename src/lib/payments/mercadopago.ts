@@ -12,7 +12,7 @@ import { logger } from "@/lib/logger";
 export const WEBHOOK_MAX_SKEW_SECONDS = 300;
 
 function accessToken(): string | undefined {
-  return process.env.MP_ACCESS_TOKEN;
+  return process.env.MERCADOPAGO_ACCESS_TOKEN;
 }
 
 export function isMercadoPagoConfigured(): boolean {
@@ -21,7 +21,7 @@ export function isMercadoPagoConfigured(): boolean {
 
 function mpConfig(): MercadoPagoConfig {
   const token = accessToken();
-  if (!token) throw new Error("MP_ACCESS_TOKEN não configurado");
+  if (!token) throw new Error("MERCADOPAGO_ACCESS_TOKEN não configurado");
   return new MercadoPagoConfig({ accessToken: token });
 }
 
@@ -53,8 +53,8 @@ export function webhookUrl(): string {
 export function assertMercadoPagoConfig(): void {
   if (process.env.NODE_ENV !== "production") return;
   const missing: string[] = [];
-  if (!process.env.MP_ACCESS_TOKEN) missing.push("MP_ACCESS_TOKEN");
-  if (!process.env.MP_WEBHOOK_SECRET) missing.push("MP_WEBHOOK_SECRET");
+  if (!process.env.MERCADOPAGO_ACCESS_TOKEN) missing.push("MERCADOPAGO_ACCESS_TOKEN");
+  if (!process.env.MERCADOPAGO_WEBHOOK_SECRET) missing.push("MERCADOPAGO_WEBHOOK_SECRET");
   if (!process.env.APP_URL && !process.env.NEXT_PUBLIC_APP_URL) missing.push("APP_URL");
   if (missing.length > 0) {
     throw new Error(`Configuração do Mercado Pago incompleta: ${missing.join(", ")}`);
@@ -289,13 +289,13 @@ export function verifyWebhookSignature(args: {
   dataId: string | null;
   now?: Date;
 }): boolean {
-  const secret = process.env.MP_WEBHOOK_SECRET;
+  const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
-      logger.error("MP_WEBHOOK_SECRET ausente em produção — webhook rejeitado.");
+      logger.error("MERCADOPAGO_WEBHOOK_SECRET ausente em produção — webhook rejeitado.");
       return false;
     }
-    logger.warn("MP_WEBHOOK_SECRET ausente — pulando verificação (apenas dev).");
+    logger.warn("MERCADOPAGO_WEBHOOK_SECRET ausente — pulando verificação (apenas dev).");
     return true;
   }
   if (!args.xSignature || !args.dataId) return false;

@@ -8,6 +8,9 @@ const PUBLIC_PREFIXES = [
   "/login",
   "/recuperar-senha",
   "/offline", // fallback do PWA (o SW pré-cacheia; não pode redirecionar p/ login)
+  // Documentos legais: precisam abrir sem sessão (são linkados no checkout e no login).
+  "/termos",
+  "/privacidade",
   "/api/auth",
   "/api/webhooks",
   "/api/cron",

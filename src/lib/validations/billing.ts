@@ -24,10 +24,20 @@ export const payerSchema = z.object({
   identification: identificationSchema.optional(),
 });
 
+/**
+ * Aceite dos Termos de Uso / Política de Privacidade.
+ * Validado no servidor (e não só no formulário) porque é a prova de
+ * consentimento exigida pela LGPD — o cliente não pode simplesmente omitir.
+ */
+export const acceptedTermsSchema = z.literal(true, {
+  message: "É preciso aceitar os Termos de Uso e a Política de Privacidade.",
+});
+
 /** Cobrança da mensalidade sem cartão (hoje só PIX). `planId` troca o plano no ato. */
 export const checkoutSchema = z.object({
   method: chargeMethodEnum.default("PIX"),
   planId: z.string().min(1).optional(),
+  acceptedTerms: acceptedTermsSchema,
 });
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 
@@ -41,6 +51,7 @@ export const cardPaymentSchema = z
     installments: z.number().int().positive().max(12).default(1),
     payer: payerSchema,
     planId: z.string().min(1).optional(),
+    acceptedTerms: acceptedTermsSchema,
   })
   .refine((v) => v.method !== "DEBIT_CARD" || v.installments === 1, {
     message: "Cartao de debito nao permite parcelamento",

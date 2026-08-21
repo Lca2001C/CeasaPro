@@ -58,19 +58,19 @@ A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/au
 
 ## Assinatura e cobrança (Mercado Pago)
 
-- **Trial:** empresas novas nascem em período de teste (`TRIAL`, padrão 15 dias) — acesso liberado.
+- **Sem período gratuito:** empresas novas nascem em `SUSPENSO` e **não têm acesso** até o primeiro pagamento ser aprovado pelo Mercado Pago. O campo `activatedAt` marca essa primeira ativação; enquanto for nulo, nem a tolerância de `graceDays` se aplica.
 - **Métodos de pagamento (tela `/assinatura`, Payment Brick unificado):**
   - **PIX:** gera a cobrança do mês; o Mercado Pago devolve QR Code + copia-e-cola. A criação usa **Idempotency-Key** (sem cobrança duplicada em retry), envia a **`notification_url`** automaticamente (quando `APP_URL` é https) e define **validade de 48h** para o QR — cobranças vencidas são canceladas e renovadas sozinhas. A rota é `POST /api/billing/checkout`.
-  - **Cartão de crédito e de débito (Payment Brick):** formulário do MP embutido; o cartão é **tokenizado no browser** (o servidor recebe só o token — PCI-safe) e cobrado **à vista (1x)**. A rota é `POST /api/billing/checkout/card` e a Idempotency-Key é derivada da cobrança + token, então retentar o mesmo cartão não duplica o débito. Requer `NEXT_PUBLIC_MP_PUBLIC_KEY` (sem ela a tela cai no fallback PIX-only).
+  - **Cartão de crédito e de débito (Payment Brick):** formulário do MP embutido; o cartão é **tokenizado no browser** (o servidor recebe só o token — PCI-safe) e cobrado **à vista (1x)**. A rota é `POST /api/billing/checkout/card` e a Idempotency-Key é derivada da cobrança + token, então retentar o mesmo cartão não duplica o débito. Requer `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` (sem ela a tela cai no fallback PIX-only).
   - **Débito com 3DS:** o débito exige o **CPF do titular** e envia `three_d_secure_mode: optional`. Quando o emissor pede autenticação, a cobrança fica `PENDENTE` com o desafio (`threeDsUrl`) renderizado num iframe; quem aprova de fato é o webhook.
   - **Uma cobrança viva por mês:** pagar por cartão cancela um PIX pendente do mês; e se a mensalidade do mês já está paga, novas cobranças são recusadas.
   - Todos confirmam por **webhook** (HMAC + anti-replay, idempotente por `mpPaymentId`); ao aprovar, a assinatura vira **ATIVO**, o vencimento avança 1 mês e a **tela detecta sozinha** (polling em `/api/billing/status`) — renova a sessão e libera o acesso sem recarregar. O webhook responde `200` na hora e processa depois da resposta, para o Mercado Pago não reenviar por timeout.
+- **Estorno e chargeback:** se um pagamento já aprovado é revertido (`refunded`, `cancelled`), a assinatura volta para `SUSPENSO`; em `charged_back` (contestação junto ao emissor) vai para `BLOQUEADO`, que exige análise do super-admin. Nos dois casos o `currentPeriodEnd` é revertido, `statusSource` vira `MANUAL` (para a tolerância não devolver o acesso) e **as sessões ativas da empresa são revogadas**, com registro `ACCESS_REVOKED` na auditoria. Um novo pagamento aprovado devolve `statusSource` para `AUTO`.
 - **Status da assinatura** (calculado em [`src/lib/billing/status.ts`](../src/lib/billing/status.ts)):
-  - `TRIAL` — em teste;
   - `ATIVO` — em dia;
   - `VENCIDO` — passou do vencimento, mas dentro da tolerância (`graceDays`): acesso liberado com **aviso**;
-  - `SUSPENSO` — passou a tolerância: **acesso bloqueado** (dados preservados);
-  - `BLOQUEADO` — bloqueio manual do super-admin;
+  - `SUSPENSO` — nunca pagou, ou passou a tolerância: **acesso bloqueado** (dados preservados);
+  - `BLOQUEADO` — bloqueio manual do super-admin ou chargeback;
   - `CANCELADO` — assinatura encerrada.
   - `statusSource = MANUAL` faz o status definido pelo super-admin prevalecer sobre o cálculo automático.
 - **Bloqueio imediato:** o super-admin pode suspender/bloquear a empresa (`Tenant.status`), o que **revoga as sessões ativas** na hora.

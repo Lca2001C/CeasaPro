@@ -45,7 +45,6 @@ export const STOCK_MOVEMENT_LABELS: Record<string, string> = {
 };
 
 export const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
-  TRIAL: "Período grátis",
   ATIVO: "Ativo",
   VENCIDO: "Vencido",
   SUSPENSO: "Suspenso",
@@ -89,6 +88,7 @@ export const AUDIT_ACTION_LABELS: Record<string, string> = {
   PAYMENT: "registrou pagamento em",
   LOGIN: "entrou no sistema",
   STATUS_CHANGE: "alterou a situação de",
+  ACCESS_REVOKED: "revogou o acesso de",
 };
 
 export const AUDIT_ENTITY_LABELS: Record<string, string> = {

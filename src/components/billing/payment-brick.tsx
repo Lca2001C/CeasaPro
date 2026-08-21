@@ -80,7 +80,12 @@ export function PaymentBrick({
   }, [publicKey]);
 
   async function submitPix() {
-    const res = await apiPost<PixCharge>("/api/billing/checkout", { method: "PIX" });
+    // O aceite dos termos é validado no servidor; o Brick só é montado depois
+    // que o usuário marcou a caixa (ou já havia aceitado a versão vigente).
+    const res = await apiPost<PixCharge>("/api/billing/checkout", {
+      method: "PIX",
+      acceptedTerms: true,
+    });
     if (!res.ok) {
       toast.error(res.error.message);
       return;
@@ -102,6 +107,7 @@ export function PaymentBrick({
         email: formData.payer?.email ?? payerEmail,
         identification: identification?.number ? identification : undefined,
       },
+      acceptedTerms: true,
     });
     if (!res.ok) {
       toast.error(res.error.message);

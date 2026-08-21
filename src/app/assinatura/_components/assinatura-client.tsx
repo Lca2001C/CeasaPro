@@ -7,6 +7,7 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { PaymentBrick } from "@/components/billing/payment-brick";
 import { PixCheckout } from "@/components/billing/pix-checkout";
+import { TermsAcceptance } from "@/components/billing/terms-acceptance";
 import type { PixCharge } from "@/components/billing/pix-charge-panel";
 
 interface BillingStatus {
@@ -16,7 +17,7 @@ interface BillingStatus {
 }
 
 const POLL_MS = 5000;
-const PUBLIC_KEY = process.env.NEXT_PUBLIC_MP_PUBLIC_KEY;
+const PUBLIC_KEY = process.env.NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY;
 
 /**
  * Tela de pagamento da mensalidade. Escolhe entre o Payment Brick (PIX, crédito
@@ -28,14 +29,18 @@ export function AssinaturaClient({
   monthlyAmount,
   payerEmail,
   initialCharge,
+  termsAccepted,
 }: {
   mpConfigured: boolean;
   monthlyAmount: number;
   payerEmail?: string;
   initialCharge: PixCharge | null;
+  /** Já aceitou a versão vigente dos termos? Se sim, o checkbox não reaparece. */
+  termsAccepted: boolean;
 }) {
   const [paid, setPaid] = useState(false);
   const [awaiting, setAwaiting] = useState(Boolean(initialCharge?.qrCodeBase64));
+  const [accepted, setAccepted] = useState(termsAccepted);
   const confirmed = useRef(false);
 
   const confirmPaid = useCallback(async () => {
@@ -84,18 +89,29 @@ export function AssinaturaClient({
     );
   }
 
-  if (!PUBLIC_KEY) {
-    return <PixCheckout initialCharge={initialCharge} onAwaitingPayment={startAwaiting} />;
-  }
+  // Uma cobrança já em aberto (QR gerado antes) dispensa novo aceite: o
+  // consentimento foi dado quando a cobrança foi criada.
+  const jaTemCobranca = Boolean(initialCharge?.qrCodeBase64);
 
   return (
-    <PaymentBrick
-      publicKey={PUBLIC_KEY}
-      amount={monthlyAmount}
-      payerEmail={payerEmail}
-      initialCharge={initialCharge}
-      onPaid={confirmPaid}
-      onAwaitingPayment={startAwaiting}
-    />
+    <div className="flex flex-col gap-4">
+      {!jaTemCobranca && !termsAccepted && (
+        <TermsAcceptance accepted={accepted} onChange={setAccepted} />
+      )}
+
+      {(accepted || jaTemCobranca) &&
+        (PUBLIC_KEY ? (
+          <PaymentBrick
+            publicKey={PUBLIC_KEY}
+            amount={monthlyAmount}
+            payerEmail={payerEmail}
+            initialCharge={initialCharge}
+            onPaid={confirmPaid}
+            onAwaitingPayment={startAwaiting}
+          />
+        ) : (
+          <PixCheckout initialCharge={initialCharge} onAwaitingPayment={startAwaiting} />
+        ))}
+    </div>
   );
 }

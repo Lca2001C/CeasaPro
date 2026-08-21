@@ -69,8 +69,9 @@ enum TenantStatus {
   BLOCKED
 }
 
+/// Não existe período gratuito: a empresa nasce SUSPENSA e só vai para ATIVO
+/// quando o primeiro pagamento é aprovado pelo Mercado Pago.
 enum SubscriptionStatus {
-  TRIAL
   ATIVO
   VENCIDO
   SUSPENSO
@@ -159,6 +160,11 @@ model Tenant {
   businessHours         String?
   status                TenantStatus @default(ACTIVE)
   onboardingCompletedAt DateTime?
+  /// Prova de aceite dos Termos de Uso / Política de Privacidade (LGPD, art. 8º).
+  /// Registrado no primeiro checkout; guardamos data, IP e versão do documento.
+  termsAcceptedAt       DateTime?
+  termsAcceptedIp       String?
+  termsVersion          String?
   createdAt             DateTime     @default(now())
   updatedAt             DateTime     @updatedAt
   deletedAt             DateTime?
@@ -243,13 +249,16 @@ model TenantSubscription {
   id               String             @id @default(cuid())
   tenantId         String             @unique
   planId           String
-  status           SubscriptionStatus @default(TRIAL)
+  status           SubscriptionStatus @default(SUSPENSO)
   statusSource     StatusSource       @default(AUTO)
   statusReason     String?
   monthlyAmount    Decimal            @db.Decimal(10, 2)
   startedAt        DateTime           @default(now())
-  trialEndsAt      DateTime?
+  /// Data do PRIMEIRO pagamento aprovado. Enquanto for null a empresa nunca pagou,
+  /// então não tem acesso nem direito à tolerância de `graceDays`.
+  activatedAt      DateTime?
   currentPeriodEnd DateTime
+  /// Tolerância em dias após o vencimento — só vale para quem já tem `activatedAt`.
   graceDays        Int                @default(5)
   mpCustomerId     String?
   cancelledAt      DateTime?

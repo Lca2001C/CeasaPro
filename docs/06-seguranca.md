@@ -5,7 +5,7 @@ A segurança do CeasaPro se apoia em quatro pilares: **autenticação forte**, *
 ## Autenticação
 
 - **Senhas** com **Argon2id** (`@node-rs/argon2`) — padrão OWASP. Hash só roda no Node (nunca no Edge).
-- **Access token**: JWT curto (~15 min), assinado com `JWT_ACCESS_SECRET` (via `jose`), em cookie `httpOnly`, `Secure` (em produção) e `SameSite=Lax`.
+- **Access token**: JWT curto (~15 min), assinado com `JWT_SECRET` (via `jose`), em cookie `httpOnly`, `Secure` (em produção) e `SameSite=Lax`.
 - **Refresh token**: valor **opaco e aleatório**, guardado **apenas como hash** (`SHA-256`) na tabela `refresh_tokens`; **rotacionado** a cada uso. Isso permite **revogação real** — logout, troca de senha e bloqueio de empresa invalidam sessões.
 - **Rate limit** no login (5 tentativas / 15 min por IP+e-mail).
 - Respostas de login/recuperação são **genéricas** (não revelam se o e-mail existe).
@@ -29,7 +29,7 @@ Arquivos: [`src/lib/auth/`](../src/lib/auth/) (`password.ts`, `jwt.ts`, `session
 
 ## Webhook de pagamento
 
-- O webhook do Mercado Pago valida a **assinatura HMAC** (`x-signature`) com `MP_WEBHOOK_SECRET` (comparação `timingSafeEqual`), busca o pagamento real na API (nunca confia no corpo) e é **idempotente** (chave única `mpPaymentId`). Ver [`src/lib/payments/mercadopago.ts`](../src/lib/payments/mercadopago.ts).
+- O webhook do Mercado Pago valida a **assinatura HMAC** (`x-signature`) com `MERCADOPAGO_WEBHOOK_SECRET` (comparação `timingSafeEqual`) e recusa timestamps fora de uma janela de 5 min (**anti-replay**), busca o pagamento real na API (nunca confia no corpo) e é **idempotente** (chave única `mpPaymentId`). Estorno e chargeback bloqueiam a assinatura e **revogam as sessões ativas** da empresa. Ver [`src/lib/payments/mercadopago.ts`](../src/lib/payments/mercadopago.ts).
 - O cron (`/api/cron/billing`) exige `Authorization: Bearer ${CRON_SECRET}`.
 
 ## Validação de entrada

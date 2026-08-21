@@ -31,7 +31,7 @@ export const AdminService = {
     monthStart.setDate(1);
     monthStart.setHours(0, 0, 0, 0);
 
-    const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes] =
+    const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes, aguardandoAtivacao] =
       await Promise.all([
         prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
         prisma.tenant.count({ where: { deletedAt: null } }),
@@ -47,6 +47,10 @@ export const AdminService = {
           _sum: { amount: true },
           where: { status: "APROVADO", paidAt: { gte: monthStart } },
         }),
+        // Empresas cadastradas que ainda nao tiveram nenhum pagamento aprovado.
+        prisma.tenantSubscription.count({
+          where: { activatedAt: null, tenant: { deletedAt: null } },
+        }),
       ]);
     const byStatus: Record<string, number> = {};
     for (const s of subs) byStatus[s.status] = s._count;
@@ -57,6 +61,7 @@ export const AdminService = {
       paymentsApproved: recentPayments,
       novosNoMes,
       receitaMes: receitaMes._sum.amount ?? new Prisma.Decimal(0),
+      aguardandoAtivacao,
     };
   },
 
@@ -92,7 +97,6 @@ export const AdminService = {
     const tempPassword = randomBytes(6).toString("base64url");
     const passwordHash = await hashPassword(tempPassword);
     const now = new Date();
-    const trialEnd = new Date(now.getTime() + input.trialDays * 24 * 60 * 60 * 1000);
 
     const tenantId = await prisma.$transaction(async (tx) => {
       const tenant = await tx.tenant.create({
@@ -105,10 +109,12 @@ export const AdminService = {
           subscription: {
             create: {
               planId: plan.id,
-              status: input.trialDays > 0 ? "TRIAL" : "ATIVO",
+              // Sem periodo gratuito: a empresa nasce bloqueada e so vai para
+              // ATIVO quando o Mercado Pago aprovar a primeira mensalidade.
+              status: "SUSPENSO",
               monthlyAmount: input.monthlyAmount,
-              trialEndsAt: input.trialDays > 0 ? trialEnd : null,
-              currentPeriodEnd: trialEnd,
+              activatedAt: null,
+              currentPeriodEnd: now,
               graceDays: input.graceDays,
             },
           },

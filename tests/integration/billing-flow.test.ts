@@ -77,6 +77,7 @@ const creditoInput: CardPaymentInput = {
   paymentMethodId: "visa",
   installments: 1,
   payer: { email: "pagador@teste.com" },
+  acceptedTerms: true,
 };
 
 const debitoInput: CardPaymentInput = {
@@ -88,17 +89,33 @@ const debitoInput: CardPaymentInput = {
     email: "pagador@teste.com",
     identification: { type: "CPF", number: "12345678909" },
   },
+  acceptedTerms: true,
 };
 
-// Cria um tenant isolado (com assinatura TRIAL + OWNER) para um cenário de cartão.
+/**
+ * Confere a renovação de quem nunca pagou: como `currentPeriodEnd` nasce no
+ * passado, o novo ciclo tem de começar HOJE — se partisse da data velha, o mês
+ * recém-pago já nasceria vencido e a empresa seguiria bloqueada.
+ */
+function expectCicloComecandoHoje(periodStart: Date | null, periodEnd: Date | null) {
+  expect(periodStart).toBeTruthy();
+  expect(periodEnd).toBeTruthy();
+  const agora = Date.now();
+  expect(Math.abs(periodStart!.getTime() - agora)).toBeLessThan(60_000);
+  expect(periodEnd!.toISOString()).toBe(addOneMonth(periodStart!).toISOString());
+  expect(periodEnd!.getTime()).toBeGreaterThan(agora);
+}
+
+// Cria um tenant isolado (assinatura ainda sem pagamento + OWNER) para um cenário de cartão.
 async function createCardTenant(): Promise<string> {
   const id = await createTestTenant("BILLING CARD");
   await prisma.tenantSubscription.create({
     data: {
       tenantId: id,
       planId,
-      status: "TRIAL",
+      status: "SUSPENSO",
       monthlyAmount: 49.9,
+      activatedAt: null,
       currentPeriodEnd: periodEndInicial,
       graceDays: 5,
     },
@@ -131,9 +148,9 @@ beforeAll(async () => {
     data: {
       tenantId,
       planId,
-      status: "TRIAL",
+      status: "SUSPENSO",
       monthlyAmount: 49.9,
-      trialEndsAt: new Date("2026-07-20T00:00:00Z"),
+      activatedAt: null,
       currentPeriodEnd: periodEndInicial,
       graceDays: 5,
     },
@@ -189,7 +206,7 @@ describe("Cobrança mensal PIX (Mercado Pago)", () => {
 
   it("cartão não passa pelo checkout PIX (exige token do Brick)", async () => {
     await expect(
-      BillingService.createCheckout(tenantId, { method: "CREDIT_CARD" }),
+      BillingService.createCheckout(tenantId, { method: "CREDIT_CARD", acceptedTerms: true }),
     ).rejects.toThrow(/cartão/i);
   });
 });
@@ -206,16 +223,17 @@ describe("Webhook de pagamento (idempotente, ativa a assinatura)", () => {
 
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     expect(sub?.status).toBe("ATIVO");
-    expect(sub?.trialEndsAt).toBeNull();
-    const expected = addOneMonth(periodEndInicial);
-    expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
+    expect(sub?.activatedAt).toBeTruthy(); // primeira ativação registrada
+    expectCicloComecandoHoje(payment!.periodStart, payment!.periodEnd);
+    expect(sub?.currentPeriodEnd.toISOString()).toBe(payment!.periodEnd!.toISOString());
   });
 
   it("reentrega do mesmo webhook NÃO avança o vencimento de novo (idempotência)", async () => {
+    const antes = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     await BillingService.handleWebhook("mp-2");
-    const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    const expected = addOneMonth(periodEndInicial);
-    expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
+    const depois = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
+    expect(depois?.currentPeriodEnd.toISOString()).toBe(antes!.currentPeriodEnd.toISOString());
+    expect(depois?.activatedAt?.toISOString()).toBe(antes!.activatedAt?.toISOString());
   });
 
   it("pagamento recusado: marca RECUSADO e NÃO mexe na assinatura", async () => {
@@ -275,9 +293,9 @@ describe("Cobrança com CARTÃO (Payment Brick)", () => {
 
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
     expect(sub?.status).toBe("ATIVO");
-    expect(sub?.trialEndsAt).toBeNull();
-    const expected = addOneMonth(periodEndInicial);
-    expect(sub?.currentPeriodEnd.toISOString()).toBe(expected.toISOString());
+    expect(sub?.activatedAt).toBeTruthy();
+    expectCicloComecandoHoje(row!.periodStart, row!.periodEnd);
+    expect(sub?.currentPeriodEnd.toISOString()).toBe(row!.periodEnd!.toISOString());
   });
 
   it("em análise (pending) → só o webhook aprova depois, ativando a assinatura", async () => {
@@ -288,7 +306,8 @@ describe("Cobrança com CARTÃO (Payment Brick)", () => {
     const result = await BillingService.processCardPayment(t, creditoInput);
     expect(result.status).toBe("PENDENTE");
     let sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
-    expect(sub?.status).toBe("TRIAL"); // ainda não ativou
+    expect(sub?.status).toBe("SUSPENSO"); // ainda não ativou
+    expect(sub?.activatedAt).toBeNull();
 
     // Webhook aprova depois.
     gw.paymentStatus.set(result.mpPaymentId!, "approved");
@@ -309,7 +328,8 @@ describe("Cobrança com CARTÃO (Payment Brick)", () => {
     const result = await BillingService.processCardPayment(t, creditoInput);
     expect(result.status).toBe("RECUSADO");
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
-    expect(sub?.status).toBe("TRIAL");
+    expect(sub?.status).toBe("SUSPENSO");
+    expect(sub?.activatedAt).toBeNull();
   });
 
   it("cartão aprovado cancela um PIX PENDENTE do mesmo mês", async () => {
@@ -359,7 +379,7 @@ describe("Cartão de DÉBITO com autenticação 3DS", () => {
     expect(row?.statusDetail).toBe("pending_challenge");
 
     let sub = await prisma.tenantSubscription.findUnique({ where: { tenantId: t } });
-    expect(sub?.status).toBe("TRIAL"); // ainda não autenticou
+    expect(sub?.status).toBe("SUSPENSO"); // ainda não autenticou
 
     // Portador autentica → o Mercado Pago aprova e avisa pelo webhook.
     gw.paymentStatus.set(result.mpPaymentId!, "approved");

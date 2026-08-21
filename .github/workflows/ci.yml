@@ -37,14 +37,15 @@ jobs:
     env:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/ceasapro_test?schema=public
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/ceasapro_test?schema=public
-      JWT_ACCESS_SECRET: ci-access-secret-change-in-production-32-bytes
-      JWT_REFRESH_SECRET: ci-refresh-secret-change-in-production-32-bytes
+      JWT_SECRET: ci-access-secret-change-in-production-32-bytes
       ACCESS_TOKEN_TTL: 15m
       REFRESH_TOKEN_TTL_DAYS: "30"
       APP_URL: http://localhost:3000
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       CRON_SECRET: ci-cron-secret
-      MP_WEBHOOK_SECRET: ci-webhook-secret
+      MERCADOPAGO_WEBHOOK_SECRET: ci-webhook-secret
+      # RESEND_API_KEY fica de fora de propósito: sem ela o envio de e-mail vira
+      # no-op e o CI não faz chamada de rede para o Resend.
       SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
       SEED_SUPERADMIN_PASSWORD: ci-superadmin-password-123
       SEED_DEMO: "true"
@@ -82,6 +83,9 @@ jobs:
 
       - name: Testes de integração
         run: npm run test:integration
+
+      - name: Verificação pré-flight (env, banco, resíduo de trial)
+        run: npm run preflight
 
       - name: Build de produção
         run: npm run build

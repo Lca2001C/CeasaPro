@@ -33,7 +33,7 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 | Operação | Produtos · Fornecedores · Compras (entrada de estoque + frete rateado) · Vendas/PDV · Fiado (pagamento parcial) · Estoque (quebra/perda/doação) |
 | Fase 2 | Caixas plásticas (entrada/saída/retorno/quebra + saldos) · Higienização (envio/devolução/pagamento) · Venda de embalagens (tipos + vendas) |
 | Financeiro | Despesas (fixas/variáveis + categorias) · Dashboard (com avisos + indicadores avançados) · 13 relatórios (básicos + lucro por produto, mais vendidos, inadimplentes, fornecedores, fluxo de caixa, caixas, higienização, embalagens) |
-| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (PIX Mercado Pago, trial, bloqueio) · Painel super-admin (clientes, planos, pagamentos, auditoria) |
+| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (Mercado Pago: PIX, crédito e débito; sem período gratuito; bloqueio automático) · Painel super-admin (clientes, planos, pagamentos, auditoria) |
 | Fase 3 | **PWA instalável** (manifest + service worker leve) · **Avisos** no painel (fiado vencido, despesas a vencer, higienização a pagar) · **Atividades/Auditoria** (empresa e plataforma) · Métricas avançadas (margem, mais vendidos, prejuízo, estoque parado, MRR, novos no mês) |
 
 ---
@@ -80,7 +80,7 @@ npm install
 
 # 2. Configurar variáveis de ambiente
 cp .env.example .env
-#   Gere segredos fortes para JWT_ACCESS_SECRET / JWT_REFRESH_SECRET:
+#   Gere um segredo forte para JWT_SECRET:
 #   node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"
 
 # 3. Subir o banco (PostgreSQL via Docker)
@@ -117,6 +117,7 @@ Acesse http://localhost:3000.
 | `npm run prisma:migrate` | Criar/aplicar migration (dev) |
 | `npm run prisma:deploy` | Aplicar migrations (produção) |
 | `npm run db:seed` | Popular dados iniciais |
+| `npm run preflight` | Valida env, banco e ausência de resíduo de trial |
 
 ## Testes
 
@@ -138,7 +139,7 @@ Os testes de integração exigem o banco de pé (`docker compose up -d`). Eles c
 2. **Vercel:** importe o repositório. Configure todas as variáveis do `.env.example` em *Production* (e *Preview*). Gere segredos com `openssl rand -base64 32`.
 3. **Migrations em produção:** rode `npm run prisma:deploy` no pipeline de release (usa `DIRECT_URL`) — nunca `migrate dev` em produção.
 4. **Seed inicial** (uma vez): `npm run db:seed` apontando para o banco de produção (defina `SEED_SUPERADMIN_*`).
-5. **Mercado Pago:** configure `MP_ACCESS_TOKEN`, `MP_WEBHOOK_SECRET` e `APP_URL` (as três são **obrigatórias em produção** — a aplicação recusa gerar cobrança sem elas). No painel do Mercado Pago, em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MP_WEBHOOK_SECRET`. O mesmo endpoint atende PIX e cartão (Checkout Pro). `MP_PUBLIC_KEY` não é usada no fluxo por redirecionamento.
+5. **Mercado Pago:** configure `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` e `APP_URL` (as três são **obrigatórias em produção** — a aplicação recusa gerar cobrança sem elas). No painel do Mercado Pago, em *Suas integrações → Webhooks*, aponte o evento **Pagamentos** para `https://SEU_DOMINIO/api/webhooks/mercadopago` e copie a chave secreta para `MERCADOPAGO_WEBHOOK_SECRET`. O mesmo endpoint atende PIX, crédito, débito e as notificações de estorno/chargeback. Sem `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` a tela de assinatura cai no fallback somente-PIX. **Atualize esses nomes na Vercel** se ainda estiverem como `MP_*` / `JWT_ACCESS_SECRET`.
 6. **Cron de cobrança:** o [`vercel.json`](vercel.json) já agenda `/api/cron/billing` (protegido por `CRON_SECRET`) diariamente. Ele **reconcilia as cobranças pendentes** direto na API do Mercado Pago antes de recalcular os status — é a rede de segurança para webhook perdido.
 7. **E-mail:** verifique o domínio no Resend e configure `RESEND_API_KEY` / `EMAIL_FROM`.
 

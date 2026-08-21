@@ -174,16 +174,16 @@ Rota `/assinatura` (acessível mesmo com a conta bloqueada). Integração **Merc
 - O cliente gera a cobrança do mês → o sistema cria um pagamento PIX no Mercado Pago e exibe o **QR Code** e o **copia-e-cola**.
 - O pagamento é confirmado por **webhook** (`/api/webhooks/mercadopago`): ao ser aprovado, a assinatura vai para **ATIVO** e o vencimento avança um mês.
 - Um **cron** diário (`/api/cron/billing`) recalcula o status de todas as assinaturas.
-- **Trial:** empresas novas começam com período de teste (padrão 15 dias).
-- **Bloqueio:** vencida além da tolerância → **suspensa**; a empresa é redirecionada para `/conta/suspensa` e só acessa a tela de regularização. Ver [Planos e módulos](05-planos-e-modulos.md) e [Segurança](06-seguranca.md).
+- **Sem período gratuito:** empresas novas nascem bloqueadas e só liberam as rotas operacionais após o primeiro pagamento aprovado.
+- **Bloqueio:** nunca pagou, ou vencida além da tolerância → **suspensa**; a empresa é redirecionada para `/conta/suspensa` e só acessa a tela de regularização. Estorno e chargeback também bloqueiam na hora, revogando as sessões ativas. Ver [Planos e módulos](05-planos-e-modulos.md) e [Segurança](06-seguranca.md).
 
 ## Painel do super-admin
 
 Área `/admin` (somente `SUPER_ADMIN`).
 
-- **Visão geral** (`/admin`): nº de empresas, MRR (receita mensal recorrente), ativas, inadimplentes, novos clientes no mês, recebido no mês, em teste grátis, e distribuição por status.
+- **Visão geral** (`/admin`): nº de empresas, MRR (receita mensal recorrente), ativas, inadimplentes, novos clientes no mês, recebido no mês, aguardando o 1º pagamento, e distribuição por status.
 - **Clientes** (`/admin/clientes`, `/admin/clientes/novo`, `/admin/clientes/[id]`):
-  - **Criar empresa + dono** numa transação (gera senha temporária para o OWNER, cria a assinatura em trial e as categorias/tipos padrão).
+  - **Criar empresa + dono** numa transação (gera senha temporária para o OWNER, cria a assinatura já bloqueada — aguardando o 1º pagamento — e as categorias/tipos padrão).
   - No detalhe: **ativar / suspender / bloquear** a empresa (bloqueio imediato — derruba as sessões ativas), editar mensalidade, ver usuários e histórico de pagamentos.
 - **Planos** (`/admin/planos`): criar e **editar** planos — preço, limite de usuários, ativo e **quais módulos opcionais** o plano inclui.
 - **Pagamentos** (`/admin/pagamentos`): todas as cobranças de mensalidade das empresas.

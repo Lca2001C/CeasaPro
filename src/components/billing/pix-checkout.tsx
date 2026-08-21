@@ -9,7 +9,7 @@ import { PixChargePanel, type PixCharge } from "./pix-charge-panel";
 
 /**
  * Checkout PIX puro — usado quando o Payment Brick não está disponível
- * (`NEXT_PUBLIC_MP_PUBLIC_KEY` ausente), já que o Brick exige a chave pública.
+ * (`NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` ausente), já que o Brick exige a chave pública.
  */
 export function PixCheckout({
   initialCharge,
@@ -23,7 +23,12 @@ export function PixCheckout({
 
   async function gerarPix() {
     setLoading(true);
-    const res = await apiPost<PixCharge>("/api/billing/checkout", { method: "PIX" });
+    // O aceite dos termos é validado no servidor; a tela só chega aqui depois
+    // que o usuário marcou a caixa (ou já havia aceitado a versão vigente).
+    const res = await apiPost<PixCharge>("/api/billing/checkout", {
+      method: "PIX",
+      acceptedTerms: true,
+    });
     setLoading(false);
     if (!res.ok) {
       toast.error(res.error.message);

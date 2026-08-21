@@ -5,6 +5,7 @@ import {
   DEFAULT_EXPENSE_CATEGORIES,
   DEFAULT_PACKAGING_TYPES,
 } from "../src/lib/constants";
+import { TERMS_VERSION } from "../src/lib/legal";
 
 const prisma = new PrismaClient();
 
@@ -75,7 +76,10 @@ async function main() {
     const existingDemo = await prisma.user.findFirst({ where: { email: demoEmail } });
     if (!existingDemo) {
       const now = new Date();
-      const trialEnd = new Date(now.getTime() + 15 * 24 * 60 * 60 * 1000);
+      // Fixture de dev/E2E: a demo nasce com a assinatura JÁ PAGA (activatedAt
+      // preenchido) para não cair na tela de bloqueio. Não é período gratuito —
+      // empresas reais nascem SUSPENSAS até o Mercado Pago aprovar o 1º pagamento.
+      const periodEnd = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
       const tenant = await prisma.tenant.create({
         data: {
           tradeName: "Hortifruti Demo",
@@ -83,13 +87,15 @@ async function main() {
           phone: "31999990000",
           status: "ACTIVE",
           onboardingCompletedAt: new Date(),
+          termsAcceptedAt: now,
+          termsVersion: TERMS_VERSION,
           subscription: {
             create: {
               planId: plan.id,
-              status: "TRIAL",
+              status: "ATIVO",
               monthlyAmount: plan.priceMonthly,
-              trialEndsAt: trialEnd,
-              currentPeriodEnd: trialEnd,
+              activatedAt: now,
+              currentPeriodEnd: periodEnd,
               graceDays: 5,
             },
           },
@@ -128,8 +134,21 @@ async function main() {
           data: DEFAULT_PACKAGING_TYPES.map((name) => ({ tenantId: demoTenant.id, name })),
           skipDuplicates: true,
         });
+        // Mantém a demo utilizável em dev/E2E mesmo depois do fim do trial:
+        // sem `activatedAt` a assinatura seria recalculada para SUSPENSO e a
+        // suíte E2E cairia na tela de bloqueio.
+        const now = new Date();
+        await prisma.tenantSubscription.updateMany({
+          where: { tenantId: demoTenant.id, activatedAt: null },
+          data: {
+            status: "ATIVO",
+            statusSource: "AUTO",
+            activatedAt: now,
+            currentPeriodEnd: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000),
+          },
+        });
       }
-      console.log("• Empresa demo já existe (tipos de embalagem garantidos)");
+      console.log("• Empresa demo já existe (assinatura e embalagens garantidas)");
     }
   }
 

@@ -64,6 +64,9 @@ async function criarTenantSuspenso(mpPaymentId: string, method: ChargeMethod) {
       planId,
       status: "SUSPENSO",
       monthlyAmount: 49.9,
+      // Cliente antigo que deixou vencer: já pagou no passado, por isso tem
+      // `activatedAt`. O vencimento ficou para trás e o acesso caiu.
+      activatedAt: new Date("2026-06-01T00:00:00Z"),
       currentPeriodEnd: periodEnd,
       graceDays: 5,
     },
@@ -101,7 +104,7 @@ afterAll(async () => {
 });
 
 beforeEach(() => {
-  vi.stubEnv("MP_WEBHOOK_SECRET", SECRET);
+  vi.stubEnv("MERCADOPAGO_WEBHOOK_SECRET", SECRET);
 });
 
 afterEach(() => {
@@ -170,7 +173,13 @@ describe("Webhook reativa a assinatura nos três métodos", () => {
 
       const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
       expect(sub?.status).toBe("ATIVO");
-      expect(sub?.currentPeriodEnd.toISOString()).toBe(addOneMonth(periodEnd).toISOString());
+      // O vencimento antigo ficou no passado, então o novo ciclo começa hoje —
+      // se partisse da data velha, o mês pago já nasceria vencido.
+      expect(Math.abs(payment!.periodStart!.getTime() - Date.now())).toBeLessThan(60_000);
+      expect(sub?.currentPeriodEnd.toISOString()).toBe(
+        addOneMonth(payment!.periodStart!).toISOString(),
+      );
+      expect(sub!.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now());
     });
   }
 

@@ -11,7 +11,8 @@ export const novaEmpresaSchema = z.object({
   ownerEmail: emailSchema,
   planId: z.string().min(1, "Selecione o plano"),
   monthlyAmount: z.number().nonnegative("Valor invalido"),
-  trialDays: z.number().int().nonnegative(),
+  // Nao existe trial: a empresa nasce SUSPENSA e so libera apos o 1o pagamento.
+  // `graceDays` e a tolerancia pos-vencimento e so vale depois da 1a ativacao.
   graceDays: z.number().int().nonnegative(),
 });
 export type NovaEmpresaInput = z.infer<typeof novaEmpresaSchema>;
