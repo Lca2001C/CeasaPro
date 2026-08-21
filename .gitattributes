@@ -1,0 +1,2 @@
+# Scripts Bash precisam de LF — CRLF quebra execução no WSL/Git Bash.
+*.sh text eol=lf

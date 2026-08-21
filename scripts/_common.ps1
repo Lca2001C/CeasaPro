@@ -13,7 +13,7 @@ function ErrMsg($m)  { Write-Host "X $m" -ForegroundColor Red }
 
 function Initialize-CeasaPro([string]$Mode = "dev") {
   if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    ErrMsg "Node.js nao encontrado. Instale o Node 20+."; exit 1
+    ErrMsg "Node.js nao encontrado. Instale o Node 22+ (https://nodejs.org)."; exit 1
   }
 
   # .env
@@ -80,8 +80,8 @@ function Initialize-CeasaPro([string]$Mode = "dev") {
     npx prisma migrate dev --skip-generate
   }
 
-  # Seed (apenas na primeira vez)
-  if (-not (Test-Path "node_modules\.ceasapro-seeded")) {
+  # Seed automatico so em desenvolvimento (em producao rode npm run db:seed manualmente, uma vez).
+  if ($Mode -eq "dev" -and -not (Test-Path "node_modules\.ceasapro-seeded")) {
     Info "Populando dados iniciais (super-admin, plano, demo)..."
     npm run db:seed
     New-Item -ItemType File "node_modules\.ceasapro-seeded" | Out-Null

@@ -11,10 +11,36 @@ ok()   { printf "\033[32m✔\033[0m %s\n" "$1"; }
 warn() { printf "\033[33m⚠\033[0m %s\n" "$1"; }
 err()  { printf "\033[31m✖\033[0m %s\n" "$1" >&2; }
 
+# Garante node/npm/npx no PATH (Git Bash e WSL no Windows não herdam o PATH do sistema).
+ceasapro_ensure_node() {
+  if command -v node >/dev/null 2>&1; then
+    return 0
+  fi
+
+  local dir
+  for dir in \
+    "/c/Program Files/nodejs" \
+    "/c/Program Files (x86)/nodejs" \
+    "/mnt/c/Program Files/nodejs" \
+    "/mnt/c/Program Files (x86)/nodejs"
+  do
+    if [ -f "$dir/node.exe" ] || [ -f "$dir/node" ]; then
+      export PATH="$dir:$PATH"
+      if command -v node >/dev/null 2>&1 || command -v node.exe >/dev/null 2>&1; then
+        warn "Node.js encontrado em $dir — adicionado ao PATH desta sessão."
+        return 0
+      fi
+    fi
+  done
+
+  err "Node.js não encontrado. Instale o Node 22+ (https://nodejs.org) ou use scripts/start.ps1 no Windows."
+  exit 1
+}
+
 ceasapro_prepare() {
   local mode="${1:-dev}"
 
-  command -v node >/dev/null 2>&1 || { err "Node.js não encontrado. Instale o Node 20+."; exit 1; }
+  ceasapro_ensure_node
 
   # .env
   if [ ! -f .env ]; then
@@ -69,8 +95,8 @@ ceasapro_prepare() {
     npx prisma migrate dev --skip-generate
   fi
 
-  # Seed (apenas na primeira vez)
-  if [ ! -f node_modules/.ceasapro-seeded ]; then
+  # Seed automático só em desenvolvimento (em produção rode npm run db:seed manualmente, uma vez).
+  if [ "$mode" = "dev" ] && [ ! -f node_modules/.ceasapro-seeded ]; then
     info "Populando dados iniciais (super-admin, plano, demo)..."
     npm run db:seed
     touch node_modules/.ceasapro-seeded
