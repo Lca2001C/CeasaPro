@@ -352,7 +352,7 @@ erDiagram
 
 ### Seed (`prisma/seed.ts`)
 
-Sempre cria (de forma idempotente) o **super-admin** com `mustChangePassword: true` e **dois planos**: *Padrão* (R$ 49,90, até 3 usuários, todos os módulos) e *Básico* (R$ 29,90, até 2 usuários, `modules: []` ⇒ só o núcleo). Com `SEED_DEMO=true`, cria também a empresa **Hortifruti Demo** com a assinatura já ativa (fixture de dev/E2E, não é período gratuito), usuário OWNER, 14 categorias de despesa padrão e 4 tipos de embalagem. Não cria produtos, vendas nem movimentos.
+Sempre cria (de forma idempotente) o **super-admin** com `mustChangePassword: true` e **dois planos**: *Padrão* (R$ 200,00, até 3 usuários, todos os módulos) e *Básico* (R$ 160,00, até 2 usuários, `modules: []` ⇒ só o núcleo). Com `SEED_DEMO=true`, cria também a empresa **Hortifruti Demo** com a assinatura já ativa (fixture de dev/E2E, não é período gratuito), usuário OWNER, 14 categorias de despesa padrão e 4 tipos de embalagem. Não cria produtos, vendas nem movimentos.
 
 ---
 

@@ -43,11 +43,11 @@ async function main() {
   //    Ter 2+ planos ativos habilita a troca de plano na tela "Meu plano".
   const plan = await prisma.plan.upsert({
     where: { slug: "padrao" },
-    update: {},
+    update: { priceMonthly: new Prisma.Decimal("200.00") },
     create: {
       name: "Plano Padrão",
       slug: "padrao",
-      priceMonthly: new Prisma.Decimal("49.90"),
+      priceMonthly: new Prisma.Decimal("200.00"),
       maxUsers: 3,
       active: true,
       // sem features.modules ⇒ todos os módulos opcionais liberados (retrocompat).
@@ -57,11 +57,11 @@ async function main() {
 
   const planoBasico = await prisma.plan.upsert({
     where: { slug: "basico" },
-    update: {},
+    update: { priceMonthly: new Prisma.Decimal("160.00") },
     create: {
       name: "Plano Básico",
       slug: "basico",
-      priceMonthly: new Prisma.Decimal("29.90"),
+      priceMonthly: new Prisma.Decimal("160.00"),
       maxUsers: 2,
       active: true,
       features: { modules: [] }, // só os recursos básicos (núcleo)
