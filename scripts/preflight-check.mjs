@@ -43,6 +43,7 @@ const isProd = process.env.NODE_ENV === "production";
  * @property {string} name
  * @property {string} description
  * @property {boolean} [prodOnly]   só é exigida em produção
+ * @property {boolean} [optional]   nunca bloqueia: ausência vira aviso
  * @property {(value: string) => string | null} [validate] devolve a mensagem de erro, ou null
  */
 
@@ -128,6 +129,18 @@ const ENV_RULES = [
     validate: (v) => (v.includes("@") ? null : "deveria conter um endereço de e-mail"),
   },
   {
+    name: "EMAIL_REPLY_TO",
+    description: "Endereço de resposta monitorado (opcional, melhora a reputação anti-spam)",
+    optional: true,
+    validate: (v) => (v.includes("@") ? null : "deveria conter um endereço de e-mail"),
+  },
+  {
+    name: "RESEND_WEBHOOK_SECRET",
+    description: "Assinatura do webhook do Resend (bounce/spam) — opcional",
+    optional: true,
+    validate: startsWith("whsec_"),
+  },
+  {
     name: "CRON_SECRET",
     description: "Protege /api/cron/billing",
     prodOnly: true,
@@ -153,7 +166,8 @@ function checkEnv() {
 
     if (!value) {
       const message = `${rule.name} não definida — ${rule.description}`;
-      if (rule.prodOnly && !isProd) advise(`${message} (obrigatória em produção)`);
+      if (rule.optional) advise(message);
+      else if (rule.prodOnly && !isProd) advise(`${message} (obrigatória em produção)`);
       else fail(message);
       continue;
     }
@@ -197,11 +211,57 @@ async function checkDatabase() {
     if (planosAtivos === 0) fail("Nenhum plano ativo cadastrado — rode o seed antes do deploy");
     else ok(`${planosAtivos} plano(s) ativo(s) cadastrado(s)`);
 
+    await checkPasswordResetFlow(prisma);
     await checkNoTrialResidue(prisma);
   } catch (e) {
     fail(`Falha ao consultar o banco: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
     await prisma.$disconnect();
+  }
+}
+
+/**
+ * Fluxo "esqueci minha senha": o que quebra em produção e não aparece em teste.
+ *
+ * O envio em si depende de RESEND_API_KEY/EMAIL_FROM (conferidos acima). Aqui
+ * checamos o que é específico do banco e do link: o índice do token (senão cada
+ * clique em link vira seq scan em users) e tokens vencidos acumulados.
+ */
+async function checkPasswordResetFlow(prisma) {
+  section("Recuperação de senha");
+
+  const [{ count: indice }] = await prisma.$queryRaw`
+    SELECT COUNT(*)::int AS count
+    FROM pg_indexes
+    WHERE tablename = 'users' AND indexname = 'users_resetTokenHash_idx'
+  `;
+  if (indice === 0) {
+    fail(
+      'Índice "users_resetTokenHash_idx" não existe — rode `prisma migrate deploy` ' +
+        "(migration 20260824120000_user_reset_token_index)",
+    );
+  } else {
+    ok('Índice "users_resetTokenHash_idx" presente (busca do token do e-mail)');
+  }
+
+  // O link vale 1 hora; token vencido no banco é só resíduo, mas muitos deles
+  // sugerem gente pedindo link e não conseguindo usar (e-mail não chegando).
+  const vencidos = await prisma.user.count({
+    where: { resetTokenHash: { not: null }, resetTokenExpiresAt: { lt: new Date() } },
+  });
+  if (vencidos > 0) {
+    advise(
+      `${vencidos} usuário(s) com token de redefinição vencido — normal em pouca ` +
+        "quantidade; se for muito, verifique se o e-mail está chegando (painel do Resend)",
+    );
+  } else {
+    ok("Nenhum token de redefinição vencido pendente");
+  }
+
+  if (isProd && !process.env.RESEND_API_KEY) {
+    fail(
+      "Sem RESEND_API_KEY o envio de e-mail é no-op: ninguém consegue recuperar a senha.",
+    );
   }
 }
 

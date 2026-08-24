@@ -226,6 +226,8 @@ model User {
 
   @@unique([tenantId, email])
   @@index([tenantId])
+  // Busca do fluxo "esqueci minha senha": sem indice, cada link clicado varre a tabela inteira.
+  @@index([resetTokenHash])
   @@map("users")
 }
 

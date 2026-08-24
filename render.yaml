@@ -44,6 +44,11 @@ services:
         value: "30"
       - key: SEED_DEMO
         value: "false"
+      # URL pública do serviço — https://<nome>.onrender.com ou seu domínio próprio.
+      # Usada nos links dos e-mails (redefinição de senha, boas-vindas) e no Mercado Pago.
+      # Se esquecer de preencher, o app cai em RENDER_EXTERNAL_URL (injetada pelo Render),
+      # então o link de redefinição continua saindo com o domínio certo — mas preencha:
+      # NEXT_PUBLIC_APP_URL entra no build do client e não tem esse fallback.
       - key: APP_URL
         sync: false
       - key: NEXT_PUBLIC_APP_URL
@@ -58,9 +63,18 @@ services:
         sync: false
       - key: NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY
         sync: false
+      # Resend — sem estas duas o "esqueci minha senha" não envia e-mail nenhum.
+      # O domínio de EMAIL_FROM precisa estar verificado no painel do Resend.
       - key: RESEND_API_KEY
         sync: false
       - key: EMAIL_FROM
+        sync: false
+      # Opcionais (pode deixar em branco):
+      # EMAIL_REPLY_TO      — endereço de resposta monitorado (ajuda na reputação anti-spam)
+      # RESEND_WEBHOOK_SECRET — só se cadastrar o webhook de bounce/spam no Resend
+      - key: EMAIL_REPLY_TO
+        sync: false
+      - key: RESEND_WEBHOOK_SECRET
         sync: false
       - key: NEXT_PUBLIC_SUPPORT_WHATSAPP
         sync: false

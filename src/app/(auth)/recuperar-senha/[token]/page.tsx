@@ -1,82 +1,58 @@
-"use client";
-
-import { useState, use } from "react";
-import { useRouter } from "next/navigation";
-import { useForm } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import { z } from "zod";
-import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
-import { apiPost } from "@/lib/api-client";
-import { passwordPolicy } from "@/lib/validations/auth";
+import type { Metadata } from "next";
+import Link from "next/link";
+import { KeyRound, TriangleAlert } from "lucide-react";
+import { findUserByResetToken } from "@/lib/auth/password-reset";
+import { maskEmail } from "@/lib/auth/reset-token";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { ResetForm } from "./_components/reset-form";
 
-const schema = z
-  .object({
-    password: passwordPolicy,
-    confirm: z.string(),
-  })
-  .refine((d) => d.password === d.confirm, {
-    message: "As senhas não conferem",
-    path: ["confirm"],
-  });
-type FormValues = z.infer<typeof schema>;
+// O token vem na URL e é consultado no banco: nunca pode ser pré-renderizado
+// nem ficar em cache (nem no CDN do Render).
+export const dynamic = "force-dynamic";
 
-export default function ResetPage({
-  params,
-}: {
-  params: Promise<{ token: string }>;
-}) {
-  const { token } = use(params);
-  const router = useRouter();
-  const [loading, setLoading] = useState(false);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors },
-  } = useForm<FormValues>({ resolver: zodResolver(schema) });
+export const metadata: Metadata = {
+  title: "Redefinir senha",
+  robots: { index: false, follow: false },
+};
 
-  async function onSubmit(values: FormValues) {
-    setLoading(true);
-    const res = await apiPost("/api/auth/reset", {
-      token,
-      password: values.password,
-    });
-    setLoading(false);
-    if (res.ok) {
-      toast.success("Senha redefinida! Faça login.");
-      router.push("/login");
-    } else {
-      toast.error(res.error.message);
-    }
-  }
+/**
+ * Valida o token NO SERVIDOR antes de mostrar o formulário. Sem isto o usuário
+ * digita a senha duas vezes para só então descobrir que o link expirou.
+ */
+export default async function ResetPage({ params }: { params: Promise<{ token: string }> }) {
+  const { token } = await params;
+  const user = await findUserByResetToken(token);
 
   return (
     <Card>
       <CardContent className="pt-6">
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="password">Nova senha</Label>
-            <Input id="password" type="password" autoFocus {...register("password")} />
-            {errors.password && (
-              <span className="text-xs text-destructive">{errors.password.message}</span>
-            )}
+        {user ? (
+          <ResetForm token={token} maskedEmail={maskEmail(user.email)} />
+        ) : (
+          <div className="flex flex-col items-center gap-4 text-center">
+            <TriangleAlert className="size-8 text-destructive" />
+            <div className="flex flex-col gap-1">
+              <p className="font-medium">Link inválido ou expirado</p>
+              <p className="text-sm text-muted-foreground">
+                O link de redefinição vale por 1 hora e só pode ser usado uma vez. Peça
+                um novo para continuar.
+              </p>
+            </div>
+            <Button asChild size="lg" className="w-full">
+              <Link href="/recuperar-senha">
+                <KeyRound className="size-4" />
+                Pedir um link novo
+              </Link>
+            </Button>
+            <Link
+              href="/login"
+              className="text-sm text-muted-foreground hover:text-foreground"
+            >
+              Voltar para o login
+            </Link>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="confirm">Confirmar senha</Label>
-            <Input id="confirm" type="password" {...register("confirm")} />
-            {errors.confirm && (
-              <span className="text-xs text-destructive">{errors.confirm.message}</span>
-            )}
-          </div>
-          <Button type="submit" size="lg" disabled={loading}>
-            {loading && <Loader2 className="animate-spin" />}
-            Redefinir senha
-          </Button>
-        </form>
+        )}
       </CardContent>
     </Card>
   );

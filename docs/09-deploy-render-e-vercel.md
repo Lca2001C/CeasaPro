@@ -391,12 +391,54 @@ https://SEU-DOMINIO/api/webhooks/mercadopago
 5. Se o secret mudou, **não** precisa rebuild (não é `NEXT_PUBLIC_*`); na Vercel um Redeploy rápido basta para recarregar env do server; no Render, **Restart**.
 6. Teste: gere um PIX de teste na tela `/assinatura` (com uma empresa real). O status deve ir para pago sem você recarregar à força — o cron também reconcilia no dia seguinte se o webhook falhar.
 
-### 5.2 Resend — domínio e webhook (opcional)
+### 5.2 Resend — e-mail do "esqueci minha senha"
+
+Sem esta configuração o botão **Esqueci minha senha** funciona na tela mas **nenhum e-mail sai**: a API responde a mesma mensagem genérica sempre (para não revelar quais e-mails existem), então o usuário não vê erro nenhum. Configure antes do go-live.
+
+**1) Verifique o domínio no Resend**
 
 1. Resend → **Domains → Add** o domínio que está em `EMAIL_FROM`.
-2. Crie os registros DNS (SPF, DKIM, opcionalmente DMARC) e aguarde **Verified**.
-3. Opcional: **Webhooks** → `https://SEU-DOMINIO/api/webhooks/resend` e grave `RESEND_WEBHOOK_SECRET`.
-4. Teste: em `/login` use **Esqueci a senha** no e-mail do super-admin.
+2. Crie os registros DNS (SPF, DKIM e, de preferência, DMARC) e espere ficar **Verified**.
+3. `EMAIL_FROM` tem que ser **do domínio verificado**. Enviar de `@gmail.com` ou do `*.resend.dev` em produção cai em spam ou é recusado.
+
+**2) Variáveis no Render** (Web Service → *Environment*)
+
+| Variável | Obrigatória | Observação |
+|---|---|---|
+| `RESEND_API_KEY` | sim | começa com `re_`; sem ela o envio é **no-op silencioso** |
+| `EMAIL_FROM` | sim | `CeasaPro <nao-responda@seudominio.com.br>` |
+| `APP_URL` | sim | origem do link do e-mail: `https://`, sem barra no fim |
+| `EMAIL_REPLY_TO` | não | endereço de resposta monitorado; melhora a reputação anti-spam |
+| `RESEND_WEBHOOK_SECRET` | não | só se cadastrar o webhook de bounce/spam |
+
+> Se `APP_URL` faltar, o servidor cai em `RENDER_EXTERNAL_URL` (o Render injeta sozinho) e o link ainda sai com `https://SEU-SERVICO.onrender.com` — é rede de segurança, não substituto: com domínio próprio o link sairia com o endereço errado.
+
+**3) Webhook (opcional)** — Resend → **Webhooks** → `https://SEU-DOMINIO/api/webhooks/resend`; guarde o segredo em `RESEND_WEBHOOK_SECRET`.
+
+**4) Teste em produção**
+
+1. `/login` → **Esqueci minha senha** → e-mail do super-admin.
+2. A tela responde "Verifique seu e-mail" (responde isso **mesmo se o e-mail não existir** — é proposital).
+3. O e-mail chega em segundos; em Resend → **Emails** o status fica `delivered`.
+4. Abra o link. A tela valida o token **no servidor** antes de pedir a senha: link velho mostra "Link inválido ou expirado" em vez de deixar digitar à toa.
+5. Defina a senha nova → entre com ela. A antiga para de funcionar e todas as sessões abertas caem.
+
+**Como o fluxo funciona** (útil para depurar)
+
+| Etapa | Onde |
+|---|---|
+| Formulário do pedido | `/recuperar-senha` |
+| Gera o token e dispara o e-mail | `POST /api/auth/forgot` |
+| Token: 32 bytes aleatórios; o banco guarda só o SHA-256 | `users.resetTokenHash` |
+| Validade | 1 hora, **uso único** (pedir outro link invalida o anterior) |
+| Tela do link | `/recuperar-senha/[token]` |
+| Grava a senha nova e revoga as sessões | `POST /api/auth/reset` |
+| Limites | 5 pedidos / 15 min por IP e 3 / 15 min por e-mail (contador em memória: valem **por instância**) |
+| Trilha de auditoria | `audit_logs`: `PASSWORD_RESET_REQUESTED` e `PASSWORD_RESET` |
+
+Depois da troca o usuário recebe um segundo e-mail ("Sua senha foi alterada") — é o aviso que permite reagir se não tiver sido ele.
+
+Em **desenvolvimento**, sem `RESEND_API_KEY`, nada é enviado: o link aparece no log do servidor como `[DEV] Link de redefinição de senha`, o que permite testar o fluxo inteiro sem caixa de e-mail.
 
 ### 5.3 Pré-flight contra produção
 
@@ -423,7 +465,8 @@ Só siga se a saída for **Tudo certo. Pronto para o deploy.** Avisos de variáv
 - [ ] Pagamento de teste/produção aprovado → empresa **ATIVA** → `/dashboard`
 - [ ] Webhook MP: no painel, último envio **2xx**
 - [ ] Cron: execução manual devolve `ok: true`
-- [ ] Recuperar senha chega no e-mail
+- [ ] **Esqueci minha senha**: e-mail chega, link abre, senha nova entra e a antiga para de funcionar
+- [ ] Link de redefinição já usado (ou de mais de 1 h) mostra "Link inválido ou expirado"
 - [ ] Botão de WhatsApp aparece (se `NEXT_PUBLIC_SUPPORT_WHATSAPP` estava no **build**)
 - [ ] HTTPS no domínio; cookie de sessão persiste (não desloga no F5)
 
@@ -482,6 +525,9 @@ pg_dump "$DIRECT_URL" -Fc -f ceasapro-$(date +%Y%m%d).dump
 | `too many connections` (Neon) | `DATABASE_URL` sem `pgbouncer=true&connection_limit=1` | Ajuste a URL pooled e redeploy |
 | Render: deploy ok, site “acordando” 30s | Instância free adormecida | Suba para Starter |
 | E-mail não sai | Domínio Resend não verificado / `EMAIL_FROM` de outro domínio | Verifique DNS; o From tem que ser do domínio autenticado |
+| "Esqueci minha senha" não manda nada e não dá erro | `RESEND_API_KEY` ausente — o envio vira no-op silencioso | Setar no Render e redeploy; confira o log: `Falha ao enviar e-mail de redefinição` |
+| Link do e-mail aponta para `localhost` ou para o domínio errado | `APP_URL` não configurada (ou com barra no fim) | Setar `APP_URL`/`NEXT_PUBLIC_APP_URL` com `https://` e sem barra final |
+| Link do e-mail sempre "inválido ou expirado" | Link tem 1 h e é de uso único; pedir outro invalida o anterior | Use o e-mail mais recente e clique só uma vez |
 | `Node.js version` no Render | Runtime antigo | `NODE_VERSION=22` ou `.node-version` (já no repo) |
 | Argon2 falha no build | Binário nativo | Confirme OS linux x64 (Vercel/Render); não use Edge runtime (as rotas já estão `nodejs`) |
 

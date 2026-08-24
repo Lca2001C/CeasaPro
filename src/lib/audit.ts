@@ -9,6 +9,10 @@ export type AuditAction =
   | "LOGIN"
   | "PAYMENT"
   | "STATUS_CHANGE"
+  /** Pediu o link de "esqueci minha senha" (o e-mail existia e a conta estava ativa). */
+  | "PASSWORD_RESET_REQUESTED"
+  /** Senha efetivamente redefinida pelo link do e-mail. */
+  | "PASSWORD_RESET"
   /** Acesso cortado e sessões revogadas (estorno, chargeback, bloqueio). */
   | "ACCESS_REVOKED";
 

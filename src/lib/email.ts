@@ -140,15 +140,58 @@ function htmlToText(html: string): string {
     .trim();
 }
 
-export function passwordResetEmail(link: string): { subject: string; html: string } {
+/**
+ * E-mail com o link de redefinição de senha.
+ *
+ * O link aparece duas vezes de propósito: como botão e como URL em texto. Vários
+ * clientes (e gateways corporativos) desmontam o botão ou bloqueiam o clique, e
+ * sem a URL visível o usuário fica sem saída.
+ */
+export function passwordResetEmail(
+  link: string,
+  expiresInMinutes = 60,
+): { subject: string; html: string } {
+  const validade =
+    expiresInMinutes % 60 === 0
+      ? `${expiresInMinutes / 60} hora${expiresInMinutes > 60 ? "s" : ""}`
+      : `${expiresInMinutes} minutos`;
+  const href = escapeHtml(link);
   return {
     subject: "CeasaPro - Redefinir senha",
     html: `
       <div style="font-family:sans-serif;max-width:480px;margin:auto">
         <h2 style="color:#1a7a3f">CeasaPro</h2>
-        <p>Recebemos um pedido para redefinir sua senha.</p>
-        <p><a href="${escapeHtml(link)}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Redefinir minha senha</a></p>
-        <p style="color:#666;font-size:13px">Se voce nao solicitou, ignore este e-mail. O link expira em 1 hora.</p>
+        <p>Recebemos um pedido para redefinir a senha da sua conta.</p>
+        <p><a href="${href}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Redefinir minha senha</a></p>
+        <p style="color:#666;font-size:13px">Se o botao nao funcionar, copie e cole este endereco no navegador:</p>
+        <p style="font-size:13px;word-break:break-all"><a href="${href}" style="color:#1a7a3f">${href}</a></p>
+        <p style="color:#666;font-size:13px">O link vale por ${escapeHtml(validade)} e pode ser usado uma unica vez. Se voce nao pediu a troca, ignore este e-mail — sua senha atual continua valendo.</p>
+      </div>`,
+  };
+}
+
+/**
+ * Confirmação enviada DEPOIS que a senha foi trocada. É o aviso que permite à
+ * pessoa reagir caso a troca não tenha sido ela (conta comprometida).
+ */
+export function passwordChangedEmail(args: {
+  loginUrl: string;
+  changedAt?: Date;
+}): { subject: string; html: string } {
+  const quando = new Intl.DateTimeFormat("pt-BR", {
+    dateStyle: "short",
+    timeStyle: "short",
+    timeZone: "America/Sao_Paulo",
+  }).format(args.changedAt ?? new Date());
+  return {
+    subject: "CeasaPro - Sua senha foi alterada",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>A senha da sua conta foi alterada em <strong>${escapeHtml(quando)}</strong>.</p>
+        <p>Por seguranca, todos os dispositivos conectados foram desconectados.</p>
+        <p><a href="${escapeHtml(args.loginUrl)}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Entrar no CeasaPro</a></p>
+        <p style="color:#666;font-size:13px">Se nao foi voce que trocou a senha, redefina-a imediatamente em "Esqueci minha senha" e fale com o suporte.</p>
       </div>`,
   };
 }
