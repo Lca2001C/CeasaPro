@@ -19,7 +19,7 @@ Guia para quem vai manter ou evoluir o CeasaPro.
 | `npm run prisma:studio` | Prisma Studio (inspecionar o banco) |
 | `npm run db:seed` | Popular dados iniciais |
 | `npm run preflight` | Valida env, banco e resíduo de trial |
-| `npm run cron:billing` | Chama `/api/cron/billing` (Cron Job do Render) |
+| `npm run cron:billing` | Chama `/api/cron/billing` à mão (em produção quem chama é o cron da Vercel) |
 
 ## Testes
 

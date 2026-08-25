@@ -11,7 +11,7 @@ export const prisma =
     log: process.env.NODE_ENV === "development" ? ["error", "warn"] : ["error"],
   });
 
-// Reusa o client em hot-reload (dev) e em instâncias quentes (Vercel/Render).
+// Reusa o client em hot-reload (dev) e em instâncias quentes da Vercel.
 globalForPrisma.prisma = prisma;
 
 /**

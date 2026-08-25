@@ -1,6 +1,13 @@
 /**
- * Rate limit simples em memória (janela deslizante). Suficiente para 1 instância.
- * Em produção multi-instância, trocar por Upstash Redis.
+ * Rate limit em memória (janela deslizante), best-effort e **por instância**.
+ *
+ * Uso pretendido: o throttle por empresa de `with-route.ts`, que existe para
+ * conter abuso acidental (loop de UI, cliente repetindo request) — ali um
+ * contador local basta e evita uma ida ao banco a cada requisição.
+ *
+ * NÃO use isto no que precisa resistir a ataque. Em serverless cada request pode
+ * cair numa instância diferente, então este contador não segura força bruta: as
+ * rotas de autenticação usam `rate-limit-db.ts`, que persiste no Postgres.
  */
 type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();

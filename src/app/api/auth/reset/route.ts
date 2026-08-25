@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { hashPassword } from "@/lib/auth/password";
 import { resetSchema } from "@/lib/validations/auth";
 import { audit } from "@/lib/audit";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { rateLimitDb } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { absoluteUrl } from "@/lib/app-url";
@@ -34,7 +34,7 @@ function invalidToken() {
  */
 export async function POST(req: Request) {
   const ip = (await clientIp()) ?? "unknown";
-  const rl = rateLimit(`reset:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });
+  const rl = await rateLimitDb(`reset:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });
   if (!rl.ok) {
     return Response.json(
       {

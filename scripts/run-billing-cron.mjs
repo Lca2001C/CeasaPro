@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 /**
- * Dispara o cron de billing via HTTP.
- * Usado pelo Cron Job do Render (a Vercel chama /api/cron/billing direto).
+ * Dispara o cron de billing via HTTP, à mão, contra qualquer ambiente.
  *
- * Exige APP_URL e CRON_SECRET no ambiente do job.
+ * Em produção quem chama /api/cron/billing é o cron da Vercel (vercel.json).
+ * Este script serve para rodar a cobrança na hora — testar uma reconciliação,
+ * ou reprocessar depois de um incidente — sem esperar as 6h da manhã.
+ *
+ * Uso:  APP_URL=... CRON_SECRET=... npm run cron:billing
  */
 const appUrl = (process.env.APP_URL ?? "").replace(/\/+$/, "");
 const secret = process.env.CRON_SECRET ?? "";

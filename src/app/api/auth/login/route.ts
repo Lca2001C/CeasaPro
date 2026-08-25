@@ -5,7 +5,7 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshToken } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { rateLimitDb, resetRateLimit } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 
@@ -23,7 +23,8 @@ export async function POST(req: Request) {
   }
   const { email, password } = parsed.data;
 
-  const rl = rateLimit(`login:${ip}:${email}`, { limit: 5, windowMs: 15 * 60 * 1000 });
+  const rateKey = `login:${ip}:${email}`;
+  const rl = await rateLimitDb(rateKey, { limit: 5, windowMs: 15 * 60 * 1000 });
   if (!rl.ok) {
     return Response.json(
       {
@@ -51,6 +52,11 @@ export async function POST(req: Request) {
 
   const payload = await buildAccessPayload(user.id);
   if (!payload) return invalid();
+
+  // Credencial correta: a janela é liberada. O limite existe para conter
+  // adivinhação de senha, então só tentativa que falha deve consumi-lo — senão
+  // a mesma pessoa entrando de dois aparelhos trancaria a própria conta.
+  await resetRateLimit(rateKey);
 
   const accessToken = await signAccess(payload);
   const refreshToken = await createRefreshToken(user.id, {

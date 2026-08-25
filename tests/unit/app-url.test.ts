@@ -4,8 +4,8 @@ import { appBaseUrl, absoluteUrl, hasConfiguredAppUrl } from "@/lib/app-url";
 const KEYS = [
   "APP_URL",
   "NEXT_PUBLIC_APP_URL",
-  "RENDER_EXTERNAL_URL",
-  "RENDER_EXTERNAL_HOSTNAME",
+  "VERCEL_PROJECT_PRODUCTION_URL",
+  "VERCEL_URL",
 ] as const;
 
 const original = Object.fromEntries(KEYS.map((k) => [k, process.env[k]]));
@@ -39,20 +39,30 @@ describe("appBaseUrl", () => {
     );
   });
 
-  it("cai em RENDER_EXTERNAL_URL quando APP_URL nao foi preenchida no Blueprint", () => {
-    setEnv({ RENDER_EXTERNAL_URL: "https://ceasapro.onrender.com" });
-    expect(appBaseUrl()).toBe("https://ceasapro.onrender.com");
+  it("usa o dominio estavel da Vercel quando APP_URL nao foi preenchida", () => {
+    setEnv({ VERCEL_PROJECT_PRODUCTION_URL: "ceasapro.vercel.app", VERCEL_URL: "deploy-abc123.vercel.app" });
+    // O dominio de producao vence a URL do deploy, que muda a cada build.
+    expect(appBaseUrl()).toBe("https://ceasapro.vercel.app");
+  });
+
+  it("em preview da Vercel (sem dominio estavel) usa VERCEL_URL", () => {
+    setEnv({ VERCEL_URL: "ceasapro-git-fix-abc.vercel.app" });
+    expect(appBaseUrl()).toBe("https://ceasapro-git-fix-abc.vercel.app");
     expect(hasConfiguredAppUrl()).toBe(true);
   });
 
-  it("completa o esquema quando so ha o hostname do Render", () => {
-    setEnv({ RENDER_EXTERNAL_HOSTNAME: "ceasapro.onrender.com" });
-    expect(appBaseUrl()).toBe("https://ceasapro.onrender.com");
+  it("APP_URL explicita vence as variaveis da plataforma", () => {
+    setEnv({
+      APP_URL: "https://app.ceasapro.com.br",
+      VERCEL_PROJECT_PRODUCTION_URL: "ceasapro.vercel.app",
+      VERCEL_URL: "deploy-abc123.vercel.app",
+    });
+    expect(appBaseUrl()).toBe("https://app.ceasapro.com.br");
   });
 
   it("ignora valor vazio e continua para o proximo candidato", () => {
-    setEnv({ APP_URL: "   ", RENDER_EXTERNAL_URL: "https://ceasapro.onrender.com" });
-    expect(appBaseUrl()).toBe("https://ceasapro.onrender.com");
+    setEnv({ APP_URL: "   ", VERCEL_PROJECT_PRODUCTION_URL: "ceasapro.vercel.app" });
+    expect(appBaseUrl()).toBe("https://ceasapro.vercel.app");
   });
 
   it("sem nenhuma variavel, avisa que a URL nao esta configurada", () => {

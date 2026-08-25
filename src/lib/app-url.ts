@@ -3,27 +3,28 @@
  * recuperação de senha, back_urls/notification_url do Mercado Pago, etc).
  *
  * Ordem de precedência:
- *   1. APP_URL                    — o que você configurou explicitamente (vence sempre)
- *   2. NEXT_PUBLIC_APP_URL        — mesmo valor, exposto ao browser
- *   3. RENDER_EXTERNAL_URL        — injetada pelo Render (https://<serviço>.onrender.com)
- *   4. RENDER_EXTERNAL_HOSTNAME   — idem, só o host (recebe https:// aqui)
- *   5. http://localhost:3000      — dev
+ *   1. APP_URL                        — o que você configurou explicitamente (vence sempre)
+ *   2. NEXT_PUBLIC_APP_URL            — mesmo valor, exposto ao browser
+ *   3. VERCEL_PROJECT_PRODUCTION_URL  — domínio estável de produção (injetado pela Vercel)
+ *   4. VERCEL_URL                     — URL DESTE deploy; muda a cada build, por isso é a última
+ *   5. http://localhost:3000          — dev
  *
- * Os itens 3 e 4 são a rede de segurança do deploy no Render: se APP_URL não
- * for preenchida no Blueprint, o link de redefinição de senha ainda sai com o
- * domínio certo em vez de apontar para localhost (e-mail inútil).
- * Atenção: só existem em runtime, nunca no build.
+ * Os itens 3 e 4 são a rede de segurança: se APP_URL não for preenchida no
+ * painel, o link de redefinição de senha ainda sai com o domínio certo em vez
+ * de apontar para localhost (e-mail inútil). Em preview, onde não existe
+ * domínio estável, VERCEL_URL é o único que resolve.
+ * Atenção: as variáveis da Vercel só existem em runtime, nunca no build.
  */
 
 const FALLBACK = "http://localhost:3000";
 
-/** Resolvida a cada chamada: em runtime as variáveis do Render já estão no ambiente. */
+/** Resolvida a cada chamada: em runtime as variáveis da Vercel já estão no ambiente. */
 function configured(): string | null {
   const candidates = [
     process.env.APP_URL,
     process.env.NEXT_PUBLIC_APP_URL,
-    process.env.RENDER_EXTERNAL_URL,
-    process.env.RENDER_EXTERNAL_HOSTNAME,
+    process.env.VERCEL_PROJECT_PRODUCTION_URL,
+    process.env.VERCEL_URL,
   ];
   for (const candidate of candidates) {
     const url = normalize(candidate);
@@ -56,6 +57,7 @@ export function hasConfiguredAppUrl(): boolean {
 function normalize(value: string | undefined): string | null {
   const trimmed = value?.trim().replace(/\/+$/, "");
   if (!trimmed) return null;
-  // RENDER_EXTERNAL_HOSTNAME vem sem esquema; https é o único válido no Render.
+  // VERCEL_URL e VERCEL_PROJECT_PRODUCTION_URL vêm só com o host, sem esquema;
+  // na Vercel https é o único válido.
   return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
 }

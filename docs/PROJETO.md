@@ -726,16 +726,16 @@ npm run dev                   # http://localhost:3000
 
 ## 19. Deploy e operação
 
-O passo a passo completo (Vercel + Neon **ou** Render) está em [`docs/09-deploy-render-e-vercel.md`](09-deploy-render-e-vercel.md).
+O passo a passo completo está em [`docs/09-deploy-vercel.md`](09-deploy-vercel.md).
 
-Arquitetura típica de baixo custo: **app na Vercel (região `gru1`)**, **banco no Neon**, **e-mail no Resend**. Alternativa: **web + Postgres + cron no Render** (`render.yaml`).
+Arquitetura: **app completo na Vercel**, **banco no Neon**, **e-mail no Resend**.
 
-1. **Banco** — Neon: URL *pooled* (`pgbouncer=true&connection_limit=1`) em `DATABASE_URL` e *direct* em `DIRECT_URL`. Render: as duas iguais à Internal URL.
+1. **Banco** — Neon: URL *pooled* (`sslmode=require&pgbouncer=true&connection_limit=1`) em `DATABASE_URL` e *direct* em `DIRECT_URL`. As duas são obrigatórias: o `prisma generate` do build valida o datasource inteiro.
 2. **App** — importe o GitHub; configure todas as variáveis (as `NEXT_PUBLIC_*` precisam existir **no build**).
-3. **Migrations** — `prisma migrate deploy` no comando de build. **Nunca** `migrate dev` em produção.
+3. **Migrations** — `prisma migrate deploy` pelo job de deploy do GitHub Actions (secret `PROD_DIRECT_URL`). **Nunca** `migrate dev` em produção.
 4. **Seed** — uma vez, `SEED_DEMO=false`, com `SEED_SUPERADMIN_*`.
 5. **Mercado Pago** — webhook `https://SEU_DOMINIO/api/webhooks/mercadopago` (evento Pagamentos).
-6. **Cron** — Vercel via `vercel.json`; Render via Cron Job que chama `scripts/run-billing-cron.mjs`.
+6. **Cron** — declarado em `vercel.json`; `scripts/run-billing-cron.mjs` dispara à mão quando preciso.
 7. **Resend** — domínio verificado + `RESEND_API_KEY` / `EMAIL_FROM`.
 8. **Pré-flight** — `NODE_ENV=production npm run preflight` contra o banco de destino.
 

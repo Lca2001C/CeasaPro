@@ -12,7 +12,7 @@ Documentação completa do **CeasaPro** — SaaS de gestão para comercializador
 6. [Segurança](06-seguranca.md) — autenticação, isolamento por empresa, auditoria, boas práticas.
 7. [Instalação local](07-instalacao-e-deploy.md) — rodar na máquina, variáveis, backup.
 8. [Desenvolvimento](08-desenvolvimento.md) — estrutura de pastas, scripts, testes, convenções.
-9. [Deploy na Vercel e no Render](09-deploy-render-e-vercel.md) — passo a passo para colocar no ar.
+9. [Deploy em produção](09-deploy-vercel.md) — Vercel + Neon, passo a passo para colocar no ar.
 
 > Prefere ler tudo de uma vez? [PROJETO.md](PROJETO.md) descreve o sistema inteiro em um único documento.
 

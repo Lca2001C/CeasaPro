@@ -6,7 +6,7 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshToken, revokeAllForUser } from "@/lib/auth/refresh";
 import { changePasswordSchema } from "@/lib/validations/auth";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { rateLimitDb } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 
@@ -22,7 +22,7 @@ export async function POST(req: Request) {
   }
   const ip = (await clientIp()) ?? "unknown";
 
-  const rl = rateLimit(`change-password:${ip}:${session.sub}`, {
+  const rl = await rateLimitDb(`change-password:${ip}:${session.sub}`, {
     limit: 8,
     windowMs: 15 * 60 * 1000,
   });

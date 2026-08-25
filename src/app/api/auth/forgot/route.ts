@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { forgotSchema } from "@/lib/validations/auth";
 import { sendEmail, passwordResetEmail } from "@/lib/email";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { rateLimitDb } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { audit } from "@/lib/audit";
@@ -38,8 +38,8 @@ export async function POST(req: Request) {
 
   // Dois limites: por IP (impede varredura) e por e-mail (impede usar o
   // formulário para inundar a caixa de uma pessoa específica, de vários IPs).
-  const byIp = rateLimit(`forgot:ip:${ip}`, { limit: 5, windowMs: 15 * 60 * 1000 });
-  const byEmail = rateLimit(`forgot:email:${email}`, { limit: 3, windowMs: 15 * 60 * 1000 });
+  const byIp = await rateLimitDb(`forgot:ip:${ip}`, { limit: 5, windowMs: 15 * 60 * 1000 });
+  const byEmail = await rateLimitDb(`forgot:email:${email}`, { limit: 3, windowMs: 15 * 60 * 1000 });
   if (!byIp.ok || !byEmail.ok) {
     logger.warn({ ip, scope: byIp.ok ? "email" : "ip" }, "Rate limit em /api/auth/forgot");
     return generic;
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
       }
       if (process.env.NODE_ENV === "production" && !hasConfiguredAppUrl()) {
         logger.error(
-          "APP_URL/NEXT_PUBLIC_APP_URL ausentes e RENDER_EXTERNAL_URL indisponível — " +
+          "APP_URL/NEXT_PUBLIC_APP_URL ausentes e sem URL da Vercel no ambiente — " +
             "o link de redefinição está apontando para localhost.",
         );
       }

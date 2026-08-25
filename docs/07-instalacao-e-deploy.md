@@ -65,9 +65,9 @@ Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toStr
 
 O procedimento **completo** (contas, variáveis, migrations, seed, webhook, cron, domínio e troubleshooting) está em:
 
-**[09 — Deploy na Vercel e no Render](09-deploy-render-e-vercel.md)**
+**[09 — Deploy em produção (Vercel + Neon)](09-deploy-vercel.md)**
 
-Resumo: app na Vercel (região São Paulo) + Postgres no Neon, **ou** app + Postgres no Render. Sempre `prisma migrate deploy` no build; seed uma vez com `SEED_DEMO=false`; webhook em `https://SEU-DOMINIO/api/webhooks/mercadopago`.
+Resumo: app na Vercel + Postgres no Neon. As migrations entram pelo job de deploy do GitHub Actions (`PROD_DIRECT_URL`); seed uma vez com `SEED_DEMO=false`; webhook em `https://SEU-DOMINIO/api/webhooks/mercadopago`.
 
 ## Backup
 

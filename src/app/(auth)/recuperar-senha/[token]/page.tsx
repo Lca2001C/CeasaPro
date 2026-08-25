@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { ResetForm } from "./_components/reset-form";
 
 // O token vem na URL e é consultado no banco: nunca pode ser pré-renderizado
-// nem ficar em cache (nem no CDN do Render).
+// nem ficar em cache (nem no CDN).
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { BillingService } from "@/lib/services/billing.service";
+import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
 import { logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -18,8 +19,9 @@ function authorized(req: Request): boolean {
 /**
  * Cron diário de billing:
  *  1. reconcilia cobranças PENDENTES (cura webhook perdido);
- *  2. recalcula o status das assinaturas (ATIVO/VENCIDO/SUSPENSO).
- * A ordem importa: reconciliar antes evita suspender quem já pagou.
+ *  2. recalcula o status das assinaturas (ATIVO/VENCIDO/SUSPENSO);
+ *  3. limpa as janelas de rate limit já vencidas (só higiene de tabela).
+ * A ordem dos dois primeiros importa: reconciliar antes evita suspender quem já pagou.
  * Protegido por CRON_SECRET. Configurado em vercel.json.
  */
 async function handle(req: Request): Promise<Response> {
@@ -29,7 +31,9 @@ async function handle(req: Request): Promise<Response> {
   try {
     const reconciliacao = await BillingService.reconcilePendingPayments();
     const statuses = await BillingService.recomputeStatuses();
-    return Response.json({ ok: true, reconciliacao, statuses });
+    // Não pode derrubar o cron: as linhas vencidas são inertes de qualquer forma.
+    const rateLimitsRemovidos = await purgeExpiredRateLimits().catch(() => 0);
+    return Response.json({ ok: true, reconciliacao, statuses, rateLimitsRemovidos });
   } catch (e) {
     logger.error({ err: e instanceof Error ? e.message : String(e) }, "Erro no cron de billing");
     return Response.json({ ok: false }, { status: 500 });

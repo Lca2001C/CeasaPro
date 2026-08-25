@@ -118,7 +118,7 @@ Acesse http://localhost:3000.
 | `npm run prisma:deploy` | Aplicar migrations (produção) |
 | `npm run db:seed` | Popular dados iniciais |
 | `npm run preflight` | Valida env, banco e ausência de resíduo de trial |
-| `npm run cron:billing` | Dispara o cron de cobrança (usado no Render) |
+| `npm run cron:billing` | Dispara o cron de cobrança à mão (em produção quem chama é a Vercel) |
 
 ## Testes
 
@@ -134,11 +134,11 @@ Os testes de integração exigem o banco de pé (`docker compose up -d`). Eles c
 
 ## Deploy (produção)
 
-Guia completo, passo a passo, para **Vercel + Neon** e para **Render** (web + Postgres + cron):
+Guia completo, passo a passo, para **Vercel + Neon**:
 
-**[docs/09-deploy-render-e-vercel.md](docs/09-deploy-render-e-vercel.md)**
+**[docs/09-deploy-vercel.md](docs/09-deploy-vercel.md)**
 
-Resumo: não use o plano free do Render (adormece e quebra PIX/webhook). Na Vercel, `DATABASE_URL` do Neon precisa de `pgbouncer=true&connection_limit=1`. Seed só uma vez, com `SEED_DEMO=false`.
+Resumo: a `DATABASE_URL` do Neon precisa da string *pooled* com `pgbouncer=true&connection_limit=1`, e a `DIRECT_URL` também é obrigatória (o `prisma generate` do build valida o datasource inteiro). Seed só uma vez, com `SEED_DEMO=false`.
 
 ## Backup (recomendado)
 

@@ -672,3 +672,22 @@ model AuditLog {
   @@index([tenantId, createdAt])
   @@map("audit_logs")
 }
+
+/// Contador de rate limit das rotas de autenticação.
+///
+/// Fica no banco, e não em memória, porque em serverless (Vercel) cada request
+/// pode cair numa instância diferente — um contador em processo não seguraria
+/// força bruta no login. O throttle por empresa (`with-route.ts`) continua em
+/// memória de propósito: lá o objetivo é conter abuso acidental, e não vale uma
+/// ida ao banco por request.
+model RateLimit {
+  /// SHA-256 da chave lógica ("login:<ip>:<email>"). Hash, e não texto puro:
+  /// a chave carrega IP e e-mail, que são dado pessoal.
+  keyHash   String   @id
+  count     Int      @default(1)
+  expiresAt DateTime
+
+  /// Usado pela limpeza diária das janelas vencidas (cron de billing).
+  @@index([expiresAt])
+  @@map("rate_limits")
+}

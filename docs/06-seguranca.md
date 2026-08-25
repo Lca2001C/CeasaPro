@@ -7,7 +7,7 @@ A segurança do CeasaPro se apoia em quatro pilares: **autenticação forte**, *
 - **Senhas** com **Argon2id** (`@node-rs/argon2`) — padrão OWASP. Hash só roda no Node (nunca no Edge).
 - **Access token**: JWT curto (~15 min), assinado com `JWT_SECRET` (via `jose`), em cookie `httpOnly`, `Secure` (em produção) e `SameSite=Lax`.
 - **Refresh token**: valor **opaco e aleatório**, guardado **apenas como hash** (`SHA-256`) na tabela `refresh_tokens`; **rotacionado** a cada uso. Isso permite **revogação real** — logout, troca de senha e bloqueio de empresa invalidam sessões.
-- **Rate limit** no login (5 tentativas / 15 min por IP+e-mail).
+- **Rate limit** no login (5 tentativas / 15 min por IP+e-mail) e nas demais rotas de autenticação. O contador é **persistido no Postgres** (tabela `rate_limits`, `src/lib/security/rate-limit-db.ts`), então vale **entre instâncias** — em serverless um contador em memória não seguraria força bruta. A chave (que contém IP e e-mail) é gravada só como SHA-256, e o incremento é atômico (`INSERT … ON CONFLICT`), para não perder contagem sob concorrência. No login, **só tentativa malsucedida consome a janela**: acertar a senha zera o contador, senão a mesma pessoa entrando de dois aparelhos trancaria a própria conta.
 - Respostas de login/recuperação são **genéricas** (não revelam se o e-mail existe).
 - Recuperação de senha: token de uso único com expiração de 1 hora; ao redefinir, revoga todas as sessões.
 
@@ -55,5 +55,5 @@ Alterações de status de assinatura/plano/módulos valem no **próximo refresh 
 
 ## Boas práticas já cobertas / evoluções
 
-- Cobertas: hashing forte, tokens rotativos/revogáveis, isolamento automático, gating server-side, webhook assinado e idempotente, auditoria, validação dupla, rate limit no login.
-- Evoluções recomendadas: **RLS (Row-Level Security)** no PostgreSQL como segunda barreira do banco; rate limit distribuído (Upstash) para múltiplas instâncias; verificação de força de senha.
+- Cobertas: hashing forte, tokens rotativos/revogáveis, isolamento automático, gating server-side, webhook assinado e idempotente, auditoria, validação dupla, rate limit no login compartilhado entre instâncias.
+- Evoluções recomendadas: **RLS (Row-Level Security)** no PostgreSQL como segunda barreira do banco; verificação de força de senha.

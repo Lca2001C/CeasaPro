@@ -92,7 +92,12 @@ Tipo: `name`, `active` (único por `(tenantId, name)`). Venda: `packagingTypeId`
 ## Auditoria
 
 ### `audit_logs`
-Trilha imutável, **sem relação/cascade** (sobrevive ao soft delete da empresa). `tenantId?`, `userId?`, `actorEmail?`, `action` ("CREATE"/"UPDATE"/"DELETE"/"PAYMENT"/"LOGIN"/"STATUS_CHANGE"), `entity`, `entityId?`, `oldData?` (Json), `newData?` (Json), `ip?`, `createdAt`.
+Trilha imutável, **sem relação/cascade** (sobrevive ao soft delete da empresa). `tenantId?`, `userId?`, `actorEmail?`, `action` ("CREATE"/"UPDATE"/"DELETE"/"PAYMENT"/"LOGIN"/"STATUS_CHANGE"/"PASSWORD_RESET_REQUESTED"/"PASSWORD_RESET"), `entity`, `entityId?`, `oldData?` (Json), `newData?` (Json), `ip?`, `createdAt`.
+
+## Infraestrutura
+
+### `rate_limits`
+Contador das rotas de autenticação, **sem relação com nenhuma outra tabela**. `keyHash` (PK — SHA-256 de `"login:<ip>:<email>"`, nunca o texto puro, porque a chave é dado pessoal), `count`, `expiresAt`. Fica no banco, e não em memória, porque em serverless cada request pode cair numa instância diferente. As janelas vencidas são inertes e removidas pelo cron diário de billing. Detalhes em [06 — Segurança](06-seguranca.md).
 
 ## Regras de exclusão (onDelete)
 
