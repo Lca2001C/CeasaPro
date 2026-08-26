@@ -5,7 +5,8 @@ import { Loader2, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
-import { PixChargePanel, type PixCharge } from "./pix-charge-panel";
+import { temPagamentoPix, type PixCharge } from "@/lib/payments/pix-charge";
+import { PixChargePanel } from "./pix-charge-panel";
 
 /**
  * Checkout PIX puro — usado quando o Payment Brick não está disponível
@@ -38,11 +39,15 @@ export function PixCheckout({
       toast.error(res.error.message);
       return;
     }
+    if (!temPagamentoPix(res.data)) {
+      toast.error("Não foi possível gerar o código PIX. Tente de novo em instantes.");
+      return;
+    }
     setCharge(res.data);
     onAwaitingPayment();
   }
 
-  if (charge?.qrCodeBase64) return <PixChargePanel charge={charge} />;
+  if (charge && temPagamentoPix(charge)) return <PixChargePanel charge={charge} />;
 
   return (
     <Button size="lg" className="w-full" onClick={gerarPix} disabled={loading}>

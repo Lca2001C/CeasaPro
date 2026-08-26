@@ -9,7 +9,7 @@ import { PaymentBrick } from "@/components/billing/payment-brick";
 import { PixCheckout } from "@/components/billing/pix-checkout";
 import { PlanSelector } from "@/components/billing/plan-selector";
 import { TermsAcceptance } from "@/components/billing/terms-acceptance";
-import type { PixCharge } from "@/components/billing/pix-charge-panel";
+import { temPagamentoPix, type PixCharge } from "@/lib/payments/pix-charge";
 import type { AvailablePlan } from "@/lib/services/plano.service";
 
 interface BillingStatus {
@@ -47,7 +47,7 @@ export function AssinaturaClient({
   primeiraAtivacao: boolean;
 }) {
   const [paid, setPaid] = useState(false);
-  const [awaiting, setAwaiting] = useState(Boolean(initialCharge?.qrCodeBase64));
+  const [awaiting, setAwaiting] = useState(temPagamentoPix(initialCharge));
   const [accepted, setAccepted] = useState(termsAccepted);
   const [planId, setPlanId] = useState(
     () => plans.find((p) => p.isCurrent)?.id ?? plans[0]?.id ?? null,
@@ -102,7 +102,7 @@ export function AssinaturaClient({
 
   // Uma cobrança já em aberto (QR gerado antes) dispensa novo aceite: o
   // consentimento foi dado quando a cobrança foi criada.
-  const jaTemCobranca = Boolean(initialCharge?.qrCodeBase64);
+  const jaTemCobranca = temPagamentoPix(initialCharge);
 
   // Enquanto há cobrança em aberto a escolha fica travada: o QR e o valor já
   // foram emitidos no plano anterior, então trocar aqui mostraria um preço que

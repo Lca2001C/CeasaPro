@@ -57,13 +57,16 @@ export default async function AssinaturaPage() {
         termsAccepted={sub?.tenant.termsVersion === TERMS_VERSION}
         plans={plans}
         primeiraAtivacao={primeiraAtivacao}
+        // Reabre a cobrança pendente com qualquer forma de pagar: só o
+        // copia-e-cola já basta para o cliente concluir no app do banco.
         initialCharge={
-          charge?.qrCode
+          charge && (charge.qrCode || charge.qrCodeBase64 || charge.ticketUrl)
             ? {
                 qrCode: charge.qrCode,
                 qrCodeBase64: charge.qrCodeBase64,
                 ticketUrl: charge.ticketUrl,
                 amount: charge.amount.toString(),
+                expiresAt: charge.expiresAt?.toISOString() ?? null,
               }
             : null
         }

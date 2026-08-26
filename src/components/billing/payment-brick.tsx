@@ -6,9 +6,11 @@ import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { Payment as PaymentBrickComponent } from "@mercadopago/sdk-react";
 import { apiPost } from "@/lib/api-client";
+import { normalizarMetodoBrick } from "@/lib/payments/brick-method";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CardPaymentResult } from "@/lib/validations/billing";
-import { PixChargePanel, type PixCharge } from "./pix-charge-panel";
+import { temPagamentoPix, type PixCharge } from "@/lib/payments/pix-charge";
+import { PixChargePanel } from "./pix-charge-panel";
 import { ThreeDsChallenge } from "./three-ds-challenge";
 
 const brickLoader = (
@@ -107,6 +109,13 @@ export function PaymentBrick({
       toast.error(res.error.message);
       return;
     }
+    if (!temPagamentoPix(res.data)) {
+      // Cobrança criada sem QR nem copia-e-cola: não há como pagar. Avisa em
+      // vez de deixar o cliente na tela do Brick, que manda procurar o código
+      // no e-mail — e-mail que este fluxo não envia.
+      toast.error("Não foi possível gerar o código PIX. Tente de novo ou use cartão.");
+      return;
+    }
     setCharge(res.data);
     onAwaitingPayment();
   }
@@ -154,20 +163,22 @@ export function PaymentBrick({
   }
 
   async function onSubmit(data: PaymentFormData) {
-    switch (data.selectedPaymentMethod) {
-      case "bank_transfer":
-        return submitPix();
-      case "creditCard":
-        return submitCard(data, "CREDIT_CARD");
-      case "debitCard":
-        return submitCard(data, "DEBIT_CARD");
-      default:
-        toast.error("Forma de pagamento não disponível para a mensalidade.");
-    }
+    const metodo = normalizarMetodoBrick(data.selectedPaymentMethod, data.paymentType);
+    if (metodo === "PIX") return submitPix();
+    if (metodo === "CREDIT_CARD") return submitCard(data, "CREDIT_CARD");
+    if (metodo === "DEBIT_CARD") return submitCard(data, "DEBIT_CARD");
+    // Inclui o identificador na mensagem: se o Brick passar a emitir um valor
+    // novo, dá para descobrir qual sem precisar depurar o iframe.
+    toast.error(
+      `Forma de pagamento não disponível para a mensalidade (${String(data.selectedPaymentMethod)}).`,
+    );
   }
 
   if (threeDs) return <ThreeDsChallenge url={threeDs.url} creq={threeDs.creq ?? undefined} />;
-  if (charge?.qrCodeBase64) return <PixChargePanel charge={charge} />;
+  // Basta ter QR, copia-e-cola OU link: exigir a imagem base64 fazia o painel
+  // não aparecer quando o Mercado Pago mandava só o copia-e-cola, e o cliente
+  // ficava preso na tela do Brick.
+  if (charge && temPagamentoPix(charge)) return <PixChargePanel charge={charge} />;
 
   return (
     <Card>
