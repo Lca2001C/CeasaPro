@@ -2,11 +2,12 @@
 
 import { useEffect, useState, type ComponentProps } from "react";
 import dynamic from "next/dynamic";
-import { Loader2 } from "lucide-react";
+import { Loader2, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import type { Payment as PaymentBrickComponent } from "@mercadopago/sdk-react";
 import { apiPost } from "@/lib/api-client";
 import { normalizarMetodoBrick } from "@/lib/payments/brick-method";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import type { CardPaymentResult } from "@/lib/validations/billing";
 import { temPagamentoPix, type PixCharge } from "@/lib/payments/pix-charge";
@@ -90,6 +91,7 @@ export function PaymentBrick({
 }) {
   const [charge, setCharge] = useState<PixCharge | null>(initialCharge);
   const [threeDs, setThreeDs] = useState<ThreeDs | null>(null);
+  const [gerandoPix, setGerandoPix] = useState(false);
 
   useEffect(() => {
     void import("@mercadopago/sdk-react").then(({ initMercadoPago }) => {
@@ -118,6 +120,16 @@ export function PaymentBrick({
     }
     setCharge(res.data);
     onAwaitingPayment();
+  }
+
+  /** Botão próprio do PIX — este caminho não passa pelo Brick. */
+  async function gerarPix() {
+    setGerandoPix(true);
+    try {
+      await submitPix();
+    } finally {
+      setGerandoPix(false);
+    }
   }
 
   async function submitCard(data: PaymentFormData, method: "CREDIT_CARD" | "DEBIT_CARD") {
@@ -181,30 +193,52 @@ export function PaymentBrick({
   if (charge && temPagamentoPix(charge)) return <PixChargePanel charge={charge} />;
 
   return (
-    <Card>
-      <CardContent className="pt-6">
-        <Payment
-          // O Brick lê `initialization` só na montagem: trocar de plano mudaria
-          // o valor no nosso estado e o iframe seguiria cobrando o anterior.
-          // A `key` força a remontagem quando o valor muda.
-          key={amount}
-          initialization={{
-            amount,
-            ...(payerEmail ? { payer: { email: payerEmail } } : {}),
-          }}
-          customization={{
-            paymentMethods: {
-              creditCard: "all",
-              debitCard: "all",
-              bankTransfer: "all",
-              // Mensalidade é sempre à vista.
-              minInstallments: 1,
-              maxInstallments: 1,
-            },
-          }}
-          onSubmit={onSubmit}
-        />
-      </CardContent>
-    </Card>
+    <div className="flex flex-col gap-4">
+      <Card>
+        <CardContent className="pt-6">
+          <Payment
+            // O Brick lê `initialization` só na montagem: trocar de plano mudaria
+            // o valor no nosso estado e o iframe seguiria cobrando o anterior.
+            // A `key` força a remontagem quando o valor muda.
+            key={amount}
+            initialization={{
+              amount,
+              ...(payerEmail ? { payer: { email: payerEmail } } : {}),
+            }}
+            customization={{
+              paymentMethods: {
+                creditCard: "all",
+                debitCard: "all",
+                // PIX (`bankTransfer`) fica FORA do Brick de propósito: o passo
+                // de seleção dele é do Mercado Pago e diz "insira o e-mail para
+                // receber o código Pix" — promessa que este fluxo não cumpre,
+                // porque o código aparece na própria tela. Aquele texto roda
+                // dentro do iframe e não há como reescrevê-lo, então o caminho
+                // é não usar aquele passo. O PIX tem entrada própria abaixo.
+                // Mensalidade é sempre à vista.
+                minInstallments: 1,
+                maxInstallments: 1,
+              },
+            }}
+            onSubmit={onSubmit}
+          />
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardContent className="flex flex-col gap-3 pt-6">
+          <div>
+            <p className="font-medium">Pagar com PIX</p>
+            <p className="mt-0.5 text-sm text-muted-foreground">
+              O QR Code e o código copia-e-cola aparecem aqui na tela, na hora.
+            </p>
+          </div>
+          <Button size="lg" onClick={gerarPix} disabled={gerandoPix}>
+            {gerandoPix ? <Loader2 className="animate-spin" /> : <QrCode />}
+            Gerar código PIX
+          </Button>
+        </CardContent>
+      </Card>
+    </div>
   );
 }

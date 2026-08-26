@@ -51,7 +51,7 @@ export function PixCheckout({
 
   return (
     <Button size="lg" className="w-full" onClick={gerarPix} disabled={loading}>
-      {loading ? <Loader2 className="animate-spin" /> : <QrCode />} Gerar cobrança PIX
+      {loading ? <Loader2 className="animate-spin" /> : <QrCode />} Gerar código PIX
     </Button>
   );
 }
