@@ -185,6 +185,6 @@ Rota `/assinatura` (acessível mesmo com a conta bloqueada). Integração **Merc
 - **Clientes** (`/admin/clientes`, `/admin/clientes/novo`, `/admin/clientes/[id]`):
   - **Criar empresa + dono** numa transação (gera senha temporária para o OWNER, cria a assinatura já bloqueada — aguardando o 1º pagamento — e as categorias/tipos padrão).
   - No detalhe: **ativar / suspender / bloquear** a empresa (bloqueio imediato — derruba as sessões ativas), editar mensalidade, ver usuários e histórico de pagamentos.
-- **Planos** (`/admin/planos`): criar e **editar** planos — preço, limite de usuários, ativo e **quais módulos opcionais** o plano inclui.
+- **Planos** (`/admin/planos`): criar, **editar** e **excluir** planos — preço, limite de usuários, ativo e **quais módulos opcionais** o plano inclui. A exclusão é definitiva e só vale para plano que **nenhuma assinatura usa**; se alguma empresa o tiver, a ação é recusada com a contagem e o caminho certo é **desativar** o plano — ele some da oferta e quem já assinou continua como está. Apagar o plano de uma empresa apagaria a prova de quanto e por qual pacote ela paga.
 - **Pagamentos** (`/admin/pagamentos`): todas as cobranças de mensalidade das empresas.
 - **Auditoria** (`/admin/auditoria`): trilha global de ações, com o nome da empresa.

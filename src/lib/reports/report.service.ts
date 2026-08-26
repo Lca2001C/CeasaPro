@@ -6,6 +6,7 @@ import { CaixasService } from "@/lib/services/caixas.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { add, sub, toDecimal, money } from "@/lib/money";
 import { formatQty } from "@/lib/format";
+import { APP_TIME_ZONE } from "@/lib/tz";
 import {
   PAYMENT_METHOD_LABELS,
   EXPENSE_TYPE_LABELS,
@@ -593,7 +594,11 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     case "FLUXO_CAIXA": {
       // Entradas = vendas à vista + recebimentos de fiado + venda de embalagens.
       // Saidas = compras + despesas pagas + pagamentos de higienizacao.
-      const dayExpr = (col: string) => Prisma.raw(`DATE_TRUNC('day', ${col})::date`);
+      // Agrupa pelo dia BRASILEIRO. As colunas são `timestamp` sem fuso guardando
+      // UTC, então truncar direto jogava o movimento das 21h em diante para o dia
+      // seguinte — o fluxo de caixa nunca fechava com o do balcão.
+      const dayExpr = (col: string) =>
+        Prisma.raw(`DATE_TRUNC('day', ${col} AT TIME ZONE 'UTC' AT TIME ZONE '${APP_TIME_ZONE}')::date`);
       const [vendasVista, recebFiado, vendEmb, compras, despesasPagas, pagHig] =
         await Promise.all([
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`

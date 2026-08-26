@@ -232,7 +232,9 @@ export function paymentApprovedEmail(args: {
     style: "currency",
     currency: "BRL",
   }).format(Number(args.amount));
-  const vencimento = new Intl.DateTimeFormat("pt-BR").format(args.nextDueDate);
+  const vencimento = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  }).format(args.nextDueDate);
   return {
     subject: `CeasaPro - Pagamento confirmado (${args.referenceMonth})`,
     html: `

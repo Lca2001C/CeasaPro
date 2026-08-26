@@ -5,6 +5,7 @@ import { toDecimal, money } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays } from "@/lib/dates";
+import { APP_TIME_ZONE, isoDateTz } from "@/lib/tz";
 
 export interface DashboardProductRow {
   productId: string;
@@ -104,8 +105,13 @@ export const DashboardService = {
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
         GROUP BY type
       `,
+      // A coluna é `timestamp` sem fuso, guardando UTC. Truncar direto agrupava
+      // por dia UTC: a venda das 22h ia para a barra do dia seguinte. Reinterpreta
+      // como UTC, converte para o fuso do app e só então trunca — o resultado é
+      // uma data civil brasileira, que `isoDateTz` lê de volta sem deslocar.
       prisma.$queryRaw<{ d: Date; total: Prisma.Decimal | string }[]>`
-        SELECT DATE_TRUNC('day', "saleDate") AS d, SUM("totalAmount") AS total
+        SELECT DATE_TRUNC('day', "saleDate" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE}) AS d,
+               SUM("totalAmount") AS total
         FROM sales
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "saleDate" >= ${chartStart}
         GROUP BY d ORDER BY d ASC
@@ -201,12 +207,16 @@ export const DashboardService = {
 
     const byDay = new Map<string, number>();
     for (const r of chartRows) {
-      const key = new Date(r.d).toISOString().slice(0, 10);
-      byDay.set(key, toDecimal(r.total as Prisma.Decimal.Value).toNumber());
+      // `d` já é a data civil brasileira (o SQL converteu). Prisma a devolve como
+      // instante UTC, então os campos UTC são exatamente o dia que queremos.
+      byDay.set(
+        new Date(r.d).toISOString().slice(0, 10),
+        toDecimal(r.total as Prisma.Decimal.Value).toNumber(),
+      );
     }
     const chart: { date: string; total: number }[] = [];
     for (let i = 29; i >= 0; i--) {
-      const day = addDays(now, -i).toISOString().slice(0, 10);
+      const day = isoDateTz(addDays(now, -i));
       chart.push({ date: day, total: byDay.get(day) ?? 0 });
     }
 

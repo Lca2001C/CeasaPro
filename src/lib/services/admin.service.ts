@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
+import { startOfMonth } from "@/lib/dates";
 import { sendEmail, welcomeOwnerEmail } from "@/lib/email";
 import { absoluteUrl } from "@/lib/app-url";
 import { createDefaultExpenseCategories } from "./expense-categories";
@@ -42,9 +43,9 @@ const ADMIN_PLAN_SLUG = "ambiente-administrador";
 
 export const AdminService = {
   async metrics() {
-    const monthStart = new Date();
-    monthStart.setDate(1);
-    monthStart.setHours(0, 0, 0, 0);
+    // Início do mês no fuso do app: em UTC, "novos clientes no mês" e "recebido
+    // no mês" começavam às 21h do último dia do mês anterior.
+    const monthStart = startOfMonth(new Date());
 
     const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes, aguardandoAtivacao] =
       await Promise.all([
@@ -383,6 +384,46 @@ export const AdminService = {
         features: { modules: input.modules },
       },
     });
+  },
+
+  /**
+   * Exclui um plano DEFINITIVAMENTE.
+   *
+   * Só é permitido para plano que nenhuma assinatura usa — nem ativa, nem
+   * cancelada. `TenantSubscription.planId` é obrigatório e a FK é `Restrict`, e
+   * mesmo que não fosse: apagar o plano de uma empresa apagaria a prova de
+   * quanto e por qual pacote ela pagou. Para tirar de circulação um plano já
+   * contratado, o caminho é **desativar** (`active: false`), que o esconde da
+   * oferta sem tocar em quem já assinou.
+   */
+  async deletePlan(id: string, ctx: AdminCtx) {
+    const plan = await prisma.plan.findUnique({ where: { id } });
+    if (!plan) throw new NotFoundError("Plano não encontrado");
+
+    const emUso = await prisma.tenantSubscription.count({ where: { planId: id } });
+    if (emUso > 0) {
+      throw new BusinessRuleError(
+        `Este plano está em ${emUso} assinatura(s) e não pode ser excluído. ` +
+          "Desative-o para parar de oferecê-lo — quem já assinou continua como está.",
+      );
+    }
+
+    await prisma.plan.delete({ where: { id } });
+    await audit({
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "DELETE",
+      entity: "Plan",
+      entityId: id,
+      oldData: {
+        name: plan.name,
+        slug: plan.slug,
+        priceMonthly: plan.priceMonthly.toString(),
+        active: plan.active,
+      },
+      ip: ctx.ip,
+    });
+    return { id, name: plan.name };
   },
 
   async listPayments() {

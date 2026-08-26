@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
@@ -34,7 +35,7 @@ export function CompraForm({
   const router = useRouter();
   const [supplierId, setSupplierId] = useState("");
   const [purchaseDate, setPurchaseDate] = useState(
-    new Date().toISOString().slice(0, 10),
+    isoDateTz(),
   );
   const [freight, setFreight] = useState(0);
   const [items, setItems] = useState<Item[]>([
@@ -94,7 +95,7 @@ export function CompraForm({
         <div className="flex flex-col gap-1.5">
           <Label>Fornecedor</Label>
           <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">— Sem fornecedor —</option>
+            <option value="">â€” Sem fornecedor â€”</option>
             {fornecedores.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -139,7 +140,7 @@ export function CompraForm({
                 />
               </div>
               <div>
-                <span className="text-xs text-muted-foreground">Preço unitário</span>
+                <span className="text-xs text-muted-foreground">PreÃ§o unitÃ¡rio</span>
                 <CurrencyInput
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}

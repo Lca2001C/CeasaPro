@@ -1,3 +1,13 @@
+import {
+  addDaysTz,
+  civilParts,
+  endOfDayTz,
+  parseIsoDateTz,
+  startOfDayTz,
+  startOfMonthTz,
+  zonedTimeToUtc,
+} from "./tz";
+
 export type PeriodPreset =
   | "hoje"
   | "semana"
@@ -13,22 +23,31 @@ export interface Period {
   preset: PeriodPreset;
 }
 
+// Todos os limites de dia/mês são calculados no fuso do app (ver `tz.ts`).
+// Com `setHours`/`getDate` puros, o servidor da Vercel (UTC) fazia o dia virar
+// às 21h no Brasil: a venda das 22h entrava no relatório do dia seguinte.
 function startOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(0, 0, 0, 0);
-  return x;
+  return startOfDayTz(d);
 }
 
 function endOfDay(d: Date): Date {
-  const x = new Date(d);
-  x.setHours(23, 59, 59, 999);
-  return x;
+  return endOfDayTz(d);
 }
 
 function addDays(d: Date, days: number): Date {
-  const x = new Date(d);
-  x.setDate(x.getDate() + days);
-  return x;
+  return addDaysTz(d, days);
+}
+
+/**
+ * Interpreta o que veio do filtro de período.
+ *
+ * "2026-08-26" precisa significar o dia 26 **no Brasil**. `new Date("2026-08-26")`
+ * daria meia-noite UTC, que é 21h do dia 25 aqui — e o relatório personalizado
+ * começaria um dia antes do que o usuário escolheu.
+ */
+function parseEntrada(v: string | Date): Date {
+  if (v instanceof Date) return v;
+  return parseIsoDateTz(v) ?? new Date(v);
 }
 
 /**
@@ -57,15 +76,17 @@ export function resolvePeriod(input?: {
       break;
     }
     case "mes_passado": {
-      const first = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-      const last = new Date(now.getFullYear(), now.getMonth(), 0);
+      const c = civilParts(now);
+      // Dia 0 do mês atual = último dia do mês passado, no fuso do app.
+      const first = zonedTimeToUtc(c.year, c.month - 1, 1);
+      const last = zonedTimeToUtc(c.year, c.month, 0);
       from = startOfDay(first);
       to = endOfDay(last);
       break;
     }
     case "personalizado": {
-      from = startOfDay(input?.from ? new Date(input.from) : startOfMonth(now));
-      to = endOfDay(input?.to ? new Date(input.to) : now);
+      from = startOfDay(input?.from ? parseEntrada(input.from) : startOfMonth(now));
+      to = endOfDay(input?.to ? parseEntrada(input.to) : now);
       break;
     }
     case "mes":
@@ -82,7 +103,7 @@ export function resolvePeriod(input?: {
 }
 
 function startOfMonth(d: Date): Date {
-  return new Date(d.getFullYear(), d.getMonth(), 1);
+  return startOfMonthTz(d);
 }
 
 export { startOfDay, endOfDay, addDays, startOfMonth };

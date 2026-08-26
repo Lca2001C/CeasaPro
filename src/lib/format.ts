@@ -1,4 +1,5 @@
 import { toNumber, type Numeric } from "./money";
+import { APP_TIME_ZONE } from "./tz";
 
 const BRL = new Intl.NumberFormat("pt-BR", {
   style: "currency",
@@ -9,13 +10,17 @@ const NUM = new Intl.NumberFormat("pt-BR", {
   maximumFractionDigits: 3,
 });
 
+// `timeZone` explícito: sem ele o formatador usa o fuso do processo, que na
+// Vercel é UTC — toda data renderizada no servidor saía 3 horas adiantada.
 const DATE = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: APP_TIME_ZONE,
   day: "2-digit",
   month: "2-digit",
   year: "numeric",
 });
 
 const DATETIME = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: APP_TIME_ZONE,
   day: "2-digit",
   month: "2-digit",
   year: "numeric",

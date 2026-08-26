@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -17,7 +18,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
   const router = useRouter();
   const [packagingTypeId, setPackagingTypeId] = useState(tipos[0]?.id ?? "");
   const [customerName, setCustomerName] = useState("");
-  const [saleDate, setSaleDate] = useState(new Date().toISOString().slice(0, 10));
+  const [saleDate, setSaleDate] = useState(isoDateTz());
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState<number | undefined>(undefined);
   const [saving, setSaving] = useState(false);
@@ -78,7 +79,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Valor unitário</Label>
+        <Label>Valor unitÃ¡rio</Label>
         <CurrencyInput value={unitPrice} onChange={setUnitPrice} />
       </div>
 

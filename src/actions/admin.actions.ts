@@ -50,3 +50,9 @@ export const atualizarPlano = withAdminAction({
   schema: planoUpdateSchema,
   handler: (input) => AdminService.updatePlan(input),
 });
+
+/** Exclui um plano — só se nenhuma assinatura o usa (ver `deletePlan`). */
+export const excluirPlano = withAdminAction({
+  schema: z.string().min(1),
+  handler: (id, ctx) => AdminService.deletePlan(id, ctx),
+});

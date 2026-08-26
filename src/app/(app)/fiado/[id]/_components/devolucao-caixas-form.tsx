@@ -1,5 +1,6 @@
-"use client";
+﻿"use client";
 
+import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
@@ -9,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-/** Cliente devolveu caixas — voltam sujas para o estoque, prontas para higienizar. */
+/** Cliente devolveu caixas â€” voltam sujas para o estoque, prontas para higienizar. */
 export function DevolucaoCaixasForm({
   accountId,
   maximo,
@@ -19,7 +20,7 @@ export function DevolucaoCaixasForm({
 }) {
   const router = useRouter();
   const [quantity, setQuantity] = useState(String(maximo));
-  const [movementDate, setMovementDate] = useState(new Date().toISOString().slice(0, 10));
+  const [movementDate, setMovementDate] = useState(isoDateTz());
   const [saving, setSaving] = useState(false);
 
   async function submit() {
@@ -31,7 +32,7 @@ export function DevolucaoCaixasForm({
     const res = await registrarDevolucaoCaixas({ accountId, quantity: qty, movementDate });
     setSaving(false);
     if (res.ok) {
-      toast.success("Devolução de caixas registrada.");
+      toast.success("DevoluÃ§Ã£o de caixas registrada.");
       router.refresh();
     } else {
       toast.error(res.error.message);
@@ -65,7 +66,7 @@ export function DevolucaoCaixasForm({
       </div>
       <Button variant="outline" onClick={submit} disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
-        Registrar devolução
+        Registrar devoluÃ§Ã£o
       </Button>
     </div>
   );

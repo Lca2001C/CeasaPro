@@ -35,6 +35,7 @@ import type {
 import { PlanoService } from "./plano.service";
 import { sendEmail, paymentApprovedEmail, subscriptionDueSoonEmail } from "@/lib/email";
 import { describeError, logger } from "@/lib/logger";
+import { civilParts, refMonthTz, zonedTimeToUtc } from "@/lib/tz";
 import { TERMS_VERSION } from "@/lib/legal";
 
 /** Validade da cobrança do mês (QR PIX e preferência de cartão). */
@@ -49,13 +50,20 @@ const CARD_PAYMENT_TYPE: Record<"CREDIT_CARD" | "DEBIT_CARD", CardPaymentTypeId>
   DEBIT_CARD: "debit_card",
 };
 
+/**
+ * Mês de referência da mensalidade, no fuso do app.
+ *
+ * Com `getMonth()` puro, o servidor em UTC já estava no mês seguinte a partir
+ * das 21h do último dia — quem pagasse no fim da noite de 31/08 recebia uma
+ * cobrança marcada como setembro, e agosto ficava eternamente em aberto.
+ */
 function currentRefMonth(d = new Date()): string {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+  return refMonthTz(d);
 }
 
 function previousRefMonth(d = new Date()): string {
-  const prev = new Date(d.getFullYear(), d.getMonth() - 1, 1);
-  return currentRefMonth(prev);
+  const c = civilParts(d);
+  return refMonthTz(zonedTimeToUtc(c.year, c.month - 1, 1));
 }
 
 /**

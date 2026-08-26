@@ -331,8 +331,13 @@ function cardIdempotencyKey(externalReference: string, token: string): string {
 /**
  * Cria um pagamento com CARTÃO (crédito ou débito) a partir do token do Brick.
  * PCI: o servidor recebe apenas o `token` — nunca número/CVV/validade.
- * No débito enviamos `three_d_secure_mode: "optional"`: o Mercado Pago devolve
- * o desafio 3DS quando o emissor exige e aprova direto quando não exige.
+ *
+ * `three_d_secure_mode: "optional"` vai em **crédito e débito**: o Mercado Pago
+ * devolve o desafio 3DS quando o emissor exige e aprova direto quando não exige.
+ * Antes só o débito mandava esse campo, e era por isso que cartão de crédito
+ * REAL não passava: os emissores brasileiros exigem autenticação em compra sem
+ * cartão presente, e sem o campo o Mercado Pago não tem como negociá-la — a
+ * transação volta recusada pelo emissor, sem chance de o portador autenticar.
  */
 export async function createCardPayment(args: {
   amount: number;
@@ -355,7 +360,7 @@ export async function createCardPayment(args: {
       installments: args.installments,
       payment_method_id: args.paymentMethodId,
       ...(Number.isFinite(issuer) ? { issuer_id: issuer } : {}),
-      ...(args.paymentTypeId === "debit_card" ? { three_d_secure_mode: "optional" } : {}),
+      three_d_secure_mode: "optional",
       payer: {
         email: args.payer.email,
         ...(args.payer.firstName ? { first_name: args.payer.firstName } : {}),

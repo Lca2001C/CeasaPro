@@ -95,6 +95,19 @@ docs/               esta documentação
 
 Mais detalhes de convenções em [Desenvolvimento](08-desenvolvimento.md).
 
+## Fuso horário
+
+O servidor roda em **UTC** (Vercel) e o usuário está no **Brasil**. Toda data que o sistema exibe, agrupa ou compara passa por [`src/lib/tz.ts`](../src/lib/tz.ts), que fixa `America/Sao_Paulo`:
+
+- **Exibição:** `formatDate`/`formatDateTime` declaram `timeZone` — sem isso, tudo renderizado no servidor saía 3 horas adiantado (a auditoria mostrava 15:27 para um evento das 12:27).
+- **Limite do dia:** `startOfDay`/`endOfDay`/`startOfMonth` calculam a virada no fuso brasileiro. Com `setHours` puro o dia começava às 21h do dia anterior: uma venda das 22h caía no relatório do dia seguinte e o fechamento nunca batia com o do balcão.
+- **Agrupamento por dia no banco:** as consultas de gráfico e de fluxo de caixa usam `DATE_TRUNC('day', col AT TIME ZONE 'UTC' AT TIME ZONE 'America/Sao_Paulo')`. As colunas são `timestamp` sem fuso guardando UTC, então truncar direto agrupava por dia UTC.
+- **Mês de referência da mensalidade:** `refMonthTz`. Com `getMonth()` puro, quem pagasse depois das 21h de 31/08 recebia cobrança marcada como setembro, e agosto ficava em aberto para sempre.
+- **Formulários:** o padrão "hoje" dos campos de data usa `isoDateTz()`. `new Date().toISOString().slice(0,10)` já devolvia amanhã às 21h.
+- **Entrada de data:** `parseIsoDateTz` lê `"2026-08-26"` como o dia 26 **aqui** — `new Date("2026-08-26")` é meia-noite UTC, ou seja, 21h do dia 25.
+
+Coberto por [`tests/unit/timezone.test.ts`](../tests/unit/timezone.test.ts), que fixa o comportamento nas bordas (23h30 e virada de mês).
+
 ## Padrões transversais
 
 - **Respostas padronizadas:** `ActionResult<T>` = `{ ok: true, data }` ou `{ ok: false, error: { code, message, fields? } }`. O cliente sempre checa `res.ok`.

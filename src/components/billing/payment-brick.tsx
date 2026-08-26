@@ -39,15 +39,28 @@ const REJECTION_MESSAGES: Record<string, string> = {
   cc_rejected_bad_filled_security_code: "Código de segurança inválido.",
   cc_rejected_bad_filled_date: "Data de validade inválida.",
   cc_rejected_bad_filled_other: "Dados do cartão incorretos. Confira e tente de novo.",
-  cc_rejected_call_for_authorize: "Autorize a compra com o seu banco e tente de novo.",
+  cc_rejected_bad_filled_card_number: "Número do cartão incorreto.",
+  cc_rejected_call_for_authorize: "Ligue para o seu banco e autorize esta compra, depois tente de novo.",
   cc_rejected_high_risk: "Pagamento recusado por segurança. Tente outro meio de pagamento.",
+  cc_rejected_card_disabled: "Cartão não habilitado para compras online. Peça a liberação ao banco.",
+  cc_rejected_card_type_not_allowed: "Este tipo de cartão não é aceito. Tente outro ou pague com PIX.",
+  cc_rejected_duplicated_payment: "Já existe um pagamento igual em andamento. Aguarde alguns minutos.",
+  cc_rejected_max_attempts: "Muitas tentativas com este cartão. Tente outro ou pague com PIX.",
+  cc_rejected_invalid_installments: "Parcelamento não aceito por este cartão.",
+  cc_rejected_blacklist: "Pagamento recusado pelo emissor. Tente outro cartão ou pague com PIX.",
+  cc_rejected_other_reason: "O banco emissor recusou a compra. Tente outro cartão ou pague com PIX.",
 };
 
 function rejectionMessage(statusDetail: string | null): string {
-  return (
-    (statusDetail && REJECTION_MESSAGES[statusDetail]) ??
-    "Pagamento recusado. Tente outro cartão ou pague com PIX."
-  );
+  if (statusDetail && REJECTION_MESSAGES[statusDetail]) {
+    return REJECTION_MESSAGES[statusDetail];
+  }
+  // Recusa que ainda não traduzimos: mostra o código do Mercado Pago. É feio,
+  // mas é o que permite descobrir o motivo sem acesso ao log do servidor —
+  // "Pagamento recusado" sozinho não dá para investigar.
+  return statusDetail
+    ? `Pagamento recusado pelo emissor (${statusDetail}). Tente outro cartão ou pague com PIX.`
+    : "Pagamento recusado. Tente outro cartão ou pague com PIX.";
 }
 
 /**
@@ -108,7 +121,10 @@ export function PaymentBrick({
       issuerId: formData.issuer_id || undefined,
       installments: method === "DEBIT_CARD" ? 1 : (formData.installments ?? 1),
       payer: {
-        email: formData.payer?.email ?? payerEmail,
+        // `||`, não `??`: o Brick devolve string VAZIA quando o campo de e-mail
+        // vem pré-preenchido e oculto. Com `??` o vazio passava adiante e o
+        // servidor recusava com "Dados inválidos", sem dizer qual campo.
+        email: formData.payer?.email || payerEmail,
         identification: identification?.number ? identification : undefined,
       },
       acceptedTerms: true,
