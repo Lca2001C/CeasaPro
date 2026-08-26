@@ -78,8 +78,8 @@ export default function PrivacidadePage() {
       <h2 className="mt-4 text-lg font-semibold">4. Com quem compartilhamos</h2>
       <p>
         Compartilhamos apenas o necessário, com operadores que também seguem a LGPD:{" "}
-        <strong>Mercado Pago</strong> (processamento de pagamentos), <strong>Resend</strong> (envio
-        de e-mails transacionais), <strong>Vercel</strong> (hospedagem) e{" "}
+        <strong>Mercado Pago</strong> (processamento de pagamentos), <strong>Google</strong> (envio
+        de e-mails transacionais por SMTP), <strong>Vercel</strong> (hospedagem) e{" "}
         <strong>Neon</strong> (banco de dados). Não vendemos nem cedemos seus dados para fins de
         publicidade. Dados podem ser fornecidos a autoridades mediante ordem legal.
       </p>

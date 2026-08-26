@@ -69,7 +69,7 @@ Um único aplicativo full-stack, sem backend separado.
 | Estado cliente | TanStack React Query + Zustand + sonner (toasts) |
 | Autenticação | **jose** (JWT HS256) + **@node-rs/argon2** (Argon2id) |
 | Pagamentos | **Mercado Pago** (SDK server + Card Brick no cliente) |
-| E-mail | **Resend** |
+| E-mail | **SMTP do Gmail** via **nodemailer** |
 | Relatórios | **exceljs** (.xlsx) e **pdfmake** (.pdf) |
 | Logs | **pino** com redaction |
 | Testes | **Vitest** (unit + integração) e **Playwright** (E2E) |
@@ -112,7 +112,7 @@ A escolha não é arbitrária:
 |---|---|---|
 | CRUD simples de cadastro | **Server Action** | produtos, fornecedores, despesas, categorias, tipos de embalagem, configurações, higienização, movimento de caixas |
 | Fluxo transacional multi-tabela, ou consumido por cliente rico | **Route Handler** (`/api/*`) | venda no PDV, compra, fiado (criação e pagamento), ajuste de estoque, exportação de relatório, checkout de assinatura |
-| Integrações externas | **Route Handler** | webhooks Mercado Pago e Resend, cron de billing |
+| Integrações externas | **Route Handler** | webhook do Mercado Pago, cron de billing |
 
 ### Wrappers de guarda
 
@@ -519,7 +519,6 @@ Os route groups `(auth)`, `(app)` e `(admin)` organizam os arquivos sem aparecer
 | Rota | Método | Função |
 |---|---|---|
 | `/api/webhooks/mercadopago` | POST | Webhook de pagamento; valida HMAC e reconcilia |
-| `/api/webhooks/resend` | POST | Eventos de e-mail (delivered, bounce, complaint) |
 | `/api/cron/billing` | GET/POST | Cron diário: reconcilia pendências e recalcula status (`CRON_SECRET`) |
 
 ---
@@ -559,7 +558,7 @@ A navegação é mobile-first: `side-nav` no desktop e `bottom-nav` no celular.
 | Escalada de privilégio | Papel verificado no proxy **e** revalidado nos wrappers de servidor |
 | Acesso a módulo não contratado | `moduleForPath` no proxy + `requireModule` no servidor |
 | Força bruta no login | Rate limit em `src/lib/security/rate-limit.ts` |
-| Webhook forjado | HMAC-SHA256 do Mercado Pago com anti-replay por timestamp; assinatura Svix/HMAC no Resend |
+| Webhook forjado | HMAC-SHA256 do Mercado Pago com anti-replay por timestamp |
 | Cron exposto | Bearer `CRON_SECRET` |
 | Open redirect | `safeRedirectPath` rejeita URLs externas, `//`, `javascript:` e loops de login |
 | Injeção de fórmula em planilha | `spreadsheetSafe` em toda célula exportada |
@@ -668,8 +667,9 @@ npm run test:e2e          # exige build + seed com SEED_DEMO=true
 | `MERCADOPAGO_ACCESS_TOKEN` | Token do Mercado Pago — **obrigatório em produção** |
 | `MERCADOPAGO_WEBHOOK_SECRET` | Segredo HMAC do webhook — **obrigatório em produção** |
 | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | Public key do MP usada pelo Payment Brick no browser |
-| `RESEND_API_KEY` / `EMAIL_FROM` / `EMAIL_REPLY_TO` | E-mail transacional |
-| `RESEND_WEBHOOK_SECRET` | Assinatura do webhook de e-mail |
+| `SMTP_USER` / `SMTP_PASSWORD` | Conta Gmail e a senha de app de 16 caracteres usada no envio |
+| `EMAIL_FROM` / `EMAIL_REPLY_TO` | Remetente (tem que ser o mesmo endereço do `SMTP_USER`) e endereço de resposta |
+| `SMTP_HOST` / `SMTP_PORT` | Opcionais — padrão `smtp.gmail.com` e `465` |
 | `CRON_SECRET` | Bearer que protege `/api/cron/billing` |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP` | WhatsApp do suporte (DDI+DDD+número, só dígitos). Ausente = botão flutuante oculto |
 | `R2_*` | Cloudflare R2, opcional (assets/backup) |
@@ -728,7 +728,7 @@ npm run dev                   # http://localhost:3000
 
 O passo a passo completo está em [`docs/09-deploy-vercel.md`](09-deploy-vercel.md).
 
-Arquitetura: **app completo na Vercel**, **banco no Neon**, **e-mail no Resend**.
+Arquitetura: **app completo na Vercel**, **banco no Neon**, **e-mail pelo SMTP do Gmail**.
 
 1. **Banco** — Neon: URL *pooled* (`sslmode=require&pgbouncer=true&connection_limit=1`) em `DATABASE_URL` e *direct* em `DIRECT_URL`. As duas são obrigatórias: o `prisma generate` do build valida o datasource inteiro.
 2. **App** — importe o GitHub; configure todas as variáveis (as `NEXT_PUBLIC_*` precisam existir **no build**).
@@ -736,7 +736,7 @@ Arquitetura: **app completo na Vercel**, **banco no Neon**, **e-mail no Resend**
 4. **Seed** — uma vez, `SEED_DEMO=false`, com `SEED_SUPERADMIN_*`.
 5. **Mercado Pago** — webhook `https://SEU_DOMINIO/api/webhooks/mercadopago` (evento Pagamentos).
 6. **Cron** — declarado em `vercel.json`; `scripts/run-billing-cron.mjs` dispara à mão quando preciso.
-7. **Resend** — domínio verificado + `RESEND_API_KEY` / `EMAIL_FROM`.
+7. **E-mail** — verificação em duas etapas ligada na conta Google + senha de app em `SMTP_USER` / `SMTP_PASSWORD`, com `EMAIL_FROM` igual ao `SMTP_USER`.
 8. **Pré-flight** — `NODE_ENV=production npm run preflight` contra o banco de destino.
 
 **Backup:** PITR/automático no provedor do Postgres + `pg_dump` periódico.

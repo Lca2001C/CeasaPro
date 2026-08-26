@@ -4,7 +4,7 @@ import { createTestTenant, cleanupTenants } from "../helpers/factory";
 import { BillingService, DUE_REMINDER_DAYS } from "@/lib/services/billing.service";
 
 /**
- * Lembrete de vencimento. Sem RESEND_API_KEY o envio é no-op e devolve
+ * Lembrete de vencimento. Sem SMTP configurado o envio é no-op e devolve
  * `{ ok: true }`, então o que se observa aqui é a decisão de QUEM recebe e a
  * marca de auditoria que impede o reenvio — que é onde estão as regras.
  */

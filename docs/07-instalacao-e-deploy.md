@@ -4,7 +4,7 @@
 
 - **Node.js 22+**
 - **Docker** (para o PostgreSQL local) — ou um PostgreSQL já instalado
-- Para produção: contas em **Vercel**, **Neon** (Postgres), **Resend** (e-mail) e **Mercado Pago**
+- Para produção: contas em **Vercel**, **Neon** (Postgres), **Gmail** (SMTP, com senha de app) e **Mercado Pago**
 
 ## Rodar localmente — jeito rápido (scripts)
 
@@ -54,14 +54,15 @@ Arquivo modelo: [`.env.example`](../.env.example).
 | `SEED_SUPERADMIN_EMAIL`, `SEED_SUPERADMIN_PASSWORD` | Credenciais do super-admin no seed |
 | `SEED_DEMO` | `true` cria uma empresa de exemplo |
 | `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET`, `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | Mercado Pago |
-| `RESEND_API_KEY`, `EMAIL_FROM` | E-mail transacional |
+| `SMTP_USER`, `SMTP_PASSWORD`, `EMAIL_FROM` | E-mail transacional pelo SMTP do Gmail (`EMAIL_FROM` = `SMTP_USER`) |
+| `SMTP_HOST`, `SMTP_PORT` | Opcionais — padrão `smtp.gmail.com` e `465` |
 | `CRON_SECRET` | Protege `/api/cron/billing` |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP` | WhatsApp do suporte (só dígitos, com DDI) |
 | `R2_*` | Cloudflare R2 (armazenamento — logo/anexos, futuro) |
 
 Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` ou `openssl rand -base64 32`.
 
-## Deploy de baixo custo (Vercel + Neon + Resend)
+## Deploy de baixo custo (Vercel + Neon + SMTP do Gmail)
 
 O procedimento **completo** (contas, variáveis, migrations, seed, webhook, cron, domínio e troubleshooting) está em:
 

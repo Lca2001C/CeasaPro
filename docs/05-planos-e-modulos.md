@@ -107,7 +107,7 @@ Quem recebe: assinatura `ATIVO`, com `activatedAt` (já pagou pelo menos uma vez
 - **quem já venceu ou está suspenso** — o bloqueio já é o aviso;
 - **empresa sem OWNER** (inclui o ambiente do super-admin) — não há para quem escrever.
 
-**Um aviso por período.** A marca é o próprio registro de auditoria `SUBSCRIPTION_DUE_REMINDER`, procurado dentro da janela deste vencimento: sem ela o cron mandaria o mesmo e-mail três dias seguidos. Quando o cliente paga, `currentPeriodEnd` avança e o período seguinte volta a ser elegível. A marca só é gravada **depois** de o envio dar certo — falha transitória do Resend deixa o cron de amanhã tentar de novo, em vez de silenciar o aviso para sempre.
+**Um aviso por período.** A marca é o próprio registro de auditoria `SUBSCRIPTION_DUE_REMINDER`, procurado dentro da janela deste vencimento: sem ela o cron mandaria o mesmo e-mail três dias seguidos. Quando o cliente paga, `currentPeriodEnd` avança e o período seguinte volta a ser elegível. A marca só é gravada **depois** de o envio dar certo — falha transitória do SMTP deixa o cron de amanhã tentar de novo, em vez de silenciar o aviso para sempre.
 
 O lembrete roda **depois** do recálculo de status, senão quem acabou de ser reativado por um pagamento reconciliado receberia "vence em 3 dias" no mesmo minuto. Uma falha no envio não derruba o cron: a cobrança não depende do e-mail.
 

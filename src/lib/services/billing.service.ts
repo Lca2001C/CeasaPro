@@ -181,7 +181,18 @@ interface ChargeContext {
   amount: Decimal;
   description: string;
   payerEmail: string;
+  /** Nome do dono da empresa — o PIX espera nome do pagador, não só e-mail. */
+  payerName: string | null;
+  /** CNPJ da empresa, quando cadastrado, como documento do pagador. */
+  payerIdentification: { type: string; number: string } | null;
   externalRefPrefix: string;
+}
+
+/** CNPJ do tenant como identificação do pagador, se estiver completo. */
+function identificacaoDoPagador(cnpj: string | null): { type: string; number: string } | null {
+  const digitos = (cnpj ?? "").replace(/\D/g, "");
+  if (digitos.length !== 14) return null;
+  return { type: "CNPJ", number: digitos };
 }
 
 /**
@@ -230,6 +241,8 @@ async function prepareCharge(
     amount: money(sub.monthlyAmount),
     description: `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`,
     payerEmail: sub.tenant.users[0]?.email ?? "sememail@ceasapro.com.br",
+    payerName: sub.tenant.users[0]?.name ?? sub.tenant.tradeName,
+    payerIdentification: identificacaoDoPagador(sub.tenant.cnpj),
     externalRefPrefix: `sub:${sub.id}:${refMonth}`,
   };
 }
@@ -304,6 +317,8 @@ export const BillingService = {
         amount: toNumber(charge.amount),
         description: charge.description,
         payerEmail: charge.payerEmail,
+        payerName: charge.payerName,
+        payerIdentification: charge.payerIdentification,
         externalReference: externalRef,
         expiresAt,
       }),
@@ -733,7 +748,7 @@ export const BillingService = {
       const res = await sendEmail(owner.email, mail.subject, mail.html, {
         tags: [{ name: "tipo", value: "lembrete-vencimento" }],
       });
-      // Só marca depois do envio dar certo: falha transitória do Resend deve
+      // Só marca depois do envio dar certo: falha transitória do SMTP deve
       // deixar o cron de amanhã tentar de novo, não silenciar o aviso.
       if (!res.ok) {
         logger.error(

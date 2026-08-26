@@ -44,8 +44,8 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       CRON_SECRET: ci-cron-secret
       MERCADOPAGO_WEBHOOK_SECRET: ci-webhook-secret
-      # RESEND_API_KEY fica de fora de propósito: sem ela o envio de e-mail vira
-      # no-op e o CI não faz chamada de rede para o Resend.
+      # SMTP_USER / SMTP_PASSWORD ficam de fora de propósito: sem elas o envio de
+      # e-mail vira no-op e o CI não abre conexão SMTP com o Gmail.
       SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
       SEED_SUPERADMIN_PASSWORD: ci-superadmin-password-123
       SEED_DEMO: "true"

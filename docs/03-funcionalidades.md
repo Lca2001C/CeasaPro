@@ -29,7 +29,7 @@ Este documento descreve cada área do sistema, o que ela faz e as regras de neg�
 ## Autenticação e acesso
 
 - **Login** (`/login`): e-mail + senha. Mensagem genérica em caso de erro (não revela se o e-mail existe). **Rate limit** de 5 tentativas / 15 min por IP+e-mail.
-- **Recuperação de senha** (`/recuperar-senha` e `/recuperar-senha/[token]`): informa o e-mail → recebe um link (via Resend) válido por 1 hora → define nova senha. Resposta sempre genérica. Ao redefinir, todas as sessões são revogadas.
+- **Recuperação de senha** (`/recuperar-senha` e `/recuperar-senha/[token]`): informa o e-mail → recebe um link (por e-mail, via SMTP do Gmail) válido por 1 hora → define nova senha. Resposta sempre genérica. Ao redefinir, todas as sessões são revogadas.
 - **Logout**: encerra a sessão e revoga o refresh token.
 - **Sessão**: renovada automaticamente por refresh token; mudanças de status (assinatura/bloqueio) propagam em ≤15 min.
 

@@ -57,7 +57,7 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
         <CardContent className="flex flex-col gap-3 pt-6">
           <p className="font-medium">Empresa criada com sucesso!</p>
           <p className="text-sm text-muted-foreground">
-            O e-mail de boas-vindas foi disparado quando o Resend esta configurado. Confira as
+            O e-mail de boas-vindas foi disparado quando o SMTP esta configurado. Confira as
             credenciais abaixo; a senha deve ser trocada no primeiro acesso.
           </p>
           <div className="rounded-md border bg-muted/40 p-3 text-sm">

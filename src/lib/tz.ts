@@ -55,7 +55,7 @@ export function civilParts(date: Date): CivilParts {
 }
 
 /** Deslocamento do fuso, em ms, para um instante (negativo a oeste de Greenwich). */
-function offsetMs(date: Date): number {
+export function offsetMs(date: Date): number {
   const c = civilParts(date);
   const asUtc = Date.UTC(c.year, c.month - 1, c.day, c.hour, c.minute, c.second);
   // Descarta os milissegundos dos dois lados: `civilParts` não os traz.
@@ -132,6 +132,28 @@ export function addDaysTz(date: Date, days: number): Date {
 export function isoDateTz(date: Date = new Date()): string {
   const c = civilParts(date);
   return `${c.year}-${String(c.month).padStart(2, "0")}-${String(c.day).padStart(2, "0")}`;
+}
+
+/**
+ * Data/hora em ISO 8601 **com o deslocamento explícito** do fuso do app
+ * (`2026-08-28T14:30:00.000-03:00`), em vez do `Z` de `toISOString()`.
+ *
+ * O Mercado Pago exige esse formato em `date_of_expiration` da cobrança PIX e
+ * recusa a requisição quando recebe `Z` — o pedido volta 400 e o cliente vê um
+ * erro sem conseguir gerar o código.
+ */
+export function isoComOffsetTz(date: Date): string {
+  const c = civilParts(date);
+  const p2 = (n: number) => String(n).padStart(2, "0");
+  // Milissegundos não dependem de fuso; os campos civis já vieram convertidos.
+  const ms = String(date.getUTCMilliseconds()).padStart(3, "0");
+
+  const off = offsetMs(date);
+  const sinal = off <= 0 ? "-" : "+";
+  const minutos = Math.abs(off) / 60_000;
+  const offset = `${sinal}${p2(Math.floor(minutos / 60))}:${p2(minutos % 60)}`;
+
+  return `${c.year}-${p2(c.month)}-${p2(c.day)}T${p2(c.hour)}:${p2(c.minute)}:${p2(c.second)}.${ms}${offset}`;
 }
 
 /** Mês de referência ("YYYY-MM") no fuso do app. */

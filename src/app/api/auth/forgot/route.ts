@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { forgotSchema } from "@/lib/validations/auth";
-import { sendEmail, passwordResetEmail } from "@/lib/email";
+import { sendEmail, passwordResetEmail, isEmailConfigured } from "@/lib/email";
 import { rateLimitDb } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
@@ -56,9 +56,9 @@ export async function POST(req: Request) {
       const { raw } = await issueResetToken(user.id);
       const link = absoluteUrl(`/recuperar-senha/${raw}`);
 
-      // Sem RESEND_API_KEY (dev), sendEmail é no-op — o link vai para o log
+      // Sem SMTP configurado (dev), sendEmail é no-op — o link vai para o log
       // para dar como testar o fluxo inteiro sem caixa de e-mail.
-      if (!process.env.RESEND_API_KEY) {
+      if (!isEmailConfigured()) {
         logger.info({ link }, "[DEV] Link de redefinição de senha");
       }
       if (process.env.NODE_ENV === "production" && !hasConfiguredAppUrl()) {

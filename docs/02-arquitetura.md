@@ -12,7 +12,7 @@
 | Dados no cliente | **TanStack Query** (onde há interatividade) e **Zustand** (estado de UI simples) |
 | Autenticação | Própria, com **`jose`** (JWT) e **Argon2id** (`@node-rs/argon2`) |
 | Pagamentos | **Mercado Pago** (mensalidade via PIX) |
-| E-mail | **Resend** (recuperação de senha) |
+| E-mail | **SMTP do Gmail** via nodemailer (recuperação de senha, recibo, lembrete de vencimento) |
 | Relatórios | **exceljs** (Excel) + impressão do navegador (PDF) |
 | Logs | **pino** (com redação de dados sensíveis) |
 | Testes | **Vitest** |

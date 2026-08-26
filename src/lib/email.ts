@@ -1,11 +1,30 @@
-import { Resend } from "resend";
+import nodemailer, { type Transporter } from "nodemailer";
 import { logger } from "./logger";
 
-const apiKey = process.env.RESEND_API_KEY;
-const from = process.env.EMAIL_FROM ?? "CeasaPro <nao-responda@ceasapro.com.br>";
+/**
+ * Envio de e-mail transacional por **SMTP** (Gmail por padrão).
+ *
+ * Substitui o Resend. O contrato público (`sendEmail`, `SendEmailResult`,
+ * `SendEmailOptions`) foi mantido de propósito: nenhum chamador precisou mudar.
+ *
+ * Gmail exige **senha de app** (Conta Google › Segurança › Verificação em duas
+ * etapas › Senhas de app) — a senha normal da conta não autentica em SMTP.
+ */
+const SMTP_HOST = process.env.SMTP_HOST ?? "smtp.gmail.com";
+const SMTP_PORT = Number(process.env.SMTP_PORT ?? "465");
+const SMTP_USER = process.env.SMTP_USER;
+const SMTP_PASSWORD = process.env.SMTP_PASSWORD;
+
+/**
+ * O Gmail reescreve o remetente para a conta autenticada quando o `From` é de
+ * outro endereço, então o padrão é o próprio `SMTP_USER`. `EMAIL_FROM` continua
+ * valendo para quem usa outro servidor SMTP ou um alias verificado no Gmail.
+ */
+const from =
+  process.env.EMAIL_FROM ??
+  (SMTP_USER ? `CeasaPro <${SMTP_USER}>` : "CeasaPro <nao-responda@ceasapro.com.br>");
 // Endereço de resposta monitorado (opcional). Ter um reply-to real ajuda na reputação/anti-spam.
 const defaultReplyTo = process.env.EMAIL_REPLY_TO || undefined;
-const resend = apiKey ? new Resend(apiKey) : null;
 
 /** Resultado do envio. Permite ao chamador decidir o que fazer sem precisar de try/catch. */
 export type SendEmailResult =
@@ -18,7 +37,10 @@ export interface SendEmailOptions {
   text?: string;
   /** Endereço de resposta. Default: EMAIL_FROM/EMAIL_REPLY_TO. */
   replyTo?: string;
-  /** Tags para segmentar métricas no painel do Resend. */
+  /**
+   * Rótulos do envio. Viram cabeçalhos `X-Entity-Ref-*`, úteis para filtrar no
+   * servidor de e-mail. (No Resend eram tags de métrica; o contrato ficou.)
+   */
   tags?: { name: string; value: string }[];
   /** Cabeçalhos extras (ex.: Idempotency-Key, References). */
   headers?: Record<string, string>;
@@ -26,15 +48,50 @@ export interface SendEmailOptions {
   unsubscribeUrl?: string;
 }
 
+export function isEmailConfigured(): boolean {
+  return Boolean(SMTP_USER && SMTP_PASSWORD);
+}
+
+/**
+ * Conexão SMTP reaproveitada entre invocações.
+ *
+ * Em serverless a instância fica quente entre requisições, e abrir uma conexão
+ * TLS nova a cada e-mail custa mais que o próprio envio. `pool: false` porque
+ * a função pode ser congelada a qualquer momento — um pool de conexões ociosas
+ * ficaria pendurado do lado do Gmail.
+ */
+let transporter: Transporter | null = null;
+
+function getTransporter(): Transporter | null {
+  if (!isEmailConfigured()) return null;
+  if (transporter) return transporter;
+  transporter = nodemailer.createTransport({
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    // 465 = TLS implícito; 587 = STARTTLS (o nodemailer negocia sozinho).
+    secure: SMTP_PORT === 465,
+    auth: { user: SMTP_USER, pass: SMTP_PASSWORD },
+    // Sem isso, uma indisponibilidade do SMTP seguraria a função até o timeout
+    // da plataforma, e o usuário ficaria olhando para uma tela travada.
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+    socketTimeout: 20_000,
+  });
+  return transporter;
+}
+
 const MAX_ATTEMPTS = 3; // 1 tentativa + 2 retries
 const RETRY_BASE_MS = 300;
 
 /**
- * Envia um e-mail transacional via Resend.
+ * Envia um e-mail transacional por SMTP.
  *
- * - Em dev, sem RESEND_API_KEY, apenas registra no log e retorna { ok:true } (no-op).
+ * - Sem SMTP_USER/SMTP_PASSWORD, apenas registra no log e retorna { ok:true }
+ *   (no-op) — é o que permite rodar em dev sem caixa de e-mail.
  * - Nunca lança: retorna SendEmailResult para o chamador decidir.
- * - Reenvia (backoff) apenas em falhas transitórias (rede/5xx/rate limit); 4xx não repete.
+ * - Reenvia (backoff) apenas em falhas transitórias (rede, timeout, 4xx do SMTP,
+ *   limite de envio). Erro permanente — credencial inválida, destinatário
+ *   recusado — não repete: insistir só queimaria a reputação da conta.
  */
 export async function sendEmail(
   to: string | string[],
@@ -43,9 +100,13 @@ export async function sendEmail(
   opts: SendEmailOptions = {},
 ): Promise<SendEmailResult> {
   const recipients = Array.isArray(to) ? to : [to];
+  const mailer = getTransporter();
 
-  if (!resend) {
-    logger.info({ to: recipients, subject }, "[DEV] E-mail nao enviado (RESEND_API_KEY ausente)");
+  if (!mailer) {
+    logger.info(
+      { to: recipients, subject },
+      "[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)",
+    );
     return { ok: true, id: "dev-noop" };
   }
 
@@ -53,6 +114,11 @@ export async function sendEmail(
   if (opts.unsubscribeUrl) {
     headers["List-Unsubscribe"] = `<${opts.unsubscribeUrl}>`;
     headers["List-Unsubscribe-Post"] = "List-Unsubscribe=One-Click";
+  }
+  // Os rótulos viram cabeçalhos: dá para filtrar/monitorar no servidor de
+  // e-mail sem precisar de um painel de provedor.
+  for (const tag of opts.tags ?? []) {
+    headers[`X-Entity-Ref-${tag.name}`] = tag.value;
   }
 
   const payload = {
@@ -63,7 +129,6 @@ export async function sendEmail(
     // Multipart texto+HTML: clientes que preferem texto puro têm fallback e a mensagem "cheira" menos a spam.
     text: opts.text ?? htmlToText(html),
     replyTo: opts.replyTo ?? defaultReplyTo,
-    tags: opts.tags,
     headers: Object.keys(headers).length ? headers : undefined,
   };
 
@@ -71,26 +136,21 @@ export async function sendEmail(
 
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
-      const { data, error } = await resend.emails.send(payload);
-
-      if (error) {
-        // O SDK devolve o erro no corpo (não lança). Só reenvia se for transitório.
-        lastError = error.message;
-        if (!isRetriableMessage(error.name, error.message) || attempt === MAX_ATTEMPTS) {
-          logger.error({ err: error.message, to: recipients, subject, attempt }, "Falha ao enviar e-mail");
-          return { ok: false, error: error.message };
-        }
-      } else if (data?.id) {
-        logger.debug({ id: data.id, to: recipients, subject, attempt }, "E-mail enviado");
-        return { ok: true, id: data.id };
-      } else {
-        return { ok: true, id: "unknown" };
-      }
+      const info = await mailer.sendMail(payload);
+      logger.debug(
+        { id: info.messageId, to: recipients, subject, attempt },
+        "E-mail enviado",
+      );
+      return { ok: true, id: info.messageId ?? "unknown" };
     } catch (e) {
-      // Exceções aqui são tipicamente de rede/timeout — sempre transitórias.
       lastError = e instanceof Error ? e.message : String(e);
-      if (attempt === MAX_ATTEMPTS) {
-        logger.error({ err: lastError, to: recipients, subject, attempt }, "Falha ao enviar e-mail");
+      const code = (e as { responseCode?: number; code?: string }).responseCode;
+      const nome = (e as { code?: string }).code;
+      if (!isRetriableSmtpError(nome, lastError, code) || attempt === MAX_ATTEMPTS) {
+        logger.error(
+          { err: lastError, code: code ?? nome, to: recipients, subject, attempt },
+          "Falha ao enviar e-mail",
+        );
         return { ok: false, error: lastError };
       }
     }
@@ -100,6 +160,35 @@ export async function sendEmail(
   }
 
   return { ok: false, error: lastError };
+}
+
+/**
+ * Vale retry?
+ *
+ * SMTP separa por código: **4xx é temporário** (caixa cheia, limite de envio,
+ * servidor ocupado) e **5xx é permanente** (autenticação, destinatário
+ * inexistente). Repetir um 5xx não muda o resultado e conta contra a reputação
+ * do remetente, então só o 4xx e as falhas de rede voltam.
+ */
+export function isRetriableSmtpError(
+  code: string | undefined,
+  message: string,
+  responseCode?: number,
+): boolean {
+  if (responseCode !== undefined) {
+    return responseCode >= 400 && responseCode < 500;
+  }
+  const rede = new Set([
+    "ETIMEDOUT",
+    "ECONNRESET",
+    "ECONNREFUSED",
+    "ESOCKET",
+    "EDNS",
+    "EAI_AGAIN",
+    "ECONNECTION",
+  ]);
+  if (code && rede.has(code)) return true;
+  return isRetriableMessage(code, message);
 }
 
 /** Erros que valem retry: rede, timeout, rate limit (429) e 5xx do provedor. */

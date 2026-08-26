@@ -1,6 +1,7 @@
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { describeError, logger } from "@/lib/logger";
+import { isoComOffsetTz } from "@/lib/tz";
 
 /**
  * Integração Mercado Pago — PIX, cartão de crédito e cartão de débito (com 3DS).
@@ -187,30 +188,59 @@ export interface PixCharge {
   expiresAt: Date | null;
 }
 
+/** Separa "Maria Silva Souza" em nome e sobrenome para o payload do pagador. */
+export function splitNome(nome: string | undefined | null): {
+  firstName?: string;
+  lastName?: string;
+} {
+  const partes = (nome ?? "").trim().split(/\s+/).filter(Boolean);
+  if (partes.length === 0) return {};
+  if (partes.length === 1) return { firstName: partes[0] };
+  return { firstName: partes[0], lastName: partes.slice(1).join(" ") };
+}
+
 /**
  * Cria uma cobrança PIX no Mercado Pago.
- * `externalReference` é usado como chave de idempotência: repetir a chamada
- * devolve a MESMA cobrança em vez de criar uma segunda.
+ *
+ * Três detalhes que a API exige e que davam 400:
+ *  - **`date_of_expiration` com deslocamento explícito** (`-03:00`). O `Z` de
+ *    `toISOString()` é recusado.
+ *  - **dados do pagador além do e-mail.** O PIX brasileiro espera nome e, quando
+ *    houver, o documento — só o e-mail deixa o payload incompleto.
+ *  - **chave de idempotência que inclui o VALOR.** Sem isso, trocar de plano e
+ *    gerar de novo devolvia a cobrança anterior (o Mercado Pago responde a
+ *    original para a mesma chave), e o cliente pagava o preço do plano antigo.
  */
 export async function createPixPayment(args: {
   amount: number;
   description: string;
   payerEmail: string;
+  payerName?: string | null;
+  /** Documento do pagador (CNPJ da empresa, quando cadastrado). */
+  payerIdentification?: { type: string; number: string } | null;
   externalReference: string;
   expiresAt: Date;
 }): Promise<PixCharge> {
   const client = paymentClient();
+  const { firstName, lastName } = splitNome(args.payerName);
   const res = await mpCall("createPixPayment", () => client.create({
     body: {
       transaction_amount: args.amount,
       description: args.description,
       payment_method_id: "pix",
-      payer: { email: args.payerEmail },
+      payer: {
+        email: args.payerEmail,
+        ...(firstName ? { first_name: firstName } : {}),
+        ...(lastName ? { last_name: lastName } : {}),
+        ...(args.payerIdentification ? { identification: args.payerIdentification } : {}),
+      },
       external_reference: args.externalReference,
       notification_url: webhookUrl(),
-      date_of_expiration: args.expiresAt.toISOString(),
+      date_of_expiration: isoComOffsetTz(args.expiresAt),
     },
-    requestOptions: { idempotencyKey: `pix:${args.externalReference}` },
+    requestOptions: {
+      idempotencyKey: `pix:${args.externalReference}:${args.amount.toFixed(2)}`,
+    },
   }));
   const tx = res.point_of_interaction?.transaction_data;
   return {

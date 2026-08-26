@@ -1,6 +1,6 @@
 # 9. Deploy em produção — Vercel + Neon
 
-Guia único de deploy do CeasaPro. A topologia é **app completo na Vercel**, **banco no Neon**, **e-mail no Resend**.
+Guia único de deploy do CeasaPro. A topologia é **app completo na Vercel**, **banco no Neon**, **e-mail por SMTP do Gmail**.
 
 Documento irmão: instalação local em [`07-instalacao-e-deploy.md`](07-instalacao-e-deploy.md). Variáveis em [`.env.example`](../.env.example).
 
@@ -36,7 +36,7 @@ Browser --HTTPS--> Vercel (Next.js: telas + /api + Prisma) --> Neon Postgres
 - [ ] [Vercel](https://vercel.com) conectada ao GitHub
 - [ ] [Neon](https://console.neon.tech) — Postgres
 - [ ] [Mercado Pago](https://www.mercadopago.com.br/developers/panel/app) — aplicação de **produção**
-- [ ] [Resend](https://resend.com) — com **domínio próprio verificado** (não envie pelo `*.resend.dev` em produção)
+- [ ] Conta **Gmail** (ou Google Workspace) com **verificação em duas etapas** ativa — é o que libera gerar a senha de app usada no SMTP
 
 ### 1.2 Gere os segredos (guarde num bloco de notas seguro)
 
@@ -61,12 +61,13 @@ Do Mercado Pago (aplicação de **produção**, prefixo `APP_USR-`):
 | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | Credenciais de produção → Public Key |
 | `MERCADOPAGO_WEBHOOK_SECRET` | Webhooks → chave secreta (depois de cadastrar a URL; veja §4.1) |
 
-Do Resend:
+Do Gmail (veja §4.2 para gerar a senha de app):
 
 | Variável | Exemplo |
 |---|---|
-| `RESEND_API_KEY` | começa com `re_` |
-| `EMAIL_FROM` | `CeasaPro <nao-responda@seudominio.com.br>` (domínio verificado) |
+| `SMTP_USER` | `contato@seudominio.com.br` (ou o seu `@gmail.com`) |
+| `SMTP_PASSWORD` | senha de app de 16 caracteres, sem espaços |
+| `EMAIL_FROM` | `CeasaPro <o-mesmo-endereço-do-SMTP_USER>` |
 
 WhatsApp de suporte (só dígitos, com DDI):
 
@@ -146,12 +147,12 @@ Settings → **Environment Variables**. Marque **Production** (e Preview, se voc
 | `MERCADOPAGO_ACCESS_TOKEN` | |
 | `MERCADOPAGO_WEBHOOK_SECRET` | |
 | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | **Entra no build**; sem ela a assinatura cai em só-PIX |
-| `RESEND_API_KEY` | Sem ela o envio de e-mail é no-op silencioso |
-| `EMAIL_FROM` | Do domínio verificado no Resend |
+| `SMTP_USER` / `SMTP_PASSWORD` | Sem elas o envio de e-mail é no-op silencioso |
+| `EMAIL_FROM` | O mesmo endereço de `SMTP_USER` (o Gmail reescreve outros) |
 | `CRON_SECRET` | A Vercel envia `Authorization: Bearer <CRON_SECRET>` sozinha no cron |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP` | **Entra no build**; vazia = botão de suporte some |
 
-**Opcionais (têm default no código):** `ACCESS_TOKEN_TTL` (15m), `REFRESH_TOKEN_TTL_DAYS` (30), `EMAIL_REPLY_TO`, `RESEND_WEBHOOK_SECRET`, `LOG_LEVEL`.
+**Opcionais (têm default no código):** `ACCESS_TOKEN_TTL` (15m), `REFRESH_TOKEN_TTL_DAYS` (30), `SMTP_HOST` (smtp.gmail.com), `SMTP_PORT` (465), `EMAIL_REPLY_TO`, `LOG_LEVEL`.
 
 **Não configure:**
 
@@ -177,8 +178,7 @@ Ao criar a variável, a Vercel oferece **Plain Text** (você relê o valor no pa
 | `JWT_SECRET` | **Sensitive** | Quem tiver esse valor forja sessão de qualquer usuário |
 | `MERCADOPAGO_ACCESS_TOKEN` | **Sensitive** | Move dinheiro |
 | `MERCADOPAGO_WEBHOOK_SECRET` | **Sensitive** | Valida a assinatura do webhook |
-| `RESEND_API_KEY` | **Sensitive** | Envia e-mail em nome do seu domínio |
-| `RESEND_WEBHOOK_SECRET` | **Sensitive** | Idem |
+| `SMTP_PASSWORD` | **Sensitive** | Senha de app do Gmail — envia e-mail em seu nome |
 | `CRON_SECRET` | **Sensitive** | Bearer que libera `/api/cron/billing` |
 | `NEXT_PUBLIC_APP_URL` | **Plain** (obrigatório) | Público por definição |
 | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | **Plain** (obrigatório) | A própria Mercado Pago a chama de *public* key |
@@ -186,6 +186,7 @@ Ao criar a variável, a Vercel oferece **Plain Text** (você relê o valor no pa
 | `APP_URL` | Plain (recomendado) | É o seu domínio — não é segredo, e Plain deixa você conferir se está sem barra final |
 | `ACCESS_TOKEN_TTL` | Plain (recomendado) | `15m` não é segredo |
 | `REFRESH_TOKEN_TTL_DAYS` | Plain (recomendado) | `30` não é segredo |
+| `SMTP_USER` | Plain (recomendado) | É o endereço remetente, não é segredo |
 | `EMAIL_FROM` | Plain (recomendado) | Vai no cabeçalho de todo e-mail enviado |
 | `EMAIL_REPLY_TO`, `LOG_LEVEL` | Plain (recomendado) | Idem |
 
@@ -304,33 +305,47 @@ Em **produção**, valide com uma cobrança real de valor baixo no seu próprio 
 
 > Não troque as credenciais do projeto de produção para `TEST-` "só para testar": cobranças reais passariam a ser criadas na conta de teste e nenhum cliente conseguiria pagar enquanto isso durasse.
 
-### 4.2 Resend — e-mail do "esqueci minha senha"
+### 4.2 SMTP do Gmail — e-mail do "esqueci minha senha"
 
 Sem esta configuração o botão **Esqueci minha senha** funciona na tela mas **nenhum e-mail sai**: a API responde a mesma mensagem genérica sempre (para não revelar quais e-mails existem), então o usuário não vê erro nenhum. Configure antes do go-live.
 
-**1) Verifique o domínio no Resend**
+**1) Gere uma senha de app no Google**
 
-1. Resend → **Domains → Add** o domínio que está em `EMAIL_FROM`.
-2. Crie os registros DNS (SPF, DKIM e, de preferência, DMARC) e espere ficar **Verified**.
-3. `EMAIL_FROM` tem que ser **do domínio verificado**. Enviar de `@gmail.com` ou do `*.resend.dev` em produção cai em spam ou é recusado.
+A senha normal da conta **não autentica em SMTP** — o Gmail recusa com `535 Username and Password not accepted`.
+
+1. [Conta Google](https://myaccount.google.com/security) → **Segurança**.
+2. Ative a **Verificação em duas etapas** (obrigatória; sem ela a opção de senha de app não aparece).
+3. **Senhas de app** → gere uma para "CeasaPro". São 16 caracteres — cole **sem os espaços**.
 
 **2) Variáveis na Vercel**
 
 | Variável | Obrigatória | Observação |
 |---|---|---|
-| `RESEND_API_KEY` | sim | começa com `re_`; sem ela o envio é **no-op silencioso** |
-| `EMAIL_FROM` | sim | `CeasaPro <nao-responda@seudominio.com.br>` |
+| `SMTP_USER` | sim | o endereço Gmail que envia |
+| `SMTP_PASSWORD` | sim | a **senha de app** de 16 caracteres — marque como **Sensitive** |
+| `EMAIL_FROM` | sim | `CeasaPro <o-mesmo-endereço-do-SMTP_USER>` |
 | `APP_URL` | sim | origem do link do e-mail: `https://`, sem barra no fim |
+| `SMTP_HOST` | não | default `smtp.gmail.com` |
+| `SMTP_PORT` | não | default `465` (TLS implícito). Use `587` se a rede bloquear a 465 |
 | `EMAIL_REPLY_TO` | não | endereço de resposta monitorado; melhora a reputação anti-spam |
-| `RESEND_WEBHOOK_SECRET` | não | só se cadastrar o webhook de bounce/spam |
 
-**3) Webhook (opcional)** — Resend → **Webhooks** → `https://SEU-DOMINIO/api/webhooks/resend`; guarde o segredo em `RESEND_WEBHOOK_SECRET`.
+> **O `From` precisa bater com a conta autenticada.** O Gmail reescreve o remetente quando `EMAIL_FROM` é outro endereço, e a mensagem chega com o endereço real da conta — o que confunde o cliente e piora o anti-spam. Para enviar de outro endereço, cadastre-o antes em Gmail → Configurações → **Enviar e-mail como**.
+
+**3) Limite de envio** — Gmail gratuito ~500 destinatários/dia; Google Workspace ~2.000. Para "esqueci minha senha", recibo de pagamento e lembrete de vencimento isso sobra, mas é um teto real: ultrapassá-lo bloqueia a conta por 24h.
+
+**4) Confira antes do go-live**
+
+```bash
+SMTP_USER="..." SMTP_PASSWORD="..." NODE_ENV=production npm run preflight
+```
+
+O pré-flight autentica no SMTP **sem enviar nada** e distingue os três erros que importam: senha de app errada, verificação em duas etapas desligada e porta bloqueada pela rede.
 
 **4) Teste em produção**
 
 1. `/login` → **Esqueci minha senha** → e-mail do super-admin.
 2. A tela responde "Verifique seu e-mail" (responde isso **mesmo se o e-mail não existir** — é proposital).
-3. O e-mail chega em segundos; em Resend → **Emails** o status fica `delivered`.
+3. O e-mail chega em segundos; a cópia aparece na caixa de **Enviados** do Gmail da conta `SMTP_USER`.
 4. Abra o link. A tela valida o token **no servidor** antes de pedir a senha: link velho mostra "Link inválido ou expirado" em vez de deixar digitar à toa.
 5. Defina a senha nova → entre com ela. A antiga para de funcionar e todas as sessões abertas caem.
 
@@ -349,7 +364,7 @@ Sem esta configuração o botão **Esqueci minha senha** funciona na tela mas **
 
 Depois da troca o usuário recebe um segundo e-mail ("Sua senha foi alterada") — é o aviso que permite reagir se não tiver sido ele.
 
-Em **desenvolvimento**, sem `RESEND_API_KEY`, nada é enviado: o link aparece no log do servidor como `[DEV] Link de redefinição de senha`, o que permite testar o fluxo inteiro sem caixa de e-mail.
+Em **desenvolvimento**, sem `SMTP_USER` / `SMTP_PASSWORD`, nada é enviado: o link aparece no log do servidor como `[DEV] Link de redefinição de senha`, o que permite testar o fluxo inteiro sem caixa de e-mail.
 
 ### 4.3 Pré-flight contra produção
 
@@ -359,7 +374,7 @@ Na sua máquina, com as URLs **direct** do banco de produção:
 export NODE_ENV=production
 export DATABASE_URL="…"
 export DIRECT_URL="…"
-# cole também JWT_SECRET, APP_URL, NEXT_PUBLIC_APP_URL, tokens MP, Resend, CRON_SECRET, WhatsApp
+# cole também JWT_SECRET, APP_URL, NEXT_PUBLIC_APP_URL, tokens MP, SMTP_USER/SMTP_PASSWORD, CRON_SECRET, WhatsApp
 npm run preflight
 ```
 
@@ -441,7 +456,7 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 | Cron `401` | `CRON_SECRET` ausente ou diferente | A Vercel só manda o header se a variável existir |
 | Pagou no MP e continua suspenso | Webhook 401/404 ou URL antiga | Confira a URL, o secret, e rode o cron |
 | `too many connections` | Sem `connection_limit=1` | Ajuste a `DATABASE_URL` |
-| E-mail não sai | Domínio Resend não verificado / `EMAIL_FROM` de outro domínio | Verifique DNS; o From tem que ser do domínio autenticado |
+| E-mail não sai | Senha de app inválida / `EMAIL_FROM` diferente do `SMTP_USER` | Gere a senha de app com a verificação em duas etapas ligada; o From tem que ser o próprio endereço do `SMTP_USER` |
 | Função excede o tempo limite | Relatório grande no plano Hobby | §3.3 |
 | Argon2 falha no build | Binário nativo | Confirme Node 22 e runtime `nodejs` (as rotas já estão marcadas) |
 
@@ -456,7 +471,6 @@ Substitua `https://SEU-DOMINIO`:
 | GET | `/api/health` | Monitoração externa, você |
 | GET/POST | `/api/cron/billing` | Vercel Cron (`Bearer CRON_SECRET`) |
 | POST | `/api/webhooks/mercadopago` | Mercado Pago |
-| POST | `/api/webhooks/resend` | Resend (opcional) |
 | GET | `/login` | Usuários |
 | GET | `/admin` | Super-admin |
 | GET | `/assinatura` | Empresa (pagamento) |
@@ -475,7 +489,7 @@ Substitua `https://SEU-DOMINIO`:
 7. Login + troca de senha do super-admin
 8. Domínio + HTTPS + atualizar `APP_URL` / `NEXT_PUBLIC_APP_URL` + rebuild
 9. Webhook Mercado Pago + secret
-10. Resend com domínio verificado
+10. SMTP do Gmail com senha de app e `EMAIL_FROM` igual ao `SMTP_USER`
 11. Disparar o cron na mão uma vez
 12. `npm run preflight` com `NODE_ENV=production`
 13. Checklist da seção 5

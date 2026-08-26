@@ -117,10 +117,34 @@ const ENV_RULES = [
     validate: startsWith("APP_USR-"),
   },
   {
-    name: "RESEND_API_KEY",
-    description: "Envio de e-mail transacional",
+    name: "SMTP_USER",
+    description: "Conta SMTP que envia os e-mails (o endereço Gmail)",
     prodOnly: true,
-    validate: startsWith("re_"),
+    validate: (v) => (v.includes("@") ? null : "deveria conter um endereço de e-mail"),
+  },
+  {
+    name: "SMTP_PASSWORD",
+    description: "Senha de app do Gmail (a senha da conta NÃO funciona em SMTP)",
+    prodOnly: true,
+    // A senha de app do Google tem 16 caracteres; às vezes é copiada com espaços.
+    validate: (v) =>
+      v.replace(/\s/g, "").length >= 16
+        ? null
+        : "parece curta demais para uma senha de app do Google (16 caracteres)",
+  },
+  {
+    name: "SMTP_HOST",
+    description: "Servidor SMTP (opcional; default smtp.gmail.com)",
+    optional: true,
+  },
+  {
+    name: "SMTP_PORT",
+    description: "Porta SMTP (opcional; default 465)",
+    optional: true,
+    validate: (v) =>
+      ["465", "587", "25", "2525"].includes(v.trim())
+        ? null
+        : "porta incomum para SMTP (esperado 465 ou 587)",
   },
   {
     name: "EMAIL_FROM",
@@ -133,12 +157,6 @@ const ENV_RULES = [
     description: "Endereço de resposta monitorado (opcional, melhora a reputação anti-spam)",
     optional: true,
     validate: (v) => (v.includes("@") ? null : "deveria conter um endereço de e-mail"),
-  },
-  {
-    name: "RESEND_WEBHOOK_SECRET",
-    description: "Assinatura do webhook do Resend (bounce/spam) — opcional",
-    optional: true,
-    validate: startsWith("whsec_"),
   },
   {
     name: "CRON_SECRET",
@@ -223,7 +241,7 @@ async function checkDatabase() {
 /**
  * Fluxo "esqueci minha senha": o que quebra em produção e não aparece em teste.
  *
- * O envio em si depende de RESEND_API_KEY/EMAIL_FROM (conferidos acima). Aqui
+ * O envio em si depende de SMTP_USER/SMTP_PASSWORD/EMAIL_FROM (conferidos acima). Aqui
  * checamos o que é específico do banco e do link: o índice do token (senão cada
  * clique em link vira seq scan em users) e tokens vencidos acumulados.
  */
@@ -252,15 +270,15 @@ async function checkPasswordResetFlow(prisma) {
   if (vencidos > 0) {
     advise(
       `${vencidos} usuário(s) com token de redefinição vencido — normal em pouca ` +
-        "quantidade; se for muito, verifique se o e-mail está chegando (painel do Resend)",
+        "quantidade; se for muito, verifique se o e-mail está chegando (caixa de enviados do Gmail)",
     );
   } else {
     ok("Nenhum token de redefinição vencido pendente");
   }
 
-  if (isProd && !process.env.RESEND_API_KEY) {
+  if (isProd && !(process.env.SMTP_USER && process.env.SMTP_PASSWORD)) {
     fail(
-      "Sem RESEND_API_KEY o envio de e-mail é no-op: ninguém consegue recuperar a senha.",
+      "Sem SMTP_USER/SMTP_PASSWORD o envio de e-mail é no-op: ninguém consegue recuperar a senha.",
     );
   }
 }
@@ -321,11 +339,72 @@ async function checkNoTrialResidue(prisma) {
 
 // ─────────────────────────── Execução ───────────────────────────
 
+/**
+ * Autentica no SMTP sem enviar nada (comando VRFY/NOOP do handshake).
+ *
+ * É a única checagem que pega senha de app errada, verificação em duas etapas
+ * desligada ou porta bloqueada — coisas que só apareceriam quando um cliente
+ * pedisse "esqueci minha senha" e o e-mail não chegasse.
+ */
+async function checkSmtp() {
+  section("E-mail (SMTP)");
+
+  const user = process.env.SMTP_USER;
+  const pass = process.env.SMTP_PASSWORD;
+  if (!user || !pass) {
+    if (isProd) fail("SMTP_USER/SMTP_PASSWORD ausentes — nenhum e-mail sairá.");
+    else advise("SMTP não configurado — envio será no-op (normal em desenvolvimento)");
+    return;
+  }
+
+  let nodemailer;
+  try {
+    ({ default: nodemailer } = await import("nodemailer"));
+  } catch {
+    fail("Pacote `nodemailer` não instalado — rode `npm install`.");
+    return;
+  }
+
+  const port = Number(process.env.SMTP_PORT ?? "465");
+  const transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST ?? "smtp.gmail.com",
+    port,
+    secure: port === 465,
+    auth: { user, pass },
+    connectionTimeout: 10_000,
+    greetingTimeout: 10_000,
+  });
+
+  try {
+    await transporter.verify();
+    ok(`Autenticação SMTP bem-sucedida (${user})`);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    if (/invalid login|username and password not accepted|535/i.test(msg)) {
+      fail(
+        "SMTP recusou as credenciais. No Gmail é preciso uma SENHA DE APP " +
+          "(Conta Google › Segurança › Verificação em duas etapas › Senhas de app) — " +
+          "a senha normal da conta não autentica.",
+      );
+    } else if (/timeout|ETIMEDOUT|ECONNREFUSED/i.test(msg)) {
+      fail(
+        `Não foi possível conectar em ${process.env.SMTP_HOST ?? "smtp.gmail.com"}:${port} — ` +
+          "porta bloqueada pela rede? (comum em rede corporativa)",
+      );
+    } else {
+      fail(`Falha ao verificar o SMTP: ${msg}`);
+    }
+  } finally {
+    transporter.close();
+  }
+}
+
 async function main() {
   console.log(paint(36, "\nCeasaPro — verificação pré-flight"));
 
   checkEnv();
   await checkDatabase();
+  await checkSmtp();
 
   section("Resultado");
   if (warnings.length > 0) console.log(`${paint(33, `${warnings.length} aviso(s)`)}`);

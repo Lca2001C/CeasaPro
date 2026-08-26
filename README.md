@@ -12,7 +12,7 @@ Sistema **simples** de gestão para comercializadores do CEASA — produtos, for
 - **Prisma** + **PostgreSQL**
 - **Tailwind CSS** + componentes próprios (estilo shadcn) — mobile-first
 - Autenticação própria com **jose** (JWT) + **Argon2id**
-- **Mercado Pago** (mensalidade via PIX) · **Resend** (e-mail) · **exceljs** (relatórios)
+- **Mercado Pago** (mensalidade via PIX) · **SMTP do Gmail** via **nodemailer** (e-mail) · **exceljs** (relatórios)
 - Testes com **Vitest**
 
 ## Arquitetura (resumo)
@@ -42,7 +42,7 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 
 - **Node.js 22+**
 - **Docker** (para o PostgreSQL local) — ou um PostgreSQL já instalado
-- Contas (para produção): Neon, Vercel, Resend, Mercado Pago
+- Contas (para produção): Neon, Vercel, Gmail (senha de app para o SMTP), Mercado Pago
 
 ## Início rápido (scripts prontos)
 
