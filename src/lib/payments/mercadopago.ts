@@ -1,6 +1,6 @@
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
 
 /**
  * Integração Mercado Pago — PIX, cartão de crédito e cartão de débito (com 3DS).
@@ -33,6 +33,89 @@ function preferenceClient(): Preference {
   return new Preference(mpConfig());
 }
 
+/** Uma entrada de `cause` na resposta de erro da API do Mercado Pago. */
+export interface MpErrorCause {
+  code: string;
+  description: string;
+}
+
+/**
+ * Erro devolvido pela API do Mercado Pago, já normalizado.
+ *
+ * O SDK lança o JSON cru da resposta (`throw await response.json()`), um objeto
+ * que não é `Error` — sem isto ele chegava ao handler como um valor opaco,
+ * virava "[object Object]" no log e "Erro inesperado" na tela. Aqui o detalhe é
+ * preservado em campos tipados para o log e para a mensagem ao usuário.
+ */
+export class MercadoPagoApiError extends Error {
+  constructor(
+    /** Operação nossa que falhou ("createCardPayment", "getPayment", …). */
+    readonly operation: string,
+    /** HTTP devolvido pela API (400, 401, 404…). */
+    readonly status: number | null,
+    /** `cause[]` da resposta — onde está o motivo real da recusa. */
+    readonly causes: MpErrorCause[],
+    message: string,
+  ) {
+    super(message);
+    this.name = "MercadoPagoApiError";
+  }
+
+  /** `true` quando alguma causa bate com um dos códigos informados. */
+  hasCause(...codes: string[]): boolean {
+    return this.causes.some((c) => codes.includes(c.code));
+  }
+}
+
+function parseCauses(raw: unknown): MpErrorCause[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((c) => {
+    if (typeof c !== "object" || c === null) return [];
+    const { code, description, message } = c as Record<string, unknown>;
+    if (code === undefined && description === undefined) return [];
+    return [
+      {
+        code: String(code ?? ""),
+        description: String(description ?? message ?? ""),
+      },
+    ];
+  });
+}
+
+/**
+ * Executa uma chamada ao Mercado Pago normalizando a falha.
+ *
+ * Loga a resposta de erro inteira (a API não devolve dado de cartão nesse
+ * corpo — só código e descrição) e relança como `MercadoPagoApiError`, para
+ * que a camada de serviço decida a mensagem que o usuário vê.
+ */
+async function mpCall<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    // Só o objeto cru da API vira MercadoPagoApiError. Um `Error` de verdade
+    // aqui é falha de rede/timeout (o SDK aborta o fetch), não recusa do
+    // gateway — rotulá-lo como "recusado" mandaria o usuário conferir o cartão
+    // quando o problema é conectividade.
+    if (typeof e === "object" && e !== null && !(e instanceof Error)) {
+      const raw = e as Record<string, unknown>;
+      const causes = parseCauses(raw.cause);
+      const status = typeof raw.status === "number" ? raw.status : null;
+      const message =
+        (typeof raw.message === "string" && raw.message) ||
+        (typeof raw.error === "string" && raw.error) ||
+        "Falha na comunicação com o Mercado Pago";
+      logger.error(
+        { operation, status, causes, mpError: describeError(e) },
+        "Mercado Pago recusou a requisição",
+      );
+      throw new MercadoPagoApiError(operation, status, causes, message);
+    }
+    logger.error({ operation, err: describeError(e) }, "Falha ao chamar o Mercado Pago");
+    throw e;
+  }
+}
+
 /** URL pública da aplicação — usada em back_urls e notification_url. */
 export function appUrl(): string {
   return (
@@ -61,6 +144,40 @@ export function assertMercadoPagoConfig(): void {
   }
 }
 
+/**
+ * Mensagem para o usuário a partir de uma recusa da API.
+ *
+ * Cobre as recusas que acontecem ANTES de existir pagamento — as que a API
+ * rejeita com HTTP 4xx. Recusa do emissor (o pagamento existe e vem com
+ * `status: "rejected"`) não passa por aqui: quem traduz é o `status_detail`,
+ * em `REJECTION_MESSAGES` no Payment Brick.
+ */
+export function mercadoPagoErrorMessage(e: MercadoPagoApiError): string {
+  // "Invalid users involved": pagador e recebedor são a mesma conta Mercado
+  // Pago, ou um é de teste e o outro de produção. É o que acontece ao testar
+  // com cartão/usuário de teste contra credencial de produção (APP_USR-), e
+  // também ao tentar pagar a própria aplicação com a conta dona dela.
+  if (/invalid users involved/i.test(e.message)) {
+    return (
+      "O Mercado Pago recusou: pagador e recebedor não podem ser a mesma conta. " +
+      "Se está testando, use as credenciais de TESTE (TEST-...) com um cartão de teste — " +
+      "cartão de teste não funciona com credencial de produção."
+    );
+  }
+  if (e.status === 401 || e.status === 403) {
+    return "Credencial do Mercado Pago inválida ou sem permissão. Confira o MERCADOPAGO_ACCESS_TOKEN.";
+  }
+  if (e.hasCause("3001", "3003", "3004", "2062") || /card_?token/i.test(e.message)) {
+    return "Não foi possível validar o cartão. Preencha os dados novamente e tente de novo.";
+  }
+  if (e.status !== null && e.status >= 500) {
+    return "O Mercado Pago está instável no momento. Tente de novo em alguns minutos ou pague com PIX.";
+  }
+  // Fallback: a descrição do Mercado Pago é mais útil que "erro inesperado".
+  const detail = e.causes[0]?.description || e.message;
+  return `O Mercado Pago recusou o pagamento: ${detail}`;
+}
+
 export interface PixCharge {
   mpPaymentId: string;
   status: string;
@@ -83,7 +200,7 @@ export async function createPixPayment(args: {
   expiresAt: Date;
 }): Promise<PixCharge> {
   const client = paymentClient();
-  const res = await client.create({
+  const res = await mpCall("createPixPayment", () => client.create({
     body: {
       transaction_amount: args.amount,
       description: args.description,
@@ -94,7 +211,7 @@ export async function createPixPayment(args: {
       date_of_expiration: args.expiresAt.toISOString(),
     },
     requestOptions: { idempotencyKey: `pix:${args.externalReference}` },
-  });
+  }));
   const tx = res.point_of_interaction?.transaction_data;
   return {
     mpPaymentId: String(res.id),
@@ -129,7 +246,7 @@ export async function createCardPreference(args: {
 }): Promise<CardCheckout> {
   const client = preferenceClient();
   const base = appUrl();
-  const res = await client.create({
+  const res = await mpCall("createCardPreference", () => client.create({
     body: {
       items: [
         {
@@ -155,7 +272,7 @@ export async function createCardPreference(args: {
       payment_methods: { excluded_payment_types: [{ id: "ticket" }] },
     },
     requestOptions: { idempotencyKey: `card:${args.externalReference}` },
-  });
+  }));
   return {
     preferenceId: String(res.id),
     initPoint: res.init_point ?? res.sandbox_init_point ?? null,
@@ -230,7 +347,7 @@ export async function createCardPayment(args: {
 }): Promise<CardCharge> {
   const client = paymentClient();
   const issuer = args.issuerId ? Number(args.issuerId) : NaN;
-  const res = await client.create({
+  const res = await mpCall("createCardPayment", () => client.create({
     body: {
       transaction_amount: args.amount,
       token: args.token,
@@ -251,7 +368,7 @@ export async function createCardPayment(args: {
     requestOptions: {
       idempotencyKey: cardIdempotencyKey(args.externalReference, args.token),
     },
-  });
+  }));
   return {
     mpPaymentId: String(res.id),
     status: String(res.status ?? "pending"),
@@ -263,7 +380,7 @@ export async function createCardPayment(args: {
 /** Busca um pagamento no Mercado Pago (fonte da verdade do status). */
 export async function getPayment(id: string) {
   const client = paymentClient();
-  const res = await client.get({ id });
+  const res = await mpCall("getPayment", () => client.get({ id }));
   return {
     id: String(res.id),
     status: String(res.status ?? ""),
@@ -319,7 +436,13 @@ export function verifyWebhookSignature(args: {
     return false;
   }
 
-  const manifest = `id:${args.dataId};request-id:${args.xRequestId ?? ""};ts:${ts};`;
+  // O Mercado Pago calcula o HMAC com o `data.id` em MINÚSCULAS quando ele é
+  // alfanumérico. Id de pagamento é numérico e não muda com isto, mas outros
+  // tópicos (merchant_order, por exemplo) chegam ao mesmo endpoint e seriam
+  // rejeitados com 401 — o que faz o Mercado Pago reenviar sem parar e, no
+  // limite, desativar a assinatura do webhook.
+  const dataId = args.dataId.toLowerCase();
+  const manifest = `id:${dataId};request-id:${args.xRequestId ?? ""};ts:${ts};`;
   const hmac = createHmac("sha256", secret).update(manifest).digest("hex");
   try {
     return timingSafeEqual(Buffer.from(hmac), Buffer.from(v1));

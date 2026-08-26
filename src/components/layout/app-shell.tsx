@@ -1,6 +1,7 @@
 "use client";
 
-import { LogOut } from "lucide-react";
+import Link from "next/link";
+import { LogOut, ShieldCheck } from "lucide-react";
 import { BottomNav } from "./bottom-nav";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
@@ -11,6 +12,8 @@ interface Props {
   userName: string;
   billingWarning?: string | null;
   modules?: string[];
+  /** Sessão de super-admin no ambiente próprio: mostra o caminho de volta. */
+  isSuperAdmin?: boolean;
   children: React.ReactNode;
 }
 
@@ -19,7 +22,14 @@ async function logout() {
   window.location.href = "/login";
 }
 
-export function AppShell({ companyName, userName, billingWarning, modules, children }: Props) {
+export function AppShell({
+  companyName,
+  userName,
+  billingWarning,
+  modules,
+  isSuperAdmin,
+  children,
+}: Props) {
   return (
     <div className="flex min-h-screen">
       <SideNav modules={modules} />
@@ -29,10 +39,28 @@ export function AppShell({ companyName, userName, billingWarning, modules, child
             <p className="truncate text-sm font-semibold">{companyName}</p>
             <p className="truncate text-xs text-muted-foreground">{userName}</p>
           </div>
-          <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair">
-            <LogOut className="size-5" />
-          </Button>
+          <div className="flex items-center gap-1">
+            {isSuperAdmin && (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/admin">
+                  <ShieldCheck className="size-4" />
+                  <span className="hidden sm:inline">Gestão do sistema</span>
+                </Link>
+              </Button>
+            )}
+            <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair">
+              <LogOut className="size-5" />
+            </Button>
+          </div>
         </header>
+
+        {isSuperAdmin && (
+          // Faixa permanente: sem ela é fácil esquecer que este NÃO é o
+          // ambiente de um cliente e concluir que "o sistema está vazio".
+          <div className="bg-primary/10 px-4 py-1.5 text-center text-xs text-primary">
+            Ambiente do administrador — dados de teste, separados dos clientes.
+          </div>
+        )}
 
         {billingWarning && (
           <div className="bg-warning/15 px-4 py-2 text-center text-sm text-warning">

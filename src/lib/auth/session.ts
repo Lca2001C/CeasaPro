@@ -33,12 +33,19 @@ export async function requireSuperAdmin(): Promise<Session> {
 }
 
 /**
- * Garante usuário de empresa (OWNER) com tenantId presente.
- * A verificação de assinatura ativa fica no wrapper (requireActiveSubscription).
+ * Garante um usuário com empresa (tenantId presente).
+ *
+ * Vale para OWNER e para o SUPER_ADMIN **que tem ambiente próprio**: ele
+ * também precisa usar o sistema (testar, demonstrar, conferir um cálculo), e
+ * isso acontece dentro de um tenant dele — nunca no de um cliente. O
+ * `tenantId` continua vindo da sessão, então o isolamento por empresa é o
+ * mesmo de sempre: um super-admin sem ambiente provisionado não passa daqui.
+ *
+ * A verificação de assinatura ativa fica no wrapper (assertActive).
  */
 export async function requireTenant(): Promise<{ session: Session; tenantId: string }> {
   const s = await requireAuth();
-  if (s.role !== "OWNER" || !s.tenantId) {
+  if (!s.tenantId || (s.role !== "OWNER" && s.role !== "SUPER_ADMIN")) {
     throw new ForbiddenError("Acesso restrito à área da empresa.");
   }
   return { session: s, tenantId: s.tenantId };

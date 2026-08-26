@@ -1,7 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { BillingService } from "@/lib/services/billing.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,10 +18,12 @@ function authorized(req: Request): boolean {
 
 /**
  * Cron diário de billing:
- *  1. reconcilia cobranças PENDENTES (cura webhook perdido);
+ *  1. reconcilia cobranças no Mercado Pago (cura webhook perdido, nos dois sentidos);
  *  2. recalcula o status das assinaturas (ATIVO/VENCIDO/SUSPENSO);
- *  3. limpa as janelas de rate limit já vencidas (só higiene de tabela).
- * A ordem dos dois primeiros importa: reconciliar antes evita suspender quem já pagou.
+ *  3. avisa por e-mail quem vence nos próximos dias;
+ *  4. limpa as janelas de rate limit já vencidas (só higiene de tabela).
+ * A ordem importa: reconciliar antes evita suspender quem já pagou, e recalcular
+ * antes do aviso evita mandar "vence em 3 dias" para quem acabou de pagar.
  * Protegido por CRON_SECRET. Configurado em vercel.json.
  */
 async function handle(req: Request): Promise<Response> {
@@ -31,11 +33,18 @@ async function handle(req: Request): Promise<Response> {
   try {
     const reconciliacao = await BillingService.reconcilePendingPayments();
     const statuses = await BillingService.recomputeStatuses();
+    // Depois do recálculo: quem acabou de ser reativado por um pagamento
+    // reconciliado não deve receber aviso de vencimento no mesmo minuto.
+    // Não pode derrubar o cron — a cobrança em si não depende do e-mail.
+    const lembretes = await BillingService.enviarLembretesDeVencimento().catch((e) => {
+      logger.error({ err: describeError(e) }, "Falha ao enviar lembretes de vencimento");
+      return { candidatos: 0, enviados: 0 };
+    });
     // Não pode derrubar o cron: as linhas vencidas são inertes de qualquer forma.
     const rateLimitsRemovidos = await purgeExpiredRateLimits().catch(() => 0);
-    return Response.json({ ok: true, reconciliacao, statuses, rateLimitsRemovidos });
+    return Response.json({ ok: true, reconciliacao, statuses, lembretes, rateLimitsRemovidos });
   } catch (e) {
-    logger.error({ err: e instanceof Error ? e.message : String(e) }, "Erro no cron de billing");
+    logger.error({ err: describeError(e) }, "Erro no cron de billing");
     return Response.json({ ok: false }, { status: 500 });
   }
 }

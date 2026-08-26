@@ -6,7 +6,7 @@ import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { clientIp } from "./request";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
 
 export interface RouteTenantCtx {
   session: Session;
@@ -35,7 +35,7 @@ function errorResponse(e: unknown): Response {
     );
   }
   const errorId = Math.random().toString(36).slice(2, 10);
-  logger.error({ errorId, err: e instanceof Error ? e.message : String(e) }, "Erro em route handler");
+  logger.error({ errorId, err: describeError(e) }, "Erro em route handler");
   return Response.json(
     { ok: false, error: { code: "INTERNAL", message: `Erro inesperado (ref: ${errorId})` } },
     { status: 500 },

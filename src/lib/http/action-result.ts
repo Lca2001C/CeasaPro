@@ -1,6 +1,6 @@
 import { ZodError } from "zod";
 import { AppError } from "./app-error";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
 
 /** Resposta uniforme de Server Actions. O cliente checa sempre `res.ok`. */
 export type ActionResult<T> =
@@ -42,7 +42,7 @@ export function toActionResult(e: unknown): ActionResult<never> {
 
   const errorId = Math.random().toString(36).slice(2, 10);
   logger.error(
-    { errorId, err: e instanceof Error ? e.message : String(e) },
+    { errorId, err: describeError(e) },
     "Erro inesperado",
   );
   return fail(

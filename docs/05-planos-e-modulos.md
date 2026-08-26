@@ -56,6 +56,19 @@ A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de mód
 
 A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/auth/refresh` após a troca, então o claim `modules` do token é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
 
+### Escolha do plano no primeiro pagamento (`/assinatura`)
+
+Empresa recém-criada nasce `SUSPENSO`, e o proxy só a deixa abrir `/assinatura` — `/plano` é área bloqueada. Sem uma escolha ali, o primeiro pagamento seria sempre no plano que o super-admin marcou no cadastro. Por isso a tela de assinatura mostra o seletor de planos **acima** do formulário de pagamento:
+
+- lista os mesmos planos ativos de `listAvailablePlans`, com preço, limite de usuários e módulos;
+- aparece só quando **não há cobrança em aberto** — com um QR já emitido, trocar de plano mostraria um preço diferente do código que a pessoa vai pagar;
+- o `planId` escolhido vai junto no corpo de `POST /api/billing/checkout` e de `POST /api/billing/checkout/card`. Quem troca a assinatura é o **servidor**, em `prepareCharge` → `PlanoService.changePlan`, com as mesmas regras da seção anterior;
+- o **valor cobrado sai sempre do plano no banco**, nunca do que o cliente enviou. O preço na tela é só exibição, e o Payment Brick é remontado quando muda (ele lê o valor apenas na montagem).
+
+Duas guardas do servidor sustentam isso:
+- a checagem de "mensalidade do mês já paga" roda **antes** da troca de plano, senão um pagamento recusado por esse motivo deixaria o cliente com o plano novo e sem cobrança;
+- um QR PIX em aberto só é reaproveitado se o valor **ainda for o mesmo**; depois de uma troca de plano ele é cancelado e um novo é gerado, para ninguém pagar 29,90 e receber o plano de 99,90.
+
 ## Assinatura e cobrança (Mercado Pago)
 
 - **Sem período gratuito:** empresas novas nascem em `SUSPENSO` e **não têm acesso** até o primeiro pagamento ser aprovado pelo Mercado Pago. O campo `activatedAt` marca essa primeira ativação; enquanto for nulo, nem a tolerância de `graceDays` se aplica.
@@ -74,7 +87,24 @@ A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/au
   - `CANCELADO` — assinatura encerrada.
   - `statusSource = MANUAL` faz o status definido pelo super-admin prevalecer sobre o cálculo automático.
 - **Bloqueio imediato:** o super-admin pode suspender/bloquear a empresa (`Tenant.status`), o que **revoga as sessões ativas** na hora.
-- **Cron diário** (`/api/cron/billing`, protegido por `CRON_SECRET`): reconcilia as cobranças pendentes direto no Mercado Pago (cura webhook perdido) e depois recalcula o status de todas as assinaturas (ex.: ATIVO → VENCIDO → SUSPENSO conforme as datas).
+- **Cron diário** (`/api/cron/billing`, protegido por `CRON_SECRET`): reconcilia as cobranças do mês atual e do anterior direto no Mercado Pago e depois recalcula o status de todas as assinaturas (ex.: ATIVO → VENCIDO → SUSPENSO conforme as datas). A reconciliação cobre os dois sentidos: cobrança `PENDENTE` cujo webhook de aprovação se perdeu (a empresa pagou e não recebeu acesso) e cobrança `APROVADO` cujo webhook de **estorno** se perdeu (a empresa segue usando depois da reversão). Sair de `APROVADO` só é aceito com status de reversão explícito (`refunded`, `charged_back`, `cancelled`) — qualquer outra leitura da API é registrada e ignorada, para uma resposta estranha não derrubar o acesso de quem pagou.
+
+### Recorrência: o que existe e o que não existe
+
+Não há débito automático. A integração usa a API de **pagamentos avulsos** do Mercado Pago (`Payment`), não `preapproval`/assinaturas recorrentes: **todo mês o cliente precisa pagar de novo** pela tela `/assinatura` (PIX ou cartão). O que o sistema automatiza é a cobrança-controle — vencimento, tolerância, bloqueio, reativação e o **lembrete por e-mail** descrito abaixo. Débito recorrente continua sendo evolução em aberto.
+
+### Lembrete de vencimento (e-mail)
+
+O cron diário avisa por e-mail o dono da empresa **3 dias antes** do vencimento (`DUE_REMINDER_DAYS` em `billing.service.ts`), com o valor, a data e um botão que abre `/assinatura`. Antes disso o cliente só descobria o vencimento ao ser bloqueado — no meio do expediente, que é o pior momento para quem usa o sistema no balcão.
+
+Quem recebe: assinatura `ATIVO`, com `activatedAt` (já pagou pelo menos uma vez), empresa ativa e vencimento dentro da janela. Ficam de fora, de propósito:
+- **quem nunca pagou** — já vê a cobrança na tela toda vez que entra;
+- **quem já venceu ou está suspenso** — o bloqueio já é o aviso;
+- **empresa sem OWNER** (inclui o ambiente do super-admin) — não há para quem escrever.
+
+**Um aviso por período.** A marca é o próprio registro de auditoria `SUBSCRIPTION_DUE_REMINDER`, procurado dentro da janela deste vencimento: sem ela o cron mandaria o mesmo e-mail três dias seguidos. Quando o cliente paga, `currentPeriodEnd` avança e o período seguinte volta a ser elegível. A marca só é gravada **depois** de o envio dar certo — falha transitória do Resend deixa o cron de amanhã tentar de novo, em vez de silenciar o aviso para sempre.
+
+O lembrete roda **depois** do recálculo de status, senão quem acabou de ser reativado por um pagamento reconciliado receberia "vence em 3 dias" no mesmo minuto. Uma falha no envio não derruba o cron: a cobrança não depende do e-mail.
 
 ## Limites
 

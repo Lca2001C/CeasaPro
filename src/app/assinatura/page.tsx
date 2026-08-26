@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requireTenant } from "@/lib/auth/session";
 import { BillingService } from "@/lib/services/billing.service";
+import { PlanoService } from "@/lib/services/plano.service";
 import { formatBRL, formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS_LABELS } from "@/lib/labels";
 import { TERMS_VERSION } from "@/lib/legal";
@@ -12,7 +13,10 @@ export const dynamic = "force-dynamic";
 
 export default async function AssinaturaPage() {
   const { session, tenantId } = await requireTenant();
-  const status = await BillingService.getStatus(tenantId);
+  const [status, plans] = await Promise.all([
+    BillingService.getStatus(tenantId),
+    PlanoService.listAvailablePlans(tenantId),
+  ]);
   const sub = status?.sub;
   const charge = status?.pendingCharge ?? null;
 
@@ -27,9 +31,10 @@ export default async function AssinaturaPage() {
         {sub && (
           <p className="mt-1 text-sm text-muted-foreground">
             {primeiraAtivacao ? (
-              <>
-                Aguardando o primeiro pagamento · {formatBRL(sub.monthlyAmount)}/mês
-              </>
+              // Sem valor no cabeçalho: na primeira contratação o preço é o do
+              // plano que a pessoa ainda vai escolher logo abaixo, e repetir o
+              // valor do plano pré-selecionado aqui contradiria a escolha dela.
+              <>Escolha o plano e a forma de pagamento para ativar o acesso</>
             ) : (
               <>
                 {SUBSCRIPTION_STATUS_LABELS[sub.status]} · {formatBRL(sub.monthlyAmount)}/mês ·
@@ -50,6 +55,8 @@ export default async function AssinaturaPage() {
         monthlyAmount={sub ? Number(sub.monthlyAmount) : 0}
         payerEmail={session.email || undefined}
         termsAccepted={sub?.tenant.termsVersion === TERMS_VERSION}
+        plans={plans}
+        primeiraAtivacao={primeiraAtivacao}
         initialCharge={
           charge?.qrCode
             ? {

@@ -164,6 +164,35 @@ Settings → **Environment Variables**. Marque **Production** (e Preview, se voc
 
 > Rede de segurança: se `APP_URL` faltar, `src/lib/app-url.ts` cai em `VERCEL_PROJECT_PRODUCTION_URL` (produção) ou `VERCEL_URL` (preview), então os links de e-mail ainda saem com o domínio certo. Isso **não** substitui configurar `APP_URL`: `NEXT_PUBLIC_APP_URL` entra no bundle do browser em tempo de build e não tem fallback.
 
+#### Sensitive × Plain — o tipo de cada variável
+
+Ao criar a variável, a Vercel oferece **Plain Text** (você relê o valor no painel depois) e **Sensitive** (fica ilegível para sempre; só dá para substituir). A regra é simples:
+
+**Variável `NEXT_PUBLIC_*` NÃO pode ser Sensitive.** O painel recusa com "*prefixo público reservado para o framework*". Não é capricho: o valor de uma `NEXT_PUBLIC_*` é injetado literalmente no JavaScript que vai para o browser em tempo de build — qualquer visitante lê com Ctrl+U. Marcar como secreta seria uma promessa que o framework não tem como cumprir. Se o valor precisa ser secreto, ele **não** pode ter o prefixo `NEXT_PUBLIC_`.
+
+| Variável | Tipo na Vercel | Por quê |
+|---|---|---|
+| `DATABASE_URL` | **Sensitive** | Contém a senha do Postgres |
+| `DIRECT_URL` | **Sensitive** | Idem |
+| `JWT_SECRET` | **Sensitive** | Quem tiver esse valor forja sessão de qualquer usuário |
+| `MERCADOPAGO_ACCESS_TOKEN` | **Sensitive** | Move dinheiro |
+| `MERCADOPAGO_WEBHOOK_SECRET` | **Sensitive** | Valida a assinatura do webhook |
+| `RESEND_API_KEY` | **Sensitive** | Envia e-mail em nome do seu domínio |
+| `RESEND_WEBHOOK_SECRET` | **Sensitive** | Idem |
+| `CRON_SECRET` | **Sensitive** | Bearer que libera `/api/cron/billing` |
+| `NEXT_PUBLIC_APP_URL` | **Plain** (obrigatório) | Público por definição |
+| `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | **Plain** (obrigatório) | A própria Mercado Pago a chama de *public* key |
+| `NEXT_PUBLIC_SUPPORT_WHATSAPP` | **Plain** (obrigatório) | Aparece no botão flutuante |
+| `APP_URL` | Plain (recomendado) | É o seu domínio — não é segredo, e Plain deixa você conferir se está sem barra final |
+| `ACCESS_TOKEN_TTL` | Plain (recomendado) | `15m` não é segredo |
+| `REFRESH_TOKEN_TTL_DAYS` | Plain (recomendado) | `30` não é segredo |
+| `EMAIL_FROM` | Plain (recomendado) | Vai no cabeçalho de todo e-mail enviado |
+| `EMAIL_REPLY_TO`, `LOG_LEVEL` | Plain (recomendado) | Idem |
+
+Marcar como Sensitive algo que não é segredo funciona, mas custa: você perde a leitura do valor no painel e passa a depurar "`APP_URL` está com barra no fim?" às cegas. As três últimas linhas do bloco *recomendado* estão hoje como Sensitive no projeto — se quiser voltar para Plain, apague e recrie a variável (a Vercel não converte o tipo).
+
+Uma variável Sensitive continua disponível normalmente em build e runtime: `process.env.X` funciona igual. A diferença é só a leitura pelo painel/CLI.
+
 ### 3.3 Região e limites do plano
 
 O `vercel.json` **não** fixa região, de propósito: escolher região de função exige plano **Pro** e, no Hobby, o build reclama. Se você assinar o Pro e quiser latência menor no Brasil, acrescente:
@@ -253,6 +282,27 @@ Use a URL **final** (domínio próprio, se já configurou). Troque `https://SEU-
 4. Copie a **chave secreta** → variável `MERCADOPAGO_WEBHOOK_SECRET` na Vercel.
 5. Se o secret mudou, **não** precisa rebuild (não é `NEXT_PUBLIC_*`); um Redeploy recarrega o env do server.
 6. Teste: gere um PIX de teste em `/assinatura` com uma empresa real. O status deve ir para pago sem recarregar à força — e o cron reconcilia no dia seguinte se o webhook falhar.
+
+#### Cartão de teste **não** funciona com credencial de produção
+
+As credenciais do Mercado Pago vêm em dois pares, e eles não se misturam:
+
+| Ambiente | Access Token | Public Key | Aceita cartão de teste? |
+|---|---|---|---|
+| Teste | `TEST-...` | `TEST-...` | **sim** |
+| Produção | `APP_USR-...` | `APP_USR-...` | **não** — só cartão real |
+
+Cobrar um cartão de teste (`5031 4332 1540 6351`, `4235 6477 2802 5682`, …) contra `APP_USR-` faz a API responder **HTTP 400 `Invalid users involved`**: para o Mercado Pago, um usuário de teste está tentando pagar um vendedor de produção. O mesmo erro aparece quando o e-mail do pagador é o da própria conta que recebe — ninguém paga a si mesmo.
+
+Para testar o fluxo de cartão de ponta a ponta:
+
+1. Crie um **Preview** na Vercel (ou rode local) com o par de **teste**: `MERCADOPAGO_ACCESS_TOKEN=TEST-...` e `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY=TEST-...` (a public key entra no build → precisa de build novo).
+2. Use um **usuário de teste comprador** (painel MP → *Contas de teste*) como e-mail do pagador — diferente da conta vendedora.
+3. Cartão de teste + CVV `123` + validade futura. O nome do portador decide o resultado: `APRO` aprova, `OTHE` recusa por erro geral, `FUND` recusa por saldo.
+
+Em **produção**, valide com uma cobrança real de valor baixo no seu próprio cartão — é o único teste que exercita o par `APP_USR-`.
+
+> Não troque as credenciais do projeto de produção para `TEST-` "só para testar": cobranças reais passariam a ser criadas na conta de teste e nenhum cliente conseguiria pagar enquanto isso durasse.
 
 ### 4.2 Resend — e-mail do "esqueci minha senha"
 
@@ -377,6 +427,7 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 
 | Sintoma | Causa provável | O que fazer |
 |---|---|---|
+| Painel recusa a variável: "prefixo público reservado para o framework" | Marcou uma `NEXT_PUBLIC_*` como **Sensitive** | `NEXT_PUBLIC_*` só existe como Plain Text — o valor vai para o browser no build (§3.2). Se precisa ser segredo, tire o prefixo |
 | Build: `Environment variable not found: DIRECT_URL` | Só `DATABASE_URL` foi configurada | `prisma generate` valida o datasource inteiro — configure `DIRECT_URL` também |
 | Build: `Environment variable not found: DATABASE_URL` | Env não marcada para Production | Recrie a variável e redeploy com **Clear build cache** |
 | Build reclama de `gru1` | Região de função exige plano Pro | Não use `regions` no Hobby (§3.3) |
@@ -385,6 +436,7 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 | Login 500 com `relation "users" does not exist` | Migrations não aplicadas no Neon | §3.5 |
 | Login 401 sempre | Banco certo, usuário em outro banco | Confira `SELECT count(*) FROM users` no Neon |
 | Login 429 sem motivo | Janela de rate limit ainda aberta | `DELETE FROM rate_limits WHERE "keyHash" = '<hash>'`, ou espere 15 min |
+| Cartão recusado com `Invalid users involved` | Cartão/usuário de **teste** contra credencial de **produção**, ou pagador = vendedor | Use o par `TEST-` num preview (§4.1), com usuário comprador de teste |
 | Tela de assinatura só PIX | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` faltou **no build** | Configure e **rebuild** |
 | Cron `401` | `CRON_SECRET` ausente ou diferente | A Vercel só manda o header se a variável existir |
 | Pagou no MP e continua suspenso | Webhook 401/404 ou URL antiga | Confira a URL, o secret, e rode o cron |

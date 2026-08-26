@@ -12,7 +12,9 @@ export default async function AppLayout({
   const session = await getSession();
   if (!session) redirect("/login");
   if (session.mustChangePassword) redirect("/alterar-senha");
-  if (session.role === "SUPER_ADMIN") redirect("/admin");
+  // O super-admin usa esta área no ambiente PRÓPRIO dele. Sem ambiente
+  // provisionado não há o que mostrar aqui — volta para a gestão do sistema.
+  if (session.role === "SUPER_ADMIN" && !session.tenantId) redirect("/admin");
   if (!session.tenantId) redirect("/login");
 
   const tenant = await prisma.tenant.findUnique({
@@ -37,6 +39,7 @@ export default async function AppLayout({
       userName={session.name}
       billingWarning={billingWarning}
       modules={session.modules}
+      isSuperAdmin={session.role === "SUPER_ADMIN"}
     >
       {children}
     </AppShell>

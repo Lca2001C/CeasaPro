@@ -13,9 +13,12 @@ import { PixChargePanel, type PixCharge } from "./pix-charge-panel";
  */
 export function PixCheckout({
   initialCharge,
+  planId,
   onAwaitingPayment,
 }: {
   initialCharge: PixCharge | null;
+  /** Plano escolhido na tela. O servidor troca a assinatura antes de cobrar. */
+  planId?: string;
   onAwaitingPayment: () => void;
 }) {
   const [charge, setCharge] = useState<PixCharge | null>(initialCharge);
@@ -28,6 +31,7 @@ export function PixCheckout({
     const res = await apiPost<PixCharge>("/api/billing/checkout", {
       method: "PIX",
       acceptedTerms: true,
+      ...(planId ? { planId } : {}),
     });
     setLoading(false);
     if (!res.ok) {

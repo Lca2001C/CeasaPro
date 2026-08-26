@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
+import { AbrirAmbienteButton } from "./abrir-ambiente-button";
 
 const nav = [
   { href: "/admin", label: "Início" },
@@ -35,7 +36,8 @@ export function AdminShell({
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
           <span className="font-bold text-primary">CeasaPro · Painel SaaS</span>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
+            <AbrirAmbienteButton />
             <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
             <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair">
               <LogOut className="size-5" />

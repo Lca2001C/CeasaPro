@@ -31,6 +31,7 @@ Guia para quem vai manter ou evoluir o CeasaPro.
   - `tests/integration/vendas-flow.test.ts` — fluxo compra→estoque→venda→fiado→pagamento, com bloqueios de estoque/saldo.
   - `tests/integration/fase2-flow.test.ts` — caixas plásticas (saldos), higienização e embalagens.
 - Rode com o banco de pé: `docker compose up -d && npm test`.
+- **Os testes de integração apagam dados.** A suíte cria e remove tenants, usuários e planos, então [`tests/setup/guard-database.ts`](../tests/setup/guard-database.ts) recusa rodar quando `DATABASE_URL` não aponta para um host local, dizendo qual host encontrou. A trava existe porque o mesmo `.env` costuma ser apontado para produção em tarefas pontuais (reset de senha, conferência de dados) — sem ela, esquecer de voltar a URL faria `npm test` limpar tabelas do Neon, e o primeiro sinal seria o cliente ligando. Para um banco remoto realmente descartável, use `ALLOW_REMOTE_TEST_DB=1`. Os testes unitários não tocam o banco e rodam sempre.
 
 ## Convenções
 

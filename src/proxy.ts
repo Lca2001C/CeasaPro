@@ -103,9 +103,10 @@ export async function proxy(req: NextRequest) {
     return NextResponse.next();
   }
 
-  // Daqui pra baixo e area da empresa (OWNER).
-  if (session.role === "SUPER_ADMIN") {
-    // super-admin nao usa a area da empresa
+  // Daqui pra baixo e area da empresa.
+  // O super-admin entra AQUI so quando tem ambiente proprio provisionado
+  // (tenantId na sessao). Sem ambiente, volta para a gestao do sistema.
+  if (session.role === "SUPER_ADMIN" && !session.tenantId) {
     return NextResponse.redirect(new URL("/admin", req.url));
   }
 

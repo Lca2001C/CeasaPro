@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { verifyWebhookSignature } from "@/lib/payments/mercadopago";
 import { BillingService } from "@/lib/services/billing.service";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,7 +49,7 @@ export async function POST(req: Request) {
       logger.info({ mpPaymentId, result }, "Webhook Mercado Pago processado");
     } catch (e) {
       logger.error(
-        { mpPaymentId, err: e instanceof Error ? e.message : String(e) },
+        { mpPaymentId, err: describeError(e) },
         "Erro no webhook MP — será tratado pela reconciliação",
       );
     }

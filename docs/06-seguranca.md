@@ -23,7 +23,20 @@ Arquivos: [`src/lib/auth/`](../src/lib/auth/) (`password.ts`, `jwt.ts`, `session
 ## Autorização
 
 - **Papéis** (`SUPER_ADMIN`, `OWNER`) verificados por `requireRole`/`requireSuperAdmin`/`requireTenant`.
-- **Middleware** (Edge) roteia por área: `/admin/*` só para super-admin; área da empresa exige OWNER com tenant.
+- **Middleware** (Edge) roteia por área: `/admin/*` só para super-admin; área da empresa exige um usuário **com tenant na sessão**.
+
+### Ambiente próprio do super-admin
+
+O super-admin pode usar o sistema (não só administrá-lo) pelo botão **Usar o sistema**, no painel. Ele abre um tenant **dele**, provisionado sob demanda por `AdminService.getOrCreateAdminWorkspace`.
+
+O ponto de segurança é o que esse acesso **não** é: ele não entra no ambiente de nenhum cliente. `requireTenant` continua tirando o `tenantId` da sessão verificada, então o super-admin lê e escreve apenas no próprio tenant — o isolamento multi-tenant descrito acima vale igual para ele. Dos clientes, o painel mostra cadastro e cobrança; o movimento operacional (vendas, fiado, estoque) segue fora de alcance, que é o que a LGPD espera de um operador.
+
+Detalhes que sustentam isso:
+- a assinatura do ambiente nasce `ATIVO` com `statusSource: MANUAL` e vencimento distante — MANUAL faz `computeStatus` respeitar o valor, então o cron não expira o ambiente;
+- `buildAccessPayload` não aplica gate de plano nem de cobrança ao `SUPER_ADMIN`: quem administra a plataforma não pode ser expulso dela por mensalidade;
+- o tenant é **excluído das métricas e da lista de clientes** (`NAO_E_AMBIENTE_ADMIN`, em `admin.service.ts`), senão o painel mentiria sobre o próprio negócio. Ele também não pode ser aberto como se fosse um cliente;
+- o plano interno usado por ele é criado **inativo**, então nunca é ofertado a um cliente;
+- dentro do sistema, uma faixa permanente e o botão **Gestão do sistema** deixam claro que aquele não é o ambiente de um cliente.
 - **Gating por plano** decidido no servidor (middleware + `requireModule` nos wrappers e no export de relatórios). Ver [Planos e módulos](05-planos-e-modulos.md). Esconder do menu é apenas UX; a barreira real é server-side (há teste cobrindo o guard).
 - **Bloqueio por assinatura**: `middleware` + `requireActiveSubscription` (no wrapper) impedem uso quando a conta está suspensa/bloqueada, exceto as rotas de regularização (`/assinatura`, `/conta/suspensa`, `/api/billing`, `/api/auth`).
 

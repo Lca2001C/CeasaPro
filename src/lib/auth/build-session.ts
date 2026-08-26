@@ -21,9 +21,13 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
   const tenantStatus = user.tenant?.status ?? null;
 
   const sub = user.tenant?.subscription;
-  // Super-admin não tem tenant/plano → mantém undefined (não gateia nada).
+  // O super-admin não passa pelo gate de cobrança nem pelo de plano, mesmo
+  // tendo ambiente próprio: a assinatura desse ambiente existe só porque o
+  // modelo de dados exige uma. Deixando `subStatus` nulo e `modules`
+  // indefinido, `accessDecision` devolve "ok" e nenhum módulo é bloqueado —
+  // quem administra a plataforma não pode ser expulso dela por mensalidade.
   let modules: string[] | undefined;
-  if (sub) {
+  if (sub && user.role !== "SUPER_ADMIN") {
     const effective = computeStatus(sub);
     if (effective !== sub.status) {
       await prisma.tenantSubscription.update({

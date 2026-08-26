@@ -14,7 +14,12 @@ export type AuditAction =
   /** Senha efetivamente redefinida pelo link do e-mail. */
   | "PASSWORD_RESET"
   /** Acesso cortado e sessões revogadas (estorno, chargeback, bloqueio). */
-  | "ACCESS_REVOKED";
+  | "ACCESS_REVOKED"
+  /**
+   * Lembrete de vencimento enviado ao dono da empresa. Registrado por período —
+   * é o próprio log que impede o cron diário de reenviar o aviso todo dia.
+   */
+  | "SUBSCRIPTION_DUE_REMINDER";
 
 export interface AuditInput {
   tenantId?: string | null;

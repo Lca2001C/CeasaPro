@@ -60,6 +60,7 @@ export function PaymentBrick({
   amount,
   payerEmail,
   initialCharge,
+  planId,
   onPaid,
   onAwaitingPayment,
 }: {
@@ -67,6 +68,8 @@ export function PaymentBrick({
   amount: number;
   payerEmail?: string;
   initialCharge: PixCharge | null;
+  /** Plano escolhido na tela. O servidor troca a assinatura antes de cobrar. */
+  planId?: string;
   onPaid: () => void | Promise<void>;
   onAwaitingPayment: () => void;
 }) {
@@ -85,6 +88,7 @@ export function PaymentBrick({
     const res = await apiPost<PixCharge>("/api/billing/checkout", {
       method: "PIX",
       acceptedTerms: true,
+      ...(planId ? { planId } : {}),
     });
     if (!res.ok) {
       toast.error(res.error.message);
@@ -108,6 +112,7 @@ export function PaymentBrick({
         identification: identification?.number ? identification : undefined,
       },
       acceptedTerms: true,
+      ...(planId ? { planId } : {}),
     });
     if (!res.ok) {
       toast.error(res.error.message);
@@ -152,6 +157,10 @@ export function PaymentBrick({
     <Card>
       <CardContent className="pt-6">
         <Payment
+          // O Brick lê `initialization` só na montagem: trocar de plano mudaria
+          // o valor no nosso estado e o iframe seguiria cobrando o anterior.
+          // A `key` força a remontagem quando o valor muda.
+          key={amount}
           initialization={{
             amount,
             ...(payerEmail ? { payer: { email: payerEmail } } : {}),

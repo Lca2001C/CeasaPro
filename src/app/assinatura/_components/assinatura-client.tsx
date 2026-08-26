@@ -7,8 +7,10 @@ import { apiGet, apiPost } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
 import { PaymentBrick } from "@/components/billing/payment-brick";
 import { PixCheckout } from "@/components/billing/pix-checkout";
+import { PlanSelector } from "@/components/billing/plan-selector";
 import { TermsAcceptance } from "@/components/billing/terms-acceptance";
 import type { PixCharge } from "@/components/billing/pix-charge-panel";
+import type { AvailablePlan } from "@/lib/services/plano.service";
 
 interface BillingStatus {
   subStatus: string | null;
@@ -30,6 +32,8 @@ export function AssinaturaClient({
   payerEmail,
   initialCharge,
   termsAccepted,
+  plans,
+  primeiraAtivacao,
 }: {
   mpConfigured: boolean;
   monthlyAmount: number;
@@ -37,10 +41,17 @@ export function AssinaturaClient({
   initialCharge: PixCharge | null;
   /** Já aceitou a versão vigente dos termos? Se sim, o checkbox não reaparece. */
   termsAccepted: boolean;
+  /** Planos ativos que a empresa pode contratar; o atual vem com `isCurrent`. */
+  plans: AvailablePlan[];
+  /** Nunca teve pagamento aprovado — é a primeira contratação. */
+  primeiraAtivacao: boolean;
 }) {
   const [paid, setPaid] = useState(false);
   const [awaiting, setAwaiting] = useState(Boolean(initialCharge?.qrCodeBase64));
   const [accepted, setAccepted] = useState(termsAccepted);
+  const [planId, setPlanId] = useState(
+    () => plans.find((p) => p.isCurrent)?.id ?? plans[0]?.id ?? null,
+  );
   const confirmed = useRef(false);
 
   const confirmPaid = useCallback(async () => {
@@ -93,8 +104,29 @@ export function AssinaturaClient({
   // consentimento foi dado quando a cobrança foi criada.
   const jaTemCobranca = Boolean(initialCharge?.qrCodeBase64);
 
+  // Enquanto há cobrança em aberto a escolha fica travada: o QR e o valor já
+  // foram emitidos no plano anterior, então trocar aqui mostraria um preço que
+  // não é o do código que a pessoa vai pagar.
+  const podeEscolherPlano = !jaTemCobranca;
+  const selectedPlan = plans.find((p) => p.id === planId) ?? null;
+  // O servidor é quem manda no valor; isto é só o que a tela e o Brick exibem.
+  const valorCobrado = selectedPlan?.priceMonthly ?? monthlyAmount;
+  // Só vale enviar `planId` quando muda algo — o servidor rejeita trocar para o
+  // plano que já está contratado.
+  const planIdParaCheckout =
+    selectedPlan && !selectedPlan.isCurrent ? selectedPlan.id : undefined;
+
   return (
     <div className="flex flex-col gap-4">
+      {podeEscolherPlano && (
+        <PlanSelector
+          plans={plans}
+          selectedId={planId}
+          onSelect={setPlanId}
+          primeiraAtivacao={primeiraAtivacao}
+        />
+      )}
+
       {!jaTemCobranca && !termsAccepted && (
         <TermsAcceptance accepted={accepted} onChange={setAccepted} />
       )}
@@ -103,14 +135,19 @@ export function AssinaturaClient({
         (PUBLIC_KEY ? (
           <PaymentBrick
             publicKey={PUBLIC_KEY}
-            amount={monthlyAmount}
+            amount={valorCobrado}
             payerEmail={payerEmail}
             initialCharge={initialCharge}
+            planId={planIdParaCheckout}
             onPaid={confirmPaid}
             onAwaitingPayment={startAwaiting}
           />
         ) : (
-          <PixCheckout initialCharge={initialCharge} onAwaitingPayment={startAwaiting} />
+          <PixCheckout
+            initialCharge={initialCharge}
+            planId={planIdParaCheckout}
+            onAwaitingPayment={startAwaiting}
+          />
         ))}
     </div>
   );

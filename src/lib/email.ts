@@ -251,6 +251,55 @@ export function paymentApprovedEmail(args: {
   };
 }
 
+/**
+ * Lembrete enviado alguns dias ANTES do vencimento da mensalidade.
+ *
+ * Sem ele o cliente só descobria o vencimento ao ser bloqueado, no meio do
+ * expediente — que é o pior momento possível para quem usa o sistema no balcão.
+ */
+export function subscriptionDueSoonEmail(args: {
+  ownerName: string;
+  tradeName: string;
+  amount: string;
+  dueDate: Date;
+  daysAhead: number;
+  graceDays: number;
+  appUrl: string;
+}): { subject: string; html: string } {
+  const valor = new Intl.NumberFormat("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  }).format(Number(args.amount));
+  const vencimento = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+  }).format(args.dueDate);
+  const prazo =
+    args.daysAhead === 1 ? "amanhã" : `em ${args.daysAhead} dias`;
+  const tolerancia =
+    args.graceDays > 0
+      ? `Depois do vencimento ainda há ${args.graceDays} dia(s) de tolerância; passado esse prazo o acesso é bloqueado até a regularização.`
+      : "Passado o vencimento o acesso é bloqueado até a regularização.";
+  const link = escapeHtml(`${args.appUrl}/assinatura`);
+  return {
+    subject: `CeasaPro - Sua mensalidade vence ${prazo}`,
+    html: `
+      <div style="font-family:sans-serif;max-width:520px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>Ola, ${escapeHtml(args.ownerName)}.</p>
+        <p>A mensalidade de <strong>${escapeHtml(args.tradeName)}</strong> vence <strong>${escapeHtml(prazo)}</strong>.</p>
+        <div style="background:#f6f7f8;border:1px solid #e1e4e8;border-radius:8px;padding:12px;margin:16px 0">
+          <p style="margin:0 0 8px"><strong>Vencimento:</strong> ${escapeHtml(vencimento)}</p>
+          <p style="margin:0"><strong>Valor:</strong> ${escapeHtml(valor)}</p>
+        </div>
+        <p><a href="${link}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Pagar agora</a></p>
+        <p style="color:#666;font-size:13px">Se o botao nao funcionar, copie e cole este endereco no navegador:</p>
+        <p style="font-size:13px;word-break:break-all"><a href="${link}" style="color:#1a7a3f">${link}</a></p>
+        <p style="color:#666;font-size:13px">Aceitamos PIX, cartao de credito e cartao de debito. ${escapeHtml(tolerancia)}</p>
+        <p style="color:#666;font-size:13px">Se voce ja pagou, pode ignorar este aviso.</p>
+      </div>`,
+  };
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, "&amp;")

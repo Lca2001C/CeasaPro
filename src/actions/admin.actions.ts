@@ -32,6 +32,15 @@ export const alterarMensalidade = withAdminAction({
     AdminService.updateMonthlyAmount(input.tenantId, input.monthlyAmount, ctx),
 });
 
+/**
+ * Provisiona (na primeira vez) e abre o ambiente próprio do super-admin.
+ * A sessão precisa ser reemitida logo depois: o `tenantId` entra no token, e
+ * sem isso o proxy continuaria mandando o admin de volta para `/admin`.
+ */
+export const abrirMeuAmbiente = withAdminAction({
+  handler: (_input, ctx) => AdminService.getOrCreateAdminWorkspace(ctx),
+});
+
 export const criarPlano = withAdminAction({
   schema: planoSchema,
   handler: (input) => AdminService.createPlan(input),

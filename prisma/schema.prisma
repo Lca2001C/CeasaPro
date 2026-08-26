@@ -19,14 +19,14 @@ model Tenant {
   businessHours         String?
   status                TenantStatus           @default(ACTIVE)
   onboardingCompletedAt DateTime?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
-  deletedAt             DateTime?
   /// Prova de aceite dos Termos de Uso / Política de Privacidade (LGPD, art. 8º).
   /// Registrado no primeiro checkout; guardamos data, IP e versão do documento.
   termsAcceptedAt       DateTime?
   termsAcceptedIp       String?
   termsVersion          String?
+  createdAt             DateTime               @default(now())
+  updatedAt             DateTime               @updatedAt
+  deletedAt             DateTime?
   crateCleanings        CrateCleaning[]
   creditAccounts        CreditAccount[]
   expenseCategories     ExpenseCategory[]
@@ -82,7 +82,6 @@ model User {
 
   @@unique([tenantId, email])
   @@index([tenantId])
-  @@index([resetTokenHash])
   @@map("users")
 }
 
@@ -101,6 +100,19 @@ model RefreshToken {
   @@map("refresh_tokens")
 }
 
+/// Contador de rate limit das rotas de autenticação, compartilhado entre as
+/// instâncias serverless. A tabela é criada pela migration `20260825140000_rate_limits`;
+/// o modelo precisa existir aqui para que `prisma.rateLimit` exista no client
+/// (o incremento usa SQL cru, mas a limpeza e o reset usam o client).
+model RateLimit {
+  keyHash   String   @id
+  count     Int      @default(1)
+  expiresAt DateTime
+
+  @@index([expiresAt])
+  @@map("rate_limits")
+}
+
 model TenantSubscription {
   id               String                @id @default(cuid())
   tenantId         String                @unique
@@ -110,6 +122,9 @@ model TenantSubscription {
   statusReason     String?
   monthlyAmount    Decimal               @db.Decimal(10, 2)
   startedAt        DateTime              @default(now())
+  /// Data do PRIMEIRO pagamento aprovado. Enquanto for null a empresa nunca pagou,
+  /// então não tem acesso nem direito à tolerância de `graceDays`.
+  activatedAt      DateTime?
   currentPeriodEnd DateTime
   /// Tolerância em dias após o vencimento — só vale para quem já tem `activatedAt`.
   graceDays        Int                   @default(5)
@@ -117,9 +132,6 @@ model TenantSubscription {
   cancelledAt      DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
-  /// Data do PRIMEIRO pagamento aprovado. Enquanto for null a empresa nunca pagou,
-  /// então não tem acesso nem direito à tolerância de `graceDays`.
-  activatedAt      DateTime?
   payments         SubscriptionPayment[]
   plan             Plan                  @relation(fields: [planId], references: [id])
   tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -135,6 +147,7 @@ model SubscriptionPayment {
   amount         Decimal            @db.Decimal(10, 2)
   status         PaymentStatus      @default(PENDENTE)
   method         ChargeMethod?
+  statusDetail   String?
   referenceMonth String
   mpPaymentId    String?            @unique
   mpPreferenceId String?
@@ -142,15 +155,14 @@ model SubscriptionPayment {
   qrCode         String?
   qrCodeBase64   String?
   ticketUrl      String?
+  threeDsUrl     String?
+  expiresAt      DateTime?
   paidAt         DateTime?
   periodStart    DateTime?
   periodEnd      DateTime?
   rawPayload     Json?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
-  expiresAt      DateTime?
-  statusDetail   String?
-  threeDsUrl     String?
   subscription   TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
@@ -247,10 +259,10 @@ model Sale {
   saleDate        DateTime               @default(now())
   paymentMethod   PaymentMethod
   totalAmount     Decimal                @db.Decimal(14, 2)
+  plasticCrateQty Int                    @default(0)
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   deletedAt       DateTime?
-  plasticCrateQty Int                    @default(0)
   creditAccount   CreditAccount?
   crateMovements  PlasticCrateMovement[]
   items           SaleItem[]
@@ -269,11 +281,11 @@ model SaleItem {
   quantity       Decimal        @db.Decimal(14, 3)
   unitPrice      Decimal        @db.Decimal(14, 2)
   recipientType  RecipientType?
+  crateQty       Int            @default(0)
   lineTotal      Decimal        @db.Decimal(14, 2)
   unitCostAtSale Decimal        @default(0) @db.Decimal(14, 4)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
-  crateQty       Int            @default(0)
   product        Product        @relation(fields: [productId], references: [id])
   sale           Sale           @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
@@ -292,10 +304,10 @@ model CreditAccount {
   paidAmount    Decimal         @default(0) @db.Decimal(14, 2)
   status        CreditStatus    @default(EM_ABERTO)
   dueDate       DateTime?
+  notes         String?
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
   deletedAt     DateTime?
-  notes         String?
   sale          Sale?           @relation(fields: [saleId], references: [id])
   tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   payments      CreditPayment[]
@@ -404,15 +416,15 @@ model PlasticCrateMovement {
   type            PlasticCrateMovementType
   quantity        Int
   brokenQty       Int                      @default(0)
+  dirty           Boolean                  @default(false)
   customerName    String?
   supplierName    String?
+  cleanerName     String?
+  saleId          String?
+  crateCleaningId String?
   movementDate    DateTime                 @default(now())
   notes           String?
   createdAt       DateTime                 @default(now())
-  cleanerName     String?
-  crateCleaningId String?
-  dirty           Boolean                  @default(false)
-  saleId          String?
   crateCleaning   CrateCleaning?           @relation(fields: [crateCleaningId], references: [id])
   sale            Sale?                    @relation(fields: [saleId], references: [id])
   tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -501,24 +513,6 @@ model AuditLog {
   @@index([tenantId, entity, entityId])
   @@index([tenantId, createdAt])
   @@map("audit_logs")
-}
-
-/// Contador de rate limit das rotas de autenticação.
-///
-/// Fica no banco, e não em memória, porque em serverless (Vercel) cada request
-/// pode cair numa instância diferente — um contador em processo não seguraria
-/// força bruta no login. O throttle por empresa (`with-route.ts`) continua em
-/// memória de propósito: lá o objetivo é conter abuso acidental, e não vale uma
-/// ida ao banco por request.
-model RateLimit {
-  /// SHA-256 da chave lógica ("login:<ip>:<email>"). Hash, e não texto puro:
-  /// a chave carrega IP e e-mail, que são dado pessoal.
-  keyHash   String   @id
-  count     Int      @default(1)
-  expiresAt DateTime
-
-  @@index([expiresAt])
-  @@map("rate_limits")
 }
 
 enum UserRole {
@@ -617,14 +611,14 @@ enum ReportType {
   DESPESAS
   FLUXO_CAIXA
   LUCRO_PRODUTO
-  MAIS_VENDIDOS
-  CAIXAS_PLASTICAS
-  HIGIENIZACAO
-  EMBALAGENS
   LUCRO_FORNECEDOR
+  MAIS_VENDIDOS
   PRODUTOS_PREJUIZO
   ESTOQUE_PARADO
   CAIXAS_PAPELAO
+  CAIXAS_PLASTICAS
+  HIGIENIZACAO
+  EMBALAGENS
 }
 
 enum PlasticCrateMovementType {

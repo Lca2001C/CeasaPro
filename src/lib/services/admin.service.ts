@@ -26,6 +26,20 @@ function slugify(s: string): string {
     .replace(/(^-|-$)/g, "");
 }
 
+/**
+ * O ambiente próprio do super-admin é um tenant como outro qualquer no banco —
+ * o que o distingue é ter um usuário SUPER_ADMIN. Não é cliente: não pode
+ * entrar nas métricas de negócio (MRR, inadimplência), na lista de clientes
+ * nem nos relatórios da plataforma, senão o painel mente sobre o próprio negócio.
+ *
+ * Identificar pelo papel do usuário evita uma coluna nova só para isto, e é
+ * verdade por construção: nenhum cliente tem SUPER_ADMIN.
+ */
+const NAO_E_AMBIENTE_ADMIN = { users: { none: { role: "SUPER_ADMIN" as const } } };
+
+/** Nome do plano interno usado pelo ambiente do super-admin. */
+const ADMIN_PLAN_SLUG = "ambiente-administrador";
+
 export const AdminService = {
   async metrics() {
     const monthStart = new Date();
@@ -34,15 +48,19 @@ export const AdminService = {
 
     const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes, aguardandoAtivacao] =
       await Promise.all([
-        prisma.tenantSubscription.groupBy({ by: ["status"], _count: true }),
-        prisma.tenant.count({ where: { deletedAt: null } }),
+        prisma.tenantSubscription.groupBy({
+          by: ["status"],
+          _count: true,
+          where: { tenant: NAO_E_AMBIENTE_ADMIN },
+        }),
+        prisma.tenant.count({ where: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN } }),
         prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
         prisma.tenantSubscription.aggregate({
           _sum: { monthlyAmount: true },
-          where: { status: { in: ["ATIVO"] } },
+          where: { status: { in: ["ATIVO"] }, tenant: NAO_E_AMBIENTE_ADMIN },
         }),
         prisma.tenant.count({
-          where: { deletedAt: null, createdAt: { gte: monthStart } },
+          where: { deletedAt: null, createdAt: { gte: monthStart }, ...NAO_E_AMBIENTE_ADMIN },
         }),
         prisma.subscriptionPayment.aggregate({
           _sum: { amount: true },
@@ -50,7 +68,10 @@ export const AdminService = {
         }),
         // Empresas cadastradas que ainda nao tiveram nenhum pagamento aprovado.
         prisma.tenantSubscription.count({
-          where: { activatedAt: null, tenant: { deletedAt: null } },
+          where: {
+            activatedAt: null,
+            tenant: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN },
+          },
         }),
       ]);
     const byStatus: Record<string, number> = {};
@@ -68,7 +89,7 @@ export const AdminService = {
 
   async listTenants() {
     return prisma.tenant.findMany({
-      where: { deletedAt: null },
+      where: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN },
       include: { subscription: { include: { plan: true } }, _count: { select: { users: true } } },
       orderBy: { createdAt: "desc" },
     });
@@ -76,7 +97,7 @@ export const AdminService = {
 
   async getTenant(id: string) {
     const t = await prisma.tenant.findFirst({
-      where: { id, deletedAt: null },
+      where: { id, deletedAt: null, ...NAO_E_AMBIENTE_ADMIN },
       include: {
         subscription: { include: { plan: true, payments: { orderBy: { createdAt: "desc" }, take: 20 } } },
         users: { where: { deletedAt: null } },
@@ -158,6 +179,103 @@ export const AdminService = {
     await sendEmail(input.ownerEmail, subject, html);
 
     return { tenantId, tempPassword };
+  },
+
+  /**
+   * Devolve (criando na primeira vez) o **ambiente próprio** do super-admin: um
+   * tenant onde ele usa o sistema como qualquer cliente, para testar uma conta,
+   * conferir um cálculo ou demonstrar a ferramenta.
+   *
+   * Nunca é o tenant de um cliente: os dados de quem paga continuam fora do
+   * alcance do login administrativo, o que mantém a separação exigida pela LGPD
+   * (o admin vê o cadastro e a cobrança do cliente em `/admin`, não o movimento
+   * dele). O ambiente é excluído das métricas por `NAO_E_AMBIENTE_ADMIN`.
+   *
+   * A assinatura nasce `ATIVO` com `statusSource: MANUAL` e vencimento distante:
+   * MANUAL faz `computeStatus` respeitar o valor, então o cron diário não
+   * expira o ambiente. É idempotente — chamar de novo devolve o mesmo tenant.
+   */
+  async getOrCreateAdminWorkspace(ctx: AdminCtx): Promise<{ tenantId: string; criado: boolean }> {
+    const user = await prisma.user.findUnique({
+      where: { id: ctx.userId },
+      select: { id: true, name: true, tenantId: true },
+    });
+    if (!user) throw new NotFoundError("Usuário não encontrado");
+
+    if (user.tenantId) {
+      const existente = await prisma.tenant.findFirst({
+        where: { id: user.tenantId, deletedAt: null },
+        select: { id: true },
+      });
+      if (existente) return { tenantId: existente.id, criado: false };
+      // Ambiente apagado por fora: cai adiante e provisiona outro.
+    }
+
+    // Plano interno INATIVO: `listAvailablePlans` só oferta planos ativos, então
+    // ele nunca aparece para um cliente — mas a FK de assinatura exige um plano.
+    const plan =
+      (await prisma.plan.findUnique({ where: { slug: ADMIN_PLAN_SLUG } })) ??
+      (await prisma.plan.create({
+        data: {
+          name: "Ambiente do administrador",
+          slug: ADMIN_PLAN_SLUG,
+          priceMonthly: 0,
+          maxUsers: null,
+          active: false,
+          features: {},
+        },
+      }));
+
+    // Bem longe: o ambiente não deve "vencer" no meio de um teste.
+    const periodEnd = new Date();
+    periodEnd.setFullYear(periodEnd.getFullYear() + 50);
+
+    const tenantId = await prisma.$transaction(async (tx) => {
+      const tenant = await tx.tenant.create({
+        data: {
+          tradeName: `Ambiente de ${user.name}`,
+          status: "ACTIVE",
+          // Já pronto para uso: o wizard de onboarding é para o cliente novo,
+          // não para quem administra a plataforma.
+          onboardingCompletedAt: new Date(),
+          subscription: {
+            create: {
+              planId: plan.id,
+              status: "ATIVO",
+              statusSource: "MANUAL",
+              statusReason: "Ambiente interno do super-admin",
+              monthlyAmount: 0,
+              activatedAt: new Date(),
+              currentPeriodEnd: periodEnd,
+              graceDays: 0,
+            },
+          },
+        },
+      });
+      // Liga o super-admin ao ambiente: é o `tenantId` da sessão dele daqui em diante.
+      await tx.user.update({
+        where: { id: user.id },
+        data: { tenantId: tenant.id },
+      });
+      await createDefaultExpenseCategories(tenant.id, tx);
+      await createDefaultPackagingTypes(tenant.id, tx);
+      await audit(
+        {
+          tenantId: tenant.id,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "Tenant",
+          entityId: tenant.id,
+          newData: { tradeName: tenant.tradeName, ambienteAdmin: true },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return tenant.id;
+    });
+
+    return { tenantId, criado: true };
   },
 
   async setTenantStatus(input: TenantStatusInput, ctx: AdminCtx) {

@@ -60,6 +60,19 @@ describe("verifyWebhookSignature", () => {
     ).toBe(false);
   });
 
+  it("aceita data.id alfanumérico em MAIÚSCULAS (o MP assina em minúsculas)", () => {
+    // O Mercado Pago monta o manifest com o data.id minúsculo. Sem normalizar,
+    // tópicos de id alfanumérico voltariam 401 e seriam reenviados sem parar.
+    expect(
+      verifyWebhookSignature({
+        xSignature: assinar(nowSeconds, SECRET, "abc123def"),
+        xRequestId: REQUEST_ID,
+        dataId: "ABC123DEF",
+        now,
+      }),
+    ).toBe(true);
+  });
+
   it("rejeita quando o data.id não confere", () => {
     expect(
       verifyWebhookSignature({
