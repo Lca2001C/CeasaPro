@@ -444,7 +444,16 @@ export const AdminService = {
    * contratado, o caminho é **desativar** (`active: false`), que o esconde da
    * oferta sem tocar em quem já assinou.
    */
-  async deletePlan(id: string, ctx: AdminCtx) {
+  async deletePlan(
+    id: string,
+    ctx: AdminCtx,
+    /**
+     * `apagarHistoricoDeExcluidas`: remove também as assinaturas de empresas
+     * JÁ EXCLUÍDAS que travam o plano (e os pagamentos delas, por cascata).
+     * Existe para limpar plano de teste; nunca toca em empresa ativa.
+     */
+    opts?: { apagarHistoricoDeExcluidas?: boolean },
+  ) {
     const plan = await prisma.plan.findUnique({ where: { id } });
     if (!plan) throw new NotFoundError("Plano não encontrado");
     if (plan.slug === ADMIN_PLAN_SLUG) {
@@ -471,12 +480,45 @@ export const AdminService = {
           "Desative-o para parar de oferecê-lo — quem já assinou continua como está.",
       );
     }
+
     if (total > 0) {
-      throw new BusinessRuleError(
-        `Nenhuma empresa ativa usa este plano, mas ${total} empresa(s) excluída(s) ainda ` +
-          "guardam o histórico de assinatura nele. Apagar o plano apagaria a prova de quanto " +
-          "elas pagavam. Desative-o para tirá-lo da oferta.",
-      );
+      // Só empresas EXCLUÍDAS seguram o plano. É o caso típico da limpeza de
+      // teste: criou plano, criou empresa, excluiu a empresa — e a assinatura
+      // sobreviveu ao soft delete, travando o plano para sempre.
+      if (!opts?.apagarHistoricoDeExcluidas) {
+        throw new BusinessRuleError(
+          `Nenhuma empresa ativa usa este plano, mas ${total} empresa(s) já excluída(s) ` +
+            "ainda guardam o histórico de assinatura nele. Confirme a exclusão do " +
+            "histórico para remover o plano.",
+        );
+      }
+
+      // Apagar a assinatura leva junto os pagamentos dela (FK em cascata) —
+      // por isso exige confirmação explícita e só vale para empresa que já foi
+      // excluída. De empresa ativa o histórico financeiro nunca é tocado.
+      const assinaturas = await prisma.tenantSubscription.findMany({
+        where: { planId: id, tenant: { deletedAt: { not: null } } },
+        select: { id: true, tenantId: true },
+      });
+      const pagamentos = await prisma.subscriptionPayment.count({
+        where: { subscriptionId: { in: assinaturas.map((a) => a.id) } },
+      });
+      await prisma.tenantSubscription.deleteMany({
+        where: { id: { in: assinaturas.map((a) => a.id) } },
+      });
+      await audit({
+        userId: ctx.userId,
+        actorEmail: ctx.session.email,
+        action: "DELETE",
+        entity: "TenantSubscription",
+        entityId: id,
+        oldData: {
+          motivo: "Limpeza de plano — empresas já excluídas",
+          assinaturas: assinaturas.length,
+          pagamentos,
+        },
+        ip: ctx.ip,
+      });
     }
 
     await prisma.plan.delete({ where: { id } });
@@ -602,6 +644,65 @@ export const AdminService = {
     await sendEmail(user.email, mail.subject, mail.html);
 
     return { id: user.id, name: user.name, email: user.email, tempPassword };
+  },
+
+  /**
+   * Exclui um usuário (soft delete) e derruba as sessões dele.
+   *
+   * É soft delete porque o `userId` aparece na auditoria: apagar a linha
+   * deixaria o histórico apontando para o nada, e é justamente o histórico de
+   * quem fez o quê que a auditoria existe para guardar.
+   *
+   * Duas recusas: a própria conta (travaria o painel) e o **último OWNER ativo**
+   * de uma empresa em atividade — sem OWNER ninguém entra naquela empresa, e a
+   * exclusão viraria um bloqueio acidental do cliente.
+   */
+  async deleteUser(userId: string, ctx: AdminCtx) {
+    const user = await prisma.user.findFirst({
+      where: { id: userId, deletedAt: null },
+      include: { tenant: { select: { deletedAt: true, tradeName: true } } },
+    });
+    if (!user) throw new NotFoundError("Usuário não encontrado");
+    if (user.id === ctx.userId) {
+      throw new BusinessRuleError("Você não pode excluir a própria conta.");
+    }
+
+    if (user.role === "OWNER" && user.tenantId && !user.tenant?.deletedAt) {
+      const outros = await prisma.user.count({
+        where: {
+          tenantId: user.tenantId,
+          role: "OWNER",
+          active: true,
+          deletedAt: null,
+          id: { not: user.id },
+        },
+      });
+      if (outros === 0) {
+        throw new BusinessRuleError(
+          `${user.name} é o único acesso de "${user.tenant?.tradeName}". ` +
+            "Excluir deixaria a empresa sem ninguém para entrar — exclua a empresa " +
+            "ou cadastre outro responsável antes.",
+        );
+      }
+    }
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { deletedAt: new Date(), active: false },
+    });
+    await revokeAllForUser(user.id);
+
+    await audit({
+      tenantId: user.tenantId,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "DELETE",
+      entity: "User",
+      entityId: user.id,
+      oldData: { name: user.name, email: user.email, role: user.role },
+      ip: ctx.ip,
+    });
+    return { id: user.id, name: user.name };
   },
 
   async listPayments() {

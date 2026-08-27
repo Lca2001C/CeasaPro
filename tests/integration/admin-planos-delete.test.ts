@@ -103,6 +103,70 @@ describe("Exclusão de plano (super-admin)", () => {
     await expect(AdminService.deletePlan(plano.id, ctx)).rejects.toThrow(/excluída/i);
     expect(await prisma.plan.findUnique({ where: { id: plano.id } })).not.toBeNull();
   });
+
+  it("com confirmação, apaga o histórico das excluídas e remove o plano", async () => {
+    // É a limpeza de plano de teste: criou plano, criou empresa, excluiu a
+    // empresa — e a assinatura sobreviveu, travando o plano para sempre.
+    const plano = await criarPlano("Plano Teste Limpeza");
+    const tenantId = await createTestTenant("TESTE LIMPEZA");
+    tenants.push(tenantId);
+    const sub = await prisma.tenantSubscription.create({
+      data: {
+        tenantId,
+        planId: plano.id,
+        status: "ATIVO",
+        monthlyAmount: 10,
+        currentPeriodEnd: new Date("2026-12-01T00:00:00Z"),
+        graceDays: 5,
+      },
+    });
+    await prisma.subscriptionPayment.create({
+      data: {
+        subscriptionId: sub.id,
+        tenantId,
+        amount: 10,
+        status: "APROVADO",
+        method: "PIX",
+        referenceMonth: "2026-01",
+        mpPaymentId: `limpeza-${uniq()}`,
+      },
+    });
+    await prisma.tenant.update({ where: { id: tenantId }, data: { deletedAt: new Date() } });
+
+    await AdminService.deletePlan(plano.id, ctx, { apagarHistoricoDeExcluidas: true });
+
+    expect(await prisma.plan.findUnique({ where: { id: plano.id } })).toBeNull();
+    expect(await prisma.tenantSubscription.findUnique({ where: { id: sub.id } })).toBeNull();
+    // Os pagamentos vão junto por cascata — é o que a confirmação avisa.
+    expect(
+      await prisma.subscriptionPayment.count({ where: { subscriptionId: sub.id } }),
+    ).toBe(0);
+  });
+
+  it("a confirmação NÃO apaga histórico de empresa ativa", async () => {
+    const plano = await criarPlano("Plano Com Cliente Ativo");
+    const tenantId = await createTestTenant("CLIENTE ATIVO");
+    tenants.push(tenantId);
+    await prisma.tenantSubscription.create({
+      data: {
+        tenantId,
+        planId: plano.id,
+        status: "ATIVO",
+        monthlyAmount: 10,
+        currentPeriodEnd: new Date("2026-12-01T00:00:00Z"),
+        graceDays: 5,
+      },
+    });
+
+    // Mesmo com a confirmação, cliente ativo barra antes de qualquer remoção.
+    await expect(
+      AdminService.deletePlan(plano.id, ctx, { apagarHistoricoDeExcluidas: true }),
+    ).rejects.toThrow(/ativa/i);
+    expect(await prisma.plan.findUnique({ where: { id: plano.id } })).not.toBeNull();
+    expect(
+      await prisma.tenantSubscription.count({ where: { planId: plano.id } }),
+    ).toBe(1);
+  });
 });
 
 describe("Plano interno do ambiente do super-admin", () => {

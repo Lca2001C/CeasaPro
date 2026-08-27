@@ -63,8 +63,23 @@ export const atualizarPlano = withAdminAction({
   handler: (input, ctx) => AdminService.updatePlan(input, ctx),
 });
 
-/** Exclui um plano — só se nenhuma assinatura o usa (ver `deletePlan`). */
+/**
+ * Exclui um plano. `apagarHistoricoDeExcluidas` só é aceito quando nenhuma
+ * empresa ATIVA usa o plano — ver `deletePlan`.
+ */
 export const excluirPlano = withAdminAction({
+  schema: z.object({
+    id: z.string().min(1),
+    apagarHistoricoDeExcluidas: z.boolean().optional(),
+  }),
+  handler: (input, ctx) =>
+    AdminService.deletePlan(input.id, ctx, {
+      apagarHistoricoDeExcluidas: input.apagarHistoricoDeExcluidas,
+    }),
+});
+
+/** Exclui um usuário (soft delete) e derruba as sessões dele. */
+export const excluirUsuario = withAdminAction({
   schema: z.string().min(1),
-  handler: (id, ctx) => AdminService.deletePlan(id, ctx),
+  handler: (id, ctx) => AdminService.deleteUser(id, ctx),
 });

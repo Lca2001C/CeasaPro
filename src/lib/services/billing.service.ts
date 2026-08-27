@@ -301,13 +301,21 @@ export const BillingService = {
     // contrário, no downgrade).
     const mesmoValor = existing ? money(existing.amount).equals(charge.amount) : false;
     if (existing?.qrCode && isUsable(existing, now) && mesmoValor) return existing;
-    if (existing?.qrCode) {
+    if (existing) {
+      // Cancela QUALQUER pendente do mês que não será reaproveitada — inclusive
+      // a que ficou sem `qrCode` (o Mercado Pago falhou no meio). Deixá-la
+      // pendente criaria duas cobranças abertas para o mesmo mês, e a tela
+      // mostraria a mais recente enquanto a reconciliação consultava a velha.
       await prisma.subscriptionPayment.update({
         where: { id: existing.id },
         data: { status: "CANCELADO" },
       });
       logger.info(
-        { tenantId, chargeId: existing.id, motivo: mesmoValor ? "expirada" : "valor mudou" },
+        {
+          tenantId,
+          chargeId: existing.id,
+          motivo: !existing.qrCode ? "sem QR" : mesmoValor ? "expirada" : "valor mudou",
+        },
         "Cobrança PIX anterior cancelada — gerando nova",
       );
     }
@@ -324,7 +332,15 @@ export const BillingService = {
       }),
     );
 
-    // Idempotente também do nosso lado: o mpPaymentId é único.
+    // O Mercado Pago é idempotente pela chave `pix:<ref>:<valor>`: pedir de
+    // novo dentro da validade da chave devolve a MESMA cobrança. Se ela já foi
+    // paga, devolvemos como está — reabrir uma cobrança quitada faria a tela
+    // pedir pagamento de novo.
+    const jaExiste = await prisma.subscriptionPayment.findUnique({
+      where: { mpPaymentId: pix.mpPaymentId },
+    });
+    if (jaExiste?.status === "APROVADO") return jaExiste;
+
     return prisma.subscriptionPayment.upsert({
       where: { mpPaymentId: pix.mpPaymentId },
       create: {
@@ -342,6 +358,12 @@ export const BillingService = {
         expiresAt: pix.expiresAt ?? expiresAt,
       },
       update: {
+        // Volta a PENDENTE: a linha pode ter sido CANCELADA logo acima (a
+        // anterior do mês era esta mesma, devolvida pela idempotência do MP).
+        // Sem isto ela ficaria CANCELADA com QR válido na tela, e o polling —
+        // que procura cobrança PENDENTE — nunca confirmaria o pagamento.
+        status: "PENDENTE",
+        amount: charge.amount,
         qrCode: pix.qrCode,
         qrCodeBase64: pix.qrCodeBase64,
         ticketUrl: pix.ticketUrl,

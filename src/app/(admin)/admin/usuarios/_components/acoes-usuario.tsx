@@ -2,9 +2,13 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Copy, KeyRound, Loader2, Power } from "lucide-react";
+import { Copy, KeyRound, Loader2, Power, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-import { alterarStatusUsuario, resetarSenhaUsuario } from "@/actions/admin.actions";
+import {
+  alterarStatusUsuario,
+  excluirUsuario,
+  resetarSenhaUsuario,
+} from "@/actions/admin.actions";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -37,7 +41,21 @@ export function AcoesUsuario({
   const router = useRouter();
   const [pending, start] = useTransition();
   const [confirmando, setConfirmando] = useState(false);
+  const [excluindo, setExcluindo] = useState(false);
   const [senhaTemp, setSenhaTemp] = useState<string | null>(null);
+
+  function excluir() {
+    start(async () => {
+      const res = await excluirUsuario(userId);
+      if (!res.ok) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success(`${res.data.name} excluído.`);
+      setExcluindo(false);
+      router.refresh();
+    });
+  }
 
   function alternar() {
     start(async () => {
@@ -93,7 +111,39 @@ export function AcoesUsuario({
             <Power className={ativo ? "size-4 text-destructive" : "size-4 text-success"} />
           )}
         </Button>
+        <Button
+          size="icon"
+          variant="ghost"
+          aria-label={`Excluir ${nome}`}
+          title="Excluir usuário"
+          onClick={() => setExcluindo(true)}
+          disabled={pending || ehVoce}
+        >
+          <Trash2 className="size-4 text-destructive" />
+        </Button>
       </div>
+
+      <Dialog open={excluindo} onOpenChange={(o) => !o && setExcluindo(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir {nome}?</DialogTitle>
+            <DialogDescription>
+              A conta sai da lista e as sessões abertas caem na hora. O histórico de
+              auditoria é preservado — é ele que registra o que essa pessoa fez.
+              Não é possível excluir o único responsável de uma empresa ativa.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setExcluindo(false)} disabled={pending}>
+              Cancelar
+            </Button>
+            <Button variant="destructive" onClick={excluir} disabled={pending}>
+              {pending ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+              Excluir usuário
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={confirmando} onOpenChange={(o) => !o && setConfirmando(false)}>
         <DialogContent>

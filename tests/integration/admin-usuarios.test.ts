@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
 import { verifyPassword } from "@/lib/auth/password";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
+// `tenants` já é declarado abaixo; o helper de criação vem do factory.
 import type { AdminCtx } from "@/lib/http/with-action";
 
 const uniq = () => Math.random().toString(36).slice(2, 8);
@@ -178,5 +179,68 @@ describe("Reset de senha pelo super-admin", () => {
     await expect(AdminService.resetUserPassword("nao-existe", ctx)).rejects.toThrow(
       /não encontrado/i,
     );
+  });
+});
+
+describe("Exclusão de usuário", () => {
+  it("some da lista, derruba sessões e preserva a auditoria", async () => {
+    const u = await criarUsuario({});
+    await prisma.refreshToken.create({
+      data: {
+        userId: u.id,
+        tokenHash: `hash-${uniq()}`,
+        expiresAt: new Date(Date.now() + 86400000),
+      },
+    });
+
+    await AdminService.deleteUser(u.id, ctx);
+
+    expect((await AdminService.listUsers()).some((x) => x.id === u.id)).toBe(false);
+    expect(
+      await prisma.refreshToken.count({ where: { userId: u.id, revokedAt: null } }),
+    ).toBe(0);
+    // Soft delete: o `userId` aparece na auditoria, e apagar a linha deixaria
+    // o histórico apontando para o nada.
+    const linha = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(linha.deletedAt).toBeTruthy();
+    expect(linha.active).toBe(false);
+  });
+
+  it("RECUSA excluir o único responsável de uma empresa ativa", async () => {
+    const tenantId = await createTestTenant("UNICO DONO");
+    tenants.push(tenantId);
+    const dono = await criarUsuario({ tenantId, role: "OWNER" });
+
+    // Sem OWNER, ninguém entra naquela empresa — a exclusão viraria um
+    // bloqueio acidental do cliente.
+    await expect(AdminService.deleteUser(dono.id, ctx)).rejects.toThrow(/único acesso/i);
+  });
+
+  it("permite excluir um OWNER quando há outro ativo na empresa", async () => {
+    const tenantId = await createTestTenant("DOIS DONOS");
+    tenants.push(tenantId);
+    const a = await criarUsuario({ tenantId, role: "OWNER" });
+    await criarUsuario({ tenantId, role: "OWNER" });
+
+    await AdminService.deleteUser(a.id, ctx);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: a.id } })).deletedAt,
+    ).toBeTruthy();
+  });
+
+  it("permite excluir o OWNER de empresa já excluída", async () => {
+    const tenantId = await createTestTenant("EMPRESA FORA");
+    tenants.push(tenantId);
+    const dono = await criarUsuario({ tenantId, role: "OWNER" });
+    await prisma.tenant.update({ where: { id: tenantId }, data: { deletedAt: new Date() } });
+
+    await AdminService.deleteUser(dono.id, ctx);
+    expect(
+      (await prisma.user.findUniqueOrThrow({ where: { id: dono.id } })).deletedAt,
+    ).toBeTruthy();
+  });
+
+  it("RECUSA o super-admin excluir a própria conta", async () => {
+    await expect(AdminService.deleteUser(adminId, ctx)).rejects.toThrow(/própria conta/i);
   });
 });
