@@ -220,7 +220,15 @@ async function prepareCharge(
   const alreadyPaid = await prisma.subscriptionPayment.findFirst({
     where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
   });
-  if (alreadyPaid) throw new BusinessRuleError("A mensalidade deste mês já está paga.");
+  if (alreadyPaid) {
+    // Código próprio: a tela reage recarregando para o estado "já pago" em vez
+    // de mostrar isto como erro. Não é falha do usuário — é a tela estando
+    // desatualizada em relação a um pagamento que já entrou.
+    throw new BusinessRuleError(
+      "A mensalidade deste mês já está paga.",
+      "MENSALIDADE_JA_PAGA",
+    );
+  }
 
   // Contratar outro plano no ato do pagamento: a validação de plano ativo e de
   // limite de usuários é do PlanoService — não duplicamos a regra aqui.

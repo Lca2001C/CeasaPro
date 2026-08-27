@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Loader2, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
@@ -16,12 +17,16 @@ export function PixCheckout({
   initialCharge,
   planId,
   onAwaitingPayment,
+  onErro,
 }: {
   initialCharge: PixCharge | null;
   /** Plano escolhido na tela. O servidor troca a assinatura antes de cobrar. */
   planId?: string;
   onAwaitingPayment: () => void;
+  /** Motivo da recusa, para a tela mostrar de forma persistente. */
+  onErro?: (mensagem: string | null) => void;
 }) {
+  const router = useRouter();
   const [charge, setCharge] = useState<PixCharge | null>(initialCharge);
   const [loading, setLoading] = useState(false);
 
@@ -36,9 +41,16 @@ export function PixCheckout({
     });
     setLoading(false);
     if (!res.ok) {
+      if (res.error.code === "MENSALIDADE_JA_PAGA") {
+        toast.success("Sua mensalidade deste mês já está paga.");
+        router.refresh();
+        return;
+      }
       toast.error(res.error.message);
+      onErro?.(res.error.message);
       return;
     }
+    onErro?.(null);
     if (!temPagamentoPix(res.data)) {
       toast.error("Não foi possível gerar o código PIX. Tente de novo em instantes.");
       return;

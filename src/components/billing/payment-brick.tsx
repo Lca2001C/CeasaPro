@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type ComponentProps } from "react";
 import dynamic from "next/dynamic";
+import { useRouter } from "next/navigation";
 import { Loader2, QrCode } from "lucide-react";
 import { toast } from "sonner";
 import type { Payment as PaymentBrickComponent } from "@mercadopago/sdk-react";
@@ -79,16 +80,20 @@ export function PaymentBrick({
   planId,
   onPaid,
   onAwaitingPayment,
+  onErro,
 }: {
   publicKey: string;
   amount: number;
   payerEmail?: string;
   initialCharge: PixCharge | null;
+  /** Motivo da recusa, para a tela mostrar de forma persistente. */
+  onErro?: (mensagem: string | null) => void;
   /** Plano escolhido na tela. O servidor troca a assinatura antes de cobrar. */
   planId?: string;
   onPaid: () => void | Promise<void>;
   onAwaitingPayment: () => void;
 }) {
+  const router = useRouter();
   const [charge, setCharge] = useState<PixCharge | null>(initialCharge);
   const [threeDs, setThreeDs] = useState<ThreeDs | null>(null);
   const [gerandoPix, setGerandoPix] = useState(false);
@@ -108,9 +113,19 @@ export function PaymentBrick({
       ...(planId ? { planId } : {}),
     });
     if (!res.ok) {
+      // Mês já quitado não é erro do usuário: a tela é que está desatualizada
+      // em relação a um pagamento que já entrou. Recarregar leva ao estado
+      // "já pago" em vez de mostrar uma recusa sem sentido.
+      if (res.error.code === "MENSALIDADE_JA_PAGA") {
+        toast.success("Sua mensalidade deste mês já está paga.");
+        router.refresh();
+        return;
+      }
       toast.error(res.error.message);
+      onErro?.(res.error.message);
       return;
     }
+    onErro?.(null);
     if (!temPagamentoPix(res.data)) {
       // Cobrança criada sem QR nem copia-e-cola: não há como pagar. Avisa em
       // vez de deixar o cliente na tela do Brick, que manda procurar o código
@@ -152,9 +167,16 @@ export function PaymentBrick({
       ...(planId ? { planId } : {}),
     });
     if (!res.ok) {
+      if (res.error.code === "MENSALIDADE_JA_PAGA") {
+        toast.success("Sua mensalidade deste mês já está paga.");
+        router.refresh();
+        return;
+      }
       toast.error(res.error.message);
+      onErro?.(res.error.message);
       return;
     }
+    onErro?.(null);
 
     if (res.data.threeDsUrl) {
       setThreeDs({ url: res.data.threeDsUrl, creq: res.data.threeDsCreq });

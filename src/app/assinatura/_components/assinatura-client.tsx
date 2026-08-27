@@ -1,7 +1,9 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+import { AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,6 +36,8 @@ export function AssinaturaClient({
   termsAccepted,
   plans,
   primeiraAtivacao,
+  jaPagoNesteMes = false,
+  referenceMonth = null,
 }: {
   mpConfigured: boolean;
   monthlyAmount: number;
@@ -45,6 +49,9 @@ export function AssinaturaClient({
   plans: AvailablePlan[];
   /** Nunca teve pagamento aprovado — é a primeira contratação. */
   primeiraAtivacao: boolean;
+  /** A mensalidade do mês corrente já foi paga. */
+  jaPagoNesteMes?: boolean;
+  referenceMonth?: string | null;
 }) {
   const [paid, setPaid] = useState(false);
   const [awaiting, setAwaiting] = useState(temPagamentoPix(initialCharge));
@@ -52,6 +59,7 @@ export function AssinaturaClient({
   const [planId, setPlanId] = useState(
     () => plans.find((p) => p.isCurrent)?.id ?? plans[0]?.id ?? null,
   );
+  const [erro, setErro] = useState<string | null>(null);
   const confirmed = useRef(false);
 
   const confirmPaid = useCallback(async () => {
@@ -100,6 +108,28 @@ export function AssinaturaClient({
     );
   }
 
+  // Mês já quitado: mostrar o formulário aqui só levava a um erro ao clicar em
+  // pagar. O caminho certo é dizer que está pago e devolver ao sistema.
+  if (jaPagoNesteMes) {
+    return (
+      <Card>
+        <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
+          <CheckCircle2 className="size-12 text-success" />
+          <p className="font-medium">
+            Mensalidade{referenceMonth ? ` de ${referenceMonth}` : " deste mês"} já paga
+          </p>
+          <p className="text-sm text-muted-foreground">
+            Não há nada a pagar agora. O próximo vencimento aparece em{" "}
+            <b>Meu plano</b>.
+          </p>
+          <Button asChild size="lg" className="mt-1 w-full">
+            <Link href="/dashboard">Voltar ao sistema</Link>
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
   // Uma cobrança já em aberto (QR gerado antes) dispensa novo aceite: o
   // consentimento foi dado quando a cobrança foi criada.
   const jaTemCobranca = temPagamentoPix(initialCharge);
@@ -118,6 +148,20 @@ export function AssinaturaClient({
 
   return (
     <div className="flex flex-col gap-4">
+      {/* O motivo da recusa fica NA TELA, não só num toast que some. Sem isto,
+          a única pista era o status HTTP no console do navegador. */}
+      {erro && (
+        <Card className="border-destructive/40 bg-destructive/10">
+          <CardContent className="flex items-start gap-2 pt-4 text-sm">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
+            <span>
+              <b className="block">Não foi possível gerar a cobrança</b>
+              {erro}
+            </span>
+          </CardContent>
+        </Card>
+      )}
+
       {podeEscolherPlano && (
         <PlanSelector
           plans={plans}
@@ -141,12 +185,14 @@ export function AssinaturaClient({
             planId={planIdParaCheckout}
             onPaid={confirmPaid}
             onAwaitingPayment={startAwaiting}
+            onErro={setErro}
           />
         ) : (
           <PixCheckout
             initialCharge={initialCharge}
             planId={planIdParaCheckout}
             onAwaitingPayment={startAwaiting}
+            onErro={setErro}
           />
         ))}
     </div>

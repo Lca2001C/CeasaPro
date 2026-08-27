@@ -66,7 +66,12 @@ export const PlanoService = {
     const currentPlanId = sub?.planId ?? null;
 
     const plans = await prisma.plan.findMany({
-      where: { active: true },
+      // O plano ATUAL entra mesmo desativado. Um plano tirado de oferta sumia
+      // desta lista, a tela de assinatura selecionava outro por falta de opção
+      // e o pagamento virava uma troca de plano silenciosa — que ainda podia
+      // ser recusada (limite de usuários) e devolver 409 ao cliente que só
+      // queria pagar a mensalidade.
+      where: currentPlanId ? { OR: [{ active: true }, { id: currentPlanId }] } : { active: true },
       orderBy: { priceMonthly: "asc" },
     });
 

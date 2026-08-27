@@ -74,6 +74,8 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
 });
 
 import { BillingService } from "@/lib/services/billing.service";
+import { PlanoService } from "@/lib/services/plano.service";
+import { BusinessRuleError } from "@/lib/http/app-error";
 
 const uniq = () => Math.random().toString(36).slice(2, 8);
 const tenants: string[] = [];
@@ -228,6 +230,96 @@ describe("Escolha de plano no primeiro pagamento", () => {
     const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
     expect(depois.planId).toBe(basicoId);
     expect(Number(depois.monthlyAmount)).toBe(29.9);
+  });
+
+  /**
+   * A recusa de mês já pago chega ao browser como HTTP 409. A tela só consegue
+   * tratá-la como "está tudo certo, recarregue" (em vez de mostrar erro) por
+   * causa do CÓDIGO — se ele mudar, volta o 409 sem explicação no console.
+   */
+  it("a recusa de mês pago vem com o código MENSALIDADE_JA_PAGA (PIX e cartão)", async () => {
+    const tenantId = await novoCliente();
+    const ctx = makeCtx(tenantId);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+
+    const refMonth = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, "0")}`;
+    await prisma.subscriptionPayment.create({
+      data: {
+        subscriptionId: sub.id,
+        tenantId,
+        amount: 29.9,
+        status: "APROVADO",
+        method: "PIX",
+        referenceMonth: refMonth,
+        mpPaymentId: `pago-cod-${uniq()}`,
+      },
+    });
+
+    const pix = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    ).catch((e: unknown) => e);
+    expect(pix).toBeInstanceOf(BusinessRuleError);
+    expect((pix as BusinessRuleError).code).toBe("MENSALIDADE_JA_PAGA");
+    expect((pix as BusinessRuleError).status).toBe(409);
+
+    const cartao = await BillingService.processCardPayment(
+      tenantId,
+      {
+        method: "CREDIT_CARD",
+        token: "tok_qualquer",
+        paymentMethodId: "visa",
+        installments: 1,
+        payer: { email: "pagador@teste.com" },
+        acceptedTerms: true,
+      },
+      ctx,
+    ).catch((e: unknown) => e);
+    expect(cartao).toBeInstanceOf(BusinessRuleError);
+    expect((cartao as BusinessRuleError).code).toBe("MENSALIDADE_JA_PAGA");
+  });
+});
+
+/**
+ * Plano tirado de oferta (`active: false`) some da lista de planos. Enquanto ele
+ * sumia INCLUSIVE para quem já o assinava, a tela de assinatura não encontrava o
+ * plano atual, selecionava o primeiro da lista e o clique em "pagar" virava uma
+ * troca de plano — que podia ser recusada (limite de usuários) e devolver 409 a
+ * quem só queria pagar a mensalidade.
+ */
+describe("Plano desativado que ainda é o plano da empresa", () => {
+  it("continua na lista, marcado como atual", async () => {
+    const tenantId = await novoCliente();
+    const desativado = await prisma.plan.create({
+      data: {
+        name: "Plano Fora de Oferta",
+        slug: `fora-oferta-${uniq()}`,
+        priceMonthly: 49.9,
+        maxUsers: 1,
+        active: false,
+        features: { modules: [] },
+      },
+    });
+    planIds.push(desativado.id);
+    await prisma.tenantSubscription.update({
+      where: { tenantId },
+      data: { planId: desativado.id, monthlyAmount: 49.9 },
+    });
+
+    const planos = await PlanoService.listAvailablePlans(tenantId);
+    const atual = planos.find((p) => p.id === desativado.id);
+    expect(atual, "o plano atual precisa aparecer mesmo desativado").toBeDefined();
+    expect(atual?.isCurrent).toBe(true);
+    // Exatamente um marcado como atual: é o que a tela usa para não trocar nada.
+    expect(planos.filter((p) => p.isCurrent)).toHaveLength(1);
+  });
+
+  it("não é ofertado a quem não o assina", async () => {
+    const outro = await novoCliente(); // fica no Básico
+    const planos = await PlanoService.listAvailablePlans(outro);
+    expect(planos.every((p) => p.name !== "Plano Fora de Oferta")).toBe(true);
+    expect(planos.find((p) => p.isCurrent)?.id).toBe(basicoId);
   });
 });
 

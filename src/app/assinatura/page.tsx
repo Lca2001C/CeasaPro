@@ -19,6 +19,9 @@ export default async function AssinaturaPage() {
   ]);
   const sub = status?.sub;
   const charge = status?.pendingCharge ?? null;
+  // Mês já pago: oferecer o formulário aqui levava o cliente a clicar em pagar
+  // e receber um 409 ("já está paga") sem entender o motivo.
+  const jaPagoNesteMes = Boolean(status?.paidCharge);
 
   // Empresa que nunca pagou tem `currentPeriodEnd` no passado: mostrar "vence
   // <data antiga>" só confundiria. O convite é para a primeira ativação.
@@ -57,6 +60,8 @@ export default async function AssinaturaPage() {
         termsAccepted={sub?.tenant.termsVersion === TERMS_VERSION}
         plans={plans}
         primeiraAtivacao={primeiraAtivacao}
+        jaPagoNesteMes={jaPagoNesteMes}
+        referenceMonth={status?.refMonth ?? null}
         // Reabre a cobrança pendente com qualquer forma de pagar: só o
         // copia-e-cola já basta para o cliente concluir no app do banco.
         initialCharge={
