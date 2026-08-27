@@ -32,15 +32,36 @@ function disponivel(type: Tipo, saldo: CrateSaldo): string | null {
   }
 }
 
-export function MovimentoCaixaForm({ saldo }: { saldo: CrateSaldo }) {
+/** id do `<datalist>` de clientes — mesmo padrão do PDV. */
+const LISTA_CLIENTES = "caixas-clientes-conhecidos";
+
+export function MovimentoCaixaForm({
+  saldo,
+  tipoInicial,
+  quantidadeInicial,
+  clienteInicial,
+  higienizadorInicial,
+  clientesConhecidos = [],
+}: {
+  saldo: CrateSaldo;
+  /** Situação escolhida no atalho da lista (ex.: "Cliente devolveu"). */
+  tipoInicial?: Tipo;
+  /** Quantidade sugerida — vem do saldo que o atalho conhece. */
+  quantidadeInicial?: string;
+  clienteInicial?: string;
+  /** Vem do atalho "caixas perdidas no higienizador", no detalhe do lote. */
+  higienizadorInicial?: string;
+  /** Evita o mesmo cliente virar dois nomes diferentes no livro-razão. */
+  clientesConhecidos?: string[];
+}) {
   const router = useRouter();
-  const [type, setType] = useState<Tipo>("ENTRADA");
-  const [quantity, setQuantity] = useState("");
+  const [type, setType] = useState<Tipo>(tipoInicial ?? "ENTRADA");
+  const [quantity, setQuantity] = useState(quantidadeInicial ?? "");
   const [brokenQty, setBrokenQty] = useState("");
   const [dirty, setDirty] = useState(false);
-  const [customerName, setCustomerName] = useState("");
+  const [customerName, setCustomerName] = useState(clienteInicial ?? "");
   const [supplierName, setSupplierName] = useState("");
-  const [cleanerName, setCleanerName] = useState("");
+  const [cleanerName, setCleanerName] = useState(higienizadorInicial ?? "");
   const [movementDate, setMovementDate] = useState(isoDateTz());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
@@ -147,7 +168,18 @@ export function MovimentoCaixaForm({ saldo }: { saldo: CrateSaldo }) {
           <Label>
             {isQuebra ? "Cliente (se a caixa sumiu com um cliente — opcional)" : "Cliente"}
           </Label>
-          <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+          <Input
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
+            list={LISTA_CLIENTES}
+          />
+          {/* Autocomplete com quem já comprou: o saldo de caixas é agrupado
+              POR NOME, então "João" e "joao" viram dois devedores diferentes. */}
+          <datalist id={LISTA_CLIENTES}>
+            {clientesConhecidos.map((nome) => (
+              <option key={nome} value={nome} />
+            ))}
+          </datalist>
         </div>
       )}
 

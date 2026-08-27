@@ -430,15 +430,73 @@ export async function getPayment(id: string) {
 
 export type MpPayment = Awaited<ReturnType<typeof getPayment>>;
 
+/** `x-signature` separado em partes. */
+function parseXSignature(header: string): { ts?: string; v1?: string } {
+  const out: { ts?: string; v1?: string } = {};
+  for (const parte of header.split(",")) {
+    // Corta no PRIMEIRO "=": o valor pode conter "=" (padding base64).
+    const igual = parte.indexOf("=");
+    if (igual < 0) continue;
+    const chave = parte.slice(0, igual).trim();
+    const valor = parte.slice(igual + 1).trim();
+    if (chave === "ts") out.ts = valor;
+    else if (chave === "v1") out.v1 = valor;
+  }
+  return out;
+}
+
+/**
+ * O `ts` do cabeçalho convertido para SEGUNDOS.
+ *
+ * O Mercado Pago documenta epoch em segundos, mas já foi visto enviando
+ * milissegundos. Comparar 13 dígitos com 10 dá uma diferença astronômica, e a
+ * janela anti-replay rejeitava a notificação inteira — com a assinatura
+ * correta. Detectar pela grandeza cobre os dois formatos.
+ *
+ * O manifesto continua usando a string ORIGINAL: é sobre ela que o HMAC foi
+ * calculado do outro lado.
+ */
+function tsEmSegundos(ts: string): number | null {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return n >= 1e12 ? Math.floor(n / 1000) : n;
+}
+
+function comparaSeguro(a: string, b: string): boolean {
+  const bufA = Buffer.from(a);
+  const bufB = Buffer.from(b);
+  // `timingSafeEqual` lança quando os tamanhos diferem; comparar antes evita a
+  // exceção sem abrir brecha de tempo (o tamanho do hash não é segredo).
+  if (bufA.length !== bufB.length) return false;
+  return timingSafeEqual(bufA, bufB);
+}
+
 /**
  * Valida a assinatura HMAC do webhook do Mercado Pago.
- * Header x-signature: "ts=<ts>,v1=<hash>"; manifest = id:<dataId>;request-id:<reqId>;ts:<ts>;
- * Além do HMAC, o timestamp precisa ser recente (anti-replay).
+ *
+ * Modelo: `x-signature: ts=<ts>,v1=<hash>`, onde o hash é o HMAC-SHA256 do
+ * manifesto `id:<data.id>;request-id:<x-request-id>;ts:<ts>;`.
+ *
+ * Três regras da especificação que faltavam e devolviam **401 com assinatura
+ * legítima** — o que faz o Mercado Pago reenviar sem parar e, no limite,
+ * desativar o webhook:
+ *
+ *  1. **Segmento ausente sai do manifesto.** Sem `x-request-id`, o correto é
+ *     `id:…;ts:…;` — o código montava `request-id:;` e o HMAC nunca batia.
+ *  2. **`data.id` alfanumérico entra em minúsculas.**
+ *  3. **`ts` pode vir em milissegundos** (ver `tsEmSegundos`).
+ *
+ * O `data.id` chega no corpo E na query, e nem sempre nos dois; por isso
+ * testamos os candidatos plausíveis. Isso **não** enfraquece a verificação:
+ * cada candidato ainda precisa produzir o mesmo HMAC com o segredo. O que se
+ * evita é recusar notificação legítima por divergência de formato.
  */
 export function verifyWebhookSignature(args: {
   xSignature: string | null;
   xRequestId: string | null;
   dataId: string | null;
+  /** Outro valor plausível de `data.id` (corpo × query) — o MP assina um deles. */
+  dataIdAlt?: string | null;
   now?: Date;
 }): boolean {
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
@@ -450,38 +508,70 @@ export function verifyWebhookSignature(args: {
     logger.warn("MERCADOPAGO_WEBHOOK_SECRET ausente — pulando verificação (apenas dev).");
     return true;
   }
-  if (!args.xSignature || !args.dataId) return false;
 
-  const parts = Object.fromEntries(
-    args.xSignature.split(",").map((kv) => {
-      const [k, v] = kv.split("=");
-      return [k?.trim(), v?.trim()];
-    }),
-  );
-  const ts = parts["ts"];
-  const v1 = parts["v1"];
-  if (!ts || !v1) return false;
+  if (!args.xSignature) {
+    logger.warn(
+      "Webhook Mercado Pago sem cabeçalho x-signature — a URL pode estar cadastrada em " +
+        "'Notificações IPN' (legado, sem assinatura) em vez de 'Webhooks'.",
+    );
+    return false;
+  }
+  if (!args.dataId && !args.dataIdAlt) {
+    logger.warn("Webhook Mercado Pago sem data.id — nada a verificar.");
+    return false;
+  }
 
-  // Anti-replay: o Mercado Pago envia o ts em segundos (epoch).
-  const tsSeconds = Number(ts);
-  if (!Number.isFinite(tsSeconds)) return false;
+  const { ts, v1 } = parseXSignature(args.xSignature);
+  if (!ts || !v1) {
+    logger.warn({ temTs: Boolean(ts), temV1: Boolean(v1) }, "x-signature em formato inesperado");
+    return false;
+  }
+
+  const segundos = tsEmSegundos(ts);
+  if (segundos === null) {
+    logger.warn({ ts }, "Webhook Mercado Pago com ts ilegível");
+    return false;
+  }
   const nowSeconds = Math.floor((args.now ?? new Date()).getTime() / 1000);
-  if (Math.abs(nowSeconds - tsSeconds) > WEBHOOK_MAX_SKEW_SECONDS) {
-    logger.warn({ ts }, "Webhook Mercado Pago com timestamp fora da janela");
+  const atraso = Math.abs(nowSeconds - segundos);
+  if (atraso > WEBHOOK_MAX_SKEW_SECONDS) {
+    logger.warn(
+      { ts, atrasoSegundos: atraso, janelaSegundos: WEBHOOK_MAX_SKEW_SECONDS },
+      "Webhook Mercado Pago com timestamp fora da janela (replay ou relógio dessincronizado)",
+    );
     return false;
   }
 
-  // O Mercado Pago calcula o HMAC com o `data.id` em MINÚSCULAS quando ele é
-  // alfanumérico. Id de pagamento é numérico e não muda com isto, mas outros
-  // tópicos (merchant_order, por exemplo) chegam ao mesmo endpoint e seriam
-  // rejeitados com 401 — o que faz o Mercado Pago reenviar sem parar e, no
-  // limite, desativar a assinatura do webhook.
-  const dataId = args.dataId.toLowerCase();
-  const manifest = `id:${dataId};request-id:${args.xRequestId ?? ""};ts:${ts};`;
-  const hmac = createHmac("sha256", secret).update(manifest).digest("hex");
-  try {
-    return timingSafeEqual(Buffer.from(hmac), Buffer.from(v1));
-  } catch {
-    return false;
+  const ids = [...new Set(
+    [args.dataId, args.dataIdAlt]
+      .filter((v): v is string => Boolean(v))
+      .map((v) => v.toLowerCase()),
+  )];
+
+  // Com e sem o segmento request-id: a especificação manda omitir quando o
+  // cabeçalho não vem, e nem toda notificação o traz.
+  const requestIds = args.xRequestId ? [args.xRequestId, null] : [null];
+
+  for (const id of ids) {
+    for (const requestId of requestIds) {
+      const manifest =
+        requestId === null
+          ? `id:${id};ts:${ts};`
+          : `id:${id};request-id:${requestId};ts:${ts};`;
+      if (comparaSeguro(createHmac("sha256", secret).update(manifest).digest("hex"), v1)) {
+        return true;
+      }
+    }
   }
+
+  logger.warn(
+    {
+      dataIds: ids,
+      temRequestId: Boolean(args.xRequestId),
+      variantesTestadas: ids.length * requestIds.length,
+    },
+    "Webhook Mercado Pago com assinatura inválida — confira se MERCADOPAGO_WEBHOOK_SECRET " +
+      "é a chave secreta DESTE webhook no painel do Mercado Pago",
+  );
+  return false;
 }

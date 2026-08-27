@@ -10,11 +10,15 @@ export async function POST(req: Request) {
   const url = new URL(req.url);
   const body = await req.json().catch(() => ({}) as Record<string, unknown>);
 
-  // O id do pagamento vem em data.id (corpo) ou ?data.id / ?id (query).
-  const dataId =
-    (body as { data?: { id?: string } }).data?.id ??
-    url.searchParams.get("data.id") ??
-    url.searchParams.get("id");
+  // O id chega no corpo (`data.id`) e/ou na query (`?data.id`). A assinatura é
+  // calculada sobre o da QUERY, mas nem toda notificação a traz — por isso os
+  // dois vão como candidatos para a verificação.
+  const idCorpo = (body as { data?: { id?: string | number } }).data?.id;
+  const idQuery = url.searchParams.get("data.id") ?? url.searchParams.get("id");
+  const dataIdQuery = idQuery ? String(idQuery) : null;
+  const dataIdCorpo = idCorpo !== undefined && idCorpo !== null ? String(idCorpo) : null;
+  const dataId = dataIdCorpo ?? dataIdQuery;
+
   // O Mercado Pago identifica o evento em `type` (webhooks) ou `topic` (IPN legado).
   const type =
     (body as { type?: string }).type ??
@@ -24,7 +28,8 @@ export async function POST(req: Request) {
   const valid = verifyWebhookSignature({
     xSignature: req.headers.get("x-signature"),
     xRequestId: req.headers.get("x-request-id"),
-    dataId: dataId ? String(dataId) : null,
+    dataId: dataIdQuery ?? dataIdCorpo,
+    dataIdAlt: dataIdCorpo,
   });
   if (!valid) {
     // Assinatura HMAC inválida ou timestamp fora da janela (replay).

@@ -2,8 +2,9 @@
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2 } from "lucide-react";
+import { Loader2, PackageX } from "lucide-react";
 import { toast } from "sonner";
 import {
   registrarDevolucaoHigienizacao,
@@ -19,10 +20,13 @@ export function AcoesHigienizacao({
   id,
   caixasAReceber,
   valorAPagar,
+  cleanerName,
 }: {
   id: string;
   caixasAReceber: number;
   valorAPagar: number;
+  /** Nome do higienizador — vai junto no atalho de registrar perda. */
+  cleanerName?: string;
 }) {
   const router = useRouter();
   const today = isoDateTz();
@@ -88,6 +92,24 @@ export function AcoesHigienizacao({
               {devBusy && <Loader2 className="animate-spin" />}
               Registrar devolução
             </Button>
+
+            {/* Enviou 50, voltaram 47: as 3 que faltam não somem sozinhas do
+                livro-razão — ficam eternamente "em higienização". O atalho
+                registra a perda já vinculada a este higienizador, em vez de
+                obrigar a ir até Caixas plásticas e reconstruir o contexto. */}
+            <div className="border-t pt-3">
+              <p className="mb-2 text-xs text-muted-foreground">
+                Faltou caixa voltar? Se {cleanerName ? <b>{cleanerName}</b> : "o higienizador"}{" "}
+                perdeu ou quebrou alguma, registre a perda para o saldo fechar.
+              </p>
+              <Button asChild variant="outline" size="sm" className="w-full">
+                <Link
+                  href={`/caixas-plasticas/novo?tipo=QUEBRA&qtd=${caixasAReceber}&higienizador=${encodeURIComponent(cleanerName ?? "")}`}
+                >
+                  <PackageX className="size-4" /> Registrar caixas perdidas no higienizador
+                </Link>
+              </Button>
+            </div>
           </CardContent>
         </Card>
       )}

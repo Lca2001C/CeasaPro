@@ -15,5 +15,17 @@ export const compraSchema = z.object({
   freight: z.number().nonnegative(),
   notes: z.string().max(500).nullable().optional(),
   items: z.array(compraItemSchema).min(1, "Adicione ao menos um item"),
+  /**
+   * Caixas plásticas que chegaram junto com a mercadoria.
+   *
+   * Sem isto o operador lançava a compra e ia movimentar caixa em OUTRA tela —
+   * dois passos para um fato só, e a segunda metade era esquecida com
+   * frequência. Opcional: nem toda compra vem em caixa plástica.
+   */
+  caixasRecebidas: z.number().int().nonnegative().optional(),
+  /** Chegaram sujas? Vão direto para a fila de higienização. */
+  caixasSujas: z.boolean().optional(),
+  /** Quantas já vieram quebradas — entram como perda, não como estoque. */
+  caixasQuebradas: z.number().int().nonnegative().optional(),
 });
 export type CompraInput = z.infer<typeof compraSchema>;

@@ -26,6 +26,22 @@ function computeCleaningStatus(c: {
 }
 
 export const HigienizacaoService = {
+  /**
+   * Higienizadores já usados, para autocompletar o nome.
+   * O histórico e o "quanto já paguei" são agrupados pelo texto digitado —
+   * sem isto, "Silva" e "silva" viram dois prestadores diferentes.
+   */
+  async higienizadoresConhecidos(tenantId: string): Promise<string[]> {
+    const db = getTenantPrisma(tenantId);
+    const rows = await db.crateCleaning.findMany({
+      distinct: ["cleanerName"],
+      select: { cleanerName: true },
+      orderBy: { cleanerName: "asc" },
+      take: 200,
+    });
+    return rows.map((r) => r.cleanerName).filter(Boolean);
+  },
+
   async list(tenantId: string, status?: CrateCleaningStatus) {
     const db = getTenantPrisma(tenantId);
     const [registros, saldo] = await Promise.all([

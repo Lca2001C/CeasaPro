@@ -25,16 +25,24 @@ export interface HigienizacaoFormInitial {
 export function HigienizacaoForm({
   caixasSujas,
   initial,
+  quantidadeSugerida,
+  higienizadoresConhecidos = [],
 }: {
   caixasSujas: number;
   initial?: HigienizacaoFormInitial;
+  /** Vem do atalho "enviar para higienizar" na tela de Caixas plásticas. */
+  quantidadeSugerida?: string;
+  /** Higienizadores já usados — evita o mesmo nome escrito de formas diferentes. */
+  higienizadoresConhecidos?: string[];
 }) {
   const router = useRouter();
   const [cleanerName, setCleanerName] = useState(initial?.cleanerName ?? "");
   const [sentDate, setSentDate] = useState(
     initial?.sentDate ?? isoDateTz(),
   );
-  const [sentQty, setSentQty] = useState(initial ? String(initial.sentQty) : "");
+  const [sentQty, setSentQty] = useState(
+    initial ? String(initial.sentQty) : (quantidadeSugerida ?? ""),
+  );
   const [unitPrice, setUnitPrice] = useState<number | undefined>(initial?.unitPrice);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
@@ -77,7 +85,15 @@ export function HigienizacaoForm({
           autoFocus
           value={cleanerName}
           onChange={(e) => setCleanerName(e.target.value)}
+          list="higienizadores-conhecidos"
         />
+        {/* O histórico por higienizador é agrupado pelo nome digitado: sem
+            autocomplete, "Silva" e "silva" viram dois prestadores. */}
+        <datalist id="higienizadores-conhecidos">
+          {higienizadoresConhecidos.map((nome) => (
+            <option key={nome} value={nome} />
+          ))}
+        </datalist>
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">

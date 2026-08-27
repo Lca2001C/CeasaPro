@@ -42,6 +42,10 @@ export function CompraForm({
     { productId: produtos[0]?.id ?? "", quantity: 1, unitPrice: 0 },
   ]);
   const [saving, setSaving] = useState(false);
+  const [veioEmCaixa, setVeioEmCaixa] = useState(false);
+  const [caixasRecebidas, setCaixasRecebidas] = useState("");
+  const [caixasQuebradas, setCaixasQuebradas] = useState("");
+  const [caixasSujas, setCaixasSujas] = useState(false);
 
   const subtotal = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
   const total = subtotal + (freight || 0);
@@ -61,11 +65,21 @@ export function CompraForm({
     if (items.some((i) => !i.productId || i.quantity <= 0))
       return toast.error("Preencha os itens corretamente.");
 
+    const caixas = veioEmCaixa ? parseInt(caixasRecebidas, 10) || 0 : 0;
+    const quebradas = veioEmCaixa ? parseInt(caixasQuebradas, 10) || 0 : 0;
+    if (veioEmCaixa && caixas <= 0)
+      return toast.error("Informe quantas caixas plásticas chegaram.");
+    if (quebradas > caixas)
+      return toast.error("As caixas quebradas não podem passar do total recebido.");
+
     setSaving(true);
     const res = await apiPost<{ id: string }>("/api/compras", {
       supplierId: supplierId || null,
       purchaseDate,
       freight: freight || 0,
+      caixasRecebidas: caixas,
+      caixasQuebradas: quebradas,
+      caixasSujas: veioEmCaixa && caixasSujas,
       items: items.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
@@ -74,7 +88,11 @@ export function CompraForm({
     });
     setSaving(false);
     if (res.ok) {
-      toast.success("Compra registrada. Estoque atualizado.");
+      toast.success(
+        caixas > 0
+          ? `Compra registrada. Estoque atualizado e ${caixas} caixa(s) na entrada.`
+          : "Compra registrada. Estoque atualizado.",
+      );
       router.push("/compras");
     } else {
       toast.error(res.error.message);
@@ -157,12 +175,71 @@ export function CompraForm({
       <div className="flex flex-col gap-1.5">
         <Label>Frete</Label>
         <CurrencyInput value={freight} onChange={(v) => setFreight(v ?? 0)} />
+        <span className="text-xs text-muted-foreground">
+          O frete entra no custo de cada produto automaticamente, rateado pelo valor.
+        </span>
+      </div>
+
+      {/* Caixas plásticas que vieram junto: registrar aqui evita o segundo
+          lançamento em outra tela — que era esquecido e fazia o saldo de
+          caixas divergir do que existe no box. */}
+      <div className="flex flex-col gap-2 rounded-lg border p-3">
+        <label className="flex items-center gap-2 text-sm font-medium">
+          <input
+            type="checkbox"
+            className="size-4"
+            checked={veioEmCaixa}
+            onChange={(e) => setVeioEmCaixa(e.target.checked)}
+          />
+          Chegou em caixa plástica
+        </label>
+        {veioEmCaixa && (
+          <div className="flex flex-col gap-2">
+            <div className="grid grid-cols-2 gap-2">
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="caixas-recebidas">Quantas caixas</Label>
+                <Input
+                  id="caixas-recebidas"
+                  type="number"
+                  inputMode="numeric"
+                  min={1}
+                  value={caixasRecebidas}
+                  onChange={(e) => setCaixasRecebidas(e.target.value)}
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="caixas-quebradas">Quebradas na chegada</Label>
+                <Input
+                  id="caixas-quebradas"
+                  type="number"
+                  inputMode="numeric"
+                  min={0}
+                  value={caixasQuebradas}
+                  onChange={(e) => setCaixasQuebradas(e.target.value)}
+                />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="size-4"
+                checked={caixasSujas}
+                onChange={(e) => setCaixasSujas(e.target.checked)}
+              />
+              Chegaram sujas (vão para a fila de higienização)
+            </label>
+          </div>
+        )}
       </div>
 
       <Card className="p-3">
         <div className="flex justify-between text-sm text-muted-foreground">
           <span>Subtotal dos itens</span>
           <span className="tabular-nums">{formatBRL(subtotal)}</span>
+        </div>
+        <div className="mt-1 flex justify-between text-sm text-muted-foreground">
+          <span>Frete</span>
+          <span className="tabular-nums">{formatBRL(freight || 0)}</span>
         </div>
         <div className="mt-1 flex justify-between font-semibold">
           <span>Total da compra</span>

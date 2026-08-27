@@ -2,7 +2,8 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { add, mul, money } from "@/lib/money";
-import { NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import { CaixasService } from "./caixas.service";
 import type { CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -24,6 +25,23 @@ export const ComprasService = {
   async registrarCompra(input: CompraInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const productIds = [...new Set(input.items.map((i) => i.productId))];
+
+    const caixasRecebidas = input.caixasRecebidas ?? 0;
+    const caixasQuebradas = input.caixasQuebradas ?? 0;
+    if (caixasQuebradas > caixasRecebidas) {
+      throw new BusinessRuleError(
+        "As caixas quebradas não podem passar do total de caixas recebidas.",
+      );
+    }
+    // Saldo lido FORA da transação, como em `registrarVenda`: `registrarInTx`
+    // valida o movimento contra ele e não pode reabrir conexão no meio.
+    const crateSaldo = caixasRecebidas > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
+    const fornecedorNome = input.supplierId
+      ? ((await db.supplier.findFirst({
+          where: { id: input.supplierId },
+          select: { name: true },
+        }))?.name ?? null)
+      : null;
 
     const lineTotals = input.items.map((i) => mul(i.quantity, i.unitPrice));
     const freightShares = FinancialCalc.ratearFrete(lineTotals, input.freight);
@@ -83,6 +101,26 @@ export const ComprasService = {
           movedAt: purchase.purchaseDate,
         })),
       });
+
+      // Caixas plásticas que vieram com a mercadoria, na MESMA transação.
+      // Antes era um segundo lançamento em outra tela — e a metade esquecida
+      // fazia o saldo de caixas divergir do que existe no box.
+      if (caixasRecebidas > 0 && crateSaldo) {
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "ENTRADA",
+            quantity: caixasRecebidas,
+            brokenQty: caixasQuebradas,
+            dirty: input.caixasSujas ?? false,
+            supplierName: fornecedorNome,
+            movementDate: purchase.purchaseDate.toISOString(),
+            notes: "Entrada automática pela compra",
+          },
+          ctx,
+          crateSaldo,
+        );
+      }
 
       await audit(
         {

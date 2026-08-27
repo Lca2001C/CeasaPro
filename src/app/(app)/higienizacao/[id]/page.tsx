@@ -124,6 +124,7 @@ export default async function HigienizacaoDetailPage({
         id={c.id}
         caixasAReceber={c.caixasAReceber}
         valorAPagar={Number(c.valorAPagar)}
+        cleanerName={c.cleanerName}
       />
     </div>
   );

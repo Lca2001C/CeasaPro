@@ -31,6 +31,7 @@ model Tenant {
   creditAccounts        CreditAccount[]
   expenseCategories     ExpenseCategory[]
   expenses              Expense[]
+  packagingMovements    PackagingMovement[]
   packagingSales        PackagingSale[]
   packagingTypes        PackagingType[]
   plasticCrateMovements PlasticCrateMovement[]
@@ -467,14 +468,45 @@ model PackagingType {
   tenantId  String
   name      String
   active    Boolean         @default(true)
+  /// Controla saldo deste tipo? Nasce `false` de propósito: empresa que já
+  /// vendia embalagem nunca registrou entrada, e ligar o controle para todos
+  /// de uma vez mostraria saldo negativo em tudo — o que é falso, é ausência
+  /// de histórico. O dono liga por tipo, informando o que tem hoje.
+  tracksStock Boolean       @default(false)
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
   deletedAt DateTime?
   sales     PackagingSale[]
+  movements PackagingMovement[]
   tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, name])
   @@map("packaging_types")
+}
+
+/// Livro-razão das embalagens — o saldo é DERIVADO daqui, igual ao de produtos
+/// (`stock_movements`). Nunca existe coluna de saldo mutável.
+/// Saldo = Σ(ENTRADA, AJUSTE) − Σ(SAIDA, QUEBRA).
+model PackagingMovement {
+  id              String                @id @default(cuid())
+  tenantId        String
+  packagingTypeId String
+  type            PackagingMovementType
+  quantity        Int
+  unitCost        Decimal?              @db.Decimal(14, 4)
+  reason          String?
+  /// Origem do movimento ("PACKAGING_SALE") e o id dela — permite desfazer.
+  sourceType      String?
+  sourceId        String?
+  movedAt         DateTime              @default(now())
+  createdAt       DateTime              @default(now())
+  packagingType   PackagingType         @relation(fields: [packagingTypeId], references: [id], onDelete: Cascade)
+  tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, packagingTypeId])
+  @@index([tenantId, movedAt])
+  @@index([sourceType, sourceId])
+  @@map("packaging_movements")
 }
 
 model PackagingSale {
@@ -619,6 +651,13 @@ enum ReportType {
   CAIXAS_PLASTICAS
   HIGIENIZACAO
   EMBALAGENS
+}
+
+enum PackagingMovementType {
+  ENTRADA
+  SAIDA
+  AJUSTE
+  QUEBRA
 }
 
 enum PlasticCrateMovementType {

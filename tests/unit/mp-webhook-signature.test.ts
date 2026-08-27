@@ -60,6 +60,91 @@ describe("verifyWebhookSignature", () => {
     ).toBe(false);
   });
 
+  it("aceita quando o MP OMITE o request-id do manifesto", () => {
+    // Regra da especificação: segmento ausente sai do manifesto. O código
+    // montava `request-id:;` e o HMAC nunca batia — 401 com assinatura boa.
+    const manifest = `id:${DATA_ID};ts:${nowSeconds};`;
+    const v1 = createHmac("sha256", SECRET).update(manifest).digest("hex");
+    expect(
+      verifyWebhookSignature({
+        xSignature: `ts=${nowSeconds},v1=${v1}`,
+        xRequestId: REQUEST_ID, // veio no cabeçalho, mas não entrou no manifesto
+        dataId: DATA_ID,
+        now,
+      }),
+    ).toBe(true);
+  });
+
+  it("aceita notificação SEM o cabeçalho x-request-id", () => {
+    const manifest = `id:${DATA_ID};ts:${nowSeconds};`;
+    const v1 = createHmac("sha256", SECRET).update(manifest).digest("hex");
+    expect(
+      verifyWebhookSignature({
+        xSignature: `ts=${nowSeconds},v1=${v1}`,
+        xRequestId: null,
+        dataId: DATA_ID,
+        now,
+      }),
+    ).toBe(true);
+  });
+
+  it("aceita ts em MILISSEGUNDOS (o MP já enviou nos dois formatos)", () => {
+    // Comparar 13 dígitos com 10 dava diferença astronômica e a janela
+    // anti-replay recusava tudo.
+    const tsMs = nowSeconds * 1000;
+    const manifest = `id:${DATA_ID};request-id:${REQUEST_ID};ts:${tsMs};`;
+    const v1 = createHmac("sha256", SECRET).update(manifest).digest("hex");
+    expect(
+      verifyWebhookSignature({
+        xSignature: `ts=${tsMs},v1=${v1}`,
+        xRequestId: REQUEST_ID,
+        dataId: DATA_ID,
+        now,
+      }),
+    ).toBe(true);
+  });
+
+  it("aceita o data.id da QUERY quando o corpo traz outro", () => {
+    // A assinatura é calculada sobre o da query; o corpo é só o candidato alternativo.
+    const manifest = `id:${DATA_ID};request-id:${REQUEST_ID};ts:${nowSeconds};`;
+    const v1 = createHmac("sha256", SECRET).update(manifest).digest("hex");
+    expect(
+      verifyWebhookSignature({
+        xSignature: `ts=${nowSeconds},v1=${v1}`,
+        xRequestId: REQUEST_ID,
+        dataId: DATA_ID,
+        dataIdAlt: "outro-id-do-corpo",
+        now,
+      }),
+    ).toBe(true);
+  });
+
+  it("testar variantes NÃO afrouxa a verificação: segredo errado continua recusado", () => {
+    const manifest = `id:${DATA_ID};ts:${nowSeconds};`;
+    const v1 = createHmac("sha256", "segredo-errado").update(manifest).digest("hex");
+    expect(
+      verifyWebhookSignature({
+        xSignature: `ts=${nowSeconds},v1=${v1}`,
+        xRequestId: REQUEST_ID,
+        dataId: DATA_ID,
+        dataIdAlt: "9999",
+        now,
+      }),
+    ).toBe(false);
+  });
+
+  it("não lança quando o v1 tem tamanho diferente do hash", () => {
+    // `timingSafeEqual` lança se os buffers têm tamanhos diferentes.
+    expect(() =>
+      verifyWebhookSignature({
+        xSignature: `ts=${nowSeconds},v1=curto`,
+        xRequestId: REQUEST_ID,
+        dataId: DATA_ID,
+        now,
+      }),
+    ).not.toThrow();
+  });
+
   it("aceita data.id alfanumérico em MAIÚSCULAS (o MP assina em minúsculas)", () => {
     // O Mercado Pago monta o manifest com o data.id minúsculo. Sem normalizar,
     // tópicos de id alfanumérico voltariam 401 e seriam reenviados sem parar.

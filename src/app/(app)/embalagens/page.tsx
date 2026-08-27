@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus } from "lucide-react";
+import { Info, Plus } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { EmbalagensService } from "@/lib/services/embalagens.service";
 import { excluirVendaEmbalagem } from "@/actions/embalagens.actions";
@@ -12,21 +12,23 @@ import { Card } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { DeleteButton } from "@/components/crud/delete-button";
 import { TipoEmbalagemForm } from "./_components/tipo-form";
+import { EstoqueTipo } from "./_components/estoque-tipo";
 
 export const dynamic = "force-dynamic";
 
 export default async function EmbalagensPage() {
   const { tenantId } = await requireTenant();
-  const [{ vendas, total, totalQtd }, tipos] = await Promise.all([
+  const [{ vendas, total, totalQtd }, tipos, saldos] = await Promise.all([
     EmbalagensService.listSales(tenantId),
     EmbalagensService.listTypes(tenantId),
+    EmbalagensService.saldos(tenantId),
   ]);
 
   return (
     <div>
       <PageHeader
         title="Venda de embalagens"
-        description="Caixas, sacaria e outras embalagens vendidas à parte."
+        description="Papelão, sacaria e caixas vendidas à parte — o cliente leva e não devolve."
         action={
           <Button asChild size="sm">
             <Link href="/embalagens/nova">
@@ -35,6 +37,22 @@ export default async function EmbalagensPage() {
           </Button>
         }
       />
+
+      {/* Os dois "negócios de caixa" do box vivem em módulos diferentes, e
+          confundi-los é o erro mais caro aqui: lançar uma caixa retornável
+          como venda avulsa some com ela do controle de devolução. */}
+      <Card className="mb-4 flex items-start gap-2 p-3 text-sm">
+        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+        <span className="text-muted-foreground">
+          Aqui é a <b className="text-foreground">venda avulsa</b> de papelão, sacaria e
+          afins — o cliente leva e não devolve. As{" "}
+          <Link href="/caixas-plasticas" className="font-medium text-primary underline underline-offset-2">
+            caixas plásticas
+          </Link>{" "}
+          que saem <b className="text-foreground">emprestadas</b> com a mercadoria são
+          controladas no módulo próprio, junto com o fiado e a higienização.
+        </span>
+      </Card>
 
       <div className="mb-4 grid grid-cols-2 gap-2">
         <StatCard label="Embalagens vendidas" value={String(totalQtd)} />
@@ -85,9 +103,13 @@ export default async function EmbalagensPage() {
             <TipoEmbalagemForm />
             <div className="flex flex-col gap-2">
               {tipos.map((t) => (
-                <Card key={t.id} className="p-3 text-sm font-medium">
-                  {t.name}
-                </Card>
+                <EstoqueTipo
+                  key={t.id}
+                  id={t.id}
+                  nome={t.name}
+                  controlaEstoque={t.tracksStock}
+                  saldo={t.tracksStock ? (saldos.get(t.id) ?? 0) : null}
+                />
               ))}
             </div>
           </div>
