@@ -94,19 +94,24 @@ export const HigienizacaoService = {
     return rows.map((r) => r.cleanerName).filter(Boolean);
   },
 
+  /**
+   * Lista os lotes (com filtro opcional de status) + os totais do módulo.
+   *
+   * Os totais e as pendências são calculados sobre **TODOS** os lotes, nunca
+   * sobre o filtro da tela. "Caixas a receber" e "Total a pagar" são o retrato
+   * da operação: com o filtro em "Devolvidos" eles apareciam zerados, como se
+   * não houvesse nada pendente, enquanto havia lotes abertos em "Enviados".
+   * Filtrar muda a LISTA, não a realidade.
+   */
   async list(tenantId: string, status?: CrateCleaningStatus) {
     const db = getTenantPrisma(tenantId);
-    const [base, saldo] = await Promise.all([
-      db.crateCleaning.findMany({
-        where: status ? { status } : undefined,
-        orderBy: { sentDate: "desc" },
-        take: 100,
-      }),
+    const [todos, saldo] = await Promise.all([
+      db.crateCleaning.findMany({ orderBy: { sentDate: "desc" }, take: 500 }),
       CaixasService.getSaldo(tenantId),
     ]);
 
-    const perdas = await perdasPorLote(db, base.map((c) => c.id));
-    const registros = base.map((c) => {
+    const perdas = await perdasPorLote(db, todos.map((c) => c.id));
+    const comDerivados = todos.map((c) => {
       const perdidas = perdas.get(c.id) ?? 0;
       return {
         ...c,
@@ -116,14 +121,17 @@ export const HigienizacaoService = {
       };
     });
 
-    // Totais derivados (§8.8): caixas a receber e financeiro a pagar.
-    const caixasAReceber = registros.reduce((a, c) => a + c.caixasAReceber, 0);
-    const totalAPagar = money(add(...registros.map((c) => c.valorAPagar)));
+    // Totais derivados (§8.8) — sempre globais.
+    const caixasAReceber = comDerivados.reduce((a, c) => a + c.caixasAReceber, 0);
+    const totalAPagar = money(add(...comDerivados.map((c) => c.valorAPagar)));
 
     // Pendências do ciclo — cada uma tem uma ação diferente, então são
     // contadas separadamente em vez de um único "em aberto".
-    const aguardandoDevolucao = registros.filter((c) => c.caixasAReceber > 0).length;
-    const aguardandoPagamento = registros.filter((c) => gt(c.valorAPagar, 0)).length;
+    const aguardandoDevolucao = comDerivados.filter((c) => c.caixasAReceber > 0).length;
+    const aguardandoPagamento = comDerivados.filter((c) => gt(c.valorAPagar, 0)).length;
+
+    const registros = (status ? comDerivados.filter((c) => c.status === status) : comDerivados)
+      .slice(0, 100);
 
     return {
       registros,

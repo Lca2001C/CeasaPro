@@ -41,14 +41,26 @@ export const abrirMeuAmbiente = withAdminAction({
   handler: (_input, ctx) => AdminService.getOrCreateAdminWorkspace(ctx),
 });
 
+/** Liga/desliga o acesso de um usuário (revoga as sessões ao desligar). */
+export const alterarStatusUsuario = withAdminAction({
+  schema: z.object({ userId: z.string().min(1), active: z.boolean() }),
+  handler: (input, ctx) => AdminService.setUserActive(input, ctx),
+});
+
+/** Gera senha temporária e força a troca no próximo login. */
+export const resetarSenhaUsuario = withAdminAction({
+  schema: z.string().min(1),
+  handler: (id, ctx) => AdminService.resetUserPassword(id, ctx),
+});
+
 export const criarPlano = withAdminAction({
   schema: planoSchema,
-  handler: (input) => AdminService.createPlan(input),
+  handler: (input, ctx) => AdminService.createPlan(input, ctx),
 });
 
 export const atualizarPlano = withAdminAction({
   schema: planoUpdateSchema,
-  handler: (input) => AdminService.updatePlan(input),
+  handler: (input, ctx) => AdminService.updatePlan(input, ctx),
 });
 
 /** Exclui um plano — só se nenhuma assinatura o usa (ver `deletePlan`). */

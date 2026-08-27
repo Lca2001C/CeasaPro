@@ -14,7 +14,6 @@ import {
   Wallet,
   FileBarChart,
   Settings,
-  ShieldCheck,
   Container,
   Droplets,
   PackageOpen,
@@ -37,7 +36,9 @@ const items = [
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
-  { href: "/auditoria", label: "Auditoria", icon: ShieldCheck },
+  // Auditoria é da administração da plataforma (`/admin/auditoria`), não do
+  // dia a dia do box: mistura eventos técnicos com operação e não tem ação
+  // associada para quem está vendendo.
   { href: "/plano", label: "Meu plano", icon: BadgeCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];

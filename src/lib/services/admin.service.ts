@@ -2,10 +2,10 @@ import { randomBytes } from "node:crypto";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { hashPassword } from "@/lib/auth/password";
-import { revokeAllForTenant } from "@/lib/auth/refresh";
+import { revokeAllForTenant, revokeAllForUser } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
 import { startOfMonth } from "@/lib/dates";
-import { sendEmail, welcomeOwnerEmail } from "@/lib/email";
+import { sendEmail, welcomeOwnerEmail, passwordChangedEmail } from "@/lib/email";
 import { absoluteUrl } from "@/lib/app-url";
 import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
@@ -353,15 +353,24 @@ export const AdminService = {
     });
   },
 
+  /**
+   * Planos COMERCIAIS. O plano interno do ambiente do super-admin fica de fora:
+   * ele existe só porque a assinatura precisa de um `planId`, não é produto —
+   * e aparecendo aqui convidava a editar preço e módulos de algo que nenhum
+   * cliente contrata.
+   */
   async listPlans() {
-    return prisma.plan.findMany({ orderBy: { priceMonthly: "asc" } });
+    return prisma.plan.findMany({
+      where: { slug: { not: ADMIN_PLAN_SLUG } },
+      orderBy: { priceMonthly: "asc" },
+    });
   },
 
-  async createPlan(input: PlanoInput) {
+  async createPlan(input: PlanoInput, ctx: AdminCtx) {
     let slug = slugify(input.name) || "plano";
     const clash = await prisma.plan.findUnique({ where: { slug } });
     if (clash) slug = `${slug}-${randomBytes(2).toString("hex")}`;
-    return prisma.plan.create({
+    const plan = await prisma.plan.create({
       data: {
         name: input.name,
         slug,
@@ -371,10 +380,30 @@ export const AdminService = {
         features: { modules: input.modules },
       },
     });
+    await audit({
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "CREATE",
+      entity: "Plan",
+      entityId: plan.id,
+      newData: { name: plan.name, priceMonthly: plan.priceMonthly.toString() },
+      ip: ctx.ip,
+    });
+    return plan;
   },
 
-  async updatePlan(input: PlanoUpdateInput) {
-    return prisma.plan.update({
+  async updatePlan(input: PlanoUpdateInput, ctx: AdminCtx) {
+    // Buscar antes: sem isto, id inexistente virava P2025 do Prisma e chegava
+    // ao usuário como "erro inesperado" em vez de "plano não encontrado".
+    const before = await prisma.plan.findUnique({ where: { id: input.id } });
+    if (!before) throw new NotFoundError("Plano não encontrado");
+    if (before.slug === ADMIN_PLAN_SLUG) {
+      throw new BusinessRuleError(
+        "Este é o plano interno do ambiente do administrador e não deve ser editado.",
+      );
+    }
+
+    const plan = await prisma.plan.update({
       where: { id: input.id },
       data: {
         name: input.name,
@@ -384,6 +413,25 @@ export const AdminService = {
         features: { modules: input.modules },
       },
     });
+    await audit({
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "UPDATE",
+      entity: "Plan",
+      entityId: plan.id,
+      oldData: {
+        name: before.name,
+        priceMonthly: before.priceMonthly.toString(),
+        active: before.active,
+      },
+      newData: {
+        name: plan.name,
+        priceMonthly: plan.priceMonthly.toString(),
+        active: plan.active,
+      },
+      ip: ctx.ip,
+    });
+    return plan;
   },
 
   /**
@@ -399,12 +447,35 @@ export const AdminService = {
   async deletePlan(id: string, ctx: AdminCtx) {
     const plan = await prisma.plan.findUnique({ where: { id } });
     if (!plan) throw new NotFoundError("Plano não encontrado");
-
-    const emUso = await prisma.tenantSubscription.count({ where: { planId: id } });
-    if (emUso > 0) {
+    if (plan.slug === ADMIN_PLAN_SLUG) {
       throw new BusinessRuleError(
-        `Este plano está em ${emUso} assinatura(s) e não pode ser excluído. ` +
+        "Este é o plano interno do ambiente do administrador e não pode ser excluído.",
+      );
+    }
+
+    // A FK é `Restrict`, então QUALQUER assinatura impede a exclusão — inclusive
+    // a de empresa já excluída (soft delete mantém a assinatura). Contar as
+    // duas coisas separado é o que permite explicar o motivo real: dizer
+    // "está em 1 assinatura" sobre um cliente que não existe mais manda o
+    // super-admin procurar uma empresa que ele não vai achar em lugar nenhum.
+    const [emUsoAtivo, total] = await Promise.all([
+      prisma.tenantSubscription.count({
+        where: { planId: id, tenant: { deletedAt: null } },
+      }),
+      prisma.tenantSubscription.count({ where: { planId: id } }),
+    ]);
+
+    if (emUsoAtivo > 0) {
+      throw new BusinessRuleError(
+        `Este plano está em ${emUsoAtivo} assinatura(s) ativa(s) e não pode ser excluído. ` +
           "Desative-o para parar de oferecê-lo — quem já assinou continua como está.",
+      );
+    }
+    if (total > 0) {
+      throw new BusinessRuleError(
+        `Nenhuma empresa ativa usa este plano, mas ${total} empresa(s) excluída(s) ainda ` +
+          "guardam o histórico de assinatura nele. Apagar o plano apagaria a prova de quanto " +
+          "elas pagavam. Desative-o para tirá-lo da oferta.",
       );
     }
 
@@ -424,6 +495,113 @@ export const AdminService = {
       ip: ctx.ip,
     });
     return { id, name: plan.name };
+  },
+
+  /**
+   * Todos os usuários da plataforma, com a empresa de cada um.
+   *
+   * Inclui os super-admins (que aparecem sem empresa ou no próprio ambiente) —
+   * aqui a pergunta é "quem tem acesso ao sistema", e omitir quem administra
+   * seria justamente esconder o acesso mais poderoso.
+   */
+  async listUsers(filtro?: { busca?: string; somenteInativos?: boolean }) {
+    const busca = filtro?.busca?.trim();
+    return prisma.user.findMany({
+      where: {
+        deletedAt: null,
+        ...(filtro?.somenteInativos ? { active: false } : {}),
+        ...(busca
+          ? {
+              OR: [
+                { name: { contains: busca, mode: "insensitive" as const } },
+                { email: { contains: busca, mode: "insensitive" as const } },
+              ],
+            }
+          : {}),
+      },
+      include: { tenant: { select: { id: true, tradeName: true, deletedAt: true } } },
+      orderBy: [{ active: "desc" }, { name: "asc" }],
+      take: 200,
+    });
+  },
+
+  /**
+   * Liga/desliga o acesso de um usuário.
+   *
+   * Desativar **revoga as sessões abertas** na hora: sem isso o usuário
+   * continuaria usando o sistema até o refresh token expirar, que é o oposto
+   * do que "desativar" promete.
+   */
+  async setUserActive(input: { userId: string; active: boolean }, ctx: AdminCtx) {
+    const user = await prisma.user.findFirst({
+      where: { id: input.userId, deletedAt: null },
+    });
+    if (!user) throw new NotFoundError("Usuário não encontrado");
+    if (user.id === ctx.userId && !input.active) {
+      throw new BusinessRuleError("Você não pode desativar a própria conta.");
+    }
+    if (user.active === input.active) return { id: user.id, active: user.active };
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { active: input.active },
+    });
+    if (!input.active) await revokeAllForUser(user.id);
+
+    await audit({
+      tenantId: user.tenantId,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "STATUS_CHANGE",
+      entity: "User",
+      entityId: user.id,
+      oldData: { active: user.active },
+      newData: { active: input.active, sessoesRevogadas: !input.active },
+      ip: ctx.ip,
+    });
+    return { id: user.id, active: input.active };
+  },
+
+  /**
+   * Gera uma senha temporária e obriga a troca no próximo login.
+   *
+   * O super-admin nunca vê nem escolhe a senha definitiva de ninguém: a
+   * temporária é aleatória, entregue uma única vez na tela, e `mustChangePassword`
+   * força o dono a definir a dele. As sessões abertas caem junto — se o motivo
+   * do reset foi conta comprometida, deixar a sessão viva não resolveria nada.
+   */
+  async resetUserPassword(userId: string, ctx: AdminCtx) {
+    const user = await prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
+    if (!user) throw new NotFoundError("Usuário não encontrado");
+
+    const tempPassword = randomBytes(6).toString("base64url");
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        passwordHash: await hashPassword(tempPassword),
+        mustChangePassword: true,
+        resetTokenHash: null,
+        resetTokenExpiresAt: null,
+      },
+    });
+    await revokeAllForUser(user.id);
+
+    await audit({
+      tenantId: user.tenantId,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "PASSWORD_RESET",
+      entity: "User",
+      entityId: user.id,
+      newData: { porSuperAdmin: true, sessoesRevogadas: true },
+      ip: ctx.ip,
+    });
+
+    // Melhor esforço: se o e-mail não sair, a senha ainda aparece na tela.
+    const mail = passwordChangedEmail({ loginUrl: absoluteUrl("/login") });
+    await sendEmail(user.email, mail.subject, mail.html);
+
+    return { id: user.id, name: user.name, email: user.email, tempPassword };
   },
 
   async listPayments() {

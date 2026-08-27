@@ -77,4 +77,68 @@ describe("Exclusão de plano (super-admin)", () => {
       /não encontrado/i,
     );
   });
+
+  it("explica quando o bloqueio vem de empresa EXCLUÍDA, não de cliente ativo", async () => {
+    // A FK é Restrict: a assinatura sobrevive ao soft delete do tenant e
+    // continua barrando. A mensagem antiga dizia "está em 1 assinatura(s)",
+    // mandando o super-admin procurar um cliente que não existe mais.
+    const plano = await criarPlano("Plano Orfao");
+    const tenantId = await createTestTenant("EMPRESA EXCLUIDA");
+    tenants.push(tenantId);
+    await prisma.tenantSubscription.create({
+      data: {
+        tenantId,
+        planId: plano.id,
+        status: "ATIVO",
+        monthlyAmount: 10,
+        currentPeriodEnd: new Date("2026-12-01T00:00:00Z"),
+        graceDays: 5,
+      },
+    });
+    await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { deletedAt: new Date() },
+    });
+
+    await expect(AdminService.deletePlan(plano.id, ctx)).rejects.toThrow(/excluída/i);
+    expect(await prisma.plan.findUnique({ where: { id: plano.id } })).not.toBeNull();
+  });
+});
+
+describe("Plano interno do ambiente do super-admin", () => {
+  it("não aparece na lista de planos comerciais", async () => {
+    const interno = await prisma.plan.upsert({
+      where: { slug: "ambiente-administrador" },
+      update: {},
+      create: {
+        name: "Ambiente do administrador",
+        slug: "ambiente-administrador",
+        priceMonthly: 0,
+        active: false,
+      },
+    });
+
+    const lista = await AdminService.listPlans();
+    expect(lista.some((p) => p.id === interno.id)).toBe(false);
+  });
+
+  it("não pode ser editado nem excluído", async () => {
+    const interno = await prisma.plan.findUniqueOrThrow({
+      where: { slug: "ambiente-administrador" },
+    });
+    await expect(AdminService.deletePlan(interno.id, ctx)).rejects.toThrow(/interno/i);
+    await expect(
+      AdminService.updatePlan(
+        {
+          id: interno.id,
+          name: "Hackeado",
+          priceMonthly: 999,
+          maxUsers: null,
+          active: true,
+          modules: [],
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/interno/i);
+  });
 });

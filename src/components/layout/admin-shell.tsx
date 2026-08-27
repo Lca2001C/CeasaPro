@@ -10,6 +10,7 @@ import { AbrirAmbienteButton } from "./abrir-ambiente-button";
 const nav = [
   { href: "/admin", label: "Início" },
   { href: "/admin/clientes", label: "Clientes" },
+  { href: "/admin/usuarios", label: "Usuários" },
   { href: "/admin/planos", label: "Planos" },
   { href: "/admin/pagamentos", label: "Pagamentos" },
   { href: "/admin/auditoria", label: "Auditoria" },
