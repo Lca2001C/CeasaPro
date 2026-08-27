@@ -10,7 +10,12 @@ export const ComprasService = {
   async list(tenantId: string) {
     const db = getTenantPrisma(tenantId);
     return db.purchase.findMany({
-      include: { supplier: true, items: true },
+      // O produto vem junto para a lista poder abrir os itens sem outra
+      // consulta — conferir "o que veio nesta compra" era o buraco da tela.
+      include: {
+        supplier: true,
+        items: { include: { product: { select: { name: true } } } },
+      },
       orderBy: { purchaseDate: "desc" },
       take: 100,
     });

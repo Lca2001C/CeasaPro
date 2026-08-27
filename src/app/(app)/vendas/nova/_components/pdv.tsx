@@ -1,8 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Search, Plus, Minus, Trash2, Loader2, ShoppingCart } from "lucide-react";
+import {
+  CheckCircle2,
+  Container,
+  HandCoins,
+  Loader2,
+  Minus,
+  Package,
+  Plus,
+  Search,
+  ShoppingCart,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
 import { formatBRL } from "@/lib/format";
@@ -10,7 +22,7 @@ import { SALE_UNIT_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
 
 interface Produto {
@@ -25,6 +37,19 @@ interface CartItem {
   unitPrice: number;
 }
 
+/** id do `<datalist>` que alimenta o autocomplete de cliente. */
+const LISTA_CLIENTES = "pdv-clientes-conhecidos";
+
+/** O que a venda mudou no sistema — mostrado na confirmação. */
+interface ResumoVenda {
+  total: number;
+  itens: number;
+  pagamento: string;
+  cliente: string | null;
+  fiado: boolean;
+  caixas: number;
+}
+
 const PAYMENTS = [
   { value: "DINHEIRO", label: "Dinheiro" },
   { value: "PIX", label: "PIX" },
@@ -32,7 +57,19 @@ const PAYMENTS = [
   { value: "FIADO", label: "Fiado" },
 ] as const;
 
-export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLimpas: number }) {
+export function Pdv({
+  produtos,
+  caixasLimpas,
+  ultimosPrecos = {},
+  clientesConhecidos = [],
+}: {
+  produtos: Produto[];
+  caixasLimpas: number;
+  /** Último preço vendido por produto — só sugestão, o campo segue editável. */
+  ultimosPrecos?: Record<string, number>;
+  /** Clientes já atendidos, para autocompletar e evitar nomes duplicados. */
+  clientesConhecidos?: string[];
+}) {
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [cart, setCart] = useState<CartItem[]>([]);
@@ -42,6 +79,7 @@ export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLim
   const [usaCaixaPlastica, setUsaCaixaPlastica] = useState(false);
   const [crateQty, setCrateQty] = useState("");
   const [saving, setSaving] = useState(false);
+  const [resumo, setResumo] = useState<ResumoVenda | null>(null);
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -56,7 +94,12 @@ export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLim
       const found = c.find((i) => i.productId === p.id);
       if (found)
         return c.map((i) => (i.productId === p.id ? { ...i, quantity: i.quantity + 1 } : i));
-      return [...c, { productId: p.id, name: p.name, quantity: 1, unitPrice: 0 }];
+      // Sugere o último preço praticado. Zero significa "nunca vendido" — aí
+      // o campo abre vazio mesmo, e o operador digita.
+      return [
+        ...c,
+        { productId: p.id, name: p.name, quantity: 1, unitPrice: ultimosPrecos[p.id] ?? 0 },
+      ];
     });
     setSearch("");
   }
@@ -93,18 +136,86 @@ export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLim
       })),
     });
     setSaving(false);
-    if (res.ok) {
-      toast.success(`Venda registrada: ${formatBRL(total)}`);
-      setCart([]);
-      setCustomer("");
-      setDueDate("");
-      setUsaCaixaPlastica(false);
-      setCrateQty("");
-      setPayment("DINHEIRO");
-      router.refresh();
-    } else {
+    if (!res.ok) {
       toast.error(res.error.message);
+      return;
     }
+
+    // Resumo do que a venda MUDOU, não só "deu certo": o operador precisa
+    // saber que o estoque baixou, que virou fiado ou que as caixas saíram —
+    // é a diferença entre confiar no sistema e conferir tudo à mão depois.
+    setResumo({
+      total,
+      itens: cart.length,
+      pagamento: PAYMENTS.find((p) => p.value === payment)?.label ?? payment,
+      cliente: customer.trim() || null,
+      fiado: payment === "FIADO",
+      caixas,
+    });
+
+    setCart([]);
+    setCustomer("");
+    setDueDate("");
+    setUsaCaixaPlastica(false);
+    setCrateQty("");
+    setPayment("DINHEIRO");
+    router.refresh();
+  }
+
+  // Confirmação toma a tela inteira de propósito: no balcão, um toast some
+  // antes de o operador levantar os olhos do troco.
+  if (resumo) {
+    return (
+      <div className="flex flex-col gap-4">
+        <Card className="border-success/40 bg-success/5">
+          <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
+            <CheckCircle2 className="size-12 text-success" />
+            <div>
+              <p className="text-2xl font-bold tabular-nums text-success">
+                {formatBRL(resumo.total)}
+              </p>
+              <p className="text-sm text-muted-foreground">
+                Venda registrada · {resumo.pagamento}
+              </p>
+            </div>
+
+            <ul className="w-full space-y-1 text-left text-sm">
+              <li className="flex items-center gap-2">
+                <Package className="size-4 shrink-0 text-muted-foreground" />
+                Estoque baixado — {resumo.itens} produto(s)
+              </li>
+              {resumo.fiado && (
+                <li className="flex items-center gap-2">
+                  <HandCoins className="size-4 shrink-0 text-warning" />
+                  Lançado no fiado de <b>{resumo.cliente}</b>
+                </li>
+              )}
+              {resumo.caixas > 0 && (
+                <li className="flex items-center gap-2">
+                  <Container className="size-4 shrink-0 text-muted-foreground" />
+                  {resumo.caixas} caixa(s) plástica(s) com {resumo.cliente}
+                </li>
+              )}
+            </ul>
+          </CardContent>
+        </Card>
+
+        <Button size="lg" className="h-14 w-full text-base" onClick={() => setResumo(null)}>
+          <ShoppingCart className="size-5" /> Próxima venda
+        </Button>
+
+        <div className="grid grid-cols-2 gap-2">
+          <Button asChild variant="outline">
+            <Link href="/vendas">Ver vendas</Link>
+          </Button>
+          <Button asChild variant="outline">
+            <Link href={resumo.fiado ? "/fiado" : "/dashboard"}>
+              {resumo.fiado ? "Ver fiado" : "Ir para o início"}
+            </Link>
+          </Button>
+        </div>
+      </div>
+    );
   }
 
   return (
@@ -220,12 +331,22 @@ export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLim
         ))}
       </div>
 
+      {/* Autocomplete nativo: sem JS extra, funciona em qualquer navegador e
+          no teclado do celular. Evita o mesmo cliente virar "João", "joao" e
+          "JOÃO" — três saldos separados no fiado e nas caixas. */}
+      <datalist id={LISTA_CLIENTES}>
+        {clientesConhecidos.map((nome) => (
+          <option key={nome} value={nome} />
+        ))}
+      </datalist>
+
       {payment === "FIADO" ? (
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <Input
             placeholder="Nome do cliente (fiado)"
             value={customer}
             onChange={(e) => setCustomer(e.target.value)}
+            list={LISTA_CLIENTES}
           />
           <div className="flex flex-col gap-1">
             <Input
@@ -243,6 +364,7 @@ export function Pdv({ produtos, caixasLimpas }: { produtos: Produto[]; caixasLim
             placeholder="Nome do cliente (controle de caixas)"
             value={customer}
             onChange={(e) => setCustomer(e.target.value)}
+            list={LISTA_CLIENTES}
           />
         )
       )}

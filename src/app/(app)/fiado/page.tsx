@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ChevronRight, Plus, Container } from "lucide-react";
+import { AlertTriangle, ChevronRight, Plus, Container } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { FiadoService } from "@/lib/services/fiado.service";
 import { fiadoStatusFiltroEnum, type FiadoStatusFiltro } from "@/lib/validations/fiado";
@@ -19,11 +19,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { startOfDayTz } from "@/lib/tz";
 import {
   PrecoResumo,
   ProdutosResumo,
   QuantidadeResumo,
 } from "./_components/fiado-linha";
+import { BuscaFiado } from "./_components/busca-fiado";
+import { ReceberRapido } from "./_components/receber-rapido";
 
 export const dynamic = "force-dynamic";
 
@@ -36,13 +39,25 @@ const FILTROS: { value: FiadoStatusFiltro; label: string }[] = [
 export default async function FiadoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; q?: string }>;
 }) {
-  const { status: rawStatus } = await searchParams;
+  const { status: rawStatus, q } = await searchParams;
   const status = fiadoStatusFiltroEnum.safeParse(rawStatus).data ?? "EM_ABERTO";
+  const busca = q?.trim() || undefined;
 
   const { tenantId } = await requireTenant();
-  const { contas, totalGeral, totalCaixas } = await FiadoService.listOpen(tenantId, status);
+  const { contas, totalGeral, totalCaixas } = await FiadoService.listOpen(
+    tenantId,
+    status,
+    busca,
+  );
+
+  // Vencida = tem data de vencimento no passado e ainda deve. Comparar por dia
+  // brasileiro: `new Date()` puro faria uma conta vencer às 21h do dia anterior.
+  const hoje = startOfDayTz(new Date());
+  const estaVencida = (c: (typeof contas)[number]) =>
+    c.status === "EM_ABERTO" && c.dueDate !== null && c.dueDate < hoje;
+  const vencidas = contas.filter(estaVencida).length;
 
   return (
     <div>
@@ -68,6 +83,22 @@ export default async function FiadoPage({
         />
       </div>
 
+      {vencidas > 0 && (
+        <Card className="mb-4 flex items-center gap-2 border-destructive/40 bg-destructive/10 p-3 text-sm">
+          <AlertTriangle className="size-4 shrink-0 text-destructive" />
+          <span>
+            <b>
+              {vencidas} conta{vencidas > 1 ? "s" : ""}
+            </b>{" "}
+            passou do vencimento.
+          </span>
+        </Card>
+      )}
+
+      <div className="mb-3">
+        <BuscaFiado />
+      </div>
+
       <div className="mb-4 flex gap-2">
         {FILTROS.map((f) => (
           <Button
@@ -76,7 +107,9 @@ export default async function FiadoPage({
             size="sm"
             variant={status === f.value ? "default" : "outline"}
           >
-            <Link href={`/fiado?status=${f.value}`}>{f.label}</Link>
+            <Link href={`/fiado?status=${f.value}${busca ? `&q=${encodeURIComponent(busca)}` : ""}`}>
+              {f.label}
+            </Link>
           </Button>
         ))}
       </div>
@@ -108,6 +141,7 @@ export default async function FiadoPage({
                   <TableHead className="text-right">Total</TableHead>
                   <TableHead className="text-right">Caixas</TableHead>
                   <TableHead className="text-right">Saldo</TableHead>
+                  <TableHead className="text-right">Ação</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -147,10 +181,28 @@ export default async function FiadoPage({
                     <TableCell
                       className={cn(
                         "text-right font-semibold tabular-nums",
-                        c.status === "PAGO" ? "text-success" : "text-warning",
+                        c.status === "PAGO"
+                          ? "text-success"
+                          : estaVencida(c)
+                            ? "text-destructive"
+                            : "text-warning",
                       )}
                     >
                       {formatBRL(c.saldo)}
+                      {estaVencida(c) && (
+                        <span className="block text-xs font-normal">
+                          venceu {formatDate(c.dueDate)}
+                        </span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {c.status === "EM_ABERTO" && (
+                        <ReceberRapido
+                          accountId={c.id}
+                          customerName={c.customerName}
+                          saldo={Number(c.saldo)}
+                        />
+                      )}
                     </TableCell>
                   </TableRow>
                 ))}
@@ -163,11 +215,21 @@ export default async function FiadoPage({
           <div className="flex flex-col gap-2 md:hidden">
             {contas.map((c) => (
               <Link key={c.id} href={`/fiado/${c.id}`}>
-                <Card className="flex items-center justify-between p-3 hover:bg-accent/40">
+                <Card
+                  className={cn(
+                    "flex items-center justify-between gap-2 p-3 hover:bg-accent/40",
+                    estaVencida(c) && "border-destructive/50 bg-destructive/5",
+                  )}
+                >
                   <div className="min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="truncate font-medium">{c.customerName}</span>
                       {c.status === "PAGO" && <Badge variant="success">Quitada</Badge>}
+                      {estaVencida(c) && (
+                        <Badge variant="destructive" className="gap-1">
+                          <AlertTriangle className="size-3" /> Vencida
+                        </Badge>
+                      )}
                       {c.plasticCrateQty > 0 && (
                         <Badge variant="secondary">{c.plasticCrateQty} cx</Badge>
                       )}
@@ -186,12 +248,16 @@ export default async function FiadoPage({
                         : ""}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2">
+                  <div className="flex shrink-0 items-center gap-2">
                     <div className="text-right">
                       <span
                         className={cn(
                           "block font-semibold tabular-nums",
-                          c.status === "PAGO" ? "text-success" : "text-warning",
+                          c.status === "PAGO"
+                            ? "text-success"
+                            : estaVencida(c)
+                              ? "text-destructive"
+                              : "text-warning",
                         )}
                       >
                         {formatBRL(c.saldo)}
@@ -200,7 +266,14 @@ export default async function FiadoPage({
                         de {formatBRL(c.totalAmount)}
                       </span>
                     </div>
-                    <ChevronRight className="size-4 text-muted-foreground" />
+                    {c.status === "EM_ABERTO" && (
+                      <ReceberRapido
+                        accountId={c.id}
+                        customerName={c.customerName}
+                        saldo={Number(c.saldo)}
+                      />
+                    )}
+                    <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
                   </div>
                 </Card>
               </Link>

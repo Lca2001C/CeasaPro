@@ -65,21 +65,56 @@ export function isAdvancedReport(kind: ReportKind): boolean {
 }
 
 export const REPORT_LABELS: Record<ReportKind, string> = {
-  VENDAS: "Relatorio de vendas",
-  COMPRAS: "Relatorio de compras",
-  FIADO: "Relatorio de fiado",
-  DESPESAS: "Relatorio de despesas",
-  ESTOQUE: "Relatorio de estoque",
+  VENDAS: "Relatório de vendas",
+  COMPRAS: "Relatório de compras",
+  FIADO: "Relatório de fiado",
+  DESPESAS: "Relatório de despesas",
+  ESTOQUE: "Relatório de estoque",
   LUCRO_PRODUTO: "Lucro por produto",
   LUCRO_FORNECEDOR: "Lucro por fornecedor",
   MAIS_VENDIDOS: "Produtos mais vendidos",
-  PRODUTOS_PREJUIZO: "Produtos com prejuizo",
+  PRODUTOS_PREJUIZO: "Produtos com prejuízo",
   ESTOQUE_PARADO: "Estoque parado",
-  CAIXAS_PAPELAO: "Total de caixas de papelao",
+  CAIXAS_PAPELAO: "Total de caixas de papelão",
   INADIMPLENTES: "Clientes inadimplentes",
-  FORNECEDORES: "Relatorio de fornecedores",
+  FORNECEDORES: "Relatório de fornecedores",
   FLUXO_CAIXA: "Fluxo de caixa",
-  CAIXAS_PLASTICAS: "Caixas plasticas",
-  HIGIENIZACAO: "Higienizacao",
+  CAIXAS_PLASTICAS: "Caixas plásticas",
+  HIGIENIZACAO: "Higienização",
   EMBALAGENS: "Venda de embalagens",
 };
+
+/**
+ * Relatórios agrupados por assunto.
+ *
+ * Uma lista plana de 17 itens obriga a ler tudo para achar um. Em grupos de
+ * 2–4, a escolha vira "primeiro o assunto, depois o relatório" — bem mais
+ * rápido de varrer, ainda mais no celular.
+ *
+ * A lista é derivada de `REPORT_TYPES`, não digitada de novo: um relatório
+ * novo que fique de fora aparece no teste de cobertura, em vez de sumir da tela.
+ */
+export const REPORT_GROUPS: { titulo: string; relatorios: ReportKind[] }[] = [
+  {
+    titulo: "Vendas e fiado",
+    relatorios: ["VENDAS", "FIADO", "MAIS_VENDIDOS", "INADIMPLENTES"],
+  },
+  {
+    titulo: "Compras e estoque",
+    relatorios: ["COMPRAS", "ESTOQUE", "ESTOQUE_PARADO", "FORNECEDORES"],
+  },
+  {
+    titulo: "Financeiro",
+    relatorios: [
+      "DESPESAS",
+      "FLUXO_CAIXA",
+      "LUCRO_PRODUTO",
+      "LUCRO_FORNECEDOR",
+      "PRODUTOS_PREJUIZO",
+    ],
+  },
+  {
+    titulo: "Caixas, higienização e embalagens",
+    relatorios: ["CAIXAS_PLASTICAS", "CAIXAS_PAPELAO", "HIGIENIZACAO", "EMBALAGENS"],
+  },
+];

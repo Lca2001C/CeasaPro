@@ -18,6 +18,7 @@ import { DashboardService, type DashboardProductRow } from "@/lib/services/dashb
 import { AvisosService } from "@/lib/services/avisos.service";
 import { formatBRL, formatDate, formatQty } from "@/lib/format";
 import { StatCard } from "@/components/data/stat-card";
+import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
 import { SalesChart } from "@/components/data/sales-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
@@ -66,7 +67,15 @@ export default async function DashboardPage() {
         </Card>
       )}
 
-      {/* Números principais */}
+      {/* A ação principal fica no TOPO: quem abre o app no balcão quer vender,
+          não rolar doze números até achar o botão. */}
+      <Button asChild size="lg" className="h-14 w-full text-base">
+        <Link href="/vendas/nova">
+          <ShoppingCart className="size-5" /> Nova venda
+        </Link>
+      </Button>
+
+      {/* Os quatro números do dia a dia. O resto vive nas seções abaixo. */}
       <div className="grid grid-cols-2 gap-3">
         <StatCard
           label="Hoje vendi"
@@ -75,129 +84,145 @@ export default async function DashboardPage() {
           tone="success"
         />
         <StatCard
-          label="Semana"
-          value={formatBRL(s.semanaVendi)}
-          icon={<TrendingUp className="size-4" />}
-          tone="success"
-        />
-        <StatCard
-          label="Mês"
-          value={formatBRL(s.mesVendi)}
-          icon={<WalletCards className="size-4" />}
-          tone="success"
-        />
-        <StatCard
-          label="Comprado"
-          value={formatBRL(s.totalCompradoMes)}
-          icon={<ReceiptText className="size-4" />}
-        />
-        <StatCard
-          label="A receber"
+          label="Clientes me devem"
           value={formatBRL(s.aReceber)}
+          hint="Fiado a receber"
           icon={<HandCoins className="size-4" />}
           tone="warning"
         />
         <StatCard
-          label="A pagar"
-          value={formatBRL(s.contasPagar)}
-          icon={<ReceiptText className="size-4" />}
-          tone="warning"
-        />
-        <StatCard
-          label="Estoque"
+          label="Tenho em estoque"
           value={formatBRL(s.estoqueValor)}
+          hint="Valor da mercadoria"
           icon={<Package className="size-4" />}
         />
         <StatCard
-          label="Lucro bruto"
-          value={formatBRL(s.lucroBrutoMes)}
-          icon={<TrendingUp className="size-4" />}
-          tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
-        />
-        <StatCard
-          label="Lucro líquido"
+          label="Sobrou no mês"
           value={formatBRL(s.lucroMes)}
+          hint="Lucro líquido"
           icon={<TrendingUp className="size-4" />}
           tone={lucroTone}
         />
-        <StatCard
-          label="Margem"
-          value={`${formatQty(s.margemLiquidaMes)}%`}
-          icon={<Percent className="size-4" />}
-          tone={margemTone}
-        />
-        <StatCard
-          label="Fixas"
-          value={formatBRL(s.despesasFixasMes)}
-          icon={<ReceiptText className="size-4" />}
-        />
-        <StatCard
-          label="Variáveis"
-          value={formatBRL(s.despesasVariaveisMes)}
-          icon={<ReceiptText className="size-4" />}
-        />
       </div>
 
-      <Card>
-        <CardContent className="pt-4">
+      <SecaoRecolhivel
+        titulo="Ver financeiro completo"
+        descricao="Vendas da semana e do mês, contas e lucro"
+      >
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+          <StatCard
+            label="Vendi na semana"
+            value={formatBRL(s.semanaVendi)}
+            icon={<TrendingUp className="size-4" />}
+            tone="success"
+          />
+          <StatCard
+            label="Vendi no mês"
+            value={formatBRL(s.mesVendi)}
+            icon={<WalletCards className="size-4" />}
+            tone="success"
+          />
+          <StatCard
+            label="Comprei no mês"
+            value={formatBRL(s.totalCompradoMes)}
+            icon={<ReceiptText className="size-4" />}
+          />
+          <StatCard
+            label="Contas do mês"
+            value={formatBRL(s.contasPagar)}
+            hint="A pagar"
+            icon={<ReceiptText className="size-4" />}
+            tone="warning"
+          />
+          <StatCard
+            label="Ganhei nas vendas"
+            value={formatBRL(s.lucroBrutoMes)}
+            hint="Lucro bruto — antes das contas"
+            icon={<TrendingUp className="size-4" />}
+            tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
+          />
+          <StatCard
+            label="Sobrou em %"
+            value={`${formatQty(s.margemLiquidaMes)}%`}
+            hint="Margem líquida"
+            icon={<Percent className="size-4" />}
+            tone={margemTone}
+          />
+          <StatCard
+            label="Contas fixas"
+            value={formatBRL(s.despesasFixasMes)}
+            hint="Aluguel, luz, salário…"
+            icon={<ReceiptText className="size-4" />}
+          />
+          <StatCard
+            label="Contas variáveis"
+            value={formatBRL(s.despesasVariaveisMes)}
+            hint="Mudam todo mês"
+            icon={<ReceiptText className="size-4" />}
+          />
+        </div>
+
+        <div className="mt-4">
           <SalesChart data={s.chart} />
-        </CardContent>
-      </Card>
+        </div>
+      </SecaoRecolhivel>
 
-      <div className="grid gap-3 md:grid-cols-2">
-        <ProductList
-          title="Mais vendidos"
-          icon={<ShoppingCart className="size-4" />}
-          rows={s.topVendidos}
-          mode="quantity"
-        />
-        <ProductList
-          title="Mais lucrativos"
-          icon={<TrendingUp className="size-4" />}
-          rows={s.topLucrativos}
-          mode="profit"
-        />
-        <ProductList
-          title="Com prejuízo"
-          icon={<TrendingDown className="size-4" />}
-          rows={s.produtosComPrejuizo}
-          mode="profit"
-          tone="destructive"
-        />
-        <Card>
-          <CardContent className="pt-4">
-            <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
-              <Boxes className="size-4" />
-              Estoque parado
-            </div>
-            {s.estoqueParado.length === 0 ? (
-              <p className="text-sm text-muted-foreground">Nenhum produto parado com saldo.</p>
-            ) : (
-              <div className="flex flex-col divide-y">
-                {s.estoqueParado.map((row) => (
-                  <div key={row.productId} className="flex items-center justify-between gap-3 py-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-medium">{row.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        Último movimento: {formatDate(row.lastMovementAt)}
-                      </p>
-                    </div>
-                    <span className="shrink-0 text-sm font-semibold tabular-nums">
-                      {formatQty(row.quantity)}
-                    </span>
-                  </div>
-                ))}
+      <SecaoRecolhivel
+        titulo="Ver produtos"
+        descricao="Mais vendidos, mais lucrativos, prejuízo e estoque parado"
+      >
+        <div className="grid gap-3 md:grid-cols-2">
+          <ProductList
+            title="Mais vendidos"
+            icon={<ShoppingCart className="size-4" />}
+            rows={s.topVendidos}
+            mode="quantity"
+          />
+          <ProductList
+            title="Mais lucrativos"
+            icon={<TrendingUp className="size-4" />}
+            rows={s.topLucrativos}
+            mode="profit"
+          />
+          <ProductList
+            title="Com prejuízo"
+            icon={<TrendingDown className="size-4" />}
+            rows={s.produtosComPrejuizo}
+            mode="profit"
+            tone="destructive"
+          />
+          <Card>
+            <CardContent className="pt-4">
+              <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
+                <Boxes className="size-4" />
+                Estoque parado
               </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Button asChild size="lg" className="w-full">
-        <Link href="/vendas/nova">
-          <ShoppingCart /> Nova venda
-        </Link>
-      </Button>
+              {s.estoqueParado.length === 0 ? (
+                <p className="text-sm text-muted-foreground">Nenhum produto parado com saldo.</p>
+              ) : (
+                <div className="flex flex-col divide-y">
+                  {s.estoqueParado.map((row) => (
+                    <div
+                      key={row.productId}
+                      className="flex items-center justify-between gap-3 py-2"
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-medium">{row.name}</p>
+                        <p className="text-xs text-muted-foreground">
+                          Último movimento: {formatDate(row.lastMovementAt)}
+                        </p>
+                      </div>
+                      <span className="shrink-0 text-sm font-semibold tabular-nums">
+                        {formatQty(row.quantity)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      </SecaoRecolhivel>
     </div>
   );
 }

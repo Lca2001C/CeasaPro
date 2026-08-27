@@ -120,15 +120,38 @@ describe("Exclusão de lançamento de fiado", () => {
     expect(saldoDepois.comClientes).toBe(saldoAntes.comClientes);
   });
 
-  it("as caixas voltam LIMPAS — nunca chegaram ao cliente", async () => {
+  it("as caixas voltam LIMPAS — não entram na fila de higienização", async () => {
     const saldoAntes = await CaixasService.getSaldo(tenantId);
     const { conta } = await vendaFiada({ qtd: 12, preco: 2, caixas: 12 });
 
+    // Durante a venda elas saem do estoque limpo.
+    const saldoNaVenda = await CaixasService.getSaldo(tenantId);
+    expect(saldoNaVenda.limpas).toBe(saldoAntes.limpas - 12);
+
     await FiadoService.remove(conta.id, ctx);
 
+    // E voltam para `limpas`, não para `sujas`. Um movimento de RETORNO faria
+    // o contrário (`sujas = entrada_suja + retorno − …`), mandando higienizar
+    // caixa que nunca saiu do box — por isso a reversão apaga o movimento.
     const saldoDepois = await CaixasService.getSaldo(tenantId);
     expect(saldoDepois.limpas).toBe(saldoAntes.limpas);
     expect(saldoDepois.sujas).toBe(saldoAntes.sujas);
+    expect(saldoDepois.emHigienizacao).toBe(saldoAntes.emHigienizacao);
+  });
+
+  it("não deixa movimento de caixa órfão da venda apagada", async () => {
+    const { sale, conta } = await vendaFiada({ qtd: 7, preco: 2, caixas: 7 });
+    await FiadoService.remove(conta.id, ctx);
+
+    const movimentos = await prisma.plasticCrateMovement.count({
+      where: { saleId: sale.id },
+    });
+    expect(movimentos).toBe(0);
+
+    const baixas = await prisma.stockMovement.count({
+      where: { sourceType: "SALE", sourceId: sale.id },
+    });
+    expect(baixas).toBe(0);
   });
 
   it("RECUSA excluir conta que já recebeu pagamento", async () => {

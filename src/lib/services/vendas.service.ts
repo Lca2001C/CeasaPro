@@ -1,4 +1,5 @@
 import { Prisma } from "@prisma/client";
+import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { add, mul, money, toDecimal, gt } from "@/lib/money";
@@ -19,6 +20,49 @@ export function resolvePlasticCrateQty(input: VendaInput): number {
 }
 
 export const VendasService = {
+  /**
+   * Último preço praticado por produto.
+   *
+   * No PDV o preço entrava zerado e o operador digitava de novo a cada venda —
+   * no mesmo produto, quase sempre pelo mesmo valor. Sugerir o último preço
+   * elimina a digitação no caso comum; o campo continua editável, então nada
+   * é imposto.
+   *
+   * `DISTINCT ON` resolve "o mais recente de cada produto" numa varredura só,
+   * em vez de uma consulta por produto.
+   */
+  async ultimosPrecos(tenantId: string): Promise<Record<string, number>> {
+    const rows = await prisma.$queryRaw<{ productId: string; unitPrice: Prisma.Decimal }[]>`
+      SELECT DISTINCT ON (si."productId") si."productId", si."unitPrice"
+      FROM sale_items si
+      JOIN sales s ON s.id = si."saleId"
+      WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL
+      ORDER BY si."productId", s."saleDate" DESC, si."createdAt" DESC
+    `;
+    const mapa: Record<string, number> = {};
+    for (const r of rows) mapa[r.productId] = Number(r.unitPrice);
+    return mapa;
+  },
+
+  /**
+   * Nomes de clientes já usados, para autocompletar no fiado.
+   * Evita o mesmo cliente virar "João", "joao" e "JOÃO" — três saldos
+   * separados, já que o fiado agrupa caixas plásticas pelo nome.
+   */
+  async clientesConhecidos(tenantId: string): Promise<string[]> {
+    const rows = await prisma.$queryRaw<{ customerName: string }[]>`
+      SELECT DISTINCT "customerName"
+      FROM sales
+      WHERE "tenantId" = ${tenantId}
+        AND "deletedAt" IS NULL
+        AND "customerName" IS NOT NULL
+        AND "customerName" <> ''
+      ORDER BY "customerName" ASC
+      LIMIT 500
+    `;
+    return rows.map((r) => r.customerName);
+  },
+
   async list(tenantId: string) {
     const db = getTenantPrisma(tenantId);
     return db.sale.findMany({

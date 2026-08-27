@@ -13,6 +13,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { cn } from "@/lib/cn";
+
+/** Empresa → fornecedor → produto. */
+const TOTAL_PASSOS = 3;
 
 export function OnboardingWizard({ initialName }: { initialName: string }) {
   const router = useRouter();
@@ -92,7 +96,29 @@ export function OnboardingWizard({ initialName }: { initialName: string }) {
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-primary">Bem-vindo!</h1>
-        <p className="text-sm text-muted-foreground">Passo {step} de 4</p>
+        {/* São 3 passos — o texto dizia "de 4" e deixava quem está começando
+            esperando uma etapa que nunca vinha. */}
+        <p className="text-sm text-muted-foreground">
+          Passo {step} de {TOTAL_PASSOS}
+        </p>
+        <div
+          className="mx-auto mt-2 flex max-w-[12rem] gap-1.5"
+          role="progressbar"
+          aria-valuemin={1}
+          aria-valuemax={TOTAL_PASSOS}
+          aria-valuenow={step}
+          aria-label={`Passo ${step} de ${TOTAL_PASSOS}`}
+        >
+          {Array.from({ length: TOTAL_PASSOS }, (_, i) => (
+            <span
+              key={i}
+              className={cn(
+                "h-1.5 flex-1 rounded-full transition-colors",
+                i < step ? "bg-primary" : "bg-muted",
+              )}
+            />
+          ))}
+        </div>
       </div>
 
       <Card>

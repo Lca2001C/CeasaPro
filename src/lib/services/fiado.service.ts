@@ -193,7 +193,8 @@ export const FiadoService = {
    * contando, a mercadoria seguiria baixada do estoque e o valor sumiria do "a
    * receber". Ou seja, o sistema fecharia com um buraco. Por isso a exclusão
    * reverte a operação inteira, na mesma transação: conta, venda, baixa de
-   * estoque e caixas plásticas que saíram com a mercadoria.
+   * estoque e caixas plásticas que saíram com a mercadoria — que voltam
+   * exatamente ao estado anterior à venda.
    *
    * **Recusa quando já houve pagamento.** Apagar dinheiro que entrou é falsear
    * o caixa; nesse caso o caminho é acertar o valor com o cliente, não excluir
@@ -218,9 +219,6 @@ export const FiadoService = {
     }
 
     const crateQty = conta.sale?.plasticCrateQty ?? 0;
-    // O saldo de caixas é lido FORA da transação, como em `registrarVenda`:
-    // `registrarInTx` valida o movimento contra ele.
-    const crateSaldo = crateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
     const agora = new Date();
 
     await db.$transaction(async (tx) => {
@@ -230,42 +228,25 @@ export const FiadoService = {
       });
 
       if (conta.sale) {
-        // Estoque volta: uma ENTRADA por item, espelhando a SAIDA da venda.
-        // `sourceType` diferente para a reversão não se confundir com a venda
-        // original em qualquer conferência futura.
-        if (conta.sale.items.length > 0) {
-          await tx.stockMovement.createMany({
-            data: conta.sale.items.map((it) => ({
-              tenantId: ctx.tenantId,
-              productId: it.productId,
-              type: "ENTRADA" as const,
-              quantity: it.quantity,
-              unitCost: it.unitCostAtSale,
-              reason: "Estorno de venda fiada excluída",
-              sourceType: "SALE_REVERSAL",
-              sourceId: conta.sale!.id,
-            })),
-          });
-        }
-
-        // Caixas que saíram com a mercadoria voltam LIMPAS: elas nunca chegaram
-        // ao cliente, então não entram na fila de higienização.
-        if (crateQty > 0 && crateSaldo) {
-          await CaixasService.registrarInTx(
-            tx,
-            {
-              type: "RETORNO",
-              quantity: crateQty,
-              customerName: conta.customerName,
-              movementDate: agora.toISOString(),
-              saleId: conta.sale.id,
-              dirty: false,
-              notes: "Retorno automático — venda fiada excluída",
-            },
-            ctx,
-            crateSaldo,
-          );
-        }
+        // Os movimentos de estoque e de caixas são APAGADOS, não compensados.
+        //
+        // Compensar seria o certo se a venda tivesse acontecido e fosse
+        // devolvida — mas aqui ela está sendo desfeita, como se não tivesse
+        // existido. Uma ENTRADA de estorno apareceria no histórico do produto
+        // como se mercadoria tivesse chegado, e nas caixas nem funcionaria:
+        // `limpas` é `entrada_limpa + retorno_hig − saida − quebra_limpa`, ou
+        // seja, um RETORNO devolve a caixa para `sujas`, não para `limpas` —
+        // o sistema mandaria higienizar caixa que nunca saiu do box.
+        //
+        // Os dois carregam o vínculo com a venda (`sourceId` / `saleId`), então
+        // a remoção é exata. O que aconteceu fica registrado na auditoria e na
+        // própria venda, que é preservada com `deletedAt`.
+        await tx.stockMovement.deleteMany({
+          where: { tenantId: ctx.tenantId, sourceType: "SALE", sourceId: conta.sale.id },
+        });
+        await tx.plasticCrateMovement.deleteMany({
+          where: { tenantId: ctx.tenantId, saleId: conta.sale.id },
+        });
 
         await tx.sale.update({
           where: { id: conta.sale.id },
@@ -287,7 +268,7 @@ export const FiadoService = {
             saleId: conta.saleId,
           },
           newData: {
-            estoqueEstornado: conta.sale?.items.length ?? 0,
+            itensDevolvidosAoEstoque: conta.sale?.items.length ?? 0,
             caixasDevolvidas: crateQty,
             vendaExcluida: Boolean(conta.sale),
           },
