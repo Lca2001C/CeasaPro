@@ -76,9 +76,14 @@ describe("Rate limit persistido no banco", () => {
     expect((await rateLimitDb(k, JANELA)).ok).toBe(false);
 
     // Empurra a expiração para o passado — equivale a esperar a janela acabar.
+    //
+    // Uma HORA, não um segundo: quem compara é o `now()` do Postgres, e o
+    // relógio do banco pode estar alguns segundos atrás do relógio de quem roda
+    // o teste (é o que acontece com container em WSL2). Com margem de 1s o
+    // teste falhava por deriva de relógio, não por regra errada.
     await prisma.rateLimit.update({
       where: { keyHash: hashDe(k) },
-      data: { expiresAt: new Date(Date.now() - 1000) },
+      data: { expiresAt: new Date(Date.now() - 60 * 60 * 1000) },
     });
 
     const depois = await rateLimitDb(k, JANELA);

@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
+  AlertTriangle,
   CheckCircle2,
   Container,
   HandCoins,
@@ -17,10 +18,12 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, formatQty } from "@/lib/format";
 import { SALE_UNIT_LABELS } from "@/lib/labels";
+import { nivelEstoque, passaDoEstoque, saldoApos } from "@/lib/estoque/nivel";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
@@ -43,11 +46,11 @@ const LISTA_CLIENTES = "pdv-clientes-conhecidos";
 /** O que a venda mudou no sistema — mostrado na confirmação. */
 interface ResumoVenda {
   total: number;
-  itens: number;
   pagamento: string;
   cliente: string | null;
   fiado: boolean;
   caixas: number;
+  baixas: { nome: string; antes: number; depois: number }[];
 }
 
 const PAYMENTS = [
@@ -62,6 +65,8 @@ export function Pdv({
   caixasLimpas,
   ultimosPrecos = {},
   clientesConhecidos = [],
+  estoquePorProduto = {},
+  produtoInicial,
 }: {
   produtos: Produto[];
   caixasLimpas: number;
@@ -69,6 +74,10 @@ export function Pdv({
   ultimosPrecos?: Record<string, number>;
   /** Clientes já atendidos, para autocompletar e evitar nomes duplicados. */
   clientesConhecidos?: string[];
+  /** Saldo em estoque por produto, para avisar ANTES de finalizar. */
+  estoquePorProduto?: Record<string, number>;
+  /** Produto que veio pelo atalho "Vender" da tela de Estoque. */
+  produtoInicial?: string;
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
@@ -80,6 +89,32 @@ export function Pdv({
   const [crateQty, setCrateQty] = useState("");
   const [saving, setSaving] = useState(false);
   const [resumo, setResumo] = useState<ResumoVenda | null>(null);
+
+  // Atalho "Vender" do Estoque: começa com o produto já no carrinho.
+  const [carrinhoIniciado, setCarrinhoIniciado] = useState(false);
+  if (!carrinhoIniciado) {
+    setCarrinhoIniciado(true);
+    const p = produtoInicial ? produtos.find((x) => x.id === produtoInicial) : undefined;
+    if (p) {
+      setCart([
+        { productId: p.id, name: p.name, quantity: 1, unitPrice: ultimosPrecos[p.id] ?? 0 },
+      ]);
+    }
+  }
+
+  const saldoDe = (produtoId: string) => estoquePorProduto[produtoId] ?? 0;
+
+  /** Itens cuja quantidade passa do que existe em estoque. */
+  const semEstoque = cart.filter((i) => passaDoEstoque(saldoDe(i.productId), i.quantity));
+
+  // Os primeiros da lista já vêm ordenados por nome; pegamos poucos para os
+  // chips não competirem com o campo de busca.
+  const clientesFrequentes = clientesConhecidos.slice(0, 4);
+
+  const unidadeDe = (produtoId: string) => {
+    const p = produtos.find((x) => x.id === produtoId);
+    return p ? (SALE_UNIT_LABELS[p.saleUnit] ?? "").toLowerCase() : "";
+  };
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -146,11 +181,17 @@ export function Pdv({
     // é a diferença entre confiar no sistema e conferir tudo à mão depois.
     setResumo({
       total,
-      itens: cart.length,
       pagamento: PAYMENTS.find((p) => p.value === payment)?.label ?? payment,
       cliente: customer.trim() || null,
       fiado: payment === "FIADO",
       caixas,
+      // Saldo antes → depois, por produto: é o que faz o operador confiar que
+      // o estoque foi mesmo atualizado, em vez de conferir na outra aba.
+      baixas: cart.map((i) => ({
+        nome: i.name,
+        antes: saldoDe(i.productId),
+        depois: saldoDe(i.productId) - i.quantity,
+      })),
     });
 
     setCart([]);
@@ -180,10 +221,17 @@ export function Pdv({
             </div>
 
             <ul className="w-full space-y-1 text-left text-sm">
-              <li className="flex items-center gap-2">
-                <Package className="size-4 shrink-0 text-muted-foreground" />
-                Estoque baixado — {resumo.itens} produto(s)
-              </li>
+              {resumo.baixas.map((b) => (
+                <li key={b.nome} className="flex items-center gap-2">
+                  <Package className="size-4 shrink-0 text-muted-foreground" />
+                  <span className="min-w-0">
+                    Estoque baixado — <b>{b.nome}</b>:{" "}
+                    <span className="tabular-nums">
+                      {formatQty(b.antes)} → {formatQty(b.depois)}
+                    </span>
+                  </span>
+                </li>
+              ))}
               {resumo.fiado && (
                 <li className="flex items-center gap-2">
                   <HandCoins className="size-4 shrink-0 text-warning" />
@@ -222,12 +270,42 @@ export function Pdv({
     <div className="flex flex-col gap-4">
       <h1 className="text-xl font-bold">Frente de caixa</h1>
 
-      {/* Busca de produtos */}
+      {/* 1. QUEM — o cliente vem primeiro e vale para qualquer forma de
+          pagamento. Antes o campo só aparecia no fiado ou com caixa plástica,
+          então venda à vista ficava sem nome e o histórico sem dono. */}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="pdv-cliente">Cliente (opcional)</Label>
+        <Input
+          id="pdv-cliente"
+          className="h-12"
+          placeholder="Nome do cliente"
+          value={customer}
+          onChange={(e) => setCustomer(e.target.value)}
+          list={LISTA_CLIENTES}
+        />
+        {clientesFrequentes.length > 0 && !customer && (
+          <div className="flex flex-wrap gap-1.5">
+            {clientesFrequentes.map((nome) => (
+              <Button
+                key={nome}
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setCustomer(nome)}
+              >
+                {nome}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 2. O QUÊ */}
       <div>
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            className="pl-9"
+            className="h-12 pl-9"
             placeholder="Buscar produto..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -236,20 +314,46 @@ export function Pdv({
         </div>
         {filtered.length > 0 && (
           <div className="mt-2 flex flex-wrap gap-2">
-            {filtered.map((p) => (
-              <Button
-                key={p.id}
-                variant="outline"
-                size="sm"
-                onClick={() => addProduct(p)}
-                type="button"
-              >
-                <Plus className="size-4" /> {p.name}
-                <span className="text-xs text-muted-foreground">
-                  {SALE_UNIT_LABELS[p.saleUnit]}
-                </span>
-              </Button>
-            ))}
+            {filtered.map((p) => {
+              const saldo = saldoDe(p.id);
+              const nivel = nivelEstoque(saldo);
+              return (
+                <Button
+                  key={p.id}
+                  variant="outline"
+                  // Alvo de toque maior: mão molhada, dedo grosso, tela pequena.
+                  className={cn(
+                    "h-auto min-h-14 flex-col items-start gap-0.5 px-3 py-2",
+                    nivel === "acabando" && "border-warning/60",
+                    nivel === "zerado" && "opacity-60",
+                  )}
+                  onClick={() => addProduct(p)}
+                  type="button"
+                >
+                  <span className="flex items-center gap-1 font-medium">
+                    <Plus className="size-4" /> {p.name}
+                  </span>
+                  {/* O saldo aqui evita descobrir que faltou mercadoria só no
+                      erro do servidor, com o cliente esperando. */}
+                  <span
+                    className={cn(
+                      "text-xs",
+                      nivel === "acabando"
+                        ? "text-warning"
+                        : nivel === "zerado"
+                          ? "text-destructive"
+                          : "text-muted-foreground",
+                    )}
+                  >
+                    {nivel === "zerado"
+                      ? "sem estoque"
+                      : `${formatQty(saldo)} ${SALE_UNIT_LABELS[p.saleUnit]}${
+                          nivel === "acabando" ? " · acabando" : ""
+                        }`}
+                  </span>
+                </Button>
+              );
+            })}
           </div>
         )}
       </div>
@@ -275,42 +379,77 @@ export function Pdv({
                   <Trash2 className="size-4 text-destructive" />
                 </Button>
               </div>
-              <div className="mt-2 flex items-center gap-2">
-                <div className="flex items-center gap-1">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="size-9"
-                    aria-label="Diminuir quantidade"
-                    onClick={() =>
-                      updateItem(i.productId, { quantity: Math.max(0.001, i.quantity - 1) })
-                    }
-                  >
-                    <Minus className="size-4" />
-                  </Button>
-                  <span className="w-10 text-center tabular-nums">{i.quantity}</span>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon"
-                    className="size-9"
-                    aria-label="Aumentar quantidade"
-                    onClick={() => updateItem(i.productId, { quantity: i.quantity + 1 })}
-                  >
-                    <Plus className="size-4" />
-                  </Button>
+              {/* Rótulos explícitos: sem eles é fácil digitar o preço no campo
+                  da quantidade e só perceber no total. */}
+              <div className="mt-2 grid grid-cols-[auto_1fr_6rem] items-end gap-2">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] text-muted-foreground">
+                    Quantidade{unidadeDe(i.productId) ? ` (${unidadeDe(i.productId)})` : ""}
+                  </span>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-11"
+                      aria-label="Diminuir quantidade"
+                      onClick={() =>
+                        updateItem(i.productId, { quantity: Math.max(0.001, i.quantity - 1) })
+                      }
+                    >
+                      <Minus className="size-4" />
+                    </Button>
+                    <span className="w-10 text-center font-medium tabular-nums">
+                      {i.quantity}
+                    </span>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="icon"
+                      className="size-11"
+                      aria-label="Aumentar quantidade"
+                      onClick={() => updateItem(i.productId, { quantity: i.quantity + 1 })}
+                    >
+                      <Plus className="size-4" />
+                    </Button>
+                  </div>
                 </div>
-                <div className="flex-1">
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] text-muted-foreground">Preço da unidade</span>
                   <CurrencyInput
                     value={i.unitPrice}
                     onChange={(v) => updateItem(i.productId, { unitPrice: v ?? 0 })}
                   />
                 </div>
-                <span className="w-24 text-right font-semibold tabular-nums">
-                  {formatBRL(i.quantity * (i.unitPrice || 0))}
-                </span>
+                <div className="flex flex-col gap-1 text-right">
+                  <span className="text-[11px] text-muted-foreground">Total</span>
+                  <span className="font-semibold tabular-nums">
+                    {formatBRL(i.quantity * (i.unitPrice || 0))}
+                  </span>
+                </div>
               </div>
+
+              {/* Saldo antes → depois, na linha do item. */}
+              <p
+                className={cn(
+                  "mt-1.5 text-xs",
+                  passaDoEstoque(saldoDe(i.productId), i.quantity)
+                    ? "font-medium text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
+                {passaDoEstoque(saldoDe(i.productId), i.quantity) ? (
+                  <>
+                    Só tem {formatQty(saldoDe(i.productId))} — você está vendendo{" "}
+                    {formatQty(i.quantity)}
+                  </>
+                ) : (
+                  <>
+                    Em estoque: {formatQty(saldoDe(i.productId))} → ficará{" "}
+                    {formatQty(saldoApos(saldoDe(i.productId), i.quantity))}
+                  </>
+                )}
+              </p>
             </Card>
           ))}
         </div>
@@ -340,33 +479,31 @@ export function Pdv({
         ))}
       </datalist>
 
-      {payment === "FIADO" ? (
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      {/* O nome do cliente agora está no topo, para qualquer forma de
+          pagamento — aqui fica só o que é específico do fiado. Fiado e caixa
+          plástica EXIGEM cliente; o aviso aparece quando ele está vazio. */}
+      {payment === "FIADO" && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="pdv-vencimento">Vencimento do fiado (opcional)</Label>
           <Input
-            placeholder="Nome do cliente (fiado)"
-            value={customer}
-            onChange={(e) => setCustomer(e.target.value)}
-            list={LISTA_CLIENTES}
+            id="pdv-vencimento"
+            type="date"
+            className="h-12"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
           />
-          <div className="flex flex-col gap-1">
-            <Input
-              type="date"
-              aria-label="Vencimento do fiado"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-            />
-            <span className="text-xs text-muted-foreground">Vencimento (opcional)</span>
-          </div>
         </div>
-      ) : (
-        usaCaixaPlastica && (
-          <Input
-            placeholder="Nome do cliente (controle de caixas)"
-            value={customer}
-            onChange={(e) => setCustomer(e.target.value)}
-            list={LISTA_CLIENTES}
-          />
-        )
+      )}
+
+      {(payment === "FIADO" || usaCaixaPlastica) && !customer.trim() && (
+        <div className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs text-warning">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+          <span>
+            {payment === "FIADO"
+              ? "Informe o cliente lá em cima — venda fiada precisa de nome para virar conta a receber."
+              : "Informe o cliente lá em cima — as caixas plásticas ficam registradas no nome dele."}
+          </span>
+        </div>
       )}
 
       {/* Caixas plásticas que saem com a mercadoria */}
@@ -400,11 +537,43 @@ export function Pdv({
 
       {/* Total + finalizar (rodapé fixo no mobile) */}
       <div className="sticky bottom-16 z-10 mt-2 rounded-lg border bg-background p-3 shadow-lg md:bottom-0">
-        <div className="mb-2 flex items-center justify-between">
-          <span className="text-muted-foreground">Total</span>
-          <span className="text-2xl font-bold tabular-nums">{formatBRL(total)}</span>
+        {semEstoque.length > 0 && (
+          // Aviso ANTES do clique. A validação de verdade continua no servidor;
+          // aqui o objetivo é o operador não descobrir a falta com o cliente na
+          // frente, depois de já ter fechado o valor.
+          <div className="mb-2 flex items-start gap-2 rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <span>
+              {semEstoque.map((i) => (
+                <span key={i.productId} className="block">
+                  <b>{i.name}</b>: só tem {formatQty(saldoDe(i.productId))}, vendendo{" "}
+                  {formatQty(i.quantity)}
+                </span>
+              ))}
+            </span>
+          </div>
+        )}
+
+        <div className="mb-2 flex items-center justify-between gap-2">
+          <span className="min-w-0 truncate text-sm text-muted-foreground">
+            {customer.trim() ? (
+              <>
+                Vendendo para <b className="text-foreground">{customer.trim()}</b>
+              </>
+            ) : (
+              "Venda avulsa"
+            )}
+            {cart.length > 0 && ` · ${cart.length} produto(s)`}
+          </span>
+          <span className="shrink-0 text-2xl font-bold tabular-nums">{formatBRL(total)}</span>
         </div>
-        <Button size="lg" className="w-full" onClick={finalizar} disabled={saving}>
+
+        <Button
+          size="lg"
+          className="h-14 w-full text-base"
+          onClick={finalizar}
+          disabled={saving}
+        >
           {saving && <Loader2 className="animate-spin" />}
           Finalizar venda
         </Button>
