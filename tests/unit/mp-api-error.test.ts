@@ -78,4 +78,37 @@ describe("mercadoPagoErrorMessage", () => {
     );
     expect(msg).toContain("Invalid transaction_amount");
   });
+
+  /**
+   * Em erro de payload o Mercado Pago manda a causa GENÉRICA ("The name of the
+   * parameters is wrong.") e guarda o campo culpado na mensagem. Enquanto só a
+   * causa aparecia, a recusa dizia que havia um parâmetro errado sem dizer
+   * QUAL — e descobrir custou um ciclo de deploy.
+   */
+  it("mantém o nome do parâmetro culpado, não só a causa genérica", () => {
+    const msg = mercadoPagoErrorMessage(
+      erro(
+        "The name of the following parameters is wrong : [additional_info.items.currency_id]",
+        400,
+        [{ code: "2034", description: "The name of the parameters is wrong." }],
+      ),
+    );
+    expect(msg).toContain("additional_info.items.currency_id");
+    expect(msg).toContain("The name of the parameters is wrong.");
+  });
+
+  it("não repete o texto quando causa e mensagem são iguais", () => {
+    const msg = mercadoPagoErrorMessage(
+      erro("Invalid transaction_amount", 400, [
+        { code: "4037", description: "Invalid transaction_amount" },
+      ]),
+    );
+    expect(msg.match(/Invalid transaction_amount/g)).toHaveLength(1);
+  });
+
+  it("com causa e mensagem vazias ainda diz algo utilizável", () => {
+    expect(mercadoPagoErrorMessage(erro("", 400, [{ code: "1", description: "" }]))).toContain(
+      "motivo não informado",
+    );
+  });
 });

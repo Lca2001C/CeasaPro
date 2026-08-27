@@ -175,8 +175,16 @@ export function mercadoPagoErrorMessage(e: MercadoPagoApiError): string {
     return "O Mercado Pago está instável no momento. Tente de novo em alguns minutos ou pague com PIX.";
   }
   // Fallback: a descrição do Mercado Pago é mais útil que "erro inesperado".
-  const detail = e.causes[0]?.description || e.message;
-  return `O Mercado Pago recusou o pagamento: ${detail}`;
+  //
+  // Junta a causa E a mensagem crua quando trazem coisas diferentes. Em erro de
+  // payload a causa é genérica ("The name of the parameters is wrong.") e é a
+  // MENSAGEM que nomeia o campo culpado ("...: [additional_info.items.
+  // currency_id]"). Ficar só com a causa escondeu exatamente o dado que
+  // resolvia o problema, e custou um ciclo inteiro de deploy para descobrir.
+  const detail = [...new Set([e.causes[0]?.description, e.message])]
+    .filter((p): p is string => Boolean(p && p.trim()))
+    .join(" ");
+  return `O Mercado Pago recusou o pagamento: ${detail || "motivo não informado"}`;
 }
 
 export interface PixCharge {
@@ -225,7 +233,12 @@ export function additionalInfo(args: {
         category_id: CATEGORIA_MENSALIDADE,
         quantity: 1,
         unit_price: args.amount,
-        currency_id: "BRL",
+        // NÃO existe `currency_id` aqui. Ele é campo de item de *Preferência*
+        // (Checkout Pro); em `/v1/payments` a moeda é do pagamento, não do
+        // item. Mandá-lo fazia a API recusar TODO o pagamento com "The name of
+        // the parameters is wrong" — PIX e cartão juntos, já que os dois usam
+        // este mesmo bloco. O tipo `Items` do SDK é compartilhado com
+        // Preferências e aceita o campo, então o TypeScript não avisa.
       },
     ],
     ...(firstName || lastName

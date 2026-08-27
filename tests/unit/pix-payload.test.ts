@@ -59,10 +59,45 @@ describe("additionalInfo (índice de aprovação do Mercado Pago)", () => {
     expect(item.category_id).toBe("services");
     expect(item.quantity).toBe(1);
     expect(item.unit_price).toBe(149.9);
-    expect(item.currency_id).toBe("BRL");
     // O id do item amarra a cobrança à referência externa, que é como o
     // Mercado Pago correlaciona o pagamento com a nossa assinatura.
     expect(item.id).toBe(base.externalReference);
+  });
+
+  /**
+   * `/v1/payments` recusa o pagamento INTEIRO quando o payload traz um campo
+   * que ele não conhece — responde "The name of the parameters is wrong" e
+   * nenhuma cobrança é criada. Foi o que aconteceu com `currency_id`, que
+   * existe em item de *Preferência* (Checkout Pro) mas não aqui.
+   *
+   * O tipo `Items` do SDK é compartilhado entre Preferências e Pagamentos e
+   * aceita os dois conjuntos, então o TypeScript não pega isto: a lista abaixo
+   * é a única trava. Só acrescente um campo depois de conferir na referência
+   * de `POST /v1/payments` que ele vale para `additional_info.items`.
+   */
+  it("não manda nenhum campo fora do que /v1/payments aceita no item", () => {
+    const PERMITIDOS = [
+      "id",
+      "title",
+      "description",
+      "picture_url",
+      "category_id",
+      "quantity",
+      "unit_price",
+    ];
+    const info = additionalInfo({ ...base, payerName: "Maria da Silva" });
+    const enviados = Object.keys(info.items[0]);
+    expect(enviados.filter((k) => !PERMITIDOS.includes(k))).toEqual([]);
+    // Explícito porque foi ESTE campo que derrubou PIX e cartão em produção.
+    expect(enviados).not.toContain("currency_id");
+  });
+
+  /** Mesma armadilha no pagador: `additional_info.payer` não aceita `email`. */
+  it("não manda e-mail no pagador do additional_info", () => {
+    const info = additionalInfo({ ...base, payerName: "Maria da Silva" });
+    expect(Object.keys(info.payer ?? {})).toEqual(
+      expect.not.arrayContaining(["email", "identification"]),
+    );
   });
 
   it("envia nome e sobrenome do pagador separados", () => {
