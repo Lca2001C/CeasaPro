@@ -18,6 +18,30 @@ const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
 } as const;
 
+/**
+ * O que a LISTA precisa saber da venda para montar a linha de entrega — data,
+ * produto, quantidade e preço — no mesmo formato da planilha que o cliente usa
+ * no balcão. Antes a listagem só trazia `saleDate` e `plasticCrateQty`, então
+ * era preciso abrir cada conta para saber o que tinha sido vendido.
+ */
+const SALE_RESUMO = {
+  select: {
+    saleDate: true,
+    plasticCrateQty: true,
+    items: {
+      orderBy: { createdAt: "asc" },
+      select: {
+        id: true,
+        quantity: true,
+        unitPrice: true,
+        lineTotal: true,
+        crateQty: true,
+        product: { select: { name: true, saleUnit: true } },
+      },
+    },
+  },
+} as const;
+
 export const FiadoService = {
   /**
    * Contas com saldo calculado + total geral a receber.
@@ -31,7 +55,7 @@ export const FiadoService = {
           ...(status === "TODAS" ? {} : { status }),
           ...(search ? { customerName: { contains: search, mode: "insensitive" } } : {}),
         },
-        include: { sale: { select: { saleDate: true, plasticCrateQty: true } } },
+        include: { sale: SALE_RESUMO },
         orderBy: { createdAt: "asc" },
       }),
       CaixasService.saldoPorCliente(tenantId),
@@ -42,6 +66,15 @@ export const FiadoService = {
       saleDate: c.sale?.saleDate ?? c.createdAt,
       plasticCrateQty: c.sale?.plasticCrateQty ?? 0,
       caixasComCliente: caixasPorCliente.get(c.customerName) ?? 0,
+      itens: (c.sale?.items ?? []).map((it) => ({
+        id: it.id,
+        productName: it.product.name,
+        saleUnit: it.product.saleUnit,
+        quantity: it.quantity,
+        unitPrice: it.unitPrice,
+        lineTotal: it.lineTotal,
+        crateQty: it.crateQty,
+      })),
     }));
     const emAberto = withSaldo.filter((c) => c.status === "EM_ABERTO");
     const totalGeral = add(...emAberto.map((c) => c.saldo));

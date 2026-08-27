@@ -94,10 +94,24 @@ Rotas `/vendas` (histórico) e `/vendas/nova` (PDV). Venda transacional (`POST /
 
 Rotas `/fiado` (lista) e `/fiado/[id]` (detalhe). Operação de pagamento em `POST /api/fiado/pagamento`.
 
-- A lista mostra as contas **em aberto** com o **saldo** de cada cliente e o **total geral a receber**.
-- No detalhe: total, pago, saldo, histórico de pagamentos.
+A leitura da lista segue o formato da planilha que o cliente já usa no balcão — **uma linha por entrega**:
+
+| Coluna | O que é |
+|---|---|
+| Data | Data da venda (`saleDate`), não a de cadastro |
+| Cliente | Nome; badge **Quitada** quando o status é PAGO |
+| Produto | Nome do item. Com mais de um, mostra o primeiro e "e mais N" |
+| Qtd | Quantidade do item, com a unidade de venda |
+| Preço | Preço unitário — **só quando há um único item**; com vários, os preços divergem e mostrar o do primeiro seria enganoso, então a coluna fica vazia |
+| Total | Total da compra (Σ dos itens) |
+| Caixas | Caixas plásticas que saíram na venda + quantas ainda faltam voltar |
+| Saldo | `total − pago` |
+
+Em tela estreita (celular, que é o uso no balcão) a mesma informação vira cartão empilhado: oito colunas viravam rolagem lateral. O detalhe (`/fiado/[id]`) continua trazendo **todos** os itens com quantidade, preço unitário e subtotal, o total da compra, as caixas da venda, o saldo de caixas com o cliente e o histórico de pagamentos.
+
 - **Pagamento parcial**: informa valor e forma; o sistema soma ao pago e recalcula o saldo. Ao quitar (pago ≥ total), o status vira **PAGO**. Não permite pagar acima do saldo.
 - `saldo = total − pago` (nunca negativo).
+- **Caixas plásticas** são controladas por movimento, não por um contador na conta: a venda registra a saída e a devolução (`/fiado/[id]` → Caixas plásticas) registra o **RETORNO**, com data. O saldo por cliente vem de `CaixasService.saldoPorCliente`. É o equivalente às colunas *PG VALE CX* / *DATA RECEBIDA CX* da planilha.
 
 ## Estoque
 
