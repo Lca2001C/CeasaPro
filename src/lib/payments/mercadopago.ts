@@ -188,6 +188,57 @@ export interface PixCharge {
   expiresAt: Date | null;
 }
 
+/**
+ * Categoria do item no Mercado Pago. `services` é o que a mensalidade é —
+ * a categoria alimenta a análise antifraude junto com a descrição.
+ */
+const CATEGORIA_MENSALIDADE = "services";
+
+/**
+ * Bloco `additional_info` da cobrança.
+ *
+ * O Mercado Pago usa estes dados na **prevenção a fraude**: quanto mais
+ * completo o item (id, título, DESCRIÇÃO, categoria, quantidade e preço) e o
+ * pagador (nome e sobrenome), maior o índice de aprovação — cobrança sem
+ * contexto é recusada por precaução. É também o que o painel mede como
+ * "qualidade da integração".
+ *
+ * `description` é o campo que o Mercado Pago pede explicitamente: sem ele, o
+ * mecanismo antifraude não tem o que validar sobre o que está sendo vendido.
+ */
+export function additionalInfo(args: {
+  amount: number;
+  description: string;
+  externalReference: string;
+  payerName?: string | null;
+  detalhe: string;
+}) {
+  const { firstName, lastName } = splitNome(args.payerName);
+  return {
+    items: [
+      {
+        id: args.externalReference,
+        title: args.description,
+        // O que o cliente está comprando, em texto — é este campo que o
+        // Mercado Pago pede para melhorar a aprovação.
+        description: args.detalhe,
+        category_id: CATEGORIA_MENSALIDADE,
+        quantity: 1,
+        unit_price: args.amount,
+        currency_id: "BRL",
+      },
+    ],
+    ...(firstName || lastName
+      ? {
+          payer: {
+            ...(firstName ? { first_name: firstName } : {}),
+            ...(lastName ? { last_name: lastName } : {}),
+          },
+        }
+      : {}),
+  };
+}
+
 /** Separa "Maria Silva Souza" em nome e sobrenome para o payload do pagador. */
 export function splitNome(nome: string | undefined | null): {
   firstName?: string;
@@ -237,6 +288,15 @@ export async function createPixPayment(args: {
       external_reference: args.externalReference,
       notification_url: webhookUrl(),
       date_of_expiration: isoComOffsetTz(args.expiresAt),
+      additional_info: additionalInfo({
+        amount: args.amount,
+        description: args.description,
+        externalReference: args.externalReference,
+        payerName: args.payerName,
+        detalhe:
+          "Mensalidade do CeasaPro — sistema de gestão para comerciantes do CEASA. " +
+          "Serviço digital por assinatura, sem entrega física.",
+      }),
     },
     requestOptions: {
       idempotencyKey: `pix:${args.externalReference}:${args.amount.toFixed(2)}`,
@@ -282,6 +342,14 @@ export async function createCardPreference(args: {
         {
           id: args.externalReference,
           title: args.description,
+          // `description` e `category_id` alimentam a análise antifraude do
+          // Mercado Pago. É o campo que o painel dele pede explicitamente para
+          // elevar o índice de aprovação: sem contexto do que está sendo
+          // vendido, a recusa preventiva é mais provável.
+          description:
+            "Mensalidade do CeasaPro — sistema de gestão para comerciantes do CEASA. " +
+            "Serviço digital por assinatura, sem entrega física.",
+          category_id: CATEGORIA_MENSALIDADE,
           quantity: 1,
           currency_id: "BRL",
           unit_price: args.amount,
@@ -290,6 +358,7 @@ export async function createCardPreference(args: {
       payer: { email: args.payerEmail },
       external_reference: args.externalReference,
       notification_url: webhookUrl(),
+      statement_descriptor: "CEASAPRO",
       back_urls: {
         success: `${base}/assinatura?pagamento=sucesso`,
         pending: `${base}/assinatura?pagamento=pendente`,
@@ -298,7 +367,9 @@ export async function createCardPreference(args: {
       auto_return: "approved",
       binary_mode: true,
       expires: true,
-      expiration_date_to: args.expiresAt.toISOString(),
+      // Com deslocamento explícito, como o resto da integração — o `Z` de
+      // `toISOString()` é recusado pela API em campos de data.
+      expiration_date_to: isoComOffsetTz(args.expiresAt),
       payment_methods: { excluded_payment_types: [{ id: "ticket" }] },
     },
     requestOptions: { idempotencyKey: `card:${args.externalReference}` },
@@ -399,6 +470,19 @@ export async function createCardPayment(args: {
       },
       external_reference: args.externalReference,
       notification_url: webhookUrl(),
+      // Aparece na fatura do cartão. Sem isto o cliente vê um nome genérico,
+      // não reconhece a cobrança e abre contestação — que conta contra a
+      // reputação da conta no Mercado Pago.
+      statement_descriptor: "CEASAPRO",
+      additional_info: additionalInfo({
+        amount: args.amount,
+        description: args.description,
+        externalReference: args.externalReference,
+        payerName: [args.payer.firstName, args.payer.lastName].filter(Boolean).join(" "),
+        detalhe:
+          "Mensalidade do CeasaPro — sistema de gestão para comerciantes do CEASA. " +
+          "Serviço digital por assinatura, sem entrega física.",
+      }),
     },
     requestOptions: {
       idempotencyKey: cardIdempotencyKey(args.externalReference, args.token),

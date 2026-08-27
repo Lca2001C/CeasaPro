@@ -41,6 +41,25 @@ const NAO_E_AMBIENTE_ADMIN = { users: { none: { role: "SUPER_ADMIN" as const } }
 /** Nome do plano interno usado pelo ambiente do super-admin. */
 const ADMIN_PLAN_SLUG = "ambiente-administrador";
 
+/**
+ * E-mail "carimbado" de um usuário excluído.
+ *
+ * `User.email` é `@unique` GLOBAL e o índice não sabe o que é `deletedAt`:
+ * a linha excluída continua ocupando o endereço, e cadastrar de novo a mesma
+ * pessoa estourava violação de índice único — que chegava à tela como
+ * "Ocorreu um erro inesperado (ref: …)".
+ *
+ * Carimbar libera o endereço para um cadastro novo sem apagar a linha, que
+ * precisa continuar existindo porque o `userId` é referenciado na auditoria.
+ * O e-mail original fica legível (e também é guardado no log de auditoria).
+ */
+function emailDeExcluido(userId: string, email: string): string {
+  // Já carimbado (exclusão de empresa depois de exclusão de usuário): não
+  // empilha prefixo em cima de prefixo.
+  if (email.startsWith("excluido-")) return email;
+  return `excluido-${userId}-${email}`;
+}
+
 export const AdminService = {
   async metrics() {
     // Início do mês no fuso do app: em UTC, "novos clientes no mês" e "recebido
@@ -113,6 +132,21 @@ export const AdminService = {
       where: { email: input.ownerEmail, deletedAt: null },
     });
     if (existing) throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
+
+    // Conta EXCLUÍDA ainda segurando o endereço: libera antes de criar. A
+    // migration `20260829120000` já carimbou as antigas, mas isto cobre
+    // qualquer linha que tenha escapado — e é justamente onde o cadastro
+    // quebrava com "erro inesperado" em vez de uma mensagem.
+    const excluido = await prisma.user.findFirst({
+      where: { email: input.ownerEmail, deletedAt: { not: null } },
+      select: { id: true, email: true },
+    });
+    if (excluido) {
+      await prisma.user.update({
+        where: { id: excluido.id },
+        data: { email: emailDeExcluido(excluido.id, excluido.email) },
+      });
+    }
 
     const plan = await prisma.plan.findUnique({ where: { id: input.planId } });
     if (!plan) throw new NotFoundError("Plano não encontrado");
@@ -308,15 +342,40 @@ export const AdminService = {
    * Exclui uma empresa (SOFT DELETE): marca deletedAt, bloqueia e derruba as sessões.
    * Preserva dados/histórico/auditoria (o AuditLog não tem FK com Tenant, por design).
    * listTenants/metrics já filtram deletedAt, então some da UI automaticamente.
+   *
+   * Os usuários dela vão junto — e os e-mails são liberados. Sem isso, recadastrar
+   * o mesmo cliente (caso comum: erro no cadastro, refaz) esbarrava no índice
+   * único de `email` de um usuário que, para o sistema, não existe mais.
    */
   async deleteTenant(id: string, ctx: AdminCtx) {
     const t = await prisma.tenant.findUnique({ where: { id } });
     if (!t) throw new NotFoundError("Empresa não encontrada");
     if (t.deletedAt) return { id }; // idempotente
 
-    await prisma.tenant.update({
-      where: { id },
-      data: { deletedAt: new Date(), status: "BLOCKED" },
+    const usuarios = await prisma.user.findMany({
+      where: { tenantId: id, deletedAt: null },
+      select: { id: true, email: true },
+    });
+    const agora = new Date();
+
+    await prisma.$transaction(async (tx) => {
+      await tx.tenant.update({
+        where: { id },
+        data: { deletedAt: agora, status: "BLOCKED" },
+      });
+      // Um `updateMany` não serve: cada e-mail recebe um carimbo próprio.
+      for (const u of usuarios) {
+        await tx.user.update({
+          where: { id: u.id },
+          data: {
+            deletedAt: agora,
+            active: false,
+            email: emailDeExcluido(u.id, u.email),
+            resetTokenHash: null,
+            resetTokenExpiresAt: null,
+          },
+        });
+      }
     });
     await revokeAllForTenant(id);
 
@@ -328,6 +387,7 @@ export const AdminService = {
       entity: "Tenant",
       entityId: id,
       oldData: { status: t.status, tradeName: t.tradeName },
+      newData: { usuariosExcluidos: usuarios.length },
       ip: ctx.ip,
     });
     return { id };
@@ -688,7 +748,15 @@ export const AdminService = {
 
     await prisma.user.update({
       where: { id: user.id },
-      data: { deletedAt: new Date(), active: false },
+      data: {
+        deletedAt: new Date(),
+        active: false,
+        // Libera o endereço para um cadastro novo (ver `emailDeExcluido`).
+        email: emailDeExcluido(user.id, user.email),
+        // Um link de recuperação pendente não pode sobreviver à exclusão.
+        resetTokenHash: null,
+        resetTokenExpiresAt: null,
+      },
     });
     await revokeAllForUser(user.id);
 

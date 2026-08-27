@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { isoComOffsetTz } from "@/lib/tz";
-import { splitNome } from "@/lib/payments/mercadopago";
+import { additionalInfo, splitNome } from "@/lib/payments/mercadopago";
 
 /**
  * O Mercado Pago recusa `date_of_expiration` terminado em `Z` na cobrança PIX:
@@ -33,6 +33,53 @@ describe("isoComOffsetTz", () => {
   it("é reversível: o instante volta igual", () => {
     const d = new Date("2026-08-28T17:30:00.000Z");
     expect(new Date(isoComOffsetTz(d)).getTime()).toBe(d.getTime());
+  });
+});
+
+/**
+ * `additional_info` alimenta a prevenção a fraude do Mercado Pago. O painel
+ * dele pede `items.description` explicitamente: cobrança sem contexto do que
+ * está sendo vendido tem mais chance de recusa preventiva, e o campo também
+ * conta na nota de "qualidade da integração".
+ */
+describe("additionalInfo (índice de aprovação do Mercado Pago)", () => {
+  const base = {
+    amount: 149.9,
+    description: "CeasaPro - mensalidade 2026-08 - Hortifruti São João",
+    externalReference: "sub:abc:2026-08:pix",
+    detalhe: "Mensalidade do CeasaPro — serviço digital por assinatura.",
+  };
+
+  it("descreve o item, com categoria e preço", () => {
+    const info = additionalInfo({ ...base, payerName: "Maria da Silva" });
+    const item = info.items[0];
+
+    expect(item.description).toBe(base.detalhe);
+    expect(item.title).toBe(base.description);
+    expect(item.category_id).toBe("services");
+    expect(item.quantity).toBe(1);
+    expect(item.unit_price).toBe(149.9);
+    expect(item.currency_id).toBe("BRL");
+    // O id do item amarra a cobrança à referência externa, que é como o
+    // Mercado Pago correlaciona o pagamento com a nossa assinatura.
+    expect(item.id).toBe(base.externalReference);
+  });
+
+  it("envia nome e sobrenome do pagador separados", () => {
+    const info = additionalInfo({ ...base, payerName: "Maria da Silva Souza" });
+    expect(info.payer).toEqual({ first_name: "Maria", last_name: "da Silva Souza" });
+  });
+
+  it("sem nome, omite o bloco do pagador em vez de mandar vazio", () => {
+    // Campo vazio conta como dado ruim na análise — pior que ausente.
+    expect(additionalInfo({ ...base, payerName: null }).payer).toBeUndefined();
+    expect(additionalInfo({ ...base, payerName: "  " }).payer).toBeUndefined();
+  });
+
+  it("com um nome só, manda apenas o primeiro nome", () => {
+    expect(additionalInfo({ ...base, payerName: "Maria" }).payer).toEqual({
+      first_name: "Maria",
+    });
   });
 });
 

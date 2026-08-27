@@ -155,6 +155,7 @@ describe("Gerar cobrança PIX", () => {
     expect((payload.expiresAt as Date).getTime()).toBeGreaterThan(Date.now());
   });
 
+
   it("é idempotente no mês: segunda chamada devolve a MESMA cobrança", async () => {
     const { tenantId, ctx } = await novoCliente();
     const a = await BillingService.createCheckout(

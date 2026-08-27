@@ -9,6 +9,7 @@ import type { AdminCtx } from "@/lib/http/with-action";
 const uniq = () => Math.random().toString(36).slice(2, 8);
 const tenants: string[] = [];
 const usuarios: string[] = [];
+const planos: string[] = [];
 let ctx: AdminCtx;
 let adminId = "";
 
@@ -55,6 +56,8 @@ afterAll(async () => {
   await prisma.refreshToken.deleteMany({ where: { userId: { in: usuarios } } });
   await prisma.user.deleteMany({ where: { id: { in: usuarios } } });
   await cleanupTenants(tenants);
+  await prisma.tenantSubscription.deleteMany({ where: { planId: { in: planos } } });
+  await prisma.plan.deleteMany({ where: { id: { in: planos } } });
 });
 
 describe("Listagem de usuários", () => {
@@ -242,5 +245,115 @@ describe("Exclusão de usuário", () => {
 
   it("RECUSA o super-admin excluir a própria conta", async () => {
     await expect(AdminService.deleteUser(adminId, ctx)).rejects.toThrow(/própria conta/i);
+  });
+
+  it("libera o e-mail para um cadastro novo", async () => {
+    // `users.email` é UNIQUE global e o índice não sabe o que é `deletedAt`.
+    // Sem liberar, recadastrar a mesma pessoa estourava violação de índice
+    // único, que chegava à tela como "erro inesperado (ref: ...)".
+    const email = `reaproveitado-${uniq()}@teste.com`;
+    const u = await prisma.user.create({
+      data: { name: "Primeiro", email, passwordHash: "x", role: "OWNER" },
+    });
+    usuarios.push(u.id);
+
+    await AdminService.deleteUser(u.id, ctx);
+
+    const novo = await prisma.user.create({
+      data: { name: "Segundo", email, passwordHash: "x", role: "OWNER" },
+    });
+    usuarios.push(novo.id);
+    expect(novo.email).toBe(email);
+
+    // O e-mail original continua legível na linha excluída (e na auditoria).
+    const antigo = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(antigo.email).toContain(email);
+    expect(antigo.email).not.toBe(email);
+  });
+});
+
+describe("Recadastro de empresa com o mesmo e-mail do dono", () => {
+  it("excluir a empresa libera o e-mail dos usuários dela", async () => {
+    const tenantId = await createTestTenant("PARA EXCLUIR");
+    tenants.push(tenantId);
+    const email = `dono-recriado-${uniq()}@teste.com`;
+    const dono = await prisma.user.create({
+      data: { tenantId, name: "Dono", email, passwordHash: "x", role: "OWNER" },
+    });
+    usuarios.push(dono.id);
+
+    await AdminService.deleteTenant(tenantId, ctx);
+
+    // O usuário some junto com a empresa e o endereço fica livre.
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: dono.id } });
+    expect(depois.deletedAt).toBeTruthy();
+    expect(depois.active).toBe(false);
+    expect(depois.email).not.toBe(email);
+
+    const recriado = await prisma.user.create({
+      data: { name: "Dono de novo", email, passwordHash: "x", role: "OWNER" },
+    });
+    usuarios.push(recriado.id);
+    expect(recriado.email).toBe(email);
+  });
+
+  it("createTenantWithOwner aceita e-mail de conta excluída", async () => {
+    const email = `owner-${uniq()}@teste.com`;
+    const orfao = await prisma.user.create({
+      data: {
+        name: "Antigo",
+        email,
+        passwordHash: "x",
+        role: "OWNER",
+        deletedAt: new Date(), // resíduo anterior à correção
+      },
+    });
+    usuarios.push(orfao.id);
+
+    const plano = await prisma.plan.create({
+      data: { name: `Plano ${uniq()}`, slug: `p-${uniq()}`, priceMonthly: 10, active: true },
+    });
+    planos.push(plano.id);
+
+    const { tenantId } = await AdminService.createTenantWithOwner(
+      {
+        tradeName: "Empresa Nova",
+        ownerName: "Novo Dono",
+        ownerEmail: email,
+        planId: plano.id,
+        monthlyAmount: 10,
+        graceDays: 5,
+      },
+      ctx,
+    );
+    tenants.push(tenantId);
+
+    const criado = await prisma.user.findFirstOrThrow({
+      where: { tenantId, deletedAt: null },
+    });
+    expect(criado.email).toBe(email);
+    usuarios.push(criado.id);
+  });
+
+  it("continua recusando e-mail de conta ATIVA", async () => {
+    const ativo = await criarUsuario({});
+    const plano = await prisma.plan.create({
+      data: { name: `Plano ${uniq()}`, slug: `p-${uniq()}`, priceMonthly: 10, active: true },
+    });
+    planos.push(plano.id);
+
+    await expect(
+      AdminService.createTenantWithOwner(
+        {
+          tradeName: "Empresa Conflito",
+          ownerName: "Alguem",
+          ownerEmail: ativo.email,
+          planId: plano.id,
+          monthlyAmount: 10,
+          graceDays: 5,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/já existe/i);
   });
 });
