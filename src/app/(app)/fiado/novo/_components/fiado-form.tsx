@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -72,7 +72,7 @@ export function FiadoForm({
 
     const caixas = usaCaixaPlastica ? parseInt(plasticCrateQty, 10) || 0 : 0;
     if (usaCaixaPlastica && caixas <= 0)
-      return toast.error("Informe a quantidade de caixas plÃ¡sticas.");
+      return toast.error("Informe a quantidade de caixas plásticas.");
 
     setSaving(true);
     const res = await apiPost<{ id: string }>("/api/fiado", {
@@ -92,7 +92,7 @@ export function FiadoForm({
     });
     setSaving(false);
     if (res.ok) {
-      toast.success(`Fiado lanÃ§ado: ${formatBRL(total)}`);
+      toast.success(`Fiado lançado: ${formatBRL(total)}`);
       router.push("/fiado");
       router.refresh();
     } else {
@@ -174,7 +174,7 @@ export function FiadoForm({
                 />
               </div>
               <div>
-                <span className="text-xs text-muted-foreground">PreÃ§o unitÃ¡rio</span>
+                <span className="text-xs text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}
@@ -188,7 +188,7 @@ export function FiadoForm({
                   value={it.recipientType}
                   onChange={(e) => setItem(idx, { recipientType: e.target.value })}
                 >
-                  <option value="">â€” Nenhum â€”</option>
+                  <option value="">— Nenhum —</option>
                   {toOptions(RECIPIENT_TYPE_LABELS).map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
@@ -231,11 +231,11 @@ export function FiadoForm({
             checked={usaCaixaPlastica}
             onChange={(e) => setUsaCaixaPlastica(e.target.checked)}
           />
-          Saiu em caixa plÃ¡stica
+          Saiu em caixa plástica
         </label>
         {usaCaixaPlastica && (
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="caixas">Quantidade de caixas plÃ¡sticas</Label>
+            <Label htmlFor="caixas">Quantidade de caixas plásticas</Label>
             <Input
               id="caixas"
               type="number"
@@ -253,7 +253,7 @@ export function FiadoForm({
       </Card>
 
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="notes">ObservaÃ§Ã£o (opcional)</Label>
+        <Label htmlFor="notes">Observação (opcional)</Label>
         <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
@@ -270,7 +270,7 @@ export function FiadoForm({
         </Button>
         <Button className="flex-1" onClick={submit} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
-          LanÃ§ar fiado
+          Lançar fiado
         </Button>
       </div>
     </div>

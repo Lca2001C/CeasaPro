@@ -1,13 +1,18 @@
 import { notFound } from "next/navigation";
 import { requireTenant } from "@/lib/auth/session";
 import { DespesasService } from "@/lib/services/despesas.service";
+import { isoDateTz } from "@/lib/tz";
 import { PageHeader } from "@/components/data/page-header";
 import { DespesaForm } from "../_components/despesa-form";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Data para `<input type="date">`, no fuso do app. Com `toISOString` o campo
+ * abria com o dia seguinte para qualquer data gravada a partir das 21h.
+ */
 function toInput(d: Date | null): string | null {
-  return d ? new Date(d).toISOString().slice(0, 10) : null;
+  return d ? isoDateTz(new Date(d)) : null;
 }
 
 export default async function EditarDespesaPage({

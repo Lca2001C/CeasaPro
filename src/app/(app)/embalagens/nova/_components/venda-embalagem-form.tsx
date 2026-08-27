@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -79,7 +79,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Valor unitÃ¡rio</Label>
+        <Label>Valor unitário</Label>
         <CurrencyInput value={unitPrice} onChange={setUnitPrice} />
       </div>
 

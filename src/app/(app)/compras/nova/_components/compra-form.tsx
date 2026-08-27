@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -95,7 +95,7 @@ export function CompraForm({
         <div className="flex flex-col gap-1.5">
           <Label>Fornecedor</Label>
           <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
-            <option value="">â€” Sem fornecedor â€”</option>
+            <option value="">— Sem fornecedor —</option>
             {fornecedores.map((f) => (
               <option key={f.id} value={f.id}>
                 {f.name}
@@ -140,7 +140,7 @@ export function CompraForm({
                 />
               </div>
               <div>
-                <span className="text-xs text-muted-foreground">PreÃ§o unitÃ¡rio</span>
+                <span className="text-xs text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}

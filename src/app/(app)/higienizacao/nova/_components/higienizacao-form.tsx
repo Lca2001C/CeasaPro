@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -71,7 +71,7 @@ export function HigienizacaoForm({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="cleanerName">Higienizador responsÃ¡vel</Label>
+        <Label htmlFor="cleanerName">Higienizador responsável</Label>
         <Input
           id="cleanerName"
           autoFocus
@@ -109,12 +109,12 @@ export function HigienizacaoForm({
         <CurrencyInput id="unitPrice" value={unitPrice} onChange={setUnitPrice} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label htmlFor="notes">ObservaÃ§Ãµes (opcional)</Label>
+        <Label htmlFor="notes">Observações (opcional)</Label>
         <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
       <Card className="flex items-center justify-between p-3">
-        <span className="text-sm text-muted-foreground">Valor total do serviÃ§o</span>
+        <span className="text-sm text-muted-foreground">Valor total do serviço</span>
         <span className="font-semibold tabular-nums">{formatBRL(total)}</span>
       </Card>
 
@@ -124,7 +124,7 @@ export function HigienizacaoForm({
         </Button>
         <Button className="flex-1" onClick={submit} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
-          {initial ? "Salvar alteraÃ§Ãµes" : "Registrar envio"}
+          {initial ? "Salvar alterações" : "Registrar envio"}
         </Button>
       </div>
     </div>

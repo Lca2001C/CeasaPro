@@ -109,8 +109,21 @@ A leitura da lista segue o formato da planilha que o cliente já usa no balcão 
 
 Em tela estreita (celular, que é o uso no balcão) a mesma informação vira cartão empilhado: oito colunas viravam rolagem lateral. O detalhe (`/fiado/[id]`) continua trazendo **todos** os itens com quantidade, preço unitário e subtotal, o total da compra, as caixas da venda, o saldo de caixas com o cliente e o histórico de pagamentos.
 
+**Origem do lançamento.** Não existe passo manual: vender no **PDV** com a forma **Fiado** já cria a conta a receber na mesma transação da venda (`VendasService.registrarVenda`), junto com a baixa de estoque e a saída das caixas plásticas. O `/fiado/novo` existe para lançar uma venda que **não** passou pelo PDV — e usa o mesmo caminho por dentro, então as duas origens produzem exatamente o mesmo registro.
+
+**CRUD.**
+
+| Operação | Onde | Regra |
+|---|---|---|
+| Criar | PDV (forma Fiado) ou `/fiado/novo` | Cliente é obrigatório |
+| Ler | `/fiado` (lista) e `/fiado/[id]` (detalhe) | — |
+| Editar | `/fiado/[id]` → Dados da conta | Só cadastro: vencimento, telefone, observação. **Valores nunca**: eles vêm da venda |
+| Excluir | `/fiado/[id]` → Excluir lançamento | Só **sem pagamento registrado**; desfaz a venda inteira |
+
 - **Pagamento parcial**: informa valor e forma; o sistema soma ao pago e recalcula o saldo. Ao quitar (pago ≥ total), o status vira **PAGO**. Não permite pagar acima do saldo.
 - `saldo = total − pago` (nunca negativo).
+- **Excluir desfaz a operação inteira**, não só a conta: a venda sai do faturamento (soft delete), a mercadoria **volta ao estoque** (movimentos `ENTRADA` com `sourceType: SALE_REVERSAL`) e as caixas plásticas **retornam como limpas** — nunca chegaram ao cliente, então não entram na fila de higienização. Tudo na mesma transação, com registro na auditoria. Apagar só a conta deixaria a venda de pé e o sistema fecharia com buraco: faturamento contando, estoque baixado e o valor sumido do "a receber".
+- **Conta com pagamento não é excluível.** Apagar dinheiro que entrou é falsear o caixa; o acerto é com o cliente, não no registro. A tela nem oferece o botão, e o servidor recusa de novo (defesa em profundidade).
 - **Caixas plásticas** são controladas por movimento, não por um contador na conta: a venda registra a saída e a devolução (`/fiado/[id]` → Caixas plásticas) registra o **RETORNO**, com data. O saldo por cliente vem de `CaixasService.saldoPorCliente`. É o equivalente às colunas *PG VALE CX* / *DATA RECEBIDA CX* da planilha.
 
 ## Estoque

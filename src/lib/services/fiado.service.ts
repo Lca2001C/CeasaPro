@@ -186,6 +186,120 @@ export const FiadoService = {
     return updated;
   },
 
+  /**
+   * Exclui um lançamento de fiado — e **desfaz a venda que o originou**.
+   *
+   * Apagar só a conta deixaria a venda de pé: o faturamento continuaria
+   * contando, a mercadoria seguiria baixada do estoque e o valor sumiria do "a
+   * receber". Ou seja, o sistema fecharia com um buraco. Por isso a exclusão
+   * reverte a operação inteira, na mesma transação: conta, venda, baixa de
+   * estoque e caixas plásticas que saíram com a mercadoria.
+   *
+   * **Recusa quando já houve pagamento.** Apagar dinheiro que entrou é falsear
+   * o caixa; nesse caso o caminho é acertar o valor com o cliente, não excluir
+   * o registro. É a mesma lógica que impede pagar acima do saldo.
+   */
+  async remove(id: string, ctx: TenantCtx) {
+    const db = getTenantPrisma(ctx.tenantId);
+    const conta = await db.creditAccount.findFirst({
+      where: { id },
+      include: {
+        payments: { select: { id: true } },
+        sale: { select: { id: true, plasticCrateQty: true, items: true } },
+      },
+    });
+    if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+
+    if (conta.payments.length > 0 || gt(conta.paidAmount, 0)) {
+      throw new BusinessRuleError(
+        "Esta conta já tem pagamento registrado e não pode ser excluída — " +
+          "apagá-la sumiria com dinheiro que entrou no caixa.",
+      );
+    }
+
+    const crateQty = conta.sale?.plasticCrateQty ?? 0;
+    // O saldo de caixas é lido FORA da transação, como em `registrarVenda`:
+    // `registrarInTx` valida o movimento contra ele.
+    const crateSaldo = crateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
+    const agora = new Date();
+
+    await db.$transaction(async (tx) => {
+      await tx.creditAccount.update({
+        where: { id: conta.id },
+        data: { deletedAt: agora },
+      });
+
+      if (conta.sale) {
+        // Estoque volta: uma ENTRADA por item, espelhando a SAIDA da venda.
+        // `sourceType` diferente para a reversão não se confundir com a venda
+        // original em qualquer conferência futura.
+        if (conta.sale.items.length > 0) {
+          await tx.stockMovement.createMany({
+            data: conta.sale.items.map((it) => ({
+              tenantId: ctx.tenantId,
+              productId: it.productId,
+              type: "ENTRADA" as const,
+              quantity: it.quantity,
+              unitCost: it.unitCostAtSale,
+              reason: "Estorno de venda fiada excluída",
+              sourceType: "SALE_REVERSAL",
+              sourceId: conta.sale!.id,
+            })),
+          });
+        }
+
+        // Caixas que saíram com a mercadoria voltam LIMPAS: elas nunca chegaram
+        // ao cliente, então não entram na fila de higienização.
+        if (crateQty > 0 && crateSaldo) {
+          await CaixasService.registrarInTx(
+            tx,
+            {
+              type: "RETORNO",
+              quantity: crateQty,
+              customerName: conta.customerName,
+              movementDate: agora.toISOString(),
+              saleId: conta.sale.id,
+              dirty: false,
+              notes: "Retorno automático — venda fiada excluída",
+            },
+            ctx,
+            crateSaldo,
+          );
+        }
+
+        await tx.sale.update({
+          where: { id: conta.sale.id },
+          data: { deletedAt: agora },
+        });
+      }
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "CreditAccount",
+          entityId: conta.id,
+          oldData: {
+            customerName: conta.customerName,
+            totalAmount: conta.totalAmount.toString(),
+            saleId: conta.saleId,
+          },
+          newData: {
+            estoqueEstornado: conta.sale?.items.length ?? 0,
+            caixasDevolvidas: crateQty,
+            vendaExcluida: Boolean(conta.sale),
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+    });
+
+    return { id: conta.id, customerName: conta.customerName };
+  },
+
   /** Cliente devolveu caixas plásticas — elas voltam sujas para o estoque. */
   async registrarDevolucaoCaixas(input: DevolucaoCaixasInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);

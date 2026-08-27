@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -42,7 +42,7 @@ export function AcoesHigienizacao({
     const res = await registrarDevolucaoHigienizacao({ id, quantity: qty, returnedDate: devDate });
     setDevBusy(false);
     if (res.ok) {
-      toast.success("DevoluÃ§Ã£o registrada.");
+      toast.success("Devolução registrada.");
       setDevQty("");
       router.refresh();
     } else toast.error(res.error.message);
@@ -64,7 +64,7 @@ export function AcoesHigienizacao({
       {caixasAReceber > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">Registrar devoluÃ§Ã£o de caixas</CardTitle>
+            <CardTitle className="text-base">Registrar devolução de caixas</CardTitle>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">
             <div className="grid grid-cols-2 gap-3">
@@ -86,7 +86,7 @@ export function AcoesHigienizacao({
             </div>
             <Button onClick={devolver} disabled={devBusy}>
               {devBusy && <Loader2 className="animate-spin" />}
-              Registrar devoluÃ§Ã£o
+              Registrar devolução
             </Button>
           </CardContent>
         </Card>

@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
-/** Cliente devolveu caixas â€” voltam sujas para o estoque, prontas para higienizar. */
+/** Cliente devolveu caixas — voltam sujas para o estoque, prontas para higienizar. */
 export function DevolucaoCaixasForm({
   accountId,
   maximo,
@@ -32,7 +32,7 @@ export function DevolucaoCaixasForm({
     const res = await registrarDevolucaoCaixas({ accountId, quantity: qty, movementDate });
     setSaving(false);
     if (res.ok) {
-      toast.success("DevoluÃ§Ã£o de caixas registrada.");
+      toast.success("Devolução de caixas registrada.");
       router.refresh();
     } else {
       toast.error(res.error.message);
@@ -66,7 +66,7 @@ export function DevolucaoCaixasForm({
       </div>
       <Button variant="outline" onClick={submit} disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
-        Registrar devoluÃ§Ã£o
+        Registrar devolução
       </Button>
     </div>
   );

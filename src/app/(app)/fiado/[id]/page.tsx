@@ -16,9 +16,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { isoDateTz } from "@/lib/tz";
 import { PagamentoForm } from "./_components/pagamento-form";
 import { DevolucaoCaixasForm } from "./_components/devolucao-caixas-form";
 import { FiadoEditarForm } from "./_components/fiado-editar-form";
+import { ExcluirFiado } from "./_components/excluir-fiado";
 
 export const dynamic = "force-dynamic";
 
@@ -201,12 +203,22 @@ export default async function FiadoDetailPage({
             initial={{
               id: conta.id,
               customerPhone: conta.customerPhone,
-              dueDate: conta.dueDate ? conta.dueDate.toISOString().slice(0, 10) : null,
+              // `isoDateTz`, não `toISOString`: o campo é uma data civil e
+              // precisa abrir com o dia que o usuário enxerga no Brasil.
+              dueDate: conta.dueDate ? isoDateTz(conta.dueDate) : null,
               notes: conta.notes,
             }}
           />
         </CardContent>
       </Card>
+
+      <ExcluirFiado
+        accountId={conta.id}
+        customerName={conta.customerName}
+        temPagamento={conta.payments.length > 0}
+        itensCount={conta.itens.length}
+        caixasDaVenda={conta.plasticCrateQty}
+      />
     </div>
   );
 }
