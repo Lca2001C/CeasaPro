@@ -1,5 +1,11 @@
 import Link from "next/link";
-import { Plus, ChevronRight } from "lucide-react";
+import {
+  ChevronRight,
+  HandCoins,
+  PackageSearch,
+  Plus,
+  Sparkles,
+} from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { higienizacaoStatusEnum } from "@/lib/validations/higienizacao";
@@ -36,8 +42,14 @@ export default async function HigienizacaoPage({
   const status = higienizacaoStatusEnum.safeParse(rawStatus).data;
 
   const { tenantId } = await requireTenant();
-  const { registros, caixasAReceber, totalAPagar, saldo } =
-    await HigienizacaoService.list(tenantId, status);
+  const {
+    registros,
+    caixasAReceber,
+    totalAPagar,
+    aguardandoDevolucao,
+    aguardandoPagamento,
+    saldo,
+  } = await HigienizacaoService.list(tenantId, status);
 
   return (
     <div>
@@ -75,6 +87,56 @@ export default async function HigienizacaoPage({
         <StatCard label="Caixas a receber" value={String(caixasAReceber)} tone="warning" />
         <StatCard label="Total a pagar" value={formatBRL(totalAPagar)} tone="destructive" />
       </div>
+
+      {/* O ciclo tem duas pendências com ações DIFERENTES — juntar as duas num
+          "em aberto" só esconderia qual delas é a sua vez de resolver. */}
+      {(aguardandoDevolucao > 0 || aguardandoPagamento > 0 || saldo.sujas > 0) && (
+        <div className="mb-4 flex flex-col gap-2">
+          {saldo.sujas > 0 && (
+            <Link href={`/higienizacao/nova?qtd=${saldo.sujas}`}>
+              <Card className="flex items-center justify-between gap-3 border-warning/40 bg-warning/10 p-3 hover:bg-warning/15">
+                <span className="flex min-w-0 items-center gap-2 text-sm">
+                  <Sparkles className="size-4 shrink-0 text-warning" />
+                  <span>
+                    <b>{saldo.sujas} caixa(s) suja(s)</b> esperando lavagem
+                  </span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              </Card>
+            </Link>
+          )}
+          {aguardandoDevolucao > 0 && (
+            <Link href="/higienizacao?status=ENVIADO">
+              <Card className="flex items-center justify-between gap-3 p-3 hover:bg-accent/40">
+                <span className="flex min-w-0 items-center gap-2 text-sm">
+                  <PackageSearch className="size-4 shrink-0 text-muted-foreground" />
+                  <span>
+                    <b>
+                      {aguardandoDevolucao} envio{aguardandoDevolucao > 1 ? "s" : ""}
+                    </b>{" "}
+                    aguardando devolução · {caixasAReceber} caixa(s)
+                  </span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              </Card>
+            </Link>
+          )}
+          {aguardandoPagamento > 0 && (
+            <Link href="/higienizacao?status=DEVOLVIDO">
+              <Card className="flex items-center justify-between gap-3 p-3 hover:bg-accent/40">
+                <span className="flex min-w-0 items-center gap-2 text-sm">
+                  <HandCoins className="size-4 shrink-0 text-destructive" />
+                  <span>
+                    <b>{formatBRL(totalAPagar)}</b> a pagar ao higienizador ·{" "}
+                    {aguardandoPagamento} lote(s)
+                  </span>
+                </span>
+                <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+              </Card>
+            </Link>
+          )}
+        </div>
+      )}
 
       <div className="mb-4 flex flex-wrap gap-2">
         {FILTROS.map((f) => (
@@ -115,12 +177,21 @@ export default async function HigienizacaoPage({
                       {CRATE_CLEANING_STATUS_LABELS[c.status]}
                     </Badge>
                   </div>
-                  <span className="text-xs text-muted-foreground">
+                  <span className="block text-xs text-muted-foreground">
                     {formatDate(c.sentDate)} · {c.sentQty} enviada(s) · {c.returnedQty}{" "}
                     devolvida(s)
+                    {c.perdidas > 0 ? ` · ${c.perdidas} perdida(s)` : ""}
                   </span>
+                  {/* O que ainda falta neste lote, que é a razão de ele estar aberto. */}
+                  {(c.caixasAReceber > 0 || Number(c.valorAPagar) > 0) && (
+                    <span className="block text-xs font-medium text-warning">
+                      {c.caixasAReceber > 0 ? `faltam ${c.caixasAReceber} caixa(s)` : ""}
+                      {c.caixasAReceber > 0 && Number(c.valorAPagar) > 0 ? " · " : ""}
+                      {Number(c.valorAPagar) > 0 ? `a pagar ${formatBRL(c.valorAPagar)}` : ""}
+                    </span>
+                  )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <span className="font-semibold tabular-nums">{formatBRL(c.totalAmount)}</span>
                   <ChevronRight className="size-4 text-muted-foreground" />
                 </div>

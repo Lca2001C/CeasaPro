@@ -8,6 +8,7 @@ import {
   higienizacaoUpdateSchema,
   higienizacaoDevolucaoSchema,
   higienizacaoPagamentoSchema,
+  higienizacaoPerdaSchema,
 } from "@/lib/validations/higienizacao";
 
 export const criarHigienizacao = withTenantAction({
@@ -25,6 +26,13 @@ export const registrarDevolucaoHigienizacao = withTenantAction({
   schema: higienizacaoDevolucaoSchema,
   module: "higienizacao",
   handler: (input, ctx) => HigienizacaoService.registrarDevolucao(input, ctx),
+});
+
+/** Caixas perdidas no higienizador — fecham o lote sem devolução. */
+export const registrarPerdaHigienizacao = withTenantAction({
+  schema: higienizacaoPerdaSchema,
+  module: "higienizacao",
+  handler: (input, ctx) => HigienizacaoService.registrarPerda(input, ctx),
 });
 
 export const registrarPagamentoHigienizacao = withTenantAction({

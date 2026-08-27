@@ -2,13 +2,13 @@
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, PackageX } from "lucide-react";
 import { toast } from "sonner";
 import {
   registrarDevolucaoHigienizacao,
   registrarPagamentoHigienizacao,
+  registrarPerdaHigienizacao,
 } from "@/actions/higienizacao.actions";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -38,6 +38,27 @@ export function AcoesHigienizacao({
   const [payAmount, setPayAmount] = useState<number | undefined>(valorAPagar || undefined);
   const [payDate, setPayDate] = useState(today);
   const [payBusy, setPayBusy] = useState(false);
+
+  const [perdaQty, setPerdaQty] = useState("");
+  const [perdaDate, setPerdaDate] = useState(today);
+  const [perdaBusy, setPerdaBusy] = useState(false);
+
+  async function registrarPerda() {
+    const qty = parseInt(perdaQty, 10);
+    if (!qty || qty <= 0) return toast.error("Informe quantas caixas se perderam.");
+    setPerdaBusy(true);
+    const res = await registrarPerdaHigienizacao({
+      id,
+      quantity: qty,
+      movementDate: perdaDate,
+    });
+    setPerdaBusy(false);
+    if (res.ok) {
+      toast.success(`${qty} caixa(s) registrada(s) como perdida(s).`);
+      setPerdaQty("");
+      router.refresh();
+    } else toast.error(res.error.message);
+  }
 
   async function devolver() {
     const qty = parseInt(devQty, 10);
@@ -93,21 +114,47 @@ export function AcoesHigienizacao({
               Registrar devolução
             </Button>
 
-            {/* Enviou 50, voltaram 47: as 3 que faltam não somem sozinhas do
-                livro-razão — ficam eternamente "em higienização". O atalho
-                registra a perda já vinculada a este higienizador, em vez de
-                obrigar a ir até Caixas plásticas e reconstruir o contexto. */}
+            {/* Enviou 50, voltaram 47: sem isto as 3 restantes ficariam para
+                sempre "aguardando devolução" — o painel cobrando uma devolução
+                que não vai acontecer, e o lote nunca fechando. */}
             <div className="border-t pt-3">
               <p className="mb-2 text-xs text-muted-foreground">
                 Faltou caixa voltar? Se {cleanerName ? <b>{cleanerName}</b> : "o higienizador"}{" "}
-                perdeu ou quebrou alguma, registre a perda para o saldo fechar.
+                perdeu ou quebrou alguma, registre a perda para o lote fechar.
               </p>
-              <Button asChild variant="outline" size="sm" className="w-full">
-                <Link
-                  href={`/caixas-plasticas/novo?tipo=QUEBRA&qtd=${caixasAReceber}&higienizador=${encodeURIComponent(cleanerName ?? "")}`}
-                >
-                  <PackageX className="size-4" /> Registrar caixas perdidas no higienizador
-                </Link>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="flex flex-col gap-1.5">
+                  <Label>Qtd. perdida</Label>
+                  <Input
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={caixasAReceber}
+                    value={perdaQty}
+                    onChange={(e) => setPerdaQty(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label>Data</Label>
+                  <Input
+                    type="date"
+                    value={perdaDate}
+                    onChange={(e) => setPerdaDate(e.target.value)}
+                  />
+                </div>
+              </div>
+              <Button
+                variant="outline"
+                className="mt-2 w-full text-destructive"
+                onClick={registrarPerda}
+                disabled={perdaBusy}
+              >
+                {perdaBusy ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : (
+                  <PackageX className="size-4" />
+                )}
+                Registrar caixas perdidas
               </Button>
             </div>
           </CardContent>

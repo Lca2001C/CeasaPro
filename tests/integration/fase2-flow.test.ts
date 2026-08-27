@@ -196,7 +196,11 @@ describe("Higienização — envio, devolução e pagamento", () => {
     ).rejects.toThrow(/saldo/i);
   });
 
-  it("excluir um envio pendente estorna as caixas no higienizador", async () => {
+  it("excluir um envio pendente devolve as caixas para SUJAS", async () => {
+    // Este teste afirmava "voltaram limpas" — e era justamente o defeito:
+    // excluir um envio lançado por engano lavava caixa no papel. As caixas
+    // saíram sujas e ninguém as lavou, então voltam sujas. O saldo tem de
+    // ficar idêntico ao de antes do envio, nas três pontas.
     const antes = await CaixasService.getSaldo(tenantId);
     const novo = await HigienizacaoService.create(
       { cleanerName: "Higienizadora 2", sentDate: hoje, sentQty: 5, unitPrice: 1 },
@@ -206,9 +210,9 @@ describe("Higienização — envio, devolução e pagamento", () => {
 
     await HigienizacaoService.remove(novo.id, ctx);
     const depois = await CaixasService.getSaldo(tenantId);
-    expect(depois.emHigienizacao).toBe(0);
-    expect(depois.limpas).toBe(antes.limpas + 5); // voltaram limpas
-    expect(depois.sujas).toBe(antes.sujas - 5);
+    expect(depois.emHigienizacao).toBe(antes.emHigienizacao);
+    expect(depois.limpas).toBe(antes.limpas);
+    expect(depois.sujas).toBe(antes.sujas);
   });
 });
 
