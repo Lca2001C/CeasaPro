@@ -6,6 +6,7 @@ import { BottomNav } from "./bottom-nav";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
+import { encerrarSessao } from "@/lib/session-nav";
 
 interface Props {
   companyName: string;
@@ -15,11 +16,6 @@ interface Props {
   /** Sessão de super-admin no ambiente próprio: mostra o caminho de volta. */
   isSuperAdmin?: boolean;
   children: React.ReactNode;
-}
-
-async function logout() {
-  await fetch("/api/auth/logout", { method: "POST" });
-  window.location.href = "/login";
 }
 
 export function AppShell({
@@ -48,7 +44,12 @@ export function AppShell({
                 </Link>
               </Button>
             )}
-            <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void encerrarSessao()}
+              aria-label="Sair"
+            >
               <LogOut className="size-5" />
             </Button>
           </div>

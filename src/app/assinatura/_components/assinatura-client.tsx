@@ -12,6 +12,7 @@ import { PixCheckout } from "@/components/billing/pix-checkout";
 import { PlanSelector } from "@/components/billing/plan-selector";
 import { TermsAcceptance } from "@/components/billing/terms-acceptance";
 import { temPagamentoPix, type PixCharge } from "@/lib/payments/pix-charge";
+import { irComSessaoNova } from "@/lib/session-nav";
 import type { AvailablePlan } from "@/lib/services/plano.service";
 
 interface BillingStatus {
@@ -68,7 +69,9 @@ export function AssinaturaClient({
     setPaid(true);
     toast.success("Pagamento confirmado! Liberando o acesso...");
     await apiPost("/api/auth/refresh", {}); // renova o token com o novo status
-    setTimeout(() => window.location.assign("/dashboard"), 1200);
+    // Documento novo, não router: o token acabou de mudar de status e o
+    // /dashboard pode estar no cache RSC buscado com a assinatura bloqueada.
+    setTimeout(() => irComSessaoNova("/dashboard"), 1200);
   }, []);
 
   const startAwaiting = useCallback(() => setAwaiting(true), []);

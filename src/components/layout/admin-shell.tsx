@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { LogOut } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
+import { encerrarSessao } from "@/lib/session-nav";
 import { AbrirAmbienteButton } from "./abrir-ambiente-button";
 
 const nav = [
@@ -15,11 +16,6 @@ const nav = [
   { href: "/admin/pagamentos", label: "Pagamentos" },
   { href: "/admin/auditoria", label: "Auditoria" },
 ];
-
-async function logout() {
-  await fetch("/api/auth/logout", { method: "POST" });
-  window.location.href = "/login";
-}
 
 export function AdminShell({
   userName,
@@ -40,7 +36,12 @@ export function AdminShell({
           <div className="flex items-center gap-2">
             <AbrirAmbienteButton />
             <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
-            <Button variant="ghost" size="icon" onClick={logout} aria-label="Sair">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => void encerrarSessao()}
+              aria-label="Sair"
+            >
               <LogOut className="size-5" />
             </Button>
           </div>
