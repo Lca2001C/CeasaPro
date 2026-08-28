@@ -17,7 +17,6 @@ export async function POST(req: Request) {
   const idQuery = url.searchParams.get("data.id") ?? url.searchParams.get("id");
   const dataIdQuery = idQuery ? String(idQuery) : null;
   const dataIdCorpo = idCorpo !== undefined && idCorpo !== null ? String(idCorpo) : null;
-  const dataId = dataIdCorpo ?? dataIdQuery;
 
   // O Mercado Pago identifica o evento em `type` (webhooks) ou `topic` (IPN legado).
   const type =
@@ -25,16 +24,24 @@ export async function POST(req: Request) {
     url.searchParams.get("type") ??
     url.searchParams.get("topic");
 
-  const valid = verifyWebhookSignature({
+  // Devolve QUAL id fechou o HMAC — e é só esse que será processado. Confiar no
+  // id do corpo aqui permitiria apresentar assinatura válida para um pagamento e
+  // fazer o servidor processar outro.
+  const dataId = verifyWebhookSignature({
     xSignature: req.headers.get("x-signature"),
     xRequestId: req.headers.get("x-request-id"),
     dataId: dataIdQuery ?? dataIdCorpo,
     dataIdAlt: dataIdCorpo,
   });
-  if (!valid) {
+  if (!dataId) {
     // Assinatura HMAC inválida ou timestamp fora da janela (replay).
     logger.warn(
-      { dataId, type, hasSignature: Boolean(req.headers.get("x-signature")) },
+      {
+        dataIdQuery,
+        dataIdCorpo,
+        type,
+        hasSignature: Boolean(req.headers.get("x-signature")),
+      },
       "Webhook Mercado Pago rejeitado: assinatura inválida ou expirada",
     );
     return new Response("invalid signature", { status: 401 });
@@ -43,11 +50,10 @@ export async function POST(req: Request) {
   // Só nos interessa evento de pagamento — aprovação, estorno e chargeback
   // chegam todos como "payment", mudando apenas o status consultado na API.
   if (type && type !== "payment") return Response.json({ ok: true });
-  if (!dataId) return Response.json({ ok: true });
 
   // Confirma a entrega na hora e processa depois da resposta: o Mercado Pago
   // reenvia o evento se demorarmos, e o cron de reconciliação cura o que falhar.
-  const mpPaymentId = String(dataId);
+  const mpPaymentId = dataId;
   after(async () => {
     try {
       const result = await BillingService.handleWebhook(mpPaymentId);

@@ -587,6 +587,12 @@ function comparaSeguro(a: string, b: string): boolean {
  * testamos os candidatos plausíveis. Isso **não** enfraquece a verificação:
  * cada candidato ainda precisa produzir o mesmo HMAC com o segredo. O que se
  * evita é recusar notificação legítima por divergência de formato.
+ *
+ * **Devolve o `data.id` que autenticou** (ou `null`), e não um booleano: como há
+ * mais de um candidato, quem chama precisa processar exatamente o identificador
+ * que fechou o HMAC. Antes a verificação aceitava o id da query e o processamento
+ * usava o do corpo com precedência — o valor autenticado não era o valor usado.
+ * O id devolvido vem normalizado em minúsculas, a mesma forma que o MP assina.
  */
 export function verifyWebhookSignature(args: {
   xSignature: string | null;
@@ -595,15 +601,16 @@ export function verifyWebhookSignature(args: {
   /** Outro valor plausível de `data.id` (corpo × query) — o MP assina um deles. */
   dataIdAlt?: string | null;
   now?: Date;
-}): boolean {
+}): string | null {
+  const primeiroId = args.dataId ?? args.dataIdAlt ?? null;
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!secret) {
     if (process.env.NODE_ENV === "production") {
       logger.error("MERCADOPAGO_WEBHOOK_SECRET ausente em produção — webhook rejeitado.");
-      return false;
+      return null;
     }
     logger.warn("MERCADOPAGO_WEBHOOK_SECRET ausente — pulando verificação (apenas dev).");
-    return true;
+    return primeiroId;
   }
 
   if (!args.xSignature) {
@@ -611,23 +618,23 @@ export function verifyWebhookSignature(args: {
       "Webhook Mercado Pago sem cabeçalho x-signature — a URL pode estar cadastrada em " +
         "'Notificações IPN' (legado, sem assinatura) em vez de 'Webhooks'.",
     );
-    return false;
+    return null;
   }
   if (!args.dataId && !args.dataIdAlt) {
     logger.warn("Webhook Mercado Pago sem data.id — nada a verificar.");
-    return false;
+    return null;
   }
 
   const { ts, v1 } = parseXSignature(args.xSignature);
   if (!ts || !v1) {
     logger.warn({ temTs: Boolean(ts), temV1: Boolean(v1) }, "x-signature em formato inesperado");
-    return false;
+    return null;
   }
 
   const segundos = tsEmSegundos(ts);
   if (segundos === null) {
     logger.warn({ ts }, "Webhook Mercado Pago com ts ilegível");
-    return false;
+    return null;
   }
   const nowSeconds = Math.floor((args.now ?? new Date()).getTime() / 1000);
   const atraso = Math.abs(nowSeconds - segundos);
@@ -636,7 +643,7 @@ export function verifyWebhookSignature(args: {
       { ts, atrasoSegundos: atraso, janelaSegundos: WEBHOOK_MAX_SKEW_SECONDS },
       "Webhook Mercado Pago com timestamp fora da janela (replay ou relógio dessincronizado)",
     );
-    return false;
+    return null;
   }
 
   const ids = [...new Set(
@@ -656,7 +663,7 @@ export function verifyWebhookSignature(args: {
           ? `id:${id};ts:${ts};`
           : `id:${id};request-id:${requestId};ts:${ts};`;
       if (comparaSeguro(createHmac("sha256", secret).update(manifest).digest("hex"), v1)) {
-        return true;
+        return id;
       }
     }
   }
@@ -670,5 +677,5 @@ export function verifyWebhookSignature(args: {
     "Webhook Mercado Pago com assinatura inválida — confira se MERCADOPAGO_WEBHOOK_SECRET " +
       "é a chave secreta DESTE webhook no painel do Mercado Pago",
   );
-  return false;
+  return null;
 }

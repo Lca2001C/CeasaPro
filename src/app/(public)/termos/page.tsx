@@ -7,7 +7,11 @@ export const metadata: Metadata = {
     "Termos de Uso do CeasaPro, sistema de gestão para comercializadores do CEASA.",
 };
 
-/** Página estática: sem dados, sem sessão — pode ser cacheada pelo CDN. */
+// Sem dados e sem sessão, mas renderizada por requisição para receber o nonce do
+// CSP (ver `src/proxy.ts`): pré-renderizada, o HTML sairia sem nonce e a
+// hidratação do React seria bloqueada pelo script-src.
+export const dynamic = "force-dynamic";
+
 export default function TermosPage() {
   return (
     <>

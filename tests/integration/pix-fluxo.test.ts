@@ -66,7 +66,7 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
         paidAt: status === "approved" ? new Date() : null,
       };
     }),
-    verifyWebhookSignature: () => true,
+    verifyWebhookSignature: (args: { dataId: string | null }) => args.dataId,
   };
 });
 

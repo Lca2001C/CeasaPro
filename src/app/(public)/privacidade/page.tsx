@@ -7,7 +7,10 @@ export const metadata: Metadata = {
     "Como o CeasaPro coleta, usa, compartilha e protege os dados pessoais, conforme a LGPD.",
 };
 
-/** Página estática: sem dados, sem sessão — pode ser cacheada pelo CDN. */
+// Sem dados e sem sessão, mas renderizada por requisição para receber o nonce do
+// CSP (ver `src/proxy.ts`).
+export const dynamic = "force-dynamic";
+
 export default function PrivacidadePage() {
   return (
     <>

@@ -4,23 +4,38 @@ import { ACCESS_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
 const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? "30");
 
 /**
- * O atributo `Secure` deve refletir o PROTOCOLO real da requisição, não o NODE_ENV.
- * - Em HTTPS (deploy atrás de proxy/Vercel → `x-forwarded-proto: https`): Secure = true.
- * - Em HTTP (dev, ou teste na LAN por IP, ex.: PWA no celular): Secure = false, senão o
- *   navegador DESCARTA o cookie (só o trata em contexto seguro) e a sessão nunca persiste.
- * Marcar Secure numa resposta HTTP não agrega segurança (o tráfego já é texto claro),
- * então condicionar ao protocolo é a regra correta e não enfraquece o HTTPS.
+ * `Secure` LIGADO por padrão — o padrão falha seguro.
+ *
+ * Antes isto era decidido só pelo `x-forwarded-proto` da requisição. O raciocínio
+ * era correto (marcar Secure numa resposta HTTP não protege nada, e o navegador
+ * descarta cookie Secure fora de contexto seguro), mas a fonte era ruim: sem um
+ * proxy que normalize o header, quem escreve `x-forwarded-proto` é o cliente — e
+ * um valor `http` fazia o cookie de sessão ser gravado sem `Secure`.
+ *
+ * Agora só um flag explícito de ambiente reabre a exceção, para o caso real que a
+ * motivou: testar na LAN por IP (http://192.168.x.x, PWA no celular), onde o
+ * navegador não considera a origem segura. Nesse modo o protocolo ainda é lido do
+ * header — mas do hop confiável (à direita), não do primeiro elemento.
+ *
+ * `http://localhost` é contexto seguro para os navegadores atuais, então o
+ * desenvolvimento local normal funciona com `Secure` ligado, sem flag nenhum.
  */
-async function isHttpsRequest(): Promise<boolean> {
+const PERMITE_COOKIE_INSEGURO = process.env.ALLOW_INSECURE_COOKIES === "1";
+
+async function isSecureRequest(): Promise<boolean> {
+  if (!PERMITE_COOKIE_INSEGURO) return true;
   const h = await headers();
-  const proto = (h.get("x-forwarded-proto") ?? "").split(",")[0]!.trim().toLowerCase();
-  return proto === "https";
+  const cadeia = (h.get("x-forwarded-proto") ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+  return cadeia[cadeia.length - 1] === "https";
 }
 
 async function cookieBase() {
   return {
     httpOnly: true,
-    secure: await isHttpsRequest(),
+    secure: await isSecureRequest(),
     sameSite: "lax" as const,
     path: "/",
   };

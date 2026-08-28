@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { hash, verify } from "@node-rs/argon2";
 
 // Argon2id (padrão OWASP). Só roda em Node runtime (não Edge).
@@ -20,4 +21,23 @@ export async function verifyPassword(
   } catch {
     return false;
   }
+}
+
+let iscaCache: Promise<string> | null = null;
+
+/**
+ * Hash descartável, com os MESMOS parâmetros do real.
+ *
+ * Serve para gastar o mesmo tempo de CPU quando o e-mail não existe. Sem isto, o
+ * login respondia na hora para e-mail inexistente e só rodava o Argon2 (~19 MB,
+ * dezenas a centenas de ms) quando a conta existia — diferença estável e
+ * mensurável de fora, que revela quais contas existem apesar da mensagem de erro
+ * ser genérica. Verificar contra a isca iguala o custo dos dois caminhos.
+ *
+ * O valor é sorteado uma vez por processo e memoizado: nenhuma senha real bate
+ * com ele, e o custo de gerá-lo é pago só na primeira chamada.
+ */
+export function hashDeIsca(): Promise<string> {
+  iscaCache ??= hashPassword(randomBytes(32).toString("hex"));
+  return iscaCache;
 }

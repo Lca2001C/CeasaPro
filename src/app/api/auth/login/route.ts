@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/db/prisma";
-import { verifyPassword } from "@/lib/auth/password";
+import { verifyPassword, hashDeIsca } from "@/lib/auth/password";
 import { signAccess } from "@/lib/auth/jwt";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
@@ -23,9 +23,19 @@ export async function POST(req: Request) {
   }
   const { email, password } = parsed.data;
 
-  const rateKey = `login:${ip}:${email}`;
-  const rl = await rateLimitDb(rateKey, { limit: 5, windowMs: 15 * 60 * 1000 });
-  if (!rl.ok) {
+  // Dois limites, de propósito. O de IP+e-mail é o que contém a força bruta
+  // comum. O de e-mail sozinho é a rede de segurança: se a identificação de
+  // origem falhar (proxy mal configurado, cadeia de headers inesperada), a conta
+  // alvo continua protegida contra tentativa distribuída. O limite por e-mail é
+  // folgado para que trancar a conta de alguém de fora exija esforço sustentado.
+  const rateKeyIp = `login:${ip}:${email}`;
+  const rateKeyEmail = `login:email:${email}`;
+  const janela = 15 * 60 * 1000;
+  const [rlIp, rlEmail] = await Promise.all([
+    rateLimitDb(rateKeyIp, { limit: 5, windowMs: janela }),
+    rateLimitDb(rateKeyEmail, { limit: 20, windowMs: janela }),
+  ]);
+  if (!rlIp.ok || !rlEmail.ok) {
     return Response.json(
       {
         ok: false,
@@ -46,9 +56,10 @@ export async function POST(req: Request) {
       { status: 401 },
     );
 
-  if (!user) return invalid();
-  const okPass = await verifyPassword(user.passwordHash, password);
-  if (!okPass) return invalid();
+  // Verifica SEMPRE um hash, mesmo sem usuário: é o tempo de resposta, e não a
+  // mensagem, que revelaria se o e-mail existe. Contra a isca nenhuma senha bate.
+  const okPass = await verifyPassword(user?.passwordHash ?? (await hashDeIsca()), password);
+  if (!user || !okPass) return invalid();
 
   const payload = await buildAccessPayload(user.id);
   if (!payload) return invalid();
@@ -56,7 +67,7 @@ export async function POST(req: Request) {
   // Credencial correta: a janela é liberada. O limite existe para conter
   // adivinhação de senha, então só tentativa que falha deve consumi-lo — senão
   // a mesma pessoa entrando de dois aparelhos trancaria a própria conta.
-  await resetRateLimit(rateKey);
+  await Promise.all([resetRateLimit(rateKeyIp), resetRateLimit(rateKeyEmail)]);
 
   const accessToken = await signAccess(payload);
   const refreshToken = await createRefreshToken(user.id, {

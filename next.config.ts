@@ -3,6 +3,12 @@ import type { NextConfig } from "next";
 const isProd = process.env.NODE_ENV === "production";
 
 // Cabeçalhos de segurança aplicados a todas as rotas (README §11).
+//
+// O Content-Security-Policy NÃO fica aqui: ele precisa de um nonce novo por
+// requisição, e `headers()` só produz valores estáticos. Ele é montado em
+// `src/proxy.ts`. Não duplique a diretiva neste arquivo — dois cabeçalhos CSP na
+// mesma resposta são aplicados em conjunto (vale a interseção), e o mais frouxo
+// aqui não afrouxaria nada, mas o mais estrito quebraria a página em silêncio.
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "X-Frame-Options", value: "DENY" },

@@ -16,6 +16,16 @@ import {
  * Assim é impossível esquecer o filtro de tenant → fecha vazamento cross-tenant.
  * Usa `extendedWhereUnique` (GA no Prisma 5+/6): permite combinar id + tenantId em update/delete/findUnique.
  */
+/** Devolve o payload sem `tenantId`, sem mutar o objeto de quem chamou. */
+function semTenantId(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || !("tenantId" in payload)) {
+    return payload;
+  }
+  const copia = { ...(payload as Record<string, unknown>) };
+  delete copia.tenantId;
+  return copia;
+}
+
 export function getTenantPrisma(tenantId: string) {
   if (!tenantId) {
     throw new Error("getTenantPrisma: tenantId é obrigatório");
@@ -40,6 +50,19 @@ export function getTenantPrisma(tenantId: string) {
                 args.where.deletedAt = null;
               }
             }
+          }
+
+          // Só o tenantId da SESSÃO pode valer. A extensão já força o `where`,
+          // mas sem isto um `tenantId` que chegasse no `data` de um update
+          // moveria o registro para outra empresa — o filtro impede ler o que
+          // é de outro, não impede entregar o próprio. Hoje nenhum serviço
+          // espalha entrada do usuário em `data`, então isto fecha a porta
+          // antes de alguém abrir: vale por construção, não por disciplina.
+          if (operation === "update" || operation === "updateMany") {
+            args.data = semTenantId(args.data);
+          }
+          if (operation === "upsert") {
+            args.update = semTenantId(args.update);
           }
 
           if (operation === "create") {

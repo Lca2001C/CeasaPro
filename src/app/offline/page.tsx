@@ -3,7 +3,11 @@ import type { Metadata } from "next";
 export const metadata: Metadata = { title: "Offline — CeasaPro" };
 
 // Página de fallback servida pelo service worker quando não há rede.
-// Estática e sem dados (o SW a pré-cacheia no install).
+// Sem dados, mas renderizada por requisição para receber o nonce do CSP (ver
+// `src/proxy.ts`). O SW continua pré-cacheando no install: ele guarda a resposta
+// inteira, então o HTML e o cabeçalho CSP servidos do cache trazem o MESMO nonce.
+export const dynamic = "force-dynamic";
+
 export default function OfflinePage() {
   return (
     <div className="flex min-h-screen flex-col items-center justify-center gap-3 bg-secondary/40 p-6 text-center">

@@ -123,7 +123,7 @@ describe("Assinatura do webhook (proteção do endpoint público)", () => {
         dataId: "123",
         now,
       }),
-    ).toBe(true);
+    ).toBe("123");
   });
 
   it("rejeita corpo adulterado: o data.id assinado não é o recebido", () => {
@@ -134,7 +134,21 @@ describe("Assinatura do webhook (proteção do endpoint público)", () => {
         dataId: "456",
         now,
       }),
-    ).toBe(false);
+    ).toBeNull();
+  });
+
+  it("adulterar SÓ o corpo não muda o pagamento processado", () => {
+    // A assinatura cobre o id "123" (query). Mandar "456" no corpo não deve
+    // fazer o endpoint processar "456": o que vale é o id que fechou o HMAC.
+    expect(
+      verifyWebhookSignature({
+        xSignature: assinar("123", ts),
+        xRequestId: REQUEST_ID,
+        dataId: "123",
+        dataIdAlt: "456",
+        now,
+      }),
+    ).toBe("123");
   });
 
   it("rejeita replay: notificação legítima reenviada fora da janela", () => {
@@ -146,7 +160,7 @@ describe("Assinatura do webhook (proteção do endpoint público)", () => {
         dataId: "123",
         now,
       }),
-    ).toBe(false);
+    ).toBeNull();
   });
 });
 
