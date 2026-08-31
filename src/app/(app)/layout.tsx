@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
-import { accessDecision } from "@/lib/billing/status";
+import { billingNotice } from "@/lib/billing/status";
 import { AppShell } from "@/components/layout/app-shell";
 
 export default async function AppLayout({
@@ -19,7 +19,11 @@ export default async function AppLayout({
 
   const tenant = await prisma.tenant.findUnique({
     where: { id: session.tenantId },
-    select: { tradeName: true, onboardingCompletedAt: true },
+    select: {
+      tradeName: true,
+      onboardingCompletedAt: true,
+      subscription: { select: { trialEndsAt: true } },
+    },
   });
 
   // Primeiro acesso → onboarding guiado.
@@ -27,11 +31,22 @@ export default async function AppLayout({
     redirect("/onboarding");
   }
 
-  const decision = accessDecision(session.tenantStatus, session.subStatus);
+  // Duas situações, duas mensagens: teste acabando (nunca pagou, precisa
+  // contratar) e mensalidade vencida (é cliente, precisa regularizar).
+  const notice = billingNotice({
+    subStatus: session.subStatus,
+    trialEndsAt: tenant?.subscription?.trialEndsAt ?? null,
+  });
   const billingWarning =
-    decision === "warn"
-      ? "Sua assinatura venceu. Regularize para não perder o acesso."
-      : null;
+    notice?.kind === "trial_ending"
+      ? notice.daysLeft <= 0
+        ? "Seu teste grátis termina hoje. Contrate um plano para continuar usando."
+        : `Seu teste grátis termina em ${notice.daysLeft} ${
+            notice.daysLeft === 1 ? "dia" : "dias"
+          }. Contrate um plano para não perder o acesso.`
+      : notice?.kind === "overdue"
+        ? "Sua assinatura venceu. Regularize para não perder o acesso."
+        : null;
 
   return (
     <AppShell

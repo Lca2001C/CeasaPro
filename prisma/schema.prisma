@@ -18,6 +18,10 @@ model Tenant {
   logoUrl               String?
   businessHours         String?
   status                TenantStatus           @default(ACTIVE)
+  /// Tipo de estabelecimento / número do box no Ceasa, informado no cadastro
+  /// público. Livre e opcional: no Ceasa a mesma pessoa opera box, banca ou
+  /// galpão, e travar em enum obrigaria migration a cada arranjo novo.
+  establishmentType     String?
   onboardingCompletedAt DateTime?
   /// Prova de aceite dos Termos de Uso / Política de Privacidade (LGPD, art. 8º).
   /// Registrado no primeiro checkout; guardamos data, IP e versão do documento.
@@ -75,6 +79,12 @@ model User {
   lastLoginAt         DateTime?
   resetTokenHash      String?
   resetTokenExpiresAt DateTime?
+  /// Confirmação do e-mail no cadastro público. É o gatilho do trial: sem isto
+  /// preenchido a empresa continua SUSPENSA.
+  emailVerifiedAt     DateTime?
+  /// SHA-256 do token de confirmação (o token cru só existe no link do e-mail).
+  verifyTokenHash     String?
+  verifyTokenExpiresAt DateTime?
   createdAt           DateTime       @default(now())
   updatedAt           DateTime       @updatedAt
   deletedAt           DateTime?
@@ -83,6 +93,7 @@ model User {
 
   @@unique([tenantId, email])
   @@index([tenantId])
+  @@index([verifyTokenHash])
   @@map("users")
 }
 
@@ -124,8 +135,12 @@ model TenantSubscription {
   monthlyAmount    Decimal               @db.Decimal(10, 2)
   startedAt        DateTime              @default(now())
   /// Data do PRIMEIRO pagamento aprovado. Enquanto for null a empresa nunca pagou,
-  /// então não tem acesso nem direito à tolerância de `graceDays`.
+  /// então não tem direito à tolerância de `graceDays` — só ao trial, se houver.
   activatedAt      DateTime?
+  /// Fim dos 7 dias grátis do cadastro público. Só é preenchido quando o e-mail é
+  /// confirmado (sem isso, e-mail descartável renderia trial ilimitado). Null =
+  /// nunca teve trial; passado = trial encerrado.
+  trialEndsAt      DateTime?
   currentPeriodEnd DateTime
   /// Tolerância em dias após o vencimento — só vale para quem já tem `activatedAt`.
   graceDays        Int                   @default(5)
@@ -602,10 +617,13 @@ enum TenantStatus {
   BLOCKED
 }
 
-/// Não existe período gratuito: a empresa nasce SUSPENSA e só vai para ATIVO
-/// quando o primeiro pagamento é aprovado pelo Mercado Pago.
+/// A empresa nasce SUSPENSA. Vai para TRIAL quando o cadastro público confirma o
+/// e-mail (7 dias de uso, sem cartão), e para ATIVO quando o primeiro pagamento é
+/// aprovado pelo Mercado Pago. Trial vencido volta para SUSPENSO — nunca VENCIDO,
+/// porque a tolerância de `graceDays` é direito de quem já pagou.
 enum SubscriptionStatus {
   ATIVO
+  TRIAL
   VENCIDO
   SUSPENSO
   BLOQUEADO

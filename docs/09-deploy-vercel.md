@@ -69,6 +69,44 @@ Do Gmail (veja §4.2 para gerar a senha de app):
 | `SMTP_PASSWORD` | senha de app de 16 caracteres, sem espaços |
 | `EMAIL_FROM` | `CeasaPro <o-mesmo-endereço-do-SMTP_USER>` |
 
+> **Se o e-mail está caindo no spam, o problema é o remetente, não o código.**
+> Autenticar no SMTP prova que a mensagem SAI; não prova que ela CHEGA na caixa de
+> entrada. Quem decide isso é a reputação do endereço remetente. Enviar e-mail
+> transacional com nome de marca (`CeasaPro <...>`) a partir de uma conta
+> **@gmail.com gratuita** é penalizado por praticamente todos os filtros, e nenhuma
+> mudança no código contorna isso. O `npm run preflight` avisa quando detecta essa
+> configuração.
+>
+> **A correção, em ordem de eficácia:**
+>
+> 1. **Envie de um domínio próprio.** Use `nao-responda@ceasapro.com.br` como
+>    `SMTP_USER`/`EMAIL_FROM`. Com Google Workspace isso já vem com DKIM; sem
+>    Workspace, use um provedor transacional (Resend, Brevo, SendGrid, Amazon SES),
+>    que só exige trocar `SMTP_HOST`/`SMTP_USER`/`SMTP_PASSWORD` — o código não muda.
+> 2. **Publique os três registros no DNS do domínio:**
+>    - **SPF** (TXT em `@`): autoriza quem pode enviar em nome do domínio. Para o
+>      Google: `v=spf1 include:_spf.google.com ~all`. Um domínio só pode ter UM
+>      registro SPF — se já existir, some os `include:` no mesmo.
+>    - **DKIM** (TXT no seletor informado pelo provedor): assina as mensagens. No
+>      Workspace: Admin › Apps › Gmail › Autenticar e-mail › gerar e publicar.
+>    - **DMARC** (TXT em `_dmarc`): diz o que fazer quando SPF/DKIM falham. Comece
+>      permissivo e endureça depois: `v=DMARC1; p=none; rua=mailto:dmarc@ceasapro.com.br`.
+> 3. **Mantenha o remetente coerente com os links do corpo.** `EMAIL_FROM` no
+>    domínio de `APP_URL`. Divergência entre os dois é sinal de phishing para os
+>    filtros, mesmo com SPF e DKIM válidos.
+> 4. **Preencha `EMAIL_REPLY_TO`** com um endereço que alguém realmente leia.
+> 5. **Aqueça o remetente.** Domínio novo tem reputação zero: comece com volume
+>    baixo e cresça ao longo de duas ou três semanas.
+>
+> Atenção a uma armadilha do Gmail: se `EMAIL_FROM` for de um domínio diferente da
+> conta autenticada, o Gmail **reescreve** o remetente — o From que chega não é o
+> configurado. Para usar um alias, verifique-o antes em Gmail › Ver todas as
+> configurações › Contas › "Enviar e-mail como".
+>
+> Para conferir o resultado, envie um teste para [mail-tester.com](https://www.mail-tester.com)
+> e leia o cabeçalho `Authentication-Results` da mensagem recebida: precisa marcar
+> `spf=pass` e `dkim=pass`.
+
 WhatsApp de suporte (só dígitos, com DDI):
 
 | Variável | Exemplo |

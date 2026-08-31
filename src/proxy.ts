@@ -6,6 +6,7 @@ import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 // Rotas publicas (sem sessao).
 const PUBLIC_PREFIXES = [
   "/login",
+  "/cadastro", // cadastro público + confirmação de e-mail (inicia o teste grátis)
   "/recuperar-senha",
   "/offline", // fallback do PWA (o SW pré-cacheia; não pode redirecionar p/ login)
   // Documentos legais: precisam abrir sem sessão (são linkados no checkout e no login).
@@ -133,13 +134,26 @@ export async function proxy(req: NextRequest) {
   const token = req.cookies.get(ACCESS_COOKIE)?.value;
   const session = token ? await verifyAccess(token) : null;
 
-  // Raiz: manda para o lugar certo.
+  // Raiz: quem não tem sessão vê a landing page (aquisição); quem já usa o
+  // sistema vai direto para o seu lugar, como antes.
   if (pathname === "/") {
-    if (!session) return redirecionar("/login");
+    if (!session) return seguir();
     if (session.mustChangePassword) {
       return redirecionar(PASSWORD_CHANGE_PATH);
     }
     return redirecionar(homeFor(session.role));
+  }
+
+  // Já logado tentando abrir o cadastro -> não faz sentido criar outra empresa.
+  if (session && (pathname === "/cadastro" || pathname.startsWith("/cadastro/"))) {
+    // Exceção: a confirmação de e-mail precisa funcionar mesmo com sessão ativa
+    // (a pessoa se cadastrou e clicou no link já estando logada em outra conta,
+    // ou abriu o link no mesmo navegador). Bloquear aqui deixaria o teste
+    // pendente para sempre.
+    if (!pathname.startsWith("/cadastro/confirmar/")) {
+      const target = session.mustChangePassword ? PASSWORD_CHANGE_PATH : homeFor(session.role);
+      return redirecionar(target);
+    }
   }
 
   // Ja logado tentando abrir /login -> vai para a home.

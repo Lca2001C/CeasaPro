@@ -27,6 +27,16 @@ export interface AvailablePlan {
   isCurrent: boolean;
 }
 
+/**
+ * Plano interno do ambiente do super-admin. Não é produto: não pode aparecer na
+ * vitrine pública nem ser o plano de entrada de um cadastro.
+ *
+ * Exportado porque três lugares precisam do mesmo valor (`AdminService`, a
+ * vitrine pública e o cadastro). Cópias soltas divergiriam e o plano interno
+ * vazaria para a tela de preços.
+ */
+export const ADMIN_PLAN_SLUG = "ambiente-administrador";
+
 export const PlanoService = {
   async getPlanoView(tenantId: string): Promise<PlanoView | null> {
     const sub = await prisma.tenantSubscription.findUnique({
@@ -58,6 +68,31 @@ export const PlanoService = {
       modules,
       usage: { produtos, usuarios },
     };
+  },
+
+  /**
+   * Planos para a VITRINE pública (landing page). Sem sessão e sem tenant.
+   *
+   * Lê do banco em vez de repetir os preços no código da landing: a segunda
+   * fonte de verdade divergiria no primeiro reajuste, e o lugar onde isso
+   * apareceria é a página que o cliente vê antes de decidir.
+   *
+   * O plano interno do ambiente do super-admin fica fora — não é oferta.
+   */
+  async listPublicPlans(): Promise<AvailablePlan[]> {
+    const plans = await prisma.plan.findMany({
+      where: { active: true, slug: { not: ADMIN_PLAN_SLUG } },
+      orderBy: { priceMonthly: "asc" },
+    });
+
+    return plans.map((p) => ({
+      id: p.id,
+      name: p.name,
+      priceMonthly: Number(p.priceMonthly),
+      maxUsers: p.maxUsers,
+      modules: planModules(p.features).map((k) => OPTIONAL_MODULES[k].label),
+      isCurrent: false,
+    }));
   },
 
   /** Planos ativos que o cliente pode contratar (o atual vem marcado com isCurrent). */

@@ -285,6 +285,66 @@ export function passwordChangedEmail(args: {
   };
 }
 
+/**
+ * Confirmação do cadastro público. É este clique que INICIA os 7 dias de teste —
+ * por isso o texto diz isso com clareza: quem não confirma acha que já está
+ * dentro e volta dias depois reclamando que não funciona.
+ *
+ * O link aparece como botão e como URL em texto, pelo mesmo motivo do e-mail de
+ * redefinição: gateways corporativos desmontam o botão.
+ */
+export function verifyEmailEmail(args: {
+  link: string;
+  trialDays: number;
+  expiresInHours: number;
+}): { subject: string; html: string } {
+  const href = escapeHtml(args.link);
+  return {
+    // O assunto é deliberadamente seco. "Gratis" é um dos gatilhos mais clássicos
+    // de filtro de spam, e o efeito piora quando vem junto de um nome de marca
+    // enviado de uma conta @gmail.com gratuita — que é exatamente o nosso caso.
+    // A oferta dos 7 dias continua no CORPO, onde não custa entrega.
+    subject: "CeasaPro - Confirme seu e-mail",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>Falta um passo para voce comecar.</p>
+        <p>Confirme seu e-mail para liberar <strong>${args.trialDays} dias de teste gratis</strong>, sem cartao de credito.</p>
+        <p><a href="${href}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Confirmar e comecar o teste</a></p>
+        <p style="color:#666;font-size:13px">Se o botao nao funcionar, copie e cole este endereco no navegador:</p>
+        <p style="font-size:13px;word-break:break-all"><a href="${href}" style="color:#1a7a3f">${href}</a></p>
+        <p style="color:#666;font-size:13px">O link vale por ${args.expiresInHours} horas e pode ser usado uma unica vez. Os ${args.trialDays} dias comecam a contar quando voce confirmar.</p>
+      </div>`,
+  };
+}
+
+/**
+ * Alguém tentou se cadastrar com um e-mail que JÁ tem conta.
+ *
+ * Existe porque o cadastro responde sempre a mesma coisa, sem dizer se o e-mail
+ * já estava em uso — dizer isso transformaria o formulário num verificador de
+ * "esta pessoa é cliente do CeasaPro?", o mesmo oráculo que o login e o
+ * "esqueci minha senha" já evitam. Quem é dono da caixa recebe esta explicação e
+ * não fica sem saída; quem está varrendo e-mails não recebe nada.
+ */
+export function signupAttemptOnExistingAccountEmail(args: {
+  loginUrl: string;
+  forgotUrl: string;
+}): { subject: string; html: string } {
+  return {
+    subject: "CeasaPro - Voce ja tem uma conta",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>Houve uma tentativa de cadastro no CeasaPro com este e-mail, e ele ja tem uma conta.</p>
+        <p>Se foi voce, use o acesso que ja existe:</p>
+        <p><a href="${escapeHtml(args.loginUrl)}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Entrar no CeasaPro</a></p>
+        <p style="color:#666;font-size:13px">Nao lembra a senha? Redefina em <a href="${escapeHtml(args.forgotUrl)}" style="color:#1a7a3f">Esqueci minha senha</a>.</p>
+        <p style="color:#666;font-size:13px">Se nao foi voce, pode ignorar este e-mail — nenhuma conta nova foi criada e nada mudou na sua.</p>
+      </div>`,
+  };
+}
+
 export function welcomeOwnerEmail(args: {
   ownerName: string;
   tradeName: string;

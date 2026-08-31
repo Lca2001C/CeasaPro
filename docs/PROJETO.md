@@ -52,7 +52,7 @@ Um `SUPER_ADMIN` tem `tenantId = null` e é o único usuário sem empresa vincul
 - **Estoque derivado** — o saldo de estoque nunca é uma coluna que se sobrescreve; é a soma de um livro-razão append-only (`stock_movements`). O mesmo vale para caixas plásticas (`plastic_crate_movements`). Isso torna qualquer número auditável até a origem.
 - **Fiado** — venda a prazo com pagamentos parciais, saldo devedor e vencimento; central para o negócio do CEASA.
 - **Caixa plástica retornável** — ativo que circula (sai com o cliente, volta suja, vai para higienização, volta limpa, quebra). Não confundir com **embalagem vendida** (papelão, sacaria), que é receita avulsa.
-- **Assinatura** — cada tenant tem uma assinatura mensal pré-paga: sem período gratuito, com tolerância pós-vencimento e bloqueio automático.
+- **Assinatura** — cada tenant tem uma assinatura mensal pré-paga: com teste grátis de 7 dias no cadastro público, tolerância pós-vencimento e bloqueio automático.
 
 ---
 
@@ -239,9 +239,9 @@ A tela `/plano` mostra o plano contratado, o consumo (produtos, usuários), os m
 5. `now ≤ currentPeriodEnd + graceDays` → **VENCIDO** (ainda acessa, com aviso)
 6. caso contrário → **SUSPENSO**
 
-Não existe período gratuito. O passo 3 é o que garante isso: a tolerância de `graceDays` só é avaliada depois da primeira ativação, então uma empresa recém-cadastrada não ganha nenhum dia de uso antes de pagar.
+O passo 3 é o que impede acesso gratuito por descuido: sem `activatedAt`, o único caminho de acesso é o teste grátis, regido **só** por `trialEndsAt` (`now ≤ trialEndsAt` → **TRIAL**; senão **SUSPENSO**). A tolerância de `graceDays` nunca se aplica antes da primeira ativação, e um `currentPeriodEnd` generoso gravado na criação não abre nada.
 
-`accessDecision` traduz isso em três resultados: `ok`, `warn` (banner de cobrança pendente, acesso liberado) e `blocked` (redireciona para `/conta/suspensa` ou responde 402).
+`accessDecision` traduz isso em três resultados: `ok` (inclui `TRIAL`), `warn` (banner de cobrança pendente, acesso liberado) e `blocked` (redireciona para `/conta/suspensa` ou responde 402). O aviso de **fim de teste** não passa por `accessDecision` — ele precisa dos dias restantes e de outra mensagem, e sai de `billingNotice`.
 
 ### Fluxo de pagamento
 
@@ -624,7 +624,7 @@ Componentes de domínio específico (PDV, formulário de fiado, higienização) 
 |---|---|
 | `financial-calc.test.ts` | Todas as fórmulas: frete rateado, CMV, lucro, margem, fiado, estoque, precisão decimal |
 | `billing-status.test.ts` | Ciclo ATIVO → VENCIDO → SUSPENSO, override manual, cancelamento, bloqueio |
-| `billing-no-trial.test.ts` | Garante que nenhuma empresa ganha acesso antes do 1º pagamento aprovado |
+| `billing-trial.test.ts` | Teste grátis de 7 dias e bloqueio: ninguém acessa sem pagamento nem prazo válido |
 | `plan-modules.test.ts` | Gating de módulos, retrocompatibilidade, `ForbiddenError` |
 | `crate-balance.test.ts` | Saldos de caixas e validações do ledger |
 | `mp-webhook-signature.test.ts` | HMAC do webhook Mercado Pago |
@@ -676,7 +676,7 @@ npm run test:e2e          # exige build + seed com SEED_DEMO=true
 
 Há ainda `DEV_ORIGIN`, lida por `next.config.ts` para liberar acesso pela LAN em desenvolvimento — útil para testar no celular real, mas ausente do `.env.example`.
 
-A aplicação **recusa gerar cobrança** se `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` e `APP_URL` não estiverem configuradas em produção. Antes de qualquer deploy, `npm run preflight` ([`scripts/preflight-check.mjs`](../scripts/preflight-check.mjs)) confere presença e formato de todas as variáveis, a conexão com o banco e a ausência de resíduo de período gratuito.
+A aplicação **recusa gerar cobrança** se `MERCADOPAGO_ACCESS_TOKEN`, `MERCADOPAGO_WEBHOOK_SECRET` e `APP_URL` não estiverem configuradas em produção. Antes de qualquer deploy, `npm run preflight` ([`scripts/preflight-check.mjs`](../scripts/preflight-check.mjs)) confere presença e formato de todas as variáveis, a conexão com o banco e a consistência do teste grátis.
 
 ### Outros arquivos de configuração
 

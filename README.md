@@ -33,7 +33,7 @@ Estrutura em [`src/`](src/): `app/` (telas + rotas), `actions/` (Server Actions)
 | Operação | Produtos · Fornecedores · Compras (entrada de estoque + frete rateado) · Vendas/PDV · Fiado (pagamento parcial) · Estoque (quebra/perda/doação) |
 | Fase 2 | Caixas plásticas (entrada/saída/retorno/quebra + saldos) · Higienização (envio/devolução/pagamento) · Venda de embalagens (tipos + vendas) |
 | Financeiro | Despesas (fixas/variáveis + categorias) · Dashboard (com avisos + indicadores avançados) · 13 relatórios (básicos + lucro por produto, mais vendidos, inadimplentes, fornecedores, fluxo de caixa, caixas, higienização, embalagens) |
-| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (Mercado Pago: PIX, crédito e débito; sem período gratuito; bloqueio automático) · Painel super-admin (clientes, planos, pagamentos, auditoria) |
+| SaaS | Onboarding guiado · Configurações da empresa · Assinatura (Mercado Pago: PIX, crédito e débito; teste grátis de 7 dias; bloqueio automático) · Painel super-admin (clientes, planos, pagamentos, auditoria) |
 | Fase 3 | **PWA instalável** (manifest + service worker leve) · **Avisos** no painel (fiado vencido, despesas a vencer, higienização a pagar) · **Atividades/Auditoria** (empresa e plataforma) · Métricas avançadas (margem, mais vendidos, prejuízo, estoque parado, MRR, novos no mês) |
 
 ---
@@ -117,7 +117,7 @@ Acesse http://localhost:3000.
 | `npm run prisma:migrate` | Criar/aplicar migration (dev) |
 | `npm run prisma:deploy` | Aplicar migrations (produção) |
 | `npm run db:seed` | Popular dados iniciais |
-| `npm run preflight` | Valida env, banco e ausência de resíduo de trial |
+| `npm run preflight` | Valida env, banco e consistência do trial |
 | `npm run cron:billing` | Dispara o cron de cobrança à mão (em produção quem chama é a Vercel) |
 
 ## Testes

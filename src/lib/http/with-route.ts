@@ -1,12 +1,11 @@
 import type { ZodType } from "zod";
-import { ZodError } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
 import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
+import { errorResponse } from "./error-response";
 import { clientIp } from "./request";
-import { describeError, logger } from "@/lib/logger";
 
 export interface RouteTenantCtx {
   session: Session;
@@ -14,32 +13,6 @@ export interface RouteTenantCtx {
   userId: string;
   ip: string | null;
   req: Request;
-}
-
-function errorResponse(e: unknown): Response {
-  if (e instanceof ZodError) {
-    const fields: Record<string, string> = {};
-    for (const issue of e.issues) {
-      const key = issue.path.join(".") || "_";
-      if (!fields[key]) fields[key] = issue.message;
-    }
-    return Response.json(
-      { ok: false, error: { code: "VALIDATION", message: "Dados inválidos", fields } },
-      { status: 422 },
-    );
-  }
-  if (e instanceof AppError) {
-    return Response.json(
-      { ok: false, error: { code: e.code, message: e.message, fields: e.fields } },
-      { status: e.status },
-    );
-  }
-  const errorId = Math.random().toString(36).slice(2, 10);
-  logger.error({ errorId, err: describeError(e) }, "Erro em route handler");
-  return Response.json(
-    { ok: false, error: { code: "INTERNAL", message: `Erro inesperado (ref: ${errorId})` } },
-    { status: 500 },
-  );
 }
 
 async function parseInput<I>(

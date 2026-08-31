@@ -6,6 +6,27 @@ import type {
 
 export type AccessDecision = "ok" | "warn" | "blocked";
 
+/** Dias de uso grátis concedidos ao confirmar o e-mail no cadastro público. */
+export const TRIAL_DAYS = 7;
+
+/** A partir de quantos dias restantes o banner de fim de teste aparece. */
+export const TRIAL_WARN_DAYS = 2;
+
+const UM_DIA_MS = 24 * 60 * 60 * 1000;
+
+/** Fim do teste grátis contado a partir da confirmação do e-mail. */
+export function trialEndFrom(start: Date): Date {
+  return new Date(start.getTime() + TRIAL_DAYS * UM_DIA_MS);
+}
+
+/**
+ * Dias inteiros que ainda faltam para o fim do teste, arredondando para cima:
+ * faltando 1,2 dias o cliente lê "2 dias", não "1". Nunca negativo.
+ */
+export function trialDaysLeft(trialEndsAt: Date, now: Date = new Date()): number {
+  return Math.max(0, Math.ceil((trialEndsAt.getTime() - now.getTime()) / UM_DIA_MS));
+}
+
 /**
  * Avança exatamente um mês, em UTC, sem "vazar" para o mês seguinte.
  * `setMonth` nativo transformaria 31/08 em 01/10 (e 31/01 em 03/03), dando
@@ -29,6 +50,10 @@ export function addOneMonth(from: Date): Date {
  *  - blocked: bloqueio total (redireciona para /conta/suspensa)
  *  - warn:    acesso liberado com aviso de vencimento
  *  - ok:      acesso normal
+ *
+ * `TRIAL` é acesso normal: durante os 7 dias o uso é ilimitado. O aviso de fim de
+ * teste NÃO passa por aqui — ver `billingNotice`, que precisa dos dias restantes
+ * e de uma mensagem diferente da de mensalidade vencida.
  */
 export function accessDecision(
   tenantStatus: TenantStatus | null | undefined,
@@ -46,20 +71,64 @@ export function accessDecision(
   return "ok";
 }
 
+/** Aviso a exibir no topo do sistema. `null` = nada a avisar. */
+export type BillingNotice =
+  | { kind: "trial_ending"; daysLeft: number }
+  | { kind: "overdue" }
+  | null;
+
+/**
+ * Aviso do topo do dashboard, separado de `accessDecision` de propósito.
+ *
+ * São duas situações diferentes que exigem mensagens diferentes: "seu teste
+ * termina em 2 dias" (nunca pagou, precisa contratar) e "sua mensalidade venceu"
+ * (é cliente, precisa regularizar). Espremer as duas no `"warn"` de
+ * `accessDecision` daria a frase errada a metade dos casos — e `accessDecision`
+ * não tem como expressar quantos dias faltam.
+ */
+export function billingNotice(args: {
+  subStatus: SubscriptionStatus | null | undefined;
+  trialEndsAt: Date | null | undefined;
+  now?: Date;
+}): BillingNotice {
+  const now = args.now ?? new Date();
+
+  if (args.subStatus === "TRIAL" && args.trialEndsAt) {
+    const daysLeft = trialDaysLeft(args.trialEndsAt, now);
+    // Só avisa na reta final: banner desde o 1º dia vira ruído e o cliente
+    // aprende a ignorá-lo justamente antes de ele importar.
+    if (daysLeft <= TRIAL_WARN_DAYS) return { kind: "trial_ending", daysLeft };
+    return null;
+  }
+
+  if (args.subStatus === "VENCIDO") return { kind: "overdue" };
+  return null;
+}
+
 /**
  * Recalcula o status da assinatura a partir das datas (usado pelo cron e no refresh).
  * Respeita override manual (statusSource = MANUAL).
  *
- * O CeasaPro não tem período gratuito: sem um pagamento aprovado (`activatedAt`)
- * a empresa fica SUSPENSA, e nem a tolerância de `graceDays` se aplica — ela existe
- * apenas para cobrir a compensação do pagamento de quem já é cliente, não para
- * liberar uso antecipado.
+ * Antes do primeiro pagamento (`activatedAt` nulo) o único acesso possível é o
+ * teste grátis, e ele é regido SÓ por `trialEndsAt`:
+ *  - trial correndo  → TRIAL (uso ilimitado);
+ *  - trial encerrado ou inexistente → SUSPENSO.
+ *
+ * Dois invariantes que precisam sobreviver a qualquer mudança aqui:
+ *  1. `graceDays` NÃO se aplica a quem nunca pagou. A tolerância existe para
+ *     cobrir a compensação bancária de um cliente, não para estender o teste.
+ *  2. Trial vencido cai em SUSPENSO, nunca em VENCIDO. VENCIDO libera acesso com
+ *     aviso — usá-lo aqui daria dias grátis além dos 7 combinados.
+ *
+ * `currentPeriodEnd` é deliberadamente ignorado enquanto não há `activatedAt`:
+ * um valor generoso gravado na criação não pode virar acesso gratuito.
  */
 export function computeStatus(
   sub: {
     status: SubscriptionStatus;
     statusSource: StatusSource;
     activatedAt: Date | null;
+    trialEndsAt?: Date | null;
     currentPeriodEnd: Date;
     graceDays: number;
     cancelledAt: Date | null;
@@ -69,8 +138,11 @@ export function computeStatus(
   if (sub.cancelledAt) return "CANCELADO";
   if (sub.statusSource === "MANUAL") return sub.status; // override do super-admin
 
-  // Nunca houve pagamento aprovado → sem acesso e sem tolerância.
-  if (!sub.activatedAt) return "SUSPENSO";
+  // Nunca houve pagamento aprovado: só o teste grátis pode liberar acesso.
+  if (!sub.activatedAt) {
+    if (sub.trialEndsAt && now <= sub.trialEndsAt) return "TRIAL";
+    return "SUSPENSO";
+  }
 
   const graceEnd = new Date(sub.currentPeriodEnd);
   graceEnd.setDate(graceEnd.getDate() + sub.graceDays);

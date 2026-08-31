@@ -201,7 +201,8 @@ Rota `/assinatura` (acessível mesmo com a conta bloqueada). Integração **Merc
 - O cliente gera a cobrança do mês → o sistema cria um pagamento PIX no Mercado Pago e exibe o **QR Code** e o **copia-e-cola**.
 - O pagamento é confirmado por **webhook** (`/api/webhooks/mercadopago`): ao ser aprovado, a assinatura vai para **ATIVO** e o vencimento avança um mês.
 - Um **cron** diário (`/api/cron/billing`) recalcula o status de todas as assinaturas.
-- **Sem período gratuito:** empresas novas nascem bloqueadas e só liberam as rotas operacionais após o primeiro pagamento aprovado.
+- **Teste grátis de 7 dias (cadastro público):** quem se cadastra em `/cadastro` recebe 7 dias de acesso completo, sem cartão de crédito. O teste **só começa quando o e-mail é confirmado** pelo link enviado — sem isso, e-mail descartável geraria acesso ilimitado. Empresas criadas pelo super-admin não passam por esse caminho e continuam nascendo bloqueadas.
+- **Fim do teste:** passados os 7 dias sem pagamento aprovado, a assinatura volta a **SUSPENSO** e o acesso é bloqueado. A tolerância de `graceDays` **não** se aplica: ela é direito de quem já pagou.
 - **Bloqueio:** nunca pagou, ou vencida além da tolerância → **suspensa**; a empresa é redirecionada para `/conta/suspensa` e só acessa a tela de regularização. Estorno e chargeback também bloqueiam na hora, revogando as sessões ativas. Ver [Planos e módulos](05-planos-e-modulos.md) e [Segurança](06-seguranca.md).
 
 ## Painel do super-admin

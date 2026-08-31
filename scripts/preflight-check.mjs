@@ -4,7 +4,7 @@
 // Confere três coisas, nesta ordem:
 //   1. Variáveis de ambiente: presença e formato.
 //   2. Conexão real com o PostgreSQL e dados mínimos (pelo menos um plano ativo).
-//   3. Ausência de resíduo do antigo período gratuito (trial) no banco.
+//   3. Consistência do teste grátis: ninguém com acesso sem pagamento nem prazo.
 //
 // Sai com código 1 em qualquer erro, para travar o pipeline antes do deploy.
 import "dotenv/config";
@@ -230,7 +230,7 @@ async function checkDatabase() {
     else ok(`${planosAtivos} plano(s) ativo(s) cadastrado(s)`);
 
     await checkPasswordResetFlow(prisma);
-    await checkNoTrialResidue(prisma);
+    await checkTrialConsistency(prisma);
   } catch (e) {
     fail(`Falha ao consultar o banco: ${e instanceof Error ? e.message : String(e)}`);
   } finally {
@@ -284,19 +284,49 @@ async function checkPasswordResetFlow(prisma) {
 }
 
 /**
- * Garante que o antigo período gratuito não sobreviveu à migração — nem no
- * schema (coluna/enum), nem nos dados (assinatura ativa sem pagamento).
+ * Consistência do teste grátis de 7 dias.
+ *
+ * Esta função antes garantia o OPOSTO — que o período gratuito não existia — e
+ * falhava se `trialEndsAt` ou o valor `TRIAL` estivessem presentes. Com a
+ * reintrodução do teste (migration `20260831120000`) ela foi invertida no que diz
+ * respeito ao schema, mas o invariante de negócio que ela realmente protege está
+ * intacto e é o mesmo:
+ *
+ *   **ninguém tem acesso liberado sem pagamento aprovado OU teste válido.**
+ *
+ * A diferença é que agora existem dois caminhos legítimos, e cada um tem sua
+ * prova: `activatedAt` para quem pagou, `trialEndsAt` no futuro para quem testa.
  */
-async function checkNoTrialResidue(prisma) {
-  section("Resíduo de período gratuito (trial)");
+async function checkTrialConsistency(prisma) {
+  section("Consistência do teste grátis (trial)");
+
+  // Mesmo motivo do índice do token de senha: a confirmação busca o usuário PELO
+  // hash do token, em rota pública. Sem índice, cada clique em link de
+  // confirmação vira varredura completa de `users`.
+  const [{ count: indiceVerify }] = await prisma.$queryRaw`
+    SELECT COUNT(*)::int AS count
+    FROM pg_indexes
+    WHERE tablename = 'users' AND indexname = 'users_verifyTokenHash_idx'
+  `;
+  if (indiceVerify === 0) {
+    fail(
+      'Índice "users_verifyTokenHash_idx" não existe — rode `prisma migrate deploy` ' +
+        "(migration 20260831120000_add_trial_and_public_signup)",
+    );
+  } else {
+    ok('Índice "users_verifyTokenHash_idx" presente (busca do token de confirmação)');
+  }
 
   const [{ count: colunaTrial }] = await prisma.$queryRaw`
     SELECT COUNT(*)::int AS count
     FROM information_schema.columns
     WHERE table_name = 'tenant_subscriptions' AND column_name = 'trialEndsAt'
   `;
-  if (colunaTrial > 0) fail('A coluna "trialEndsAt" ainda existe — migration não aplicada');
-  else ok('Coluna "trialEndsAt" removida');
+  if (colunaTrial === 0) {
+    fail('A coluna "trialEndsAt" não existe — migration não aplicada');
+    return;
+  }
+  ok('Coluna "trialEndsAt" presente');
 
   const [{ count: valorTrial }] = await prisma.$queryRaw`
     SELECT COUNT(*)::int AS count
@@ -304,8 +334,11 @@ async function checkNoTrialResidue(prisma) {
     JOIN pg_type t ON t.oid = e.enumtypid
     WHERE t.typname = 'SubscriptionStatus' AND e.enumlabel = 'TRIAL'
   `;
-  if (valorTrial > 0) fail('O valor "TRIAL" ainda existe no enum SubscriptionStatus');
-  else ok('Valor "TRIAL" removido do enum SubscriptionStatus');
+  if (valorTrial === 0) {
+    fail('O valor "TRIAL" não existe no enum SubscriptionStatus — migration não aplicada');
+    return;
+  }
+  ok('Valor "TRIAL" presente no enum SubscriptionStatus');
 
   const [{ count: colunaAtivacao }] = await prisma.$queryRaw`
     SELECT COUNT(*)::int AS count
@@ -318,22 +351,61 @@ async function checkNoTrialResidue(prisma) {
   }
   ok('Coluna "activatedAt" presente');
 
-  // O caso perigoso: empresa com acesso liberado sem nenhum pagamento aprovado.
+  // Caso perigoso 1: ATIVO/VENCIDO exigem pagamento aprovado. Continua valendo.
   const liberadasSemPagar = await prisma.tenantSubscription.count({
     where: { activatedAt: null, status: { in: ["ATIVO", "VENCIDO"] } },
   });
   if (liberadasSemPagar > 0) {
     fail(
-      `${liberadasSemPagar} assinatura(s) com acesso liberado sem nenhum pagamento aprovado ` +
-        "(activatedAt nulo) — indica trial residual",
+      `${liberadasSemPagar} assinatura(s) marcada(s) como ATIVO/VENCIDO sem nenhum pagamento ` +
+        "aprovado (activatedAt nulo) — esses status pressupõem pagamento",
     );
   } else {
-    ok("Nenhuma assinatura liberada sem pagamento aprovado");
+    ok("Nenhuma assinatura ATIVO/VENCIDO sem pagamento aprovado");
   }
 
-  const aguardando = await prisma.tenantSubscription.count({ where: { activatedAt: null } });
+  // Caso perigoso 2 (novo): TRIAL sem data de fim é acesso liberado sem prazo.
+  // `accessDecision` devolve "ok" para TRIAL, então uma linha assim é uso grátis
+  // indefinido até o próximo recálculo — que talvez nunca aconteça se o cron
+  // parar. Vale falhar o preflight.
+  const trialSemPrazo = await prisma.tenantSubscription.count({
+    where: { status: "TRIAL", trialEndsAt: null },
+  });
+  if (trialSemPrazo > 0) {
+    fail(
+      `${trialSemPrazo} assinatura(s) em TRIAL sem "trialEndsAt" — acesso liberado sem prazo`,
+    );
+  } else {
+    ok('Nenhuma assinatura em TRIAL sem prazo de fim');
+  }
+
+  // Caso perigoso 3 (novo): TRIAL já vencido que ainda não foi recalculado.
+  // Não é falha de deploy (o cron e o refresh corrigem), mas precisa aparecer:
+  // em volume, indica que o recálculo parou de rodar.
+  const trialVencidoNaoRecalculado = await prisma.tenantSubscription.count({
+    where: { status: "TRIAL", activatedAt: null, trialEndsAt: { lt: new Date() } },
+  });
+  if (trialVencidoNaoRecalculado > 0) {
+    advise(
+      `${trialVencidoNaoRecalculado} assinatura(s) em TRIAL com prazo vencido aguardando ` +
+        "recálculo (cron de billing / refresh de sessão)",
+    );
+  }
+
+  const emTeste = await prisma.tenantSubscription.count({
+    where: { status: "TRIAL", trialEndsAt: { gte: new Date() } },
+  });
+  if (emTeste > 0) {
+    console.log(`   ${emTeste} empresa(s) em teste grátis (esperado).`);
+  }
+
+  const aguardando = await prisma.tenantSubscription.count({
+    where: { activatedAt: null, trialEndsAt: null },
+  });
   if (aguardando > 0) {
-    console.log(`   ${aguardando} empresa(s) aguardando o primeiro pagamento (esperado).`);
+    console.log(
+      `   ${aguardando} empresa(s) aguardando o primeiro pagamento ou a confirmação de e-mail (esperado).`,
+    );
   }
 }
 
@@ -348,6 +420,53 @@ async function checkNoTrialResidue(prisma) {
  */
 async function checkSmtp() {
   section("E-mail (SMTP)");
+
+  // ── Entrega na caixa de entrada ──
+  // Autenticar no SMTP prova que o e-mail SAI, não que ele CHEGA. O que decide
+  // caixa de entrada × spam é o remetente: domínio próprio, autenticado e
+  // coerente com os links do corpo. Estes avisos existem porque o sintoma
+  // ("caiu no spam") não aponta a causa, e a causa quase nunca está no código.
+  const remetente = process.env.EMAIL_FROM ?? "";
+  const dominioDe = (v) => {
+    const m = String(v).match(/@([^>s]+)/);
+    return m ? m[1].toLowerCase().replace(/[>,;]+$/, "") : null;
+  };
+  const domFrom = dominioDe(remetente);
+  const domSmtp = dominioDe(process.env.SMTP_USER ?? "");
+  const GRATUITOS = new Set([
+    "gmail.com", "googlemail.com", "hotmail.com", "outlook.com",
+    "live.com", "yahoo.com", "yahoo.com.br", "icloud.com", "bol.com.br", "uol.com.br",
+  ]);
+
+  if (domFrom && GRATUITOS.has(domFrom)) {
+    advise(
+      `EMAIL_FROM usa um provedor GRATUITO (${domFrom}). E-mail transacional com nome ` +
+        "de marca saindo de conta gratuita é fortemente penalizado pelos filtros — é a " +
+        "causa mais provável de cair no spam. Envie de um domínio próprio " +
+        "(ex.: nao-responda@ceasapro.com.br) com SPF, DKIM e DMARC publicados no DNS.",
+    );
+  }
+
+  if (domFrom && domSmtp && domFrom !== domSmtp) {
+    advise(
+      `EMAIL_FROM (${domFrom}) e SMTP_USER (${domSmtp}) são de domínios diferentes. ` +
+        "O Gmail REESCREVE o remetente para a conta autenticada, a menos que o endereço " +
+        "esteja verificado em Gmail › Ver todas as configurações › Contas › " +
+        "\"Enviar e-mail como\". Sem isso, o From que chega não é o configurado.",
+    );
+  }
+
+  const domApp = (() => {
+    try { return new URL(process.env.APP_URL ?? "").hostname.replace(/^www./, "").toLowerCase(); }
+    catch { return null; }
+  })();
+  if (domFrom && domApp && domApp !== "localhost" && !domFrom.endsWith(domApp)) {
+    advise(
+      `O remetente (${domFrom}) não pertence ao domínio da aplicação (${domApp}). ` +
+        "Divergência entre o From e os links do corpo é sinal de phishing para os " +
+        "filtros, e derruba a entrega mesmo com SPF/DKIM válidos.",
+    );
+  }
 
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASSWORD;

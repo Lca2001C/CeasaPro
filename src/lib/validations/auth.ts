@@ -46,3 +46,32 @@ export const changePasswordSchema = z.object({
   newPassword: passwordPolicy,
 });
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
+
+/**
+ * Cadastro público (7 dias de teste). Coleta só o essencial: quanto mais campo,
+ * menos gente termina — o resto é pedido no onboarding, já dentro do sistema.
+ *
+ * Todos os tetos de tamanho são explícitos porque esta é entrada de quem não está
+ * autenticado, na rota mais exposta do sistema.
+ */
+export const signupSchema = z.object({
+  tradeName: z
+    .string()
+    .trim()
+    .min(2, "Informe o nome do seu negocio")
+    .max(120, "Nome muito longo"),
+  email: emailSchema,
+  /**
+   * Só dígitos, normalizado antes de validar: o usuário digita "(31) 99999-9999"
+   * e a máscara não pode ser motivo de recusa. 10 dígitos = fixo com DDD,
+   * 11 = celular com DDD.
+   */
+  phone: z
+    .string()
+    .trim()
+    .transform((v) => v.replace(/\D/g, ""))
+    .refine((v) => v.length >= 10 && v.length <= 11, "Informe DDD + numero"),
+  establishmentType: z.string().trim().max(60, "Descricao muito longa").optional(),
+  password: passwordPolicy,
+});
+export type SignupInput = z.infer<typeof signupSchema>;

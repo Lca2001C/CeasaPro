@@ -13,16 +13,43 @@ export default async function ContaSuspensaPage() {
   const session = await getSession();
   if (!session) redirect("/login");
 
-  // Empresa recém-cadastrada (nunca ativou) recebe um convite para assinar;
-  // quem já foi cliente recebe um aviso de regularização. O texto muda porque a
-  // causa é diferente — não há período gratuito para "expirar".
+  // Três causas diferentes, três textos. Mandar "regularize seu pagamento" para
+  // quem acabou de terminar o teste grátis (e nunca teve mensalidade) soa como
+  // cobrança de uma dívida que não existe.
   const sub = session.tenantId
     ? await prisma.tenantSubscription.findUnique({
         where: { tenantId: session.tenantId },
-        select: { activatedAt: true },
+        select: { activatedAt: true, trialEndsAt: true },
       })
     : null;
   const nuncaAtivou = sub !== null && sub.activatedAt === null;
+  const testeTerminou = nuncaAtivou && sub.trialEndsAt !== null;
+
+  const conteudo = testeTerminou
+    ? {
+        titulo: "Seu teste grátis terminou",
+        texto:
+          "Esperamos que o CeasaPro tenha ajudado. Para continuar, escolha um plano e " +
+          "pague por PIX, cartão de crédito ou de débito — a liberação é automática assim " +
+          "que o pagamento é aprovado. Tudo que você lançou durante o teste continua aqui.",
+        cta: "Escolher plano e continuar",
+      }
+    : nuncaAtivou
+      ? {
+          titulo: "Ative sua assinatura",
+          texto:
+            "Falta só o pagamento da primeira mensalidade para liberar o CeasaPro. Você " +
+            "pode pagar por PIX, cartão de crédito ou de débito — a liberação é automática " +
+            "assim que o pagamento é aprovado.",
+          cta: "Escolher plano e pagar",
+        }
+      : {
+          titulo: "Acesso temporariamente bloqueado",
+          texto:
+            "Sua assinatura está pendente ou foi suspensa. Regularize o pagamento para " +
+            "voltar a usar o CeasaPro. Seus dados estão preservados.",
+          cta: "Regularizar / pagar mensalidade",
+        };
 
   return (
     <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
@@ -33,18 +60,10 @@ export default async function ContaSuspensaPage() {
           ) : (
             <AlertTriangle className="size-12 text-warning" />
           )}
-          <h1 className="text-xl font-bold">
-            {nuncaAtivou ? "Ative sua assinatura" : "Acesso temporariamente bloqueado"}
-          </h1>
-          <p className="text-sm text-muted-foreground">
-            {nuncaAtivou
-              ? "Falta só o pagamento da primeira mensalidade para liberar o CeasaPro. Você pode pagar por PIX, cartão de crédito ou de débito — a liberação é automática assim que o pagamento é aprovado."
-              : "Sua assinatura está pendente ou foi suspensa. Regularize o pagamento para voltar a usar o CeasaPro. Seus dados estão preservados."}
-          </p>
+          <h1 className="text-xl font-bold">{conteudo.titulo}</h1>
+          <p className="text-sm text-muted-foreground">{conteudo.texto}</p>
           <Button asChild size="lg" className="w-full">
-            <Link href="/assinatura">
-              {nuncaAtivou ? "Escolher plano e pagar" : "Regularizar / pagar mensalidade"}
-            </Link>
+            <Link href="/assinatura">{conteudo.cta}</Link>
           </Button>
           <LogoutButton variant="outline" />
         </CardContent>

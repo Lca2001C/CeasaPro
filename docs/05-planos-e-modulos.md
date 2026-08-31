@@ -71,7 +71,10 @@ Duas guardas do servidor sustentam isso:
 
 ## Assinatura e cobrança (Mercado Pago)
 
-- **Sem período gratuito:** empresas novas nascem em `SUSPENSO` e **não têm acesso** até o primeiro pagamento ser aprovado pelo Mercado Pago. O campo `activatedAt` marca essa primeira ativação; enquanto for nulo, nem a tolerância de `graceDays` se aplica.
+- **Dois caminhos de acesso, e só dois.** Empresas nascem em `SUSPENSO`. Elas saem daí por:
+  - **`activatedAt`** — primeiro pagamento aprovado pelo Mercado Pago (`ATIVO`); ou
+  - **`trialEndsAt` no futuro** — teste grátis de 7 dias do cadastro público (`TRIAL`), concedido na confirmação do e-mail.
+- **A tolerância de `graceDays` só vale para quem já pagou.** Enquanto `activatedAt` for nulo ela não se aplica — nem para estender o teste grátis. Teste vencido vai para `SUSPENSO`, nunca para `VENCIDO`, porque `VENCIDO` libera acesso com aviso e daria dias grátis além dos 7 combinados.
 - **Métodos de pagamento (tela `/assinatura`, Payment Brick unificado):**
   - **PIX fica FORA do Payment Brick.** `customization.paymentMethods` declara só `creditCard` e `debitCard`; **`bankTransfer` é omitido de propósito** — não é esquecimento, e reativá-lo traz o problema de volta. O passo de seleção do PIX dentro do Brick é do Mercado Pago e diz *"insira o e-mail para receber o código Pix"*, promessa que este fluxo não cumpre: aqui o código aparece na tela, na hora. Aquele texto roda dentro do iframe e não há como reescrevê-lo, então o caminho é não usar aquele passo.
   - **Entrada própria do PIX:** um cartão abaixo do Brick, com o botão **Gerar código PIX**, que chama `POST /api/billing/checkout` direto e abre o painel. É o mesmo comportamento do fallback PIX-only (usado quando falta a public key), então os dois caminhos ficam iguais para o cliente.

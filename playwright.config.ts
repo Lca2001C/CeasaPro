@@ -45,6 +45,12 @@ export default defineConfig({
   // de compilação sob demanda do `next dev`). Rode `npm run build` antes.
   webServer: {
     command: "npm run start",
+    // Mesma trava do vitest (tests/setup/no-outbound-email.ts): nenhum teste abre
+    // conexao SMTP. Sem isto, um .env de desenvolvedor com SMTP preenchido faz o
+    // cadastro do E2E tentar um envio real pelo Gmail — e como o stdout do webServer
+    // e ignorado, a tentativa (e a falha) ficam invisiveis. O CI ja roda sem essas
+    // variaveis de proposito; aqui o ambiente local passa a se comportar igual.
+    env: { SMTP_USER: "", SMTP_PASSWORD: "" },
     url: baseURL,
     reuseExistingServer: !isCI,
     timeout: 180_000,

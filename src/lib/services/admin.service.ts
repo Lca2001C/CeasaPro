@@ -9,6 +9,13 @@ import { sendEmail, welcomeOwnerEmail, passwordChangedEmail } from "@/lib/email"
 import { absoluteUrl } from "@/lib/app-url";
 import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
+import {
+  provisionTenant,
+  emailEmUso,
+  emailDeExcluido,
+  liberarEmailDeContaExcluida,
+} from "./tenant-provisioning";
+import { ADMIN_PLAN_SLUG } from "./plano.service";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { AdminCtx } from "@/lib/http/with-action";
 import type {
@@ -38,27 +45,8 @@ function slugify(s: string): string {
  */
 const NAO_E_AMBIENTE_ADMIN = { users: { none: { role: "SUPER_ADMIN" as const } } };
 
-/** Nome do plano interno usado pelo ambiente do super-admin. */
-const ADMIN_PLAN_SLUG = "ambiente-administrador";
-
-/**
- * E-mail "carimbado" de um usuário excluído.
- *
- * `User.email` é `@unique` GLOBAL e o índice não sabe o que é `deletedAt`:
- * a linha excluída continua ocupando o endereço, e cadastrar de novo a mesma
- * pessoa estourava violação de índice único — que chegava à tela como
- * "Ocorreu um erro inesperado (ref: …)".
- *
- * Carimbar libera o endereço para um cadastro novo sem apagar a linha, que
- * precisa continuar existindo porque o `userId` é referenciado na auditoria.
- * O e-mail original fica legível (e também é guardado no log de auditoria).
- */
-function emailDeExcluido(userId: string, email: string): string {
-  // Já carimbado (exclusão de empresa depois de exclusão de usuário): não
-  // empilha prefixo em cima de prefixo.
-  if (email.startsWith("excluido-")) return email;
-  return `excluido-${userId}-${email}`;
-}
+// O slug do plano interno vem de `plano.service` — a vitrine pública e o
+// cadastro precisam do mesmo valor para não oferecê-lo a cliente.
 
 export const AdminService = {
   async metrics() {
@@ -128,25 +116,10 @@ export const AdminService = {
   },
 
   async createTenantWithOwner(input: NovaEmpresaInput, ctx: AdminCtx) {
-    const existing = await prisma.user.findFirst({
-      where: { email: input.ownerEmail, deletedAt: null },
-    });
-    if (existing) throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
-
-    // Conta EXCLUÍDA ainda segurando o endereço: libera antes de criar. A
-    // migration `20260829120000` já carimbou as antigas, mas isto cobre
-    // qualquer linha que tenha escapado — e é justamente onde o cadastro
-    // quebrava com "erro inesperado" em vez de uma mensagem.
-    const excluido = await prisma.user.findFirst({
-      where: { email: input.ownerEmail, deletedAt: { not: null } },
-      select: { id: true, email: true },
-    });
-    if (excluido) {
-      await prisma.user.update({
-        where: { id: excluido.id },
-        data: { email: emailDeExcluido(excluido.id, excluido.email) },
-      });
+    if (await emailEmUso(input.ownerEmail)) {
+      throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
     }
+    await liberarEmailDeContaExcluida(input.ownerEmail);
 
     const plan = await prisma.plan.findUnique({ where: { id: input.planId } });
     if (!plan) throw new NotFoundError("Plano não encontrado");
@@ -156,52 +129,42 @@ export const AdminService = {
     const now = new Date();
 
     const tenantId = await prisma.$transaction(async (tx) => {
-      const tenant = await tx.tenant.create({
-        data: {
-          tradeName: input.tradeName,
-          legalName: input.legalName ?? null,
-          cnpj: input.cnpj ?? null,
-          phone: input.phone ?? null,
-          status: "ACTIVE",
-          subscription: {
-            create: {
-              planId: plan.id,
-              // Sem periodo gratuito: a empresa nasce bloqueada e so vai para
-              // ATIVO quando o Mercado Pago aprovar a primeira mensalidade.
-              status: "SUSPENSO",
-              monthlyAmount: input.monthlyAmount,
-              activatedAt: null,
-              currentPeriodEnd: now,
-              graceDays: input.graceDays,
-            },
-          },
-          users: {
-            create: {
-              name: input.ownerName,
-              email: input.ownerEmail,
-              passwordHash,
-              role: "OWNER",
-              mustChangePassword: true,
-            },
-          },
+      // A empresa nasce SUSPENSA (regra em `provisionTenant`): sem período
+      // gratuito por este caminho — o teste de 7 dias é do cadastro público.
+      // Só vai para ATIVO quando o Mercado Pago aprovar a primeira mensalidade.
+      const { tenantId: novoId } = await provisionTenant(tx, {
+        tradeName: input.tradeName,
+        legalName: input.legalName ?? null,
+        cnpj: input.cnpj ?? null,
+        phone: input.phone ?? null,
+        planId: plan.id,
+        monthlyAmount: input.monthlyAmount,
+        graceDays: input.graceDays,
+        currentPeriodEnd: now,
+        owner: {
+          name: input.ownerName,
+          email: input.ownerEmail,
+          passwordHash,
+          mustChangePassword: true,
+          // Cadastro pelo admin: quem cadastrou já validou o contato, então não
+          // há passo de confirmação de e-mail neste caminho.
+          emailVerifiedAt: now,
         },
       });
-      await createDefaultExpenseCategories(tenant.id, tx);
-      await createDefaultPackagingTypes(tenant.id, tx);
       await audit(
         {
-          tenantId: tenant.id,
+          tenantId: novoId,
           userId: ctx.userId,
           actorEmail: ctx.session.email,
           action: "CREATE",
           entity: "Tenant",
-          entityId: tenant.id,
-          newData: { tradeName: tenant.tradeName, ownerEmail: input.ownerEmail },
+          entityId: novoId,
+          newData: { tradeName: input.tradeName, ownerEmail: input.ownerEmail },
           ip: ctx.ip,
         },
         tx,
       );
-      return tenant.id;
+      return novoId;
     });
 
     const { subject, html } = welcomeOwnerEmail({
