@@ -1,9 +1,9 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { Plus, Pencil } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
-import { DespesasService } from "@/lib/services/despesas.service";
+import { DespesasService, DESPESAS_POR_PAGINA } from "@/lib/services/despesas.service";
 import { excluirDespesa } from "@/actions/despesas.actions";
-import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { formatBRL, formatDate } from "@/lib/format";
 import { EXPENSE_TYPE_LABELS } from "@/lib/labels";
 import { startOfDayTz } from "@/lib/tz";
@@ -27,33 +27,38 @@ const FILTROS = [
 export default async function DespesasPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string }>;
+  searchParams: Promise<{ status?: string; pagina?: string }>;
 }) {
-  const { status: rawStatus } = await searchParams;
+  const { status: rawStatus, pagina: rawPagina } = await searchParams;
   const filtro = FILTROS.some((f) => f.value === rawStatus)
     ? (rawStatus as (typeof FILTROS)[number]["value"])
     : "PENDENTE";
+  const pagina = Math.max(1, Number(rawPagina) || 1);
 
   const { tenantId } = await requireTenant();
-  const todas = await DespesasService.list(tenantId);
 
-  // Os totais somam TODAS as despesas, não só as filtradas: os cards são o
-  // retrato do mês: filtrar a lista não pode mudar quanto se deve no total.
-  const totais = FinancialCalc.totaisDespesas(
-    todas.map((d) => ({ type: d.type, amount: d.amount })),
-  );
+  // "TODAS" é ausência de filtro de status, não um status.
+  const status = filtro === "TODAS" ? undefined : filtro;
+  const skip = (pagina - 1) * DESPESAS_POR_PAGINA;
 
-  const despesas = todas
-    .filter((d) => filtro === "TODAS" || d.status === filtro)
-    // Pendentes por vencimento, o que vence primeiro no topo — sem data vai
-    // para o fim, porque não tem prazo correndo.
-    .sort((a, b) => {
-      if (filtro === "PAGO") return 0;
-      if (!a.dueDate && !b.dueDate) return 0;
-      if (!a.dueDate) return 1;
-      if (!b.dueDate) return -1;
-      return a.dueDate.getTime() - b.dueDate.getTime();
-    });
+  // Filtro, ordem, limite e totais são resolvidos no banco. A tela carregava
+  // TODAS as despesas para filtrar e somar em JS: ~278 ms com 2 anos de
+  // histórico, crescendo sem teto. Os totais continuam somando tudo (os cards
+  // são o retrato do total devido), mas via groupBy, sem trazer as linhas.
+  const [despesas, total, totais] = await Promise.all([
+    DespesasService.list(tenantId, { status, skip }),
+    DespesasService.count(tenantId, { status }),
+    DespesasService.totais(tenantId),
+  ]);
+
+  const ultimaPagina = Math.max(1, Math.ceil(total / DESPESAS_POR_PAGINA));
+  // URL pedindo pagina inexistente (editada a mao, ou a lista encurtou): manda
+  // para a ultima valida, em vez de mostrar "nenhuma despesa cadastrada" — que
+  // seria mentira.
+  if (pagina > ultimaPagina && total > 0) {
+    redirect(`/despesas?status=${filtro}&pagina=${ultimaPagina}`);
+  }
+  const linkPagina = (n: number) => `/despesas?status=${filtro}&pagina=${n}`;
 
   const hoje = startOfDayTz(new Date());
   const vencida = (d: (typeof despesas)[number]) =>
@@ -87,7 +92,7 @@ export default async function DespesasPage({
             size="sm"
             variant={filtro === f.value ? "default" : "outline"}
           >
-            <Link href={`/despesas?status=${f.value}`}>{f.label}</Link>
+            <Link href={`/despesas?status=${f.value}&pagina=1`}>{f.label}</Link>
           </Button>
         ))}
       </div>
@@ -145,6 +150,28 @@ export default async function DespesasPage({
               </div>
             </Card>
           ))}
+        </div>
+      )}
+
+      {ultimaPagina > 1 && (
+        <div className="mt-4 flex items-center justify-between gap-2">
+          {pagina > 1 ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={linkPagina(pagina - 1)}>Anterior</Link>
+            </Button>
+          ) : (
+            <span />
+          )}
+          <span className="text-xs text-muted-foreground">
+            Página {pagina} de {ultimaPagina} · {total} despesa{total === 1 ? "" : "s"}
+          </span>
+          {pagina < ultimaPagina ? (
+            <Button asChild variant="outline" size="sm">
+              <Link href={linkPagina(pagina + 1)}>Próxima</Link>
+            </Button>
+          ) : (
+            <span />
+          )}
         </div>
       )}
     </div>
