@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
 import { encerrarSessao } from "@/lib/session-nav";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
+import { NetworkStatus } from "@/components/pwa/network-status";
 
 interface Props {
   companyName: string;
@@ -69,6 +70,8 @@ export function AppShell({
             Ambiente do administrador — dados de teste, separados dos clientes.
           </div>
         )}
+
+        <NetworkStatus />
 
         {billingWarning && (
           <div className="bg-warning/15 px-4 py-2 text-center text-sm text-warning">

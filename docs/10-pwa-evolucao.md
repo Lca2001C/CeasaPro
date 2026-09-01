@@ -92,10 +92,39 @@ Levar o usuário a instalar o app logo após o login, porque o ganho de velocida
 balcão só existe se o app estiver na tela inicial. Prompt automático uma vez, respeitando
 "Agora não" por 7 dias, e reabrível em Configurações.
 
-### Fase 2 — Consulta offline (somente leitura)
-Um snapshot por empresa (`GET /api/pwa/snapshot`) guardado em IndexedDB, sincronizado
-com o app aberto. Tela `/consulta-offline` mostra os dados com a hora de origem.
-Escritas ficam bloqueadas na UI enquanto offline.
+### Fase 2 — Consulta offline (somente leitura) — **implementada**
+
+| Peça | Onde |
+|---|---|
+| Snapshot da empresa | `GET /api/pwa/snapshot` (`withTenantRoute`) |
+| Armazenamento | `src/lib/pwa/offline-store.ts` (IndexedDB, um registro) |
+| Sincronismo | `OfflineSync` montado no Início, debounce de 5 min |
+| Tela | `/consulta-offline` (cliente; lê do IndexedDB) |
+| Faixa de rede | `NetworkStatus` no `AppShell` |
+| Bloqueio de escrita | `api-client.ts` recusa POST offline com código `OFFLINE` |
+| Fallback de navegação | `sw.js` v4: /consulta-offline se houver snapshot, senão /offline |
+
+Decisões que valem registro:
+
+- **Números viram `number` na borda da API.** `Prisma.Decimal` não sobrevive a JSON
+  de forma útil, e a tela offline só exibe — os totais vêm somados do servidor. Nada
+  é recalculado no cliente.
+- **Listas limitadas** (200 produtos, 100 contas). O snapshot vai para o
+  armazenamento do celular, que o Safari descarta quando o site fica sem uso; payload
+  grande aumenta o custo e a chance de ser jogado fora.
+- **Tudo no `offline-store` falha em silêncio.** Aba privada, cota esgotada e
+  armazenamento bloqueado por política são cenários NORMAIS. Quem chama trata `null`
+  como "não tenho dados", que é um estado previsto da tela — não um erro.
+- **`/consulta-offline` é rota pública no proxy.** Sem rede o access token pode ter
+  expirado, e redirecionar para /login tiraria do usuário justamente o dado que já
+  está no aparelho dele. O que protege esses dados é o logout apagá-los.
+- **O logout apaga o snapshot** (`limparSnapshotNoLogout`). É privacidade, não
+  limpeza: o snapshot tem estoque, nomes de clientes e quanto cada um deve, e a tela
+  lê do IndexedDB sem pedir sessão. Em celular compartilhado, deixá-lo entregaria o
+  movimento da empresa para o próximo que abrisse o app.
+- **`navigator.onLine` não é verdade absoluta.** Ele afirma que existe interface de
+  rede, não que a internet funciona (Wi-Fi de portal cativo aparece como online). Por
+  isso ele serve para avisar e recusar cedo, mas quem decide é a requisição falhando.
 
 ### Fase 3 — Web Push
 Avisos que hoje só aparecem se o usuário abrir o app (fiado vencido, despesa a vencer,
@@ -186,3 +215,28 @@ O painel é **modal**: enquanto está aberto, o resto da tela fica inerte. Foi a
 que se pediu (e é o padrão que converte), mas o custo é interceptar a primeira ação
 do usuário depois do login. Se a taxa de "Agora não" vier alta, o caminho é trocar
 por uma faixa não-modal no topo — a decisão deve sair da métrica, não de opinião.
+
+---
+
+## Checklist manual — Fase 2
+
+Automatizado em `tests/e2e/pwa-offline.spec.ts` (snapshot gravado, tela com a hora de
+origem, logout apagando) e `tests/unit/api-client-offline.test.ts` (escrita recusada
+antes de chamar `fetch`).
+
+**O que a automação não alcança:** o service worker. Ele só é registrado com
+`NODE_ENV=production` e HTTPS, então no `npm start` do Playwright (HTTP em localhost)
+o SW não assume o controle — e sem ele o navegador mostra a própria tela de erro em
+vez de servir `/consulta-offline`. A navegação offline precisa ser conferida à mão.
+
+- [ ] Abrir o Início com internet, fechar o app e ativar o modo avião.
+- [ ] Abrir o app pelo ícone: deve cair em **/consulta-offline** com os dados salvos
+      e a hora de origem, não na tela genérica de "sem conexão".
+- [ ] Limpar os dados do site (ou usar aparelho novo) e repetir sem nunca ter aberto o
+      Início: agora deve cair em **/offline**, porque não há snapshot.
+- [ ] Offline, tentar finalizar uma venda no PDV: a mensagem tem de afirmar que
+      **nada foi registrado**.
+- [ ] Voltar a ter rede e conferir que o Início traz números atualizados.
+- [ ] Sair (logout) e abrir /consulta-offline: deve dizer que não há dados salvos.
+- [ ] Trocar a versão do cache do `sw.js` exige fechar todas as abas para o SW novo
+      assumir; conferir que a v4 está ativa em DevTools › Application › Service Workers.

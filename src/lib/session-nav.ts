@@ -1,3 +1,5 @@
+import { limparSnapshotNoLogout } from "@/lib/pwa/offline-store";
+
 /**
  * Navegação que exige um DOCUMENTO NOVO, não uma transição do router.
  *
@@ -38,5 +40,10 @@ export function irComSessaoNova(destino: string): void {
  */
 export async function encerrarSessao(): Promise<void> {
   await fetch("/api/auth/logout", { method: "POST" });
+  // Apaga o snapshot de consulta offline ANTES de sair. Ele contem estoque, nomes
+  // de clientes e quanto cada um deve, e a tela de consulta le do IndexedDB sem
+  // pedir sessao — num celular compartilhado, deixa-lo entregaria o movimento da
+  // empresa para o proximo que abrisse o app.
+  await limparSnapshotNoLogout();
   irComSessaoNova("/login");
 }

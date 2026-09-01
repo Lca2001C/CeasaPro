@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { OfflineSync } from "@/components/pwa/offline-sync";
 import {
   AlertTriangle,
   Bell,
@@ -37,6 +38,14 @@ export default async function DashboardPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        Guarda o snapshot de consulta offline. Fica AQUI, e não num intervalo
+        global, porque sem Background Sync no iOS o sincronismo só acontece com o
+        app aberto — e esta é a tela que todo mundo abre, com os mesmos números.
+        Não renderiza nada; tem debounce de 5 min por dentro.
+      */}
+      <OfflineSync />
+
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-bold">Início</h1>
         {avisos.length > 0 && (

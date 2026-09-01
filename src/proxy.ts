@@ -9,6 +9,11 @@ const PUBLIC_PREFIXES = [
   "/cadastro", // cadastro público + confirmação de e-mail (inicia o teste grátis)
   "/recuperar-senha",
   "/offline", // fallback do PWA (o SW pré-cacheia; não pode redirecionar p/ login)
+  // Consulta dos dados salvos no aparelho. Publica pelo mesmo motivo do /offline,
+  // com um a mais: sem rede o access token pode ter expirado, e redirecionar para
+  // /login deixaria a pessoa sem acesso ao que ela JA tem no celular. O que
+  // protege esses dados e o `limparSnapshotNoLogout` (nada fica apos sair).
+  "/consulta-offline",
   // Documentos legais: precisam abrir sem sessão (são linkados no checkout e no login).
   "/termos",
   "/privacidade",
