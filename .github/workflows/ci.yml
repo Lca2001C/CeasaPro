@@ -87,14 +87,40 @@ jobs:
       - name: Testes de integração
         run: npm run test:integration
 
-      - name: Verificação pré-flight (env, banco, resíduo de trial)
+      - name: Verificação pré-flight (env, banco, consistência do trial)
         run: npm run preflight
 
       - name: Build de produção
         run: npm run build
 
+      # `--with-deps` roda `apt-get update`, e a imagem do runner do GitHub traz os
+      # repositorios apt da Microsoft (azure-cli e ubuntu/24.04/prod) configurados.
+      # Quando eles respondem 403 — intermitente e fora do nosso controle — o apt
+      # sai com codigo 100 e derruba a instalacao do navegador, mesmo que o
+      # navegador nada tenha a ver com aqueles repositorios. Nada neste pipeline
+      # usa pacote da Microsoft, entao removemos as fontes antes de tocar no apt.
+      - name: Remover fontes apt da Microsoft (evita 403 que quebra o apt)
+        run: |
+          # Globs sem correspondencia sao passados literalmente e o -f ignora
+          # caminho inexistente, entao isto e seguro se os arquivos mudarem de nome.
+          sudo rm -f /etc/apt/sources.list.d/*microsoft*.list
+          sudo rm -f /etc/apt/sources.list.d/*microsoft*.sources
+          sudo rm -f /etc/apt/sources.list.d/*azure*.list
+          sudo rm -f /etc/apt/sources.list.d/*azure*.sources
+          echo "Fontes apt restantes:"
+          ls -1 /etc/apt/sources.list.d/ || true
+
+      # Se ainda assim o apt falhar (outro repositorio fora do ar), cai para a
+      # instalacao SEM `--with-deps`: a imagem do runner ja traz as bibliotecas
+      # que o Chromium precisa. Nao mascara problema real — se faltar alguma lib,
+      # o proprio passo de E2E falha ao abrir o navegador, e com mensagem clara.
       - name: Instalar navegador do Playwright
-        run: npx playwright install --with-deps chromium
+        run: |
+          if npx playwright install --with-deps chromium; then
+            exit 0
+          fi
+          echo "::warning::playwright install --with-deps falhou (provavel apt indisponivel). Tentando sem --with-deps."
+          npx playwright install chromium
 
       - name: Testes E2E (Playwright)
         run: npm run test:e2e
