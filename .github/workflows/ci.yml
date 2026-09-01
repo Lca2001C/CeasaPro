@@ -93,13 +93,34 @@ jobs:
       - name: Build de produção
         run: npm run build
 
+      # A chave do cache e a VERSAO do Playwright, nao o hash do lockfile: o binario
+      # do navegador e atrelado a versao, e reaproveitar o de outra versao daria um
+      # bug silencioso (navegador incompativel) em vez de um erro claro.
+      - name: Descobrir a versao do Playwright
+        id: playwright-versao
+        run: |
+          VERSAO=$(node -p "require('@playwright/test/package.json').version")
+          echo "Playwright $VERSAO"
+          echo "versao=$VERSAO" >> "$GITHUB_OUTPUT"
+
+      - name: Cache dos navegadores do Playwright
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ steps.playwright-versao.outputs.versao }}
+
       # `--with-deps` roda `apt-get update`, e a imagem do runner do GitHub traz os
       # repositorios apt da Microsoft (azure-cli e ubuntu/24.04/prod) configurados.
       # Quando eles respondem 403 — intermitente e fora do nosso controle — o apt
       # sai com codigo 100 e derruba a instalacao do navegador, mesmo que o
       # navegador nada tenha a ver com aqueles repositorios. Nada neste pipeline
       # usa pacote da Microsoft, entao removemos as fontes antes de tocar no apt.
+      #
+      # Com o cache quente este passo nao roda, o que de quebra tira o apt do
+      # caminho critico na maioria das execucoes.
       - name: Remover fontes apt da Microsoft (evita 403 que quebra o apt)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           # Globs sem correspondencia sao passados literalmente e o -f ignora
           # caminho inexistente, entao isto e seguro se os arquivos mudarem de nome.
@@ -114,13 +135,27 @@ jobs:
       # instalacao SEM `--with-deps`: a imagem do runner ja traz as bibliotecas
       # que o Chromium precisa. Nao mascara problema real — se faltar alguma lib,
       # o proprio passo de E2E falha ao abrir o navegador, e com mensagem clara.
+      #
+      # O cache guarda SO os binarios (~/.cache/ms-playwright); as bibliotecas de
+      # sistema do `--with-deps` vem da imagem do runner. Pular este passo no
+      # cache-hit parte da mesma premissa do fallback acima.
       - name: Instalar navegador do Playwright
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: |
           if npx playwright install --with-deps chromium; then
             exit 0
           fi
           echo "::warning::playwright install --with-deps falhou (provavel apt indisponivel). Tentando sem --with-deps."
           npx playwright install chromium
+
+      # Rede de seguranca: se o cache trouxer um diretorio incompleto (upload
+      # interrompido numa execucao anterior), o E2E falharia com "Executable
+      # doesn't exist". Medido: ~4s quando nada falta (so o custo do npx), e
+      # repara sozinho quando falta. Só no cache-hit — no cache-miss o passo de
+      # instalacao acima ja garantiu o navegador.
+      - name: Conferir o navegador (repara cache incompleto)
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install chromium
 
       - name: Testes E2E (Playwright)
         run: npm run test:e2e
