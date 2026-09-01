@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/data/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { EmpresaConfigForm } from "./_components/empresa-form";
 
 export const dynamic = "force-dynamic";
@@ -71,6 +72,16 @@ export default async function ConfiguracoesPage() {
           </Card>
         </TabsContent>
       </Tabs>
+
+      {/*
+        Caminho permanente para o atalho na tela inicial. O convite automatico
+        aparece uma vez e respeita "Agora nao" por 7 dias — sem esta entrada,
+        quem dispensou (ou trocou de celular) nao teria como voltar a instalar.
+        O componente se esconde sozinho quando o app JA esta instalado.
+      */}
+      <div className="mt-6">
+        <InstallPrompt triggerLabel="Instalar app / atalho na tela inicial" />
+      </div>
     </div>
   );
 }

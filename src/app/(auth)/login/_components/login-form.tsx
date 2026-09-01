@@ -10,6 +10,7 @@ import { Loader2 } from "lucide-react";
 import { loginSchema, type LoginInput } from "@/lib/validations/auth";
 import { apiPost } from "@/lib/api-client";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { pedirPromptDeInstalacao } from "@/components/pwa/install-prompt";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -33,6 +34,10 @@ export function LoginForm() {
       toast.error(res.error.message);
       return;
     }
+    // Login deu certo: pede o convite de instalacao para a proxima tela. Quem
+    // decide se ele aparece e o AppShell (respeita "Agora nao" e app instalado).
+    pedirPromptDeInstalacao();
+
     const next = params.get("next");
     const redirectTo = res.data.mustChangePassword
       ? "/alterar-senha"

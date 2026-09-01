@@ -55,6 +55,12 @@ export default async function AppLayout({
       billingWarning={billingWarning}
       modules={session.modules}
       isSuperAdmin={session.role === "SUPER_ADMIN"}
+      // Sempre true aqui, e isso NAO ignora as regras do convite: este layout so
+      // chega a renderizar depois dos redirects acima, ou seja, com a senha ja
+      // trocada e o onboarding concluido. Quem termina o wizard e mandado para
+      // /dashboard, que passa por aqui — e o convite aparece nesse momento.
+      // O proprio InstallPrompt cuida do resto (app instalado, "Agora nao").
+      showInstallPrompt
     >
       {children}
     </AppShell>

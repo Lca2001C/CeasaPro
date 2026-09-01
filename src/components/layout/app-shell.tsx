@@ -7,6 +7,7 @@ import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
 import { encerrarSessao } from "@/lib/session-nav";
+import { InstallPrompt } from "@/components/pwa/install-prompt";
 
 interface Props {
   companyName: string;
@@ -15,6 +16,11 @@ interface Props {
   modules?: string[];
   /** Sessão de super-admin no ambiente próprio: mostra o caminho de volta. */
   isSuperAdmin?: boolean;
+  /**
+   * Abre o convite de instalacao sozinho. Falso enquanto o usuario tem algo
+   * mais urgente a fazer (trocar senha, concluir onboarding) — ver o layout.
+   */
+  showInstallPrompt?: boolean;
   children: React.ReactNode;
 }
 
@@ -24,6 +30,7 @@ export function AppShell({
   billingWarning,
   modules,
   isSuperAdmin,
+  showInstallPrompt = false,
   children,
 }: Props) {
   return (
@@ -76,6 +83,7 @@ export function AppShell({
           {children}
         </main>
 
+        <InstallPrompt autoOpen={showInstallPrompt} />
         <SupportButton companyName={companyName} />
         <BottomNav modules={modules} />
       </div>

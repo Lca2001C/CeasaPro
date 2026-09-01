@@ -29,6 +29,12 @@ test.describe("Logout", () => {
     await page.getByRole("button", { name: "Entrar" }).click();
 
     await page.waitForURL("**/dashboard", { timeout: 15_000 });
+
+    // O convite de instalação do PWA abre na primeira tela pós-login e é MODAL:
+    // sem fechá-lo, o botão "Sair" fica coberto. As regras dele são cobertas por
+    // `pwa-install.spec.ts`; aqui ele é só um passo do caminho.
+    await page.getByRole("button", { name: "Agora não" }).click();
+
     await expect(page.locator("aside")).toBeVisible();
 
     await page.getByRole("button", { name: "Sair" }).click();
