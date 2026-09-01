@@ -19,6 +19,7 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
+  CircleHelp,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
@@ -50,6 +51,7 @@ const more = [
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
   // Auditoria vive na administração da plataforma (`/admin/auditoria`).
+  { href: "/ajuda", label: "Como usar", icon: CircleHelp },
   { href: "/plano", label: "Meu plano", icon: BadgeCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
