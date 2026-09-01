@@ -1,0 +1,12 @@
+-- Fim do limite de usuários por plano.
+--
+-- `plans.maxUsers` existia para recusar downgrade quando a empresa tivesse mais
+-- usuários do que o plano de destino comportava. O produto deixou de vender por
+-- número de usuários: o que diferencia os planos são os MÓDULOS (`features`).
+-- Manter a coluna deixaria uma regra morta no schema, e uma regra morta acaba
+-- sendo reativada por engano.
+--
+-- Esta é a única operação DESTRUTIVA da migration: o valor de maxUsers é
+-- perdido. Não há como reconstruí-lo depois, e é intencional — ele não é mais
+-- um dado de negócio. As assinaturas, os preços e os módulos não são tocados.
+ALTER TABLE "plans" DROP COLUMN IF EXISTS "maxUsers";

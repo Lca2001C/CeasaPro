@@ -22,7 +22,6 @@ export default async function PlanosPage() {
               id: p.id,
               name: p.name,
               priceMonthly: Number(p.priceMonthly),
-              maxUsers: p.maxUsers,
               active: p.active,
               modules: planModules(p.features),
             }}

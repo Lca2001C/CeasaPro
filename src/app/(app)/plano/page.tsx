@@ -74,13 +74,7 @@ export default async function MeuPlanoPage({
         </CardContent>
       </Card>
 
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="Produtos cadastrados" value={String(view.usage.produtos)} />
-        <StatCard
-          label="Usuários"
-          value={view.maxUsers ? `${view.usage.usuarios} / ${view.maxUsers}` : String(view.usage.usuarios)}
-        />
-      </div>
+      <StatCard label="Produtos cadastrados" value={String(view.usage.produtos)} />
 
       <Card>
         <CardHeader>

@@ -35,7 +35,6 @@ export function PlanoForm({ initial, onDone }: Props) {
         name: "",
         priceMonthly: 0,
         active: true,
-        maxUsers: null,
         modules: [...ALL_OPTIONAL_KEYS],
       },
   });
@@ -48,7 +47,7 @@ export function PlanoForm({ initial, onDone }: Props) {
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Plano atualizado" : "Plano criado");
-      if (!initial) reset({ name: "", priceMonthly: 0, active: true, maxUsers: null, modules: [...ALL_OPTIONAL_KEYS] });
+      if (!initial) reset({ name: "", priceMonthly: 0, active: true, modules: [...ALL_OPTIONAL_KEYS] });
       router.refresh();
       onDone?.();
     } else {
@@ -72,13 +71,6 @@ export function PlanoForm({ initial, onDone }: Props) {
             render={({ field }) => (
               <CurrencyInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
             )}
-          />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label>Máx. usuários (opcional)</Label>
-          <Input
-            type="number"
-            {...register("maxUsers", { setValueAs: (v) => (v === "" ? null : Number(v)) })}
           />
         </div>
       </div>

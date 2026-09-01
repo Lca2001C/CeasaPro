@@ -42,16 +42,15 @@ Assim, mesmo que alguém digite a URL direto ou chame a API sem passar pelo menu
 Mostra ao dono:
 - plano atual (nome, preço, situação, vencimento);
 - **todos** os módulos opcionais com ✓ (incluído) ou ✗ (não incluído) e a descrição de cada um;
-- limite de usuários do plano e **uso atual** (nº de produtos e usuários);
+- **uso atual** (nº de produtos);
 - quando chega aqui por um bloqueio (`?bloqueado=`), um aviso explicando qual recurso não está no plano, com atalho para a assinatura;
-- **Trocar de plano:** lista os demais planos **ativos** (nome, preço, limite de usuários e módulos incluídos) e permite mudar com um clique (confirmação em diálogo).
+- **Trocar de plano:** lista os demais planos **ativos** (nome, preço e módulos incluídos) e permite mudar com um clique (confirmação em diálogo).
 
 ### Troca de plano (autoritativa no servidor)
 
 A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de módulo) → `PlanoService.changePlan`, que aplica as regras **no servidor** (o cliente só envia o `planId` alvo):
 - só planos **existentes e ativos**; nunca o plano atual;
 - o **valor mensal vem sempre do plano** (nunca do cliente);
-- o novo plano precisa **comportar o número atual de usuários** (`maxUsers`); senão a troca é recusada com mensagem clara;
 - **não** altera status, vencimento nem `statusSource` (respeita eventual bloqueio manual do super-admin e o período já pago).
 
 A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/auth/refresh` após a troca, então o claim `modules` do token é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
@@ -60,7 +59,7 @@ A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/au
 
 Empresa recém-criada nasce `SUSPENSO`, e o proxy só a deixa abrir `/assinatura` — `/plano` é área bloqueada. Sem uma escolha ali, o primeiro pagamento seria sempre no plano que o super-admin marcou no cadastro. Por isso a tela de assinatura mostra o seletor de planos **acima** do formulário de pagamento:
 
-- lista os mesmos planos ativos de `listAvailablePlans`, com preço, limite de usuários e módulos;
+- lista os mesmos planos ativos de `listAvailablePlans`, com preço e módulos;
 - aparece só quando **não há cobrança em aberto** — com um QR já emitido, trocar de plano mostraria um preço diferente do código que a pessoa vai pagar;
 - o `planId` escolhido vai junto no corpo de `POST /api/billing/checkout` e de `POST /api/billing/checkout/card`. Quem troca a assinatura é o **servidor**, em `prepareCharge` → `PlanoService.changePlan`, com as mesmas regras da seção anterior;
 - o **valor cobrado sai sempre do plano no banco**, nunca do que o cliente enviou. O preço na tela é só exibição, e o Payment Brick é remontado quando muda (ele lê o valor apenas na montagem).
@@ -116,4 +115,4 @@ O lembrete roda **depois** do recálculo de status, senão quem acabou de ser re
 
 ## Limites
 
-- `maxUsers` do plano é exibido em "Meu plano" e no painel do super-admin. (Nesta versão há um usuário OWNER por empresa; limites numéricos rígidos por plano — ex.: máx. de produtos — estão previstos como evolução futura.)
+- **Não existe limite de usuários por plano.** O que diferencia um plano do outro são os **módulos** (`features`). Limites numéricos rígidos por plano — ex.: máx. de produtos — seguem previstos como evolução futura, mas nenhum está em vigor.

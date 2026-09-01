@@ -8,7 +8,7 @@ const planIds: string[] = [];
 let basicoId = "";
 let completoId = "";
 let inativoId = "";
-let semUsuariosId = "";
+let baratoId = "";
 
 const uniq = () => Math.random().toString(36).slice(2, 8);
 
@@ -20,7 +20,6 @@ beforeAll(async () => {
       name: "Básico Teste",
       slug: `basico-${uniq()}`,
       priceMonthly: 29.9,
-      maxUsers: 3,
       active: true,
       features: { modules: [] }, // só núcleo
     },
@@ -30,7 +29,6 @@ beforeAll(async () => {
       name: "Completo Teste",
       slug: `completo-${uniq()}`,
       priceMonthly: 99.9,
-      maxUsers: 10,
       active: true,
       features: { modules: ["caixas", "higienizacao", "embalagens", "relatorios_avancados"] },
     },
@@ -38,14 +36,15 @@ beforeAll(async () => {
   const inativo = await prisma.plan.create({
     data: { name: "Inativo Teste", slug: `inativo-${uniq()}`, priceMonthly: 10, active: false },
   });
-  const semUsuarios = await prisma.plan.create({
-    data: { name: "Zero Users Teste", slug: `zero-${uniq()}`, priceMonthly: 5, maxUsers: 1, active: true },
+  // Plano barato usado para provar que downgrade NAO tem mais trava de usuarios.
+  const barato = await prisma.plan.create({
+    data: { name: "Barato Teste", slug: `barato-${uniq()}`, priceMonthly: 5, active: true },
   });
   basicoId = basico.id;
   completoId = completo.id;
   inativoId = inativo.id;
-  semUsuariosId = semUsuarios.id;
-  planIds.push(basicoId, completoId, inativoId, semUsuariosId);
+  baratoId = barato.id;
+  planIds.push(basicoId, completoId, inativoId, baratoId);
 
   // Assinatura inicial no Básico + 2 usuários (OWNER + 1).
   await prisma.tenantSubscription.create({
@@ -120,13 +119,18 @@ describe("Troca de plano pelo cliente (OWNER)", () => {
     );
   });
 
-  it("bloqueia downgrade que estoura o limite de usuários do novo plano", async () => {
-    // Empresa tem 2 usuários; plano permite só 1.
-    await expect(PlanoService.changePlan(semUsuariosId, makeCtx(tenantId))).rejects.toThrow(
-      /usuário/i,
-    );
-    // Continua no plano completo (troca não aconteceu).
+  it("permite downgrade independentemente do numero de usuarios", async () => {
+    // O limite por plano (`maxUsers`) foi removido do produto: o que diferencia
+    // os planos sao os MODULOS. Esta empresa tem 2 usuarios e a troca para o
+    // plano mais barato precisa passar — antes ela era recusada.
+    const usuarios = await prisma.user.count({ where: { tenantId, deletedAt: null } });
+    expect(usuarios).toBeGreaterThan(1);
+
+    await PlanoService.changePlan(baratoId, makeCtx(tenantId));
+
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    expect(sub?.planId).toBe(completoId);
+    expect(sub?.planId).toBe(baratoId);
+    // O valor mensal vem SEMPRE do plano, nunca do cliente.
+    expect(Number(sub?.monthlyAmount)).toBe(5);
   });
 });

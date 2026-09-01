@@ -63,7 +63,6 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
                 </span>
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {plan.maxUsers ? `Até ${plan.maxUsers} usuário(s)` : "Usuários ilimitados"}
                 {plan.modules.length > 0
                   ? ` · Inclui: ${plan.modules.join(", ")}`
                   : " · Somente recursos básicos"}

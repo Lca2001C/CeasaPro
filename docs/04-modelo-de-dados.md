@@ -38,7 +38,7 @@ Banco **PostgreSQL** modelado com **Prisma**. O schema-fonte é [`prisma/schema.
 Dados da empresa assinante. **Não** tem `tenantId` (é a própria empresa). Campos: `tradeName` (nome fantasia), `legalName`, `cnpj` (único), `phone`, `address`, `logoUrl`, `businessHours`, `status` (`TenantStatus`, default ACTIVE), `onboardingCompletedAt`. Relações: `users`, `subscription` (1‑1), e todos os dados operacionais.
 
 ### `plans` (plano comercial)
-`name`, `slug` (único), `priceMonthly` `Decimal(10,2)`, `maxUsers` (opcional), **`features` (Json)** — guarda os módulos incluídos no formato `{ "modules": ["caixas", ...] }` —, `active`.
+`name`, `slug` (único), `priceMonthly` `Decimal(10,2)`, **`features` (Json)** — guarda os módulos incluídos no formato `{ "modules": ["caixas", ...] }` —, `active`.
 
 ### `users`
 `tenantId` (**nulo** só para o SUPER_ADMIN), `name`, `email`, `passwordHash` (Argon2id), `role`, `active`, `mustChangePassword`, `lastLoginAt`, `resetTokenHash`, `resetTokenExpiresAt`. Único por `(tenantId, email)`.

@@ -48,7 +48,6 @@ async function main() {
       name: "Plano Padrão",
       slug: "padrao",
       priceMonthly: new Prisma.Decimal("200.00"),
-      maxUsers: 3,
       active: true,
       // sem features.modules ⇒ todos os módulos opcionais liberados (retrocompat).
     },
@@ -62,7 +61,6 @@ async function main() {
       name: "Plano Básico",
       slug: "basico",
       priceMonthly: new Prisma.Decimal("160.00"),
-      maxUsers: 2,
       active: true,
       features: { modules: [] }, // só os recursos básicos (núcleo)
     },

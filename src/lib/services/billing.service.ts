@@ -230,8 +230,9 @@ async function prepareCharge(
     );
   }
 
-  // Contratar outro plano no ato do pagamento: a validação de plano ativo e de
-  // limite de usuários é do PlanoService — não duplicamos a regra aqui.
+  // Contratar outro plano no ato do pagamento: a validação (plano existente e
+  // ativo, e o valor vindo sempre do plano) é do PlanoService — não duplicamos
+  // a regra aqui.
   if (planId && planId !== sub.planId) {
     if (!ctx) throw new ValidationError("Troca de plano exige um usuário autenticado.");
     await PlanoService.changePlan(planId, ctx);

@@ -190,12 +190,6 @@ export default async function LandingPage() {
                   <ul className="flex flex-col gap-1.5 text-sm">
                     <li className="flex items-start gap-2">
                       <Check className="mt-0.5 size-4 shrink-0 text-primary" />
-                      <span>
-                        {plano.maxUsers ? `Até ${plano.maxUsers} usuários` : "Usuários ilimitados"}
-                      </span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <Check className="mt-0.5 size-4 shrink-0 text-primary" />
                       <span>Vendas, fiado, estoque e despesas</span>
                     </li>
                     {plano.modules.map((m) => (

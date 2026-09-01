@@ -218,7 +218,6 @@ export const AdminService = {
           name: "Ambiente do administrador",
           slug: ADMIN_PLAN_SLUG,
           priceMonthly: 0,
-          maxUsers: null,
           active: false,
           features: {},
         },
@@ -398,7 +397,6 @@ export const AdminService = {
         name: input.name,
         slug,
         priceMonthly: input.priceMonthly,
-        maxUsers: input.maxUsers ?? null,
         active: input.active,
         features: { modules: input.modules },
       },
@@ -431,7 +429,6 @@ export const AdminService = {
       data: {
         name: input.name,
         priceMonthly: input.priceMonthly,
-        maxUsers: input.maxUsers ?? null,
         active: input.active,
         features: { modules: input.modules },
       },

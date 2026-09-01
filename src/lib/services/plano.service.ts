@@ -11,9 +11,8 @@ export interface PlanoView {
   priceMonthly: unknown; // Prisma.Decimal (formatado na borda)
   status: string;
   currentPeriodEnd: Date | null;
-  maxUsers: number | null;
   modules: { key: OptionalModuleKey; label: string; description: string; enabled: boolean }[];
-  usage: { produtos: number; usuarios: number };
+  usage: { produtos: number };
 }
 
 /** Plano ofertado ao cliente para troca (dados já serializáveis para o cliente). */
@@ -21,7 +20,6 @@ export interface AvailablePlan {
   id: string;
   name: string;
   priceMonthly: number;
-  maxUsers: number | null;
   /** Rótulos dos módulos opcionais incluídos neste plano. */
   modules: string[];
   isCurrent: boolean;
@@ -46,10 +44,7 @@ export const PlanoService = {
     if (!sub) return null;
 
     const db = getTenantPrisma(tenantId);
-    const [produtos, usuarios] = await Promise.all([
-      db.product.count(),
-      prisma.user.count({ where: { tenantId, deletedAt: null } }),
-    ]);
+    const produtos = await db.product.count();
 
     const enabled = new Set(planModules(sub.plan?.features));
     const modules = ALL_OPTIONAL_KEYS.map((key) => ({
@@ -64,9 +59,8 @@ export const PlanoService = {
       priceMonthly: sub.monthlyAmount,
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
-      maxUsers: sub.plan?.maxUsers ?? null,
       modules,
-      usage: { produtos, usuarios },
+      usage: { produtos },
     };
   },
 
@@ -89,7 +83,6 @@ export const PlanoService = {
       id: p.id,
       name: p.name,
       priceMonthly: Number(p.priceMonthly),
-      maxUsers: p.maxUsers,
       modules: planModules(p.features).map((k) => OPTIONAL_MODULES[k].label),
       isCurrent: false,
     }));
@@ -104,8 +97,8 @@ export const PlanoService = {
       // O plano ATUAL entra mesmo desativado. Um plano tirado de oferta sumia
       // desta lista, a tela de assinatura selecionava outro por falta de opção
       // e o pagamento virava uma troca de plano silenciosa — que ainda podia
-      // ser recusada (limite de usuários) e devolver 409 ao cliente que só
-      // queria pagar a mensalidade.
+      // virar uma troca de plano silenciosa para quem só queria pagar a
+      // mensalidade.
       where: currentPlanId ? { OR: [{ active: true }, { id: currentPlanId }] } : { active: true },
       orderBy: { priceMonthly: "asc" },
     });
@@ -114,7 +107,6 @@ export const PlanoService = {
       id: p.id,
       name: p.name,
       priceMonthly: Number(p.priceMonthly),
-      maxUsers: p.maxUsers,
       modules: planModules(p.features).map((k) => OPTIONAL_MODULES[k].label),
       isCurrent: p.id === currentPlanId,
     }));
@@ -125,7 +117,6 @@ export const PlanoService = {
    * Regras (autoritativas no servidor):
    *  - só planos existentes e ativos; nunca o plano atual;
    *  - o valor mensal vem SEMPRE do plano (nunca do cliente);
-   *  - o novo plano precisa comportar o número atual de usuários (limite maxUsers);
    *  - a troca vale imediatamente (módulos mudam no próximo refresh do token); o novo
    *    valor é cobrado na próxima renovação — não há proporcional nesta versão.
    * Não altera status/vencimento/origem (respeita eventual bloqueio manual do super-admin).
@@ -141,18 +132,6 @@ export const PlanoService = {
     if (!target || !target.active) throw new NotFoundError("Plano indisponível");
     if (target.id === sub.planId) {
       throw new BusinessRuleError("Este já é o seu plano atual.");
-    }
-
-    // Downgrade de usuários: não deixar a empresa acima do limite do novo plano.
-    if (target.maxUsers != null) {
-      const usuarios = await prisma.user.count({
-        where: { tenantId: ctx.tenantId, deletedAt: null },
-      });
-      if (usuarios > target.maxUsers) {
-        throw new BusinessRuleError(
-          `O plano ${target.name} permite ${target.maxUsers} usuário(s), mas a empresa tem ${usuarios}. Remova usuários antes de trocar.`,
-        );
-      }
     }
 
     const updated = await prisma.tenantSubscription.update({

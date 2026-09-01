@@ -60,7 +60,6 @@ export function PlanoRow({ plano }: { plano: PlanoInput & { id: string } }) {
             {!plano.active && <Badge variant="secondary">Inativo</Badge>}
           </div>
           <span className="text-xs text-muted-foreground">
-            {plano.maxUsers ? `Até ${plano.maxUsers} usuários` : "Usuários ilimitados"} ·{" "}
             {plano.modules.length} módulo(s) opcional(is)
           </span>
         </div>

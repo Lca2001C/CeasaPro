@@ -26,7 +26,7 @@ O sistema é **multi-empresa (multi-tenant)**: cada comerciante (empresa/cliente
 |---|---|
 | **Empresa / Tenant** | Uma conta de comerciante. Todos os dados operacionais pertencem a uma empresa e nunca vazam para outra. |
 | **Assinatura** | Vínculo da empresa a um plano, com valor mensal, vencimento e status. É pré-paga: não há período de teste gratuito. |
-| **Plano** | Pacote comercial (preço, limite de usuários e **módulos** liberados). |
+| **Plano** | Pacote comercial (preço e **módulos** liberados). |
 | **Módulo** | Uma área do sistema. Módulos-núcleo são sempre liberados; módulos opcionais dependem do plano. |
 | **Estoque derivado** | O saldo de estoque e de caixas plásticas não é um campo editável — é **calculado** somando os movimentos (livro-razão). Isso torna tudo auditável. |
 | **Fiado** | Venda a prazo que vira uma conta a receber, com pagamentos parciais e saldo. |

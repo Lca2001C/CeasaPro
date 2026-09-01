@@ -72,7 +72,6 @@ export function PlanSelector({
                   )}
                 </span>
                 <span className="mt-0.5 block text-xs text-muted-foreground">
-                  {plan.maxUsers ? `Até ${plan.maxUsers} usuário(s)` : "Usuários ilimitados"}
                   {plan.modules.length > 0
                     ? ` · Inclui: ${plan.modules.join(", ")}`
                     : " · Somente recursos básicos"}

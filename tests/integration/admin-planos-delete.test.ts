@@ -197,7 +197,6 @@ describe("Plano interno do ambiente do super-admin", () => {
           id: interno.id,
           name: "Hackeado",
           priceMonthly: 999,
-          maxUsers: null,
           active: true,
           modules: [],
         },

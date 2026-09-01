@@ -222,7 +222,7 @@ Os módulos habilitados vêm de `Plan.features.modules` (JSON). Duas decisões d
 
 Um `features: { modules: [] }` explícito, por outro lado, libera apenas o núcleo — é assim que o "Plano Básico" do seed é configurado.
 
-A tela `/plano` mostra o plano contratado, o consumo (produtos, usuários), os módulos incluídos e permite a troca de plano. `PlanoService.changePlan` recusa a troca se o plano de destino estiver inativo ou se o número atual de usuários exceder o `maxUsers` do plano (proteção contra downgrade inválido).
+A tela `/plano` mostra o plano contratado, o consumo (produtos), os módulos incluídos e permite a troca de plano. `PlanoService.changePlan` recusa a troca apenas se o plano de destino estiver inativo ou já for o atual — não há limite de usuários por plano.
 
 ---
 
@@ -271,7 +271,7 @@ Webhooks se perdem. Por isso `vercel.json` agenda `GET /api/cron/billing` diaria
 | `Tenant` | A empresa assinante: nome fantasia, razão social, CNPJ (único), contato, `status`, `onboardingCompletedAt` |
 | `User` | Usuário; `tenantId` nulo apenas para `SUPER_ADMIN`; e-mail único global; `mustChangePassword` |
 | `RefreshToken` | Sessão de refresh: hash do token, expiração, revogação, user-agent e IP |
-| `Plan` | Catálogo global de planos: preço mensal, `maxUsers`, `features` (JSON com os módulos) |
+| `Plan` | Catálogo global de planos: preço mensal e `features` (JSON com os módulos) |
 
 **Billing**
 

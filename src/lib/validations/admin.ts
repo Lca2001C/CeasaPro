@@ -32,7 +32,6 @@ export const monthlyAmountSchema = z.object({
 export const planoSchema = z.object({
   name: z.string().trim().min(1, "Informe o nome").max(80),
   priceMonthly: z.number().nonnegative("Valor invalido"),
-  maxUsers: z.number().int().positive().nullable().optional(),
   active: z.boolean(),
   modules: z.array(z.enum(OPTIONAL_MODULE_KEYS)),
 });
