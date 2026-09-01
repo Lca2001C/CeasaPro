@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { TRIAL_DAYS } from "@/lib/billing/status";
 import { LoginForm } from "./_components/login-form";
 
 // Renderizada por requisição para receber o nonce do CSP (ver `src/proxy.ts`).
@@ -9,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default function LoginPage() {
   return (
     <Suspense fallback={null}>
-      <LoginForm />
+      <LoginForm trialDays={TRIAL_DAYS} />
     </Suspense>
   );
 }

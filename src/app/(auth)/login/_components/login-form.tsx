@@ -16,7 +16,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 
-export function LoginForm() {
+export function LoginForm({ trialDays }: { trialDays: number }) {
   const router = useRouter();
   const params = useSearchParams();
   const [loading, setLoading] = useState(false);
@@ -82,6 +82,22 @@ export function LoginForm() {
             Esqueci minha senha
           </Link>
         </form>
+
+        {/* Quem ainda não é cliente chega aqui com frequência: `/` redireciona
+            para o login assim que existe sessão, e o link que circula por
+            WhatsApp costuma ser o da tela de entrada. Sem estas duas saídas o
+            visitante só teria o caminho de volta pelo botão do navegador. */}
+        <div className="mt-6 flex flex-col gap-2 border-t pt-5">
+          <p className="text-center text-sm text-muted-foreground">
+            Ainda não tem conta?
+          </p>
+          <Button asChild variant="outline" size="lg">
+            <Link href="/cadastro">Criar conta — {trialDays} dias grátis</Link>
+          </Button>
+          <Button asChild variant="ghost">
+            <Link href="/">Conhecer o CeasaPro</Link>
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );
