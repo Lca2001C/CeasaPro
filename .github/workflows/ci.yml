@@ -13,7 +13,10 @@ concurrency:
 jobs:
   # ─────────────────────────────────────────────────────────────
   # Gate de qualidade: lint + typecheck + build + testes + E2E.
-  # O deploy só acontece se este job passar por completo.
+  # ATENÇÃO: se a integração Git da Vercel estiver ligada, ela publica por conta
+  # própria a cada push e NÃO espera este job. Um CI vermelho não impede o deploy.
+  # Por isso as migrations são aplicadas no BUILD (scripts/deploy-migrate.mjs), que
+  # roda nos dois caminhos: no build da Vercel e no `vercel build` daqui.
   # ─────────────────────────────────────────────────────────────
   ci:
     name: Lint · Typecheck · Build · Testes · E2E
@@ -118,23 +121,18 @@ jobs:
       VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
       VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-      PROD_DIRECT_URL: ${{ secrets.PROD_DIRECT_URL }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
           cache: npm
-
-      - name: Aplicar migrations em produção (se configurado)
-        run: |
-          if [ -z "$PROD_DIRECT_URL" ]; then
-            echo "PROD_DIRECT_URL não configurado — pulando migrations (rode via Vercel/manual)."
-            exit 0
-          fi
-          npm ci
-          DATABASE_URL="$PROD_DIRECT_URL" DIRECT_URL="$PROD_DIRECT_URL" npx prisma migrate deploy
-
+      # As migrations NÃO são aplicadas aqui de propósito. Este passo existia e,
+      # sem o secret PROD_DIRECT_URL, imprimia "pulando migrations" e saía com
+      # SUCESSO — foi assim que um deploy subiu com o banco atrasado e derrubou o
+      # login (P2022: users.emailVerifiedAt does not exist). Agora quem aplica é o
+      # build, via scripts/deploy-migrate.mjs: se a migration falhar, o build falha
+      # e nada sobe pela metade.
       - name: Deploy na Vercel (se configurado)
         run: |
           if [ -z "$VERCEL_TOKEN" ]; then
