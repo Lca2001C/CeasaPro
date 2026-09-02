@@ -8,10 +8,12 @@ import { test, expect } from "@playwright/test";
  * sair apaga os dados do aparelho. A recusa de escrita offline fica no unitário
  * `api-client-offline.test.ts`, onde dá para afirmar que o fetch nem é chamado.
  *
- * O que fica fora: o comportamento do service worker. Ele só é registrado com
- * `NODE_ENV=production` (`pwa-register.tsx`) e exige HTTPS — o `npm start` do
- * Playwright serve HTTP em localhost, então o SW não assume o controle e a escolha
- * entre /consulta-offline e /offline não é exercitada. Está no checklist manual.
+ * O service worker ENTRA no teste: `http://localhost` é contexto seguro, então o
+ * build de produção que o Playwright sobe registra o SW e ele assume o controle da
+ * página. Isso permite exercitar a escolha do fallback — /consulta-offline quando há
+ * dados no aparelho, /offline quando não há — que é a lógica central desta fase.
+ * O que fica de fora é a instalação nativa, no checklist manual de
+ * `docs/10-pwa-evolucao.md`.
  */
 
 const DEMO = { email: "demo@ceasapro.com.br", senha: "demo123" };
@@ -26,28 +28,39 @@ async function entrar(page: import("@playwright/test").Page) {
   await page.getByRole("button", { name: "Agora não" }).click();
 }
 
+/** Lê o IndexedDB do aparelho: existe snapshot guardado? */
+function temSnapshot(page: import("@playwright/test").Page): Promise<boolean> {
+  return page.evaluate(
+    () =>
+      new Promise<boolean>((resolve) => {
+        const req = indexedDB.open("ceasapro-offline");
+        req.onsuccess = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains("snapshot")) return resolve(false);
+          const get = db.transaction("snapshot", "readonly").objectStore("snapshot").get("atual");
+          get.onsuccess = () => resolve(Boolean(get.result));
+          get.onerror = () => resolve(false);
+        };
+        req.onerror = () => resolve(false);
+      }),
+  );
+}
+
 /** O snapshot chega ao IndexedDB de forma assíncrona; espera até aparecer. */
 async function esperarSnapshot(page: import("@playwright/test").Page) {
-  await expect
-    .poll(
-      () =>
-        page.evaluate(
-          () =>
-            new Promise<boolean>((resolve) => {
-              const req = indexedDB.open("ceasapro-offline");
-              req.onsuccess = () => {
-                const db = req.result;
-                if (!db.objectStoreNames.contains("snapshot")) return resolve(false);
-                const get = db.transaction("snapshot", "readonly").objectStore("snapshot").get("atual");
-                get.onsuccess = () => resolve(Boolean(get.result));
-                get.onerror = () => resolve(false);
-              };
-              req.onerror = () => resolve(false);
-            }),
-        ),
-      { timeout: 15_000 },
-    )
-    .toBe(true);
+  await expect.poll(() => temSnapshot(page), { timeout: 15_000 }).toBe(true);
+}
+
+/**
+ * Espera o SW assumir o controle da página.
+ *
+ * Registrado não basta: até o `clients.claim()` a página aberta segue sem
+ * controlador, e sem controlador ninguém intercepta a navegação offline.
+ */
+async function esperarServiceWorker(page: import("@playwright/test").Page) {
+  await page.waitForFunction(() => navigator.serviceWorker.controller !== null, null, {
+    timeout: 20_000,
+  });
 }
 
 test.describe("Consulta offline", () => {
@@ -72,34 +85,56 @@ test.describe("Consulta offline", () => {
   test("sem rede: avisa e leva para os dados salvos", async ({ page, context }) => {
     await entrar(page);
     await esperarSnapshot(page);
+    await esperarServiceWorker(page);
 
     await context.setOffline(true);
 
     // A faixa aparece antes de o usuário tentar qualquer coisa — sem ela, ele só
     // descobriria o problema depois de digitar a venda inteira.
     await expect(page.getByText(/Sem conexão/)).toBeVisible();
-    await expect(page.getByRole("link", { name: /consultar os dados salvos/i })).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /consultar os dados salvos/i }),
+    ).toHaveAttribute("href", "/consulta-offline");
 
-    // A faixa aponta para /consulta-offline, mas NAVEGAR até lá sem rede depende do
-    // service worker servindo a página do precache — e ele não está ativo aqui
-    // (só registra em produção, sobre HTTPS). Sem SW o navegador mostra a própria
-    // tela de erro, então este ambiente não consegue provar a navegação offline.
-    // O conteúdo da tela já é verificado no primeiro teste, e o caminho offline
-    // completo está no checklist manual de `docs/10-pwa-evolucao.md`.
-    const destino = await page
-      .getByRole("link", { name: /consultar os dados salvos/i })
-      .getAttribute("href");
-    expect(destino).toBe("/consulta-offline");
-
-    await context.setOffline(false);
-    await page.goto("/consulta-offline");
+    // E navegar sem rede tem de FUNCIONAR: quem responde é o service worker, com a
+    // página do precache. Vale para QUALQUER rota, não só o link da faixa — abrir o
+    // app pelo ícone da tela inicial cai exatamente aqui.
+    await page.goto("/produtos");
     await expect(page.getByText(/^Dados de \d{2}\/\d{2}/)).toBeVisible();
-    await expect(page.getByRole("link", { name: "Ver dados atualizados" })).toBeVisible();
     await expect(page.getByText(/somente consulta/i)).toBeVisible();
 
     // A recusa de ESCRITA offline é do `api-client` e está coberta em
     // `tests/unit/api-client-offline.test.ts`: lá dá para afirmar que o fetch nem
     // é chamado, o que aqui seria indistinguível de uma falha de rede qualquer.
+  });
+
+  test("sem rede e sem dados salvos: cai na tela de sem conexão, não na de consulta", async ({
+    page,
+    context,
+  }) => {
+    await entrar(page);
+    await esperarSnapshot(page);
+    await esperarServiceWorker(page);
+
+    // Aparelho que nunca sincronizou. Abrir a tela de consulta vazia seria pior que
+    // dizer "sem conexão": ela prometeria dados que não existem.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const req = indexedDB.deleteDatabase("ceasapro-offline");
+          req.onsuccess = () => resolve();
+          req.onerror = () => resolve();
+          req.onblocked = () => resolve();
+        }),
+    );
+
+    await context.setOffline(true);
+    await page.goto("/produtos");
+
+    // Texto da propria pagina /offline, nao da faixa de rede: e ele que prova
+    // qual dos dois destinos o service worker escolheu.
+    await expect(page.getByText("Você está offline")).toBeVisible();
+    await expect(page.getByText(/^Dados de \d{2}\/\d{2}/)).toHaveCount(0);
   });
 
   test("sair apaga o snapshot do aparelho", async ({ page }) => {
@@ -111,21 +146,7 @@ test.describe("Consulta offline", () => {
     await page.getByRole("button", { name: "Sair" }).click();
     await expect(page).toHaveURL(/\/login/);
 
-    const aindaTem = await page.evaluate(
-      () =>
-        new Promise<boolean>((resolve) => {
-          const req = indexedDB.open("ceasapro-offline");
-          req.onsuccess = () => {
-            const db = req.result;
-            if (!db.objectStoreNames.contains("snapshot")) return resolve(false);
-            const get = db.transaction("snapshot", "readonly").objectStore("snapshot").get("atual");
-            get.onsuccess = () => resolve(Boolean(get.result));
-            get.onerror = () => resolve(false);
-          };
-          req.onerror = () => resolve(false);
-        }),
-    );
-    expect(aindaTem).toBe(false);
+    expect(await temSnapshot(page)).toBe(false);
 
     // E a tela de consulta trata "sem dados" como estado normal, não como erro.
     await page.goto("/consulta-offline");

@@ -88,6 +88,7 @@ model User {
   updatedAt           DateTime       @updatedAt
   deletedAt           DateTime?
   refreshTokens       RefreshToken[]
+  pushSubscriptions   PushSubscription[]
   tenant              Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
@@ -109,6 +110,36 @@ model RefreshToken {
 
   @@index([userId])
   @@map("refresh_tokens")
+}
+
+/// Inscrição de Web Push de UM navegador/dispositivo.
+///
+/// A chave natural é o `endpoint` (o navegador o gera e ele é único por
+/// instalação), por isso ele é `@unique`: reinscrever o mesmo aparelho tem de
+/// ATUALIZAR, nunca duplicar — senão a pessoa recebe a mesma notificação N vezes.
+///
+/// Ligada ao USUÁRIO, não só ao tenant: quem autorizou notificação foi a pessoa,
+/// no aparelho dela. Excluir o usuário leva as inscrições com ele (cascade).
+model PushSubscription {
+  id        String   @id @default(cuid())
+  userId    String
+  tenantId  String
+  /// URL do serviço de push do navegador. Único por instalação.
+  endpoint  String   @unique
+  /// Chave pública do cliente (base64url) — usada na criptografia do payload.
+  p256dh    String
+  /// Segredo de autenticação do cliente (base64url).
+  auth      String
+  userAgent String?
+  createdAt DateTime @default(now())
+  /// Último envio ACEITO pelo serviço de push. Ajuda a distinguir inscrição
+  /// morta de inscrição só silenciosa.
+  lastSentAt DateTime?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@map("push_subscriptions")
 }
 
 /// Contador de rate limit das rotas de autenticação, compartilhado entre as
