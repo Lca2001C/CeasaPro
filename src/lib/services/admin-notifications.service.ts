@@ -114,7 +114,21 @@ export const AdminNotificationsService = {
   }): Promise<AdminNotificationView[]> {
     return prisma.adminNotification.findMany({
       where: opts?.apenasNaoLidas ? { readAt: null } : {},
-      orderBy: { createdAt: "desc" },
+      /**
+       * `id` como critério de desempate, e não enfeite.
+       *
+       * `createdAt` é `TIMESTAMP(3)`: dois avisos gravados no mesmo milissegundo
+       * têm a MESMA data — o que acontece de verdade quando dois cadastros
+       * entram juntos. Com apenas `createdAt` no `ORDER BY`, o Postgres é livre
+       * de devolver os empatados em qualquer ordem, e a lista embaralharia entre
+       * dois carregamentos da tela sem nada ter mudado. (Foi assim que o teste
+       * desta ordenação falhou no CI, que é mais rápido: os três avisos caíram
+       * no mesmo milissegundo.)
+       *
+       * O `id` não promete ordem de criação — é cuid, não sequência. Promete
+       * ordem ESTÁVEL, que é o que a tela precisa.
+       */
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
       take: LIMITE_LISTAGEM,
       select: {
         id: true,

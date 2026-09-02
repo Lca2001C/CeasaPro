@@ -251,9 +251,61 @@ describe("estado de lido", () => {
   });
 
   it("lista as mais recentes primeiro", async () => {
-    await tresAvisos();
+    // Datas EXPLÍCITAS e afastadas.
+    //
+    // A versão anterior deste teste criava os três em sequência e confiava no
+    // relógio para diferenciá-los. `createdAt` é `TIMESTAMP(3)`, então num
+    // servidor rápido as três inserções caem no mesmo milissegundo e a ordem
+    // passa a ser indeterminada — foi exatamente o que quebrou no CI. Fixar as
+    // datas testa a intenção ("mais recente primeiro") sem depender da
+    // resolução do relógio.
+    const base = new Date("2026-09-02T12:00:00.000Z");
+    await prisma.adminNotification.createMany({
+      data: [
+        { kind: "USER_CREATED", title: "Mais antigo", body: "x", createdAt: base },
+        {
+          kind: "USER_CREATED",
+          title: "Do meio",
+          body: "x",
+          createdAt: new Date(base.getTime() + 60_000),
+        },
+        {
+          kind: "USER_CREATED",
+          title: "Mais novo",
+          body: "x",
+          createdAt: new Date(base.getTime() + 120_000),
+        },
+      ],
+    });
+
     const titulos = (await AdminNotificationsService.listar()).map((n) => n.title);
-    expect(titulos).toEqual(["Aviso 3", "Aviso 2", "Aviso 1"]);
+    expect(titulos).toEqual(["Mais novo", "Do meio", "Mais antigo"]);
+  });
+
+  it("empate no mesmo milissegundo tem ordem ESTÁVEL, não aleatória", async () => {
+    // O caso real: dois cadastros entrando juntos. Sem critério de desempate, o
+    // Postgres pode devolver os empatados em qualquer ordem, e a lista
+    // embaralharia entre dois carregamentos da tela sem nada ter mudado.
+    //
+    // Os `id` são explícitos para o empate ser reproduzível — com cuid gerado
+    // não haveria como afirmar qual ordem é a correta.
+    const mesmoInstante = new Date("2026-09-02T12:00:00.000Z");
+    await prisma.adminNotification.createMany({
+      data: ["id-b", "id-c", "id-a"].map((id) => ({
+        id,
+        kind: "USER_CREATED" as const,
+        title: `Aviso ${id}`,
+        body: "x",
+        createdAt: mesmoInstante,
+      })),
+    });
+
+    const primeira = (await AdminNotificationsService.listar()).map((n) => n.id);
+    const segunda = (await AdminNotificationsService.listar()).map((n) => n.id);
+
+    // Desempate por `id` decrescente: determinado, e igual em toda leitura.
+    expect(primeira).toEqual(["id-c", "id-b", "id-a"]);
+    expect(segunda).toEqual(primeira);
   });
 
   it("a contagem satura em 99 em vez de crescer sem limite", async () => {
