@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
-import { vazamentos } from "./_helpers/vazamentos";
+import { estouroHorizontalDaPagina, vazamentos } from "./_helpers/vazamentos";
 
 /**
  * Nada escapa da sua caixa — em nenhum módulo, com nenhum tamanho de valor.
@@ -96,6 +96,11 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
 
     const problemas = await vazamentos(page);
     expect(problemas, JSON.stringify(problemas, null, 2)).toEqual([]);
+
+    // E a PÁGINA não pode rolar de lado. É um defeito diferente e independente:
+    // todos os cartões podem estar contidos e, ainda assim, a coluna da direita
+    // aparecer cortada porque a página inteira ficou mais larga que a tela.
+    expect(await estouroHorizontalDaPagina(page)).toBe(0);
   });
 
   test("o sinal de negativo não fica sozinho numa linha", async ({ page }) => {
@@ -140,6 +145,7 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
 
       const problemas = await vazamentos(page);
       expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
+      expect(await estouroHorizontalDaPagina(page), `${pagina.nome} rola de lado`).toBe(0);
     });
   }
 });

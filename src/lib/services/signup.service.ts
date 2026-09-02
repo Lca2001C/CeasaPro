@@ -124,6 +124,19 @@ export const SignupService = {
       return criado;
     });
 
+    // ANTES do e-mail, de propósito: o aviso ao admin não depende do SMTP, e
+    // deixá-lo depois fazia um servidor de e-mail lento atrasar o aviso pelo
+    // tempo das três tentativas de envio — ou perdê-lo, se a requisição fosse
+    // encerrada nesse meio. O serviço já engole as próprias falhas, então aqui
+    // não há try/catch redundante.
+    await AdminNotificationsService.notificarUsuarioCriado({
+      tenantId,
+      userId,
+      tradeName: input.tradeName,
+      email: input.email,
+      origem: "cadastro-publico",
+    });
+
     const link = absoluteUrl(`/cadastro/confirmar/${token.raw}`);
     const { subject, html } = verifyEmailEmail({
       link,
@@ -138,16 +151,6 @@ export const SignupService = {
       // invisível e o cadastro pareceria ter sumido.
       logger.error({ err: sent.error, tenantId }, "Falha ao enviar e-mail de confirmação");
     }
-
-    // FORA da transação: um aviso não pode desfazer um cadastro. O serviço já
-    // engole as próprias falhas, então aqui não há try/catch redundante.
-    await AdminNotificationsService.notificarUsuarioCriado({
-      tenantId,
-      userId,
-      tradeName: input.tradeName,
-      email: input.email,
-      origem: "cadastro-publico",
-    });
 
     logger.info({ tenantId, ip: ctx.ip }, "Cadastro público criado, aguardando confirmação");
 

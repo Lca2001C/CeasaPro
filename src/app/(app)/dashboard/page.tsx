@@ -17,7 +17,7 @@ import {
 import { requireTenant } from "@/lib/auth/session";
 import { DashboardService, type DashboardProductRow } from "@/lib/services/dashboard.service";
 import { AvisosService } from "@/lib/services/avisos.service";
-import { formatBRL, formatDate, formatQty } from "@/lib/format";
+import { formatBRL, formatDate, formatQty, valorExibivel } from "@/lib/format";
 import { StatCard } from "@/components/data/stat-card";
 import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
 import { SalesChart } from "@/components/data/sales-chart";
@@ -67,9 +67,20 @@ export default async function DashboardPage() {
               >
                 <span className="flex min-w-0 items-center gap-2">
                   <AlertTriangle className="size-4 shrink-0 text-warning" />
-                  <span className="truncate">{aviso.label}</span>
+                  {/*
+                    `min-w-0` no PRÓPRIO elemento que trunca, não só no pai.
+                    `truncate` inclui `white-space: nowrap`, e como item flex ele
+                    tem `min-width: auto` — ou seja, se recusa a encolher abaixo
+                    do texto inteiro, e quem cede é a página, que passa a rolar
+                    de lado no celular. Era a causa de 29px de estouro aqui.
+                  */}
+                  <span className="min-w-0 truncate">{aviso.label}</span>
                 </span>
-                <span className="shrink-0 font-semibold tabular-nums">{formatBRL(aviso.total)}</span>
+                {/* `valorExibivel`: com o espaço quebrável, a menor largura que
+                    este trecho exige passa a ser o número, e não "R$ + número". */}
+                <span className="shrink-0 font-semibold tabular-nums">
+                  {valorExibivel(formatBRL(aviso.total))}
+                </span>
               </Link>
             ))}
           </CardContent>

@@ -22,6 +22,23 @@ export interface Vazamento {
   excessoPx: number;
 }
 
+/**
+ * A página rola de lado?
+ *
+ * Complementa `vazamentos`, e a diferença importa: um cartão pode estar
+ * perfeitamente contido e, ainda assim, a PÁGINA ficar mais larga que a tela —
+ * basta um item flex sem `min-w-0` se recusando a encolher. O sintoma é a coluna
+ * direita dos cartões cortada na borda do celular, que é o que se vê na tela sem
+ * que nenhum cartão esteja "vazando".
+ *
+ * Devolve os pixels de excesso (0 = certo).
+ */
+export async function estouroHorizontalDaPagina(page: Page): Promise<number> {
+  return page.evaluate(() =>
+    Math.max(0, document.documentElement.scrollWidth - window.innerWidth),
+  );
+}
+
 export async function vazamentos(page: Page): Promise<Vazamento[]> {
   return page.evaluate(() => {
     // 1px de tolerância: arredondamento de subpixel do próprio navegador.

@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { hash } from "@node-rs/argon2";
 import { randomBytes } from "node:crypto";
-import { vazamentos } from "./_helpers/vazamentos";
+import { estouroHorizontalDaPagina, vazamentos } from "./_helpers/vazamentos";
 
 /**
  * Painel do super-admin: caixa de notificações e acompanhamento de usuários.
@@ -335,6 +335,7 @@ test.describe("Painel em tela estreita (320px)", () => {
 
       const problemas = await vazamentos(page);
       expect(problemas, `${url}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
+      expect(await estouroHorizontalDaPagina(page), `${url} rola de lado`).toBe(0);
     });
   }
 });
