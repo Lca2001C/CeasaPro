@@ -21,6 +21,7 @@ import {
   emailEmUso,
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
+import { AdminNotificationsService } from "./admin-notifications.service";
 import { ADMIN_PLAN_SLUG } from "./plano.service";
 import type { SignupInput } from "@/lib/validations/auth";
 
@@ -137,6 +138,16 @@ export const SignupService = {
       // invisível e o cadastro pareceria ter sumido.
       logger.error({ err: sent.error, tenantId }, "Falha ao enviar e-mail de confirmação");
     }
+
+    // FORA da transação: um aviso não pode desfazer um cadastro. O serviço já
+    // engole as próprias falhas, então aqui não há try/catch redundante.
+    await AdminNotificationsService.notificarUsuarioCriado({
+      tenantId,
+      userId,
+      tradeName: input.tradeName,
+      email: input.email,
+      origem: "cadastro-publico",
+    });
 
     logger.info({ tenantId, ip: ctx.ip }, "Cadastro público criado, aguardando confirmação");
 

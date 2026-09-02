@@ -106,6 +106,66 @@ export function billingNotice(args: {
 }
 
 /**
+ * Como a empresa está em relação ao pagamento, nos três grupos que interessam a
+ * quem opera o SaaS: quem está experimentando, quem está pagando, e quem não
+ * está.
+ */
+export type SituacaoCobranca = "em_teste" | "em_dia" | "inadimplente";
+
+export interface SituacaoCobrancaDetalhe {
+  situacao: SituacaoCobranca;
+  /**
+   * Status recalculado das datas — NÃO o gravado no banco.
+   *
+   * O gravado é atualizado pelo cron diário, então entre duas execuções ele
+   * mente: uma assinatura que venceu de madrugada continua marcada `ATIVO` até o
+   * cron rodar. Numa tela de acompanhamento isso é justamente o erro que importa
+   * (o admin veria "em dia" quem já venceu), então aqui a data manda.
+   *
+   * `null` = empresa sem assinatura nenhuma.
+   */
+  statusEfetivo: SubscriptionStatus | null;
+  /** Dias que faltam do teste. Só em `em_teste`; `null` nos outros casos. */
+  diasDeTeste: number | null;
+}
+
+/**
+ * Classifica a assinatura para acompanhamento.
+ *
+ * Olha só a ASSINATURA, de propósito: se o super-admin bloqueou a empresa à mão,
+ * ela perde o acesso, mas quem paga continua em dia — misturar as duas coisas
+ * marcaria como inadimplente um cliente adimplente. Quem responde sobre acesso é
+ * `accessDecision`, e as duas informações aparecem separadas na tela.
+ */
+export function situacaoCobranca(
+  sub: Parameters<typeof computeStatus>[0] | null | undefined,
+  now: Date = new Date(),
+): SituacaoCobrancaDetalhe {
+  // Sem assinatura não há o que cobrar nem o que liberar. Não é "em dia".
+  if (!sub) return { situacao: "inadimplente", statusEfetivo: null, diasDeTeste: null };
+
+  const statusEfetivo = computeStatus(sub, now);
+
+  if (statusEfetivo === "TRIAL") {
+    return {
+      situacao: "em_teste",
+      statusEfetivo,
+      // Override MANUAL pode devolver TRIAL sem data; nesse caso não há contagem.
+      diasDeTeste: sub.trialEndsAt ? trialDaysLeft(sub.trialEndsAt, now) : null,
+    };
+  }
+
+  if (statusEfetivo === "ATIVO") {
+    return { situacao: "em_dia", statusEfetivo, diasDeTeste: null };
+  }
+
+  // VENCIDO, SUSPENSO, BLOQUEADO e CANCELADO caem aqui. São graus diferentes do
+  // mesmo problema — VENCIDO ainda tem tolerância, SUSPENSO já não tem — e o
+  // `statusEfetivo` preserva a diferença para a tela mostrar qual é.
+  return { situacao: "inadimplente", statusEfetivo, diasDeTeste: null };
+}
+
+/**
  * Recalcula o status da assinatura a partir das datas (usado pelo cron e no refresh).
  * Respeita override manual (statusSource = MANUAL).
  *

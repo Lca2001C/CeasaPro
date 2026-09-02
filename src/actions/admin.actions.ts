@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { withAdminAction } from "@/lib/http/with-action";
 import { AdminService } from "@/lib/services/admin.service";
+import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
 import {
   novaEmpresaSchema,
   tenantStatusSchema,
@@ -82,4 +83,20 @@ export const excluirPlano = withAdminAction({
 export const excluirUsuario = withAdminAction({
   schema: z.string().min(1),
   handler: (id, ctx) => AdminService.deleteUser(id, ctx),
+});
+
+/**
+ * Marca UMA notificacao como lida.
+ *
+ * Nao valida se ela existe: ja ter sido lida (noutra aba, por outro admin) e
+ * resultado normal, nao erro — a caixa e compartilhada.
+ */
+export const marcarNotificacaoLida = withAdminAction({
+  schema: z.string().min(1),
+  handler: (id) => AdminNotificationsService.marcarComoLida(id),
+});
+
+/** Zera a campainha. Devolve quantas foram marcadas, para a tela poder informar. */
+export const marcarTodasNotificacoesLidas = withAdminAction({
+  handler: () => AdminNotificationsService.marcarTodasComoLidas(),
 });

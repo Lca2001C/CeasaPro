@@ -592,6 +592,39 @@ model AuditLog {
   @@map("audit_logs")
 }
 
+/// Caixa de entrada do super-admin: o que aconteceu na operação do SaaS e ele
+/// precisa ver, com estado de lido.
+///
+/// É uma caixa COMPARTILHADA entre os super-admins, não uma por pessoa: o aviso
+/// é sobre o negócio ("entrou um cadastro novo"), não sobre alguém. Dois
+/// administradores marcando o mesmo cadastro como lido seria trabalho repetido.
+///
+/// Sem relação (FK) com Tenant/User, na mesma linha do `AuditLog`: o registro do
+/// que aconteceu precisa sobreviver à exclusão da empresa que o originou. Por
+/// isso os testes limpam esta tabela explicitamente.
+model AdminNotification {
+  id        String                @id @default(cuid())
+  kind      AdminNotificationKind
+  title     String
+  body      String
+  /// Tela para onde o clique leva. Caminho relativo do app.
+  href      String?
+  tenantId  String?
+  userId    String?
+  readAt    DateTime?
+  createdAt DateTime              @default(now())
+
+  /// Serve a consulta que a campainha faz em toda página do admin: contar as
+  /// não lidas e listar as mais recentes primeiro.
+  @@index([readAt, createdAt])
+  @@map("admin_notifications")
+}
+
+enum AdminNotificationKind {
+  /// Conta criada: cadastro público (autoatendimento) ou cadastro pelo admin.
+  USER_CREATED
+}
+
 enum UserRole {
   SUPER_ADMIN
   OWNER

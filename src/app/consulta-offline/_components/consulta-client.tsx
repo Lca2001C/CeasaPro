@@ -6,6 +6,7 @@ import { CloudOff, RefreshCw, WifiOff } from "lucide-react";
 import type { PwaSnapshot } from "@/app/api/pwa/snapshot/route";
 import { carregarSnapshot, idadeEmMinutos } from "@/lib/pwa/offline-store";
 import { useOnline } from "@/lib/pwa/use-online";
+import { valorExibivel } from "@/lib/format";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 
@@ -21,8 +22,11 @@ import { Button } from "@/components/ui/button";
  * agora e vende o que não tem.
  */
 
+// `valorExibivel` pelo mesmo motivo do `StatCard`: o `toLocaleString` separa
+// "R$" do número com NBSP, que proíbe quebra, então valor comprido estoura a
+// caixa; e o negativo com hífen deixa o sinal órfão numa linha só dele.
 const brl = (v: number) =>
-  v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+  valorExibivel(v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
 
 const qtd = (v: number) =>
   v.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
@@ -134,7 +138,14 @@ export function ConsultaOfflineClient() {
           <Card key={label as string}>
             <CardContent className="py-3">
               <p className="text-xs text-muted-foreground">{label as string}</p>
-              <p className="text-lg font-semibold tabular-nums">{brl(valor as number)}</p>
+              {/*
+                `overflow-wrap:anywhere` fecha a última brecha: com o espaço já
+                quebrável, um valor comprido desce o número para a linha de
+                baixo em vez de vazar pela borda do cartão.
+              */}
+              <p className="text-lg font-semibold tabular-nums [overflow-wrap:anywhere]">
+                {brl(valor as number)}
+              </p>
             </CardContent>
           </Card>
         ))}
@@ -148,7 +159,9 @@ export function ConsultaOfflineClient() {
             <CardContent className="flex flex-col gap-2 py-3 text-sm">
               {snapshot.avisos.map((a) => (
                 <div key={a.tipo} className="flex justify-between gap-3">
-                  <span>{a.label}</span>
+                  {/* `min-w-0`: sem ele o rótulo não encolhe abaixo da palavra
+                      mais longa e empurra o valor para fora do cartão. */}
+                  <span className="min-w-0">{a.label}</span>
                   <span className="shrink-0 font-medium tabular-nums">{brl(a.total)}</span>
                 </div>
               ))}

@@ -31,6 +31,9 @@ export async function cleanupTenants(ids: string[]) {
   const where = { tenantId: { in: ids } };
   // Ordem respeita as FKs Restrict de Product (movimentos/itens antes dos produtos).
   await prisma.auditLog.deleteMany({ where });
+  // Sem FK para Tenant (o registro sobrevive à exclusão da empresa, por design),
+  // então não cai por cascata: apagar aqui evita vazar linhas entre testes.
+  await prisma.adminNotification.deleteMany({ where });
   await prisma.plasticCrateMovement.deleteMany({ where });
   await prisma.crateCleaning.deleteMany({ where });
   await prisma.packagingSale.deleteMany({ where });

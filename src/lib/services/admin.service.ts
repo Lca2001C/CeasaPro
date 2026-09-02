@@ -16,6 +16,9 @@ import {
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
 import { ADMIN_PLAN_SLUG } from "./plano.service";
+import { AdminNotificationsService } from "./admin-notifications.service";
+import { inicioDaJanelaOnline } from "@/lib/auth/presence";
+import { situacaoCobranca, type SituacaoCobrancaDetalhe } from "@/lib/billing/status";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { AdminCtx } from "@/lib/http/with-action";
 import type {
@@ -128,11 +131,11 @@ export const AdminService = {
     const passwordHash = await hashPassword(tempPassword);
     const now = new Date();
 
-    const tenantId = await prisma.$transaction(async (tx) => {
+    const { tenantId, userId: novoUserId } = await prisma.$transaction(async (tx) => {
       // A empresa nasce SUSPENSA (regra em `provisionTenant`): sem período
       // gratuito por este caminho — o teste de 7 dias é do cadastro público.
       // Só vai para ATIVO quando o Mercado Pago aprovar a primeira mensalidade.
-      const { tenantId: novoId } = await provisionTenant(tx, {
+      const { tenantId: novoId, userId: donoId } = await provisionTenant(tx, {
         tradeName: input.tradeName,
         legalName: input.legalName ?? null,
         cnpj: input.cnpj ?? null,
@@ -164,7 +167,16 @@ export const AdminService = {
         },
         tx,
       );
-      return novoId;
+      return { tenantId: novoId, userId: donoId };
+    });
+
+    // FORA da transação: o aviso é acessório e não pode desfazer o cadastro.
+    await AdminNotificationsService.notificarUsuarioCriado({
+      tenantId,
+      userId: novoUserId,
+      tradeName: input.tradeName,
+      email: input.ownerEmail,
+      origem: "admin",
     });
 
     const { subject, html } = welcomeOwnerEmail({
@@ -566,9 +578,24 @@ export const AdminService = {
    * aqui a pergunta é "quem tem acesso ao sistema", e omitir quem administra
    * seria justamente esconder o acesso mais poderoso.
    */
+  /**
+   * Usuários com **presença** e **situação de cobrança** da empresa de cada um.
+   *
+   * A presença sai de UMA consulta extra que traz o conjunto de quem tem sessão
+   * viva renovada dentro da janela (ver `presence.ts`) — e não de um `include` de
+   * refresh tokens por usuário, que faria uma subconsulta por linha para
+   * responder um sim/não.
+   *
+   * A situação de cobrança é RECALCULADA das datas por `situacaoCobranca`, em vez
+   * de ler o status gravado: o cron atualiza o gravado uma vez por dia, então
+   * entre duas execuções ele mostraria "em dia" quem venceu de madrugada —
+   * exatamente o caso que esta tela existe para pegar.
+   */
   async listUsers(filtro?: { busca?: string; somenteInativos?: boolean }) {
     const busca = filtro?.busca?.trim();
-    return prisma.user.findMany({
+    const agora = new Date();
+
+    const usuarios = await prisma.user.findMany({
       where: {
         deletedAt: null,
         ...(filtro?.somenteInativos ? { active: false } : {}),
@@ -581,10 +608,61 @@ export const AdminService = {
             }
           : {}),
       },
-      include: { tenant: { select: { id: true, tradeName: true, deletedAt: true } } },
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            tradeName: true,
+            deletedAt: true,
+            status: true,
+            subscription: {
+              select: {
+                status: true,
+                statusSource: true,
+                activatedAt: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                graceDays: true,
+                cancelledAt: true,
+              },
+            },
+          },
+        },
+      },
       orderBy: [{ active: "desc" }, { name: "asc" }],
       take: 200,
     });
+
+    if (usuarios.length === 0) return [];
+
+    const online = await prisma.refreshToken.findMany({
+      where: {
+        userId: { in: usuarios.map((u) => u.id) },
+        // As três condições são a definição de presença, e cada uma tira um
+        // falso positivo: revogado = saiu ou foi desativado; expirado = sessão
+        // morta; criado fora da janela = entrou há muito e não voltou.
+        revokedAt: null,
+        expiresAt: { gt: agora },
+        createdAt: { gte: inicioDaJanelaOnline(agora) },
+      },
+      distinct: ["userId"],
+      select: { userId: true },
+    });
+    const idsOnline = new Set(online.map((t) => t.userId));
+
+    return usuarios.map((u) => ({
+      ...u,
+      online: idsOnline.has(u.id),
+      /**
+       * `null` para quem não tem empresa (o super-admin) e para empresa
+       * excluída: cobrança de empresa que não existe mais não é informação, e
+       * marcá-la como inadimplente encheria o contador de fantasmas.
+       */
+      cobranca:
+        u.tenant && !u.tenant.deletedAt
+          ? situacaoCobranca(u.tenant.subscription, agora)
+          : (null as SituacaoCobrancaDetalhe | null),
+    }));
   },
 
   /**
