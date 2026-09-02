@@ -4,6 +4,7 @@ import "./globals.css";
 import { Providers } from "@/components/providers";
 import { PwaRegister } from "@/components/pwa-register";
 import { iosSplashLinks } from "@/lib/pwa/ios-splash";
+import { Analytics } from "@vercel/analytics/next";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -43,6 +44,7 @@ export default function RootLayout({
         ))}
         <Providers>{children}</Providers>
         <PwaRegister />
+        <Analytics />
       </body>
     </html>
   );
