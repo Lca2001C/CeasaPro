@@ -81,3 +81,34 @@ export async function revokeAllForTenant(tenantId: string): Promise<void> {
     data: { revokedAt: new Date() },
   });
 }
+
+/**
+ * Quanto tempo um token revogado ainda é guardado.
+ *
+ * Não se apaga na hora porque a linha revogada é a evidência de reuso: se um
+ * token já rotacionado reaparecer, é sinal de cópia roubada. Sete dias é prazo
+ * suficiente para essa detecção sem acumular a tabela para sempre.
+ */
+const DIAS_DE_RETENCAO = 7;
+
+/**
+ * Remove sessões que não servem mais para nada: vencidas, ou revogadas há mais
+ * de uma semana.
+ *
+ * Existe porque nada limpava esta tabela. Cada login e cada renovação criam uma
+ * linha — e a renovação passou a acontecer enquanto o app está aberto (ver
+ * `SessaoViva`), então o crescimento deixou de ser desprezível. Roda no cron
+ * diário, junto das outras manutenções.
+ */
+export async function purgeDeadRefreshTokens(now: Date = new Date()): Promise<number> {
+  const limiteRevogados = new Date(now.getTime() - DIAS_DE_RETENCAO * 24 * 60 * 60 * 1000);
+  const { count } = await prisma.refreshToken.deleteMany({
+    where: {
+      OR: [
+        { expiresAt: { lt: now } },
+        { revokedAt: { lt: limiteRevogados } },
+      ],
+    },
+  });
+  return count;
+}

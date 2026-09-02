@@ -1,5 +1,6 @@
 import { cookies, headers } from "next/headers";
 import { ACCESS_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
+import { COOKIE_TENTATIVA_RENOVACAO, TENTATIVA_MAX_AGE_SEGUNDOS } from "./renovacao";
 
 const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? "30");
 
@@ -53,6 +54,22 @@ export async function setAuthCookies(accessToken: string, refreshToken: string) 
 export async function setAccessCookie(accessToken: string) {
   const [c, base] = await Promise.all([cookies(), cookieBase()]);
   c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessTokenMaxAgeSeconds() });
+}
+
+/**
+ * Marca a tentativa de renovação por navegação (trava anti-laço do proxy).
+ *
+ * Pela mesma `cookieBase()` do resto, e não por um header cru: assim o `Secure`
+ * acompanha o ambiente. Escrito à mão, ele seria descartado no modo de teste na
+ * LAN por IP (`ALLOW_INSECURE_COOKIES=1`) — justamente onde a trava faria falta,
+ * porque sem ela o desvio de renovação poderia repetir sem fim.
+ */
+export async function marcarTentativaDeRenovacao() {
+  const [c, base] = await Promise.all([cookies(), cookieBase()]);
+  c.set(COOKIE_TENTATIVA_RENOVACAO, "1", {
+    ...base,
+    maxAge: TENTATIVA_MAX_AGE_SEGUNDOS,
+  });
 }
 
 export async function clearAuthCookies() {

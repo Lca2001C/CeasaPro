@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { verifyAccess, ACCESS_COOKIE } from "@/lib/auth/jwt";
+import { verifyAccess, ACCESS_COOKIE, REFRESH_COOKIE } from "@/lib/auth/jwt";
+import { COOKIE_TENTATIVA_RENOVACAO } from "@/lib/auth/renovacao";
 import { accessDecision } from "@/lib/billing/status";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 
@@ -106,7 +107,7 @@ const CSP_HEADER = process.env.CSP_REPORT_ONLY === "1"
   : "Content-Security-Policy";
 
 export async function proxy(req: NextRequest) {
-  const { pathname } = req.nextUrl;
+  const { pathname, search } = req.nextUrl;
 
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const protoCadeia = (req.headers.get("x-forwarded-proto") ?? "")
@@ -173,6 +174,10 @@ export async function proxy(req: NextRequest) {
 
   if (!session) {
     if (isApi) {
+      // O cliente (`api-client`) reconhece este 401, renova com o refresh token
+      // e repete a requisição — por isso aqui não há redirecionamento: uma
+      // resposta 3xx para um `fetch` de gravação faria o formulário perder o que
+      // foi digitado.
       return comCsp(
         NextResponse.json(
           { ok: false, error: { code: "UNAUTHORIZED", message: "Nao autenticado" } },
@@ -180,6 +185,29 @@ export async function proxy(req: NextRequest) {
         ),
       );
     }
+
+    /**
+     * Navegação sem access token, mas COM refresh token: a sessão é renovável.
+     *
+     * O proxy não pode renovar sozinho — o refresh token é opaco e validá-lo
+     * exige o banco, indisponível aqui. Então desvia para a rota Node que
+     * renova e devolve a pessoa ao destino. Sem isto, quem voltava ao app 15
+     * minutos depois caía no login apesar de ter sessão válida por 30 dias.
+     *
+     * `cp_renov` é a trava anti-laço: se a renovação acabou de acontecer e
+     * ainda assim não há sessão, algo está errado de verdade e o caminho certo
+     * é o login.
+     */
+    const podeRenovar =
+      Boolean(req.cookies.get(REFRESH_COOKIE)?.value) &&
+      !req.cookies.get(COOKIE_TENTATIVA_RENOVACAO)?.value;
+
+    if (podeRenovar) {
+      const renovar = new URL("/api/auth/renovar", req.url);
+      renovar.searchParams.set("next", pathname + (search || ""));
+      return comCsp(NextResponse.redirect(renovar));
+    }
+
     const url = new URL("/login", req.url);
     url.searchParams.set("next", pathname);
     return comCsp(NextResponse.redirect(url));

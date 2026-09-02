@@ -3,6 +3,8 @@ import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { billingNotice } from "@/lib/billing/status";
 import { AppShell } from "@/components/layout/app-shell";
+import { SessaoViva } from "@/components/auth/sessao-viva";
+import { accessTokenMaxAgeSeconds } from "@/lib/auth/jwt";
 
 export default async function AppLayout({
   children,
@@ -62,6 +64,12 @@ export default async function AppLayout({
       // O proprio InstallPrompt cuida do resto (app instalado, "Agora nao").
       showInstallPrompt
     >
+      {/*
+        Renova a sessao enquanto o app esta em uso. O TTL vem do servidor para
+        nao haver duas contas de tempo divergindo: se alguem encurtar
+        ACCESS_TOKEN_TTL, a renovacao acompanha.
+      */}
+      <SessaoViva tokenTtlSegundos={accessTokenMaxAgeSeconds()} />
       {children}
     </AppShell>
   );

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
 import { BillingService } from "@/lib/services/billing.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
+import { purgeDeadRefreshTokens } from "@/lib/auth/refresh";
 import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -42,7 +43,17 @@ async function handle(req: Request): Promise<Response> {
     });
     // Não pode derrubar o cron: as linhas vencidas são inertes de qualquer forma.
     const rateLimitsRemovidos = await purgeExpiredRateLimits().catch(() => 0);
-    return Response.json({ ok: true, reconciliacao, statuses, lembretes, rateLimitsRemovidos });
+    // Idem para as sessões mortas: cada login e cada renovação deixam uma linha,
+    // e nada as apagava. Falhar aqui não afeta cobrança nenhuma.
+    const sessoesRemovidas = await purgeDeadRefreshTokens().catch(() => 0);
+    return Response.json({
+      ok: true,
+      reconciliacao,
+      statuses,
+      lembretes,
+      rateLimitsRemovidos,
+      sessoesRemovidas,
+    });
   } catch (e) {
     logger.error({ err: describeError(e) }, "Erro no cron de billing");
     return Response.json({ ok: false }, { status: 500 });
