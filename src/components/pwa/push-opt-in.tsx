@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 
 type Estado =
   | "carregando"
+  | "nao-configurado"
   | "sem-suporte"
   | "precisa-instalar-ios"
   | "negado"
@@ -105,21 +106,27 @@ export function PushOptIn({ vapidPublicKey }: { vapidPublicKey: string | null })
   }, [suporte]);
 
   /**
-   * Estado DERIVADO, na ordem em que os impedimentos importam: sem chave não há
-   * o que oferecer; no iPhone sem instalar, `subscribe()` falharia e gastaria a
+   * Estado DERIVADO, na ordem em que os impedimentos importam.
+   *
+   * `nao-configurado` (sem chave VAPID no servidor) vem antes e é distinto de
+   * `sem-suporte` de propósito: é falha nossa, não do aparelho do usuário, e
+   * dizer a ele que o navegador não suporta seria mandá-lo procurar defeito onde
+   * não há. Já no iPhone sem instalar, `subscribe()` falharia e gastaria a
    * permissão — que só se pede uma vez.
    */
-  const estado: Estado = !vapidPublicKey || !suporte
-    ? "sem-suporte"
-    : ios && !instalado
-      ? "precisa-instalar-ios"
-      : permissao === "denied"
-        ? "negado"
-        : inscrito === null
-          ? "carregando"
-          : inscrito
-            ? "inscrito"
-            : "disponivel";
+  const estado: Estado = !vapidPublicKey
+    ? "nao-configurado"
+    : !suporte
+      ? "sem-suporte"
+      : ios && !instalado
+        ? "precisa-instalar-ios"
+        : permissao === "denied"
+          ? "negado"
+          : inscrito === null
+            ? "carregando"
+            : inscrito
+              ? "inscrito"
+              : "disponivel";
 
   const ativar = useCallback(async () => {
     setOcupado(true);
@@ -187,6 +194,11 @@ export function PushOptIn({ vapidPublicKey }: { vapidPublicKey: string | null })
   }, []);
 
   if (estado === "carregando") return null;
+
+  // Push não configurado no servidor: não há nada que o usuário possa fazer, e
+  // anunciar um recurso indisponível só gera dúvida. Quem precisa saber é o
+  // operador, e para ele o aviso está no log do `push-server`.
+  if (estado === "nao-configurado") return null;
 
   if (estado === "sem-suporte") {
     return (

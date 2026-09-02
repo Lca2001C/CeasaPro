@@ -47,6 +47,14 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       CRON_SECRET: ci-cron-secret
       MERCADOPAGO_WEBHOOK_SECRET: ci-webhook-secret
+      # Chave VAPID PÚBLICA (não é segredo: o navegador precisa dela para se
+      # inscrever). Precisa estar aqui, no env do JOB, porque NEXT_PUBLIC_* é
+      # substituída pelo valor literal durante o `npm run build` — definir só no
+      # passo do teste não teria efeito, e sem ela o opt-in de avisos se anuncia
+      # como indisponível e os testes de tela do push não têm o que verificar.
+      # A metade PRIVADA do par foi descartada e não existe em lugar algum: o CI
+      # renderiza a tela de inscrição e fica incapaz de enviar notificação.
+      NEXT_PUBLIC_VAPID_PUBLIC_KEY: BJrInPO256qg1kDAUFxQN6XUrXz47Q3EqfUujQG1nKe8xMuiMBS9UCBy3pfzQtdij9ct_gJAn83LVbF0QD6ckPA
       # SMTP_USER / SMTP_PASSWORD ficam de fora de propósito: sem elas o envio de
       # e-mail vira no-op e o CI não abre conexão SMTP com o Gmail.
       SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br

@@ -318,6 +318,12 @@ dedupe, bloqueado não recebe, falha não marca), `tests/unit/push-validations.t
 (https e tetos) e `tests/e2e/pwa-push.spec.ts` (rota sob sessão + qual botão cada
 plataforma vê).
 
+Os dois testes de TELA exigem `NEXT_PUBLIC_VAPID_PUBLIC_KEY` definida **no build**
+(ela é substituída pelo valor literal ali). Sem a chave o opt-in não se anuncia, e não
+há o que verificar — foi assim que esses testes quebraram no CI antes de a variável
+entrar no `env` do job em `.github/workflows/ci.yml`. Só a metade PÚBLICA está lá: o
+CI renderiza a tela e fica incapaz de enviar notificação.
+
 **O que a automação não alcança:** a notificação chegando. Isso exige uma inscrição
 real num serviço de push (FCM, Mozilla, Apple), que o Chromium headless não obtém, e o
 aparelho recebendo com o app fechado — que é justamente o cenário do recurso.
