@@ -10,7 +10,7 @@ test.describe("Despesas — valor e seleção de data (calendário)", () => {
     // Valor (campo monetário mascarado — único input decimal do formulário)
     const valor = page.locator('input[inputmode="decimal"]');
     await valor.click();
-    await valor.pressSequentially("5000"); // R$ 50,00
+    await valor.pressSequentially("5000"); // R$ 5.000,00 (dígitos = reais inteiros)
 
     await page.getByLabel("Tipo").selectOption("FIXA");
     // Seleção de data (campo de calendário nativo).

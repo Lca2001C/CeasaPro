@@ -11,6 +11,14 @@ interface Props {
   name?: string;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Nome acessível do campo.
+   *
+   * No carrinho do PDV o rótulo visível é um `<span>` solto, sem `htmlFor` —
+   * então sem isto o campo não tem nome nenhum para leitor de tela nem para
+   * teste, e só dava para alcançá-lo por índice na página.
+   */
+  "aria-label"?: string;
   suffix?: string;
 }
 

@@ -568,6 +568,7 @@ export function Pdv({
               value={qtdParaAdicionar}
               onChange={setQtdParaAdicionar}
               placeholder="Qtd."
+              aria-label="Quantidade ao adicionar"
             />
           </div>
         </div>
@@ -668,6 +669,7 @@ export function Pdv({
                         <QuantityInput
                           value={i.quantity}
                           onChange={(v) => updateItem(i.productId, { quantity: v ?? 0 })}
+                          aria-label={`Quantidade de ${i.name}`}
                         />
                       </div>
                     ) : (
@@ -719,6 +721,7 @@ export function Pdv({
                     <CurrencyInput
                       value={i.unitPrice}
                       onChange={(v) => updateItem(i.productId, { unitPrice: v ?? 0 })}
+                      aria-label={`Preço de ${i.name}`}
                     />
                   </div>
                   <div className="flex flex-col gap-1 text-right">
@@ -792,6 +795,7 @@ export function Pdv({
                         Desconto deste item (R$)
                       </span>
                       <CurrencyInput
+                        aria-label={`Desconto de ${i.name}`}
                         value={i.discountAmount}
                         onChange={(v) =>
                           updateItem(i.productId, {
