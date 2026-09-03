@@ -13,8 +13,10 @@ test.describe("Despesas — valor e seleção de data (calendário)", () => {
     await valor.pressSequentially("5000"); // R$ 50,00
 
     await page.getByLabel("Tipo").selectOption("FIXA");
-    // Seleção de data (campo de calendário nativo)
-    await page.getByLabel("Vencimento").fill("2026-07-20");
+    // Seleção de data (campo de calendário nativo).
+    // `exact` evita o checkbox "Repetir todo mês", cujo texto auxiliar também
+    // contém a palavra "vencimento" e faz o getByLabel cair em strict-mode.
+    await page.getByLabel("Vencimento", { exact: true }).fill("2026-07-20");
 
     await page.getByRole("button", { name: "Salvar" }).click();
     await page.waitForURL("**/despesas");
