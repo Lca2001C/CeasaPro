@@ -1,10 +1,28 @@
 import * as path from "node:path";
-import * as pdfMake from "pdfmake";
+import * as pdfMakeModule from "pdfmake";
 import type { Content } from "pdfmake";
 import type { TDocumentDefinitions } from "pdfmake/interfaces";
 import { formatDate } from "@/lib/format";
 import { formatCell } from "./format-cell";
 import type { ReportResult } from "./report.types";
+
+/**
+ * O `module.exports` do pdfmake É uma instância de classe, e os métodos dela
+ * dependem de `this` (`setFonts` faz `this.fonts = fonts`).
+ *
+ * Com `import * as pdfMake` e `pdfMake.setFonts(...)`, o `this` vira o
+ * NAMESPACE do módulo. Sob o bundler do Next isso funciona por acidente — o
+ * namespace acaba sendo o próprio `module.exports` —, mas sob ESM nativo
+ * (Node, e portanto qualquer teste) o namespace é imutável e a chamada morre
+ * com `TypeError: Cannot redefine property: fonts`. Era o que tornava o
+ * exportador de PDF impossível de testar.
+ *
+ * Resolver o `default` primeiro devolve a instância de verdade nos dois mundos:
+ * sob ESM o Node sintetiza `default = module.exports`; sob o bundler o
+ * namespace já é o próprio objeto e o `??` cai nele.
+ */
+const pdfMake = ((pdfMakeModule as unknown as { default?: typeof pdfMakeModule }).default ??
+  pdfMakeModule) as typeof pdfMakeModule;
 
 let pdfConfigured = false;
 
