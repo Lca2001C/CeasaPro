@@ -22,6 +22,7 @@ export const REPORT_TYPES = [
   "COMPRAS",
   "FIADO",
   "DESPESAS",
+  "CONTAS_PAGAS",
   "ESTOQUE",
   // Avancados (Fase 2)
   "LUCRO_PRODUTO",
@@ -45,6 +46,7 @@ export const BASIC_REPORTS: ReportKind[] = [
   "COMPRAS",
   "FIADO",
   "DESPESAS",
+  "CONTAS_PAGAS",
   "ESTOQUE",
 ];
 
@@ -69,6 +71,7 @@ export const REPORT_LABELS: Record<ReportKind, string> = {
   COMPRAS: "Relatório de compras",
   FIADO: "Relatório de fiado",
   DESPESAS: "Relatório de despesas",
+  CONTAS_PAGAS: "Contas pagas no período",
   ESTOQUE: "Relatório de estoque",
   LUCRO_PRODUTO: "Lucro por produto",
   LUCRO_FORNECEDOR: "Lucro por fornecedor",
@@ -104,14 +107,15 @@ export const REPORT_GROUPS: { titulo: string; relatorios: ReportKind[] }[] = [
     relatorios: ["COMPRAS", "ESTOQUE", "ESTOQUE_PARADO", "FORNECEDORES"],
   },
   {
-    titulo: "Financeiro",
-    relatorios: [
-      "DESPESAS",
-      "FLUXO_CAIXA",
-      "LUCRO_PRODUTO",
-      "LUCRO_FORNECEDOR",
-      "PRODUTOS_PREJUIZO",
-    ],
+    // "Financeiro" passou de 6 itens com a entrada de CONTAS_PAGAS, e um grupo
+    // grande derrota o propósito do agrupamento (escolher de relance). A quebra
+    // segue a pergunta do usuário: "o que eu pago" vs. "quanto eu ganho".
+    titulo: "Contas e caixa",
+    relatorios: ["DESPESAS", "CONTAS_PAGAS", "FLUXO_CAIXA"],
+  },
+  {
+    titulo: "Lucratividade",
+    relatorios: ["LUCRO_PRODUTO", "LUCRO_FORNECEDOR", "PRODUTOS_PREJUIZO"],
   },
   {
     titulo: "Caixas, higienização e embalagens",

@@ -1,7 +1,8 @@
 import { Prisma } from "@prisma/client";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { FinancialCalc } from "./financial-calc.service";
-import { addDays } from "@/lib/dates";
+import { money } from "@/lib/money";
+import { addDaysTz, endOfDayTz, startOfDayTz } from "@/lib/tz";
 
 export interface Aviso {
   tipo: "fiado_vencido" | "despesa_vencida" | "despesa_a_vencer" | "higienizacao_pendente";
@@ -11,27 +12,43 @@ export interface Aviso {
   label: string;
 }
 
-/** Avisos operacionais para o topo do dashboard (o que precisa de atenção). */
+/**
+ * Avisos operacionais para o topo do dashboard (o que precisa de atenção) e
+ * para a notificação diária por push.
+ *
+ * Duas regras de produto governam o `href` de cada aviso:
+ *
+ *  - **Leva ao recorte, não à lista inteira.** Mandar para `/despesas` obrigava
+ *    o dono do box a procurar, numa lista de meses, o que tinha vencido. Agora o
+ *    link já chega filtrado.
+ *  - **Uma conta só → leva à conta.** Quando o aviso é de um único item, o
+ *    destino é a própria despesa: da notificação ao botão de pagar, sem escala.
+ */
 export const AvisosService = {
-  async get(tenantId: string): Promise<Aviso[]> {
+  async get(tenantId: string, agora = new Date()): Promise<Aviso[]> {
     const db = getTenantPrisma(tenantId);
-    const now = new Date();
-    const em7dias = addDays(now, 7);
+    // O corte é o INÍCIO de hoje, não "agora": uma conta que vence hoje não
+    // está vencida às 9h da manhã. Era o que acontecia com `dueDate < now`, e
+    // divergia da lista de despesas, que já usava o começo do dia.
+    const hoje = startOfDayTz(agora);
+    const em7dias = endOfDayTz(addDaysTz(agora, 7));
 
     const [fiadoVenc, despVenc, despAVencer, higPend] = await Promise.all([
       db.creditAccount.findMany({
-        where: { status: "EM_ABERTO", dueDate: { lt: now } },
+        where: { status: "EM_ABERTO", dueDate: { lt: hoje } },
         select: { totalAmount: true, paidAmount: true },
       }),
-      db.expense.aggregate({
-        _sum: { amount: true },
-        _count: true,
-        where: { status: "PENDENTE", dueDate: { lt: now } },
+      // findMany em vez de aggregate: o id é o que permite linkar direto na
+      // despesa quando existe apenas uma vencida.
+      db.expense.findMany({
+        where: { status: "PENDENTE", dueDate: { lt: hoje } },
+        select: { id: true, amount: true },
+        orderBy: { dueDate: "asc" },
       }),
-      db.expense.aggregate({
-        _sum: { amount: true },
-        _count: true,
-        where: { status: "PENDENTE", dueDate: { gte: now, lte: em7dias } },
+      db.expense.findMany({
+        where: { status: "PENDENTE", dueDate: { gte: hoje, lte: em7dias } },
+        select: { id: true, amount: true },
+        orderBy: { dueDate: "asc" },
       }),
       db.crateCleaning.findMany({
         where: { status: { not: "PAGO" } },
@@ -40,6 +57,8 @@ export const AvisosService = {
     ]);
 
     const avisos: Aviso[] = [];
+    const somar = (linhas: { amount: Prisma.Decimal }[]) =>
+      money(linhas.reduce((a, l) => a.plus(l.amount), new Prisma.Decimal(0)));
 
     if (fiadoVenc.length > 0) {
       const total = FinancialCalc.saldoFiado(
@@ -55,23 +74,29 @@ export const AvisosService = {
       });
     }
 
-    if (despVenc._count > 0) {
+    if (despVenc.length > 0) {
       avisos.push({
         tipo: "despesa_vencida",
-        count: despVenc._count,
-        total: despVenc._sum.amount ?? new Prisma.Decimal(0),
-        href: "/despesas",
-        label: `${despVenc._count} despesa(s) vencida(s)`,
+        count: despVenc.length,
+        total: somar(despVenc),
+        href:
+          despVenc.length === 1
+            ? `/despesas/${despVenc[0]!.id}`
+            : "/despesas?vencidas=1",
+        label: `${despVenc.length} despesa(s) vencida(s)`,
       });
     }
 
-    if (despAVencer._count > 0) {
+    if (despAVencer.length > 0) {
       avisos.push({
         tipo: "despesa_a_vencer",
-        count: despAVencer._count,
-        total: despAVencer._sum.amount ?? new Prisma.Decimal(0),
-        href: "/despesas",
-        label: `${despAVencer._count} despesa(s) vencem em 7 dias`,
+        count: despAVencer.length,
+        total: somar(despAVencer),
+        href:
+          despAVencer.length === 1
+            ? `/despesas/${despAVencer[0]!.id}`
+            : "/despesas?status=PENDENTE&proximos=7",
+        label: `${despAVencer.length} despesa(s) vencem em 7 dias`,
       });
     }
 

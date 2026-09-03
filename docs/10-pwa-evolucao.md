@@ -69,7 +69,9 @@ O iOS é o caso que mais frustra expectativa, então vale ser explícito:
    Daí o card com passo a passo em vez de botão.
 2. **Só pelo Safari.** Chrome, Firefox e Edge no iOS usam o motor do Safari mas **não**
    oferecem "Adicionar à Tela de Início" com suporte a PWA. Se o usuário estiver em
-   outro navegador, a instrução tem de mandá-lo abrir no Safari.
+   outro navegador, a instrução tem de mandá-lo abrir no Safari — ensinar
+   "Compartilhar → Adicionar" ali cria um favorito, não um app, e o usuário conclui
+   que o sistema não funciona. É o caso `ios-outro` de `src/lib/pwa/plataforma.ts`.
 3. **Web Push exige o app na tela de início.** Desde o iOS 16.4 há Web Push, mas
    **somente** para PWA já adicionado à tela inicial — não funciona na aba do Safari.
    Ou seja: no iPhone, notificação depende de instalação, e instalação depende de ação
@@ -182,6 +184,58 @@ Decisões que valem registro:
   do celular, visível para quem estiver por perto; o texto diz o que precisa de
   atenção ("3 despesa(s) vencida(s)") e o valor fica atrás do login.
 
+### Fase 4 — Aparência de app instalado — **implementada**
+
+As três primeiras fases entregam o comportamento (instalar, consultar sem rede,
+receber aviso). Esta fecha o que sobrou: **o app instalado precisa parecer um app**, e
+no iPhone o caminho até a instalação precisa existir em todos os navegadores.
+
+| Peça | Onde |
+|---|---|
+| Tela cheia no iPhone | `viewportFit: "cover"` em `src/app/layout.tsx` |
+| Recuos do recorte | `AppShell` (header, main), `BottomNav`, `SupportButton`, `SheetContent`, `/consulta-offline`, layout `(public)` |
+| Detecção de plataforma | `src/lib/pwa/plataforma.ts` (fonte única, pura, testada) |
+| Atalhos do ícone + `display_override` | `src/app/manifest.ts` |
+
+Decisões que valem registro:
+
+- **`viewport-fit=cover` e os recuos são uma coisa só.** `cover` faz o app ocupar a
+  tela física inteira do iPhone — é o que tira a moldura branca e dá a aparência de
+  app nativo — e é também o que coloca a navegação inferior **debaixo da barra de
+  gestos**, onde o toque vai para o sistema e não para o app. Cada barra fixa carrega
+  seu `env(safe-area-inset-*)`; acrescentar uma nova barra fixa sem o recuo
+  reintroduz o defeito, e ele não aparece em nenhum navegador de desktop.
+- **`env()` vale 0 fora do iPhone**, então as regras são inertes no Android e no
+  desktop. Não há ramo por plataforma no CSS, de propósito: ramo que só um aparelho
+  exercita é ramo que ninguém revisa.
+- **Sem recuo lateral.** O manifest fixa `orientation: portrait`; paisagem não é um
+  modo do app instalado, e cobrir um recorte que não aparece seria código morto.
+- **A plataforma virou módulo puro** (`plataforma.ts`), com o user agent recebido por
+  parâmetro. Estava duplicada entre o convite de instalação e o opt-in de avisos, e é
+  o único ponto do PWA em que errar produz **instrução errada na tela** — daí a
+  cobertura com user agents reais em `tests/unit/pwa-plataforma.test.ts`.
+- **Chrome/Firefox/Edge no iPhone ganharam tela própria**, que manda abrir no Safari e
+  oferece copiar o endereço. Antes esses navegadores recebiam o passo a passo do
+  Safari pelo gatilho de Configurações — instrução para um menu que o aparelho não
+  tem. Continuam **não** interrompendo a tela pós-login: ali o convite não tem ação a
+  oferecer, só o pedido de trocar de navegador.
+- **O convite do iPhone anuncia o pré-requisito dos avisos.** É o momento em que a
+  pessoa acabou de instalar; sem isso ela tenta ligar os avisos numa aba do Safari,
+  falha, e a permissão negada **não pode ser pedida de novo**.
+- **Atalho do ícone nunca aponta para módulo opcional.** O atalho é gravado na
+  instalação e não sabe qual plano a empresa contratou — um atalho para
+  `/caixas-plasticas` numa empresa sem o módulo levaria direto a uma tela negada. A
+  regra está travada em `tests/unit/pwa-manifest.test.ts`, junto da conferência de
+  que todo ícone declarado existe em `public/`.
+- **`display_override` começa em `standalone`.** Sem a lista, um navegador que não
+  implemente `standalone` cai direto em `browser` — exatamente o modo que o PWA existe
+  para evitar.
+
+**O que ficou de fora, e por quê:** `screenshots` no manifest (o Android as mostra na
+caixa de instalação e elas aumentam a conversão) exige **imagens reais** das telas do
+app. Declarar caminhos sem os arquivos quebra a caixa de instalação, e uma imagem
+inventada é pior que nenhuma. É tarefa de asset, não de código.
+
 ---
 
 ## Métricas
@@ -234,6 +288,12 @@ Sem medição não há como saber se a evolução funcionou. O que acompanhar:
 - **Ao trocar a versão do cache no `sw.js`**, o SW antigo continua ativo até todas as
   abas fecharem. `skipWaiting` + `clients.claim` (já usados) encurtam isso, mas não
   eliminam a janela.
+- **Barra fixa nova exige recuo de área segura.** Com `viewport-fit=cover` (Fase 4) o
+  app encosta na borda física da tela do iPhone. Qualquer elemento novo com `fixed`
+  ancorado embaixo precisa de `pb-[env(safe-area-inset-bottom)]`, e ancorado em cima,
+  de `pt-[env(safe-area-inset-top)]` — senão fica sob a barra de gestos ou sob a barra
+  de status. **Nenhum navegador de desktop reproduz isso**, e os testes automatizados
+  também não: é conferência de aparelho.
 
 ---
 
@@ -257,7 +317,9 @@ instalação em si tem de ser conferida à mão, em **produção sobre HTTPS**.
 - [ ] Login → o painel abre já com o passo a passo (sem botão de instalar).
 - [ ] Seguir Compartilhar → Adicionar à Tela de Início cria o ícone.
 - [ ] Abrindo pelo ícone, o painel **não** reaparece.
-- [ ] Em Chrome/Firefox no iPhone o painel **não** abre (não há caminho ali).
+- [ ] Em Chrome/Firefox no iPhone o painel **não** abre sozinho (não há caminho ali) —
+      mas Configurações → "Instalar app" abre um painel que manda usar o **Safari** e
+      oferece copiar o endereço, e **não** mostra o passo a passo do Safari.
 
 ### Desktop (Chrome/Edge)
 - [ ] Login → painel com **Instalar agora**; instala como janela própria.
@@ -373,3 +435,41 @@ aparelho recebendo com o app fechado — que é justamente o cenário do recurso
 
 - [ ] Suspender a assinatura de uma empresa inscrita, disparar o cron e conferir que
       ela **não** recebe nada (e que as outras continuam recebendo).
+
+---
+
+## Checklist manual — Fase 4
+
+Automatizado em `tests/unit/pwa-plataforma.test.ts` (a plataforma que cada user agent
+produz), `tests/unit/pwa-manifest.test.ts` (ícones existem, atalho não é gateado,
+`display_override` não cai em `browser`) e `tests/e2e/pwa-install.spec.ts` (o painel
+certo para Safari e para outro navegador do iPhone).
+
+**O que a automação não alcança:** a área segura. `env(safe-area-inset-*)` vale 0 em
+qualquer navegador de desktop e no Chromium do Playwright — o recorte só existe no
+aparelho. **Precisa de um iPhone com notch/Dynamic Island** (11 ou mais novo), aberto
+pelo ícone da tela inicial: numa aba do Safari a barra do navegador esconde o defeito.
+
+### iPhone com recorte, aberto **pelo ícone**
+
+- [ ] O nome da empresa e o botão de sair, no topo, ficam **abaixo** da barra de
+      status — não atrás dela.
+- [ ] Os rótulos da navegação inferior (Início/Vender/Estoque/Fiado/Mais) ficam
+      **acima** da barra de gestos, e o toque em cada um responde.
+- [ ] Rolar até o fim de uma lista longa (ex.: Produtos): o último cartão aparece
+      inteiro, sem ficar atrás da navegação.
+- [ ] O botão do WhatsApp não encosta na navegação inferior.
+- [ ] Abrir o menu **Mais** e o convite de instalação: o último botão da folha é
+      tocável, sem competir com a barra de gestos.
+- [ ] Modo avião + abrir pelo ícone → `/consulta-offline` com o aviso "Dados de…"
+      visível **abaixo** da barra de status.
+- [ ] Toque longo no ícone do app: aparecem os atalhos **Nova venda**, **Estoque** e
+      **Fiado** (no iOS os atalhos são ignorados — isto vale para Android).
+
+### Android e desktop (não regressão)
+
+- [ ] O header continua com a mesma altura e a navegação inferior no mesmo lugar:
+      `env()` vale 0 ali, então nada deve ter mudado visualmente.
+- [ ] Toque longo no ícone instalado (Android): os três atalhos abrem as telas certas.
+- [ ] Instalar numa empresa **sem** os módulos opcionais e conferir que nenhum atalho
+      cai em tela negada.

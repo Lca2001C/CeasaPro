@@ -30,6 +30,18 @@ export const viewport: Viewport = {
   initialScale: 1,
   maximumScale: 1,
   themeColor: "#1a7a3f",
+  /**
+   * `cover` faz o app instalado ocupar a tela INTEIRA do iPhone, inclusive sob a
+   * barra de status e a barra de gestos — é o que tira a moldura branca e dá a
+   * aparência de app nativo em vez de site salvo.
+   *
+   * O preço é que as barras fixas passam a precisar de recuo próprio
+   * (`env(safe-area-inset-*)`): sem ele a navegação inferior fica parcialmente
+   * atrás da barra de gestos e o toque nos rótulos vai para o sistema. Os recuos
+   * estão em `AppShell`, `BottomNav`, `SupportButton` e `SheetContent`; mexer
+   * aqui sem mexer lá reintroduz o problema.
+   */
+  viewportFit: "cover",
 };
 
 export default function RootLayout({

@@ -92,7 +92,7 @@ test.describe("Convite de instalação do PWA", () => {
   });
 });
 
-test.describe("Convite de instalação no iPhone", () => {
+test.describe("Convite de instalação no iPhone (Safari)", () => {
   // Safari do iPhone: sem `beforeinstallprompt`, o caminho é o passo a passo.
   test.use({
     storageState: { cookies: [], origins: [] },
@@ -114,5 +114,47 @@ test.describe("Convite de instalação no iPhone", () => {
     await expect(page.getByText("Adicionar à Tela de Início")).toBeVisible();
     await expect(page.getByText(/Compartilhar/)).toBeVisible();
     await expect(page.getByRole("button", { name: "Entendi" })).toBeVisible();
+  });
+
+  test("avisa que os avisos dependem de abrir pelo ícone", async ({ page }) => {
+    await entrar(page);
+
+    // Fase 3 no iPhone só funciona com o app na tela de início. Quem não lê isso
+    // aqui tenta ativar os avisos numa aba do Safari, falha, e conclui que o
+    // recurso é quebrado — e a permissão negada não pode ser pedida de novo.
+    await expect(page.getByText(/pelo ícone/)).toBeVisible();
+  });
+});
+
+test.describe("Convite de instalação em outro navegador do iPhone", () => {
+  // Chrome no iPhone: usa o motor do Safari, mas NÃO tem "Adicionar à Tela de
+  // Início" com suporte a PWA. É o caso em que a instrução errada faz o
+  // comerciante procurar um item de menu que não existe no aparelho dele.
+  test.use({
+    storageState: { cookies: [], origins: [] },
+    userAgent:
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 " +
+      "(KHTML, like Gecko) CriOS/120.0.6099.101 Mobile/15E148 Safari/604.1",
+  });
+
+  test("não interrompe o login, porque não há ação a oferecer", async ({ page }) => {
+    await entrar(page);
+    await expect(page.getByText(TITULO)).toHaveCount(0);
+  });
+
+  test("pelas Configurações, manda abrir no Safari em vez de ensinar o passo errado", async ({
+    page,
+  }) => {
+    await entrar(page);
+    await page.goto("/configuracoes");
+    await page.getByRole("button", { name: /Instalar app/i }).click();
+
+    await expect(page.getByText(TITULO)).toBeVisible();
+    await expect(page.getByText(/só o.*Safari/i)).toBeVisible();
+
+    // O passo a passo do Safari não pode aparecer aqui: seguir esses passos no
+    // Chrome do iPhone cria um favorito, não um app.
+    await expect(page.getByText("Adicionar à Tela de Início")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Instalar agora" })).toHaveCount(0);
   });
 });

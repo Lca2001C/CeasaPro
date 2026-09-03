@@ -18,7 +18,13 @@ export default async function RelatorioViewPage({
   searchParams,
 }: {
   params: Promise<{ tipo: string }>;
-  searchParams: Promise<{ preset?: string; from?: string; to?: string }>;
+  searchParams: Promise<{
+    preset?: string;
+    from?: string;
+    to?: string;
+    campo?: string;
+    agrupar?: string;
+  }>;
 }) {
   const { tipo } = await params;
   const sp = await searchParams;
@@ -35,7 +41,19 @@ export default async function RelatorioViewPage({
     from: sp.from,
     to: sp.to,
   });
-  const report = await buildReport(kind, { tenantId, from: period.from, to: period.to });
+  // `campo` e `agrupar` só têm efeito nos relatórios de despesa; nos outros o
+  // buildReport simplesmente os ignora.
+  const campo =
+    sp.campo === "paidDate" || sp.campo === "createdAt" || sp.campo === "dueDate"
+      ? sp.campo
+      : undefined;
+  const report = await buildReport(kind, {
+    tenantId,
+    from: period.from,
+    to: period.to,
+    dateField: campo,
+    agruparPorCategoria: sp.agrupar === "categoria",
+  });
 
   return (
     <div>
@@ -46,7 +64,11 @@ export default async function RelatorioViewPage({
         Periodo: {formatDate(period.from)} a {formatDate(period.to)}
       </p>
 
-      <ReportToolbar kind={kind.toLowerCase()} />
+      <ReportToolbar
+        kind={kind.toLowerCase()}
+        mostrarOpcoesDeDespesa={kind === "DESPESAS" || kind === "CONTAS_PAGAS"}
+        permiteEscolherData={kind === "DESPESAS"}
+      />
 
       {report.rows.length === 0 ? (
         <EmptyState title="Nenhum dado no periodo" description="Ajuste o periodo no seletor acima." />

@@ -67,32 +67,33 @@ model Plan {
 }
 
 model User {
-  id                  String         @id @default(cuid())
-  tenantId            String?
-  name                String
-  email               String         @unique
-  passwordHash        String
-  role                UserRole       @default(OWNER)
-  active              Boolean        @default(true)
-  mustChangePassword  Boolean        @default(false)
-  lastLoginAt         DateTime?
-  resetTokenHash      String?
-  resetTokenExpiresAt DateTime?
+  id                   String             @id @default(cuid())
+  tenantId             String?
+  name                 String
+  email                String             @unique
+  passwordHash         String
+  role                 UserRole           @default(OWNER)
+  active               Boolean            @default(true)
+  mustChangePassword   Boolean            @default(false)
+  lastLoginAt          DateTime?
+  resetTokenHash       String?
+  resetTokenExpiresAt  DateTime?
   /// Confirmação do e-mail no cadastro público. É o gatilho do trial: sem isto
   /// preenchido a empresa continua SUSPENSA.
-  emailVerifiedAt     DateTime?
+  emailVerifiedAt      DateTime?
   /// SHA-256 do token de confirmação (o token cru só existe no link do e-mail).
-  verifyTokenHash     String?
+  verifyTokenHash      String?
   verifyTokenExpiresAt DateTime?
-  createdAt           DateTime       @default(now())
-  updatedAt           DateTime       @updatedAt
-  deletedAt           DateTime?
-  refreshTokens       RefreshToken[]
-  pushSubscriptions   PushSubscription[]
-  tenant              Tenant?        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  deletedAt            DateTime?
+  refreshTokens        RefreshToken[]
+  pushSubscriptions    PushSubscription[]
+  tenant               Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
   @@index([tenantId])
+  @@index([resetTokenHash])
   @@index([verifyTokenHash])
   @@map("users")
 }
@@ -121,21 +122,21 @@ model RefreshToken {
 /// Ligada ao USUÁRIO, não só ao tenant: quem autorizou notificação foi a pessoa,
 /// no aparelho dela. Excluir o usuário leva as inscrições com ele (cascade).
 model PushSubscription {
-  id        String   @id @default(cuid())
-  userId    String
-  tenantId  String
+  id         String    @id @default(cuid())
+  userId     String
+  tenantId   String
   /// URL do serviço de push do navegador. Único por instalação.
-  endpoint  String   @unique
+  endpoint   String    @unique
   /// Chave pública do cliente (base64url) — usada na criptografia do payload.
-  p256dh    String
+  p256dh     String
   /// Segredo de autenticação do cliente (base64url).
-  auth      String
-  userAgent String?
-  createdAt DateTime @default(now())
+  auth       String
+  userAgent  String?
+  createdAt  DateTime  @default(now())
   /// Último envio ACEITO pelo serviço de push. Ajuda a distinguir inscrição
   /// morta de inscrição só silenciosa.
   lastSentAt DateTime?
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([tenantId])
   @@index([userId])
@@ -268,6 +269,7 @@ model Purchase {
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?
   items        PurchaseItem[]
+  expenses     Expense[]
   supplier     Supplier?      @relation(fields: [supplierId], references: [id])
   tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -414,24 +416,44 @@ model ExpenseCategory {
 }
 
 model Expense {
-  id          String           @id @default(cuid())
+  id          String        @id @default(cuid())
   tenantId    String
   categoryId  String?
   description String
-  amount      Decimal          @db.Decimal(14, 2)
+  amount      Decimal       @db.Decimal(14, 2)
   dueDate     DateTime?
   paidDate    DateTime?
   type        ExpenseType
-  status      ExpenseStatus    @default(PENDENTE)
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
-  deletedAt   DateTime?
-  category    ExpenseCategory? @relation(fields: [categoryId], references: [id])
-  tenant      Tenant           @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  status      ExpenseStatus @default(PENDENTE)
+
+  /// Como a conta foi/será paga. Opcional: muita conta é lançada antes de se
+  /// saber por onde vai sair o dinheiro.
+  paymentMethod ExpensePaymentMethod?
+  /// "Repetir todo mês". Fica marcado apenas na ÚLTIMA parcela da corrente —
+  /// quem gera a parcela do mês seguinte passa a marca adiante. Assim existe
+  /// exatamente um gerador ativo por conta fixa, e reexecutar o job não duplica.
+  recurring     Boolean               @default(false)
+  /// Parcela anterior da mesma conta recorrente (ou a despesa de origem, quando
+  /// duplicada/replicada à mão).
+  parentId      String?
+  /// Compra que originou esta despesa (frete lançado como despesa operacional).
+  /// Garante que o mesmo frete não entre duas vezes.
+  purchaseId    String?
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+  deletedAt     DateTime?
+  category      ExpenseCategory?      @relation(fields: [categoryId], references: [id])
+  parent        Expense?              @relation("ExpenseRecurrence", fields: [parentId], references: [id], onDelete: SetNull)
+  children      Expense[]             @relation("ExpenseRecurrence")
+  purchase      Purchase?             @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, dueDate])
   @@index([tenantId, status])
   @@index([tenantId, type])
+  @@index([tenantId, paidDate])
+  @@index([tenantId, recurring])
+  @@index([purchaseId])
   @@map("expenses")
 }
 
@@ -509,21 +531,21 @@ model CrateCleaning {
 }
 
 model PackagingType {
-  id        String          @id @default(cuid())
-  tenantId  String
-  name      String
-  active    Boolean         @default(true)
+  id          String              @id @default(cuid())
+  tenantId    String
+  name        String
+  active      Boolean             @default(true)
   /// Controla saldo deste tipo? Nasce `false` de propósito: empresa que já
   /// vendia embalagem nunca registrou entrada, e ligar o controle para todos
   /// de uma vez mostraria saldo negativo em tudo — o que é falso, é ausência
   /// de histórico. O dono liga por tipo, informando o que tem hoje.
-  tracksStock Boolean       @default(false)
-  createdAt DateTime        @default(now())
-  updatedAt DateTime        @updatedAt
-  deletedAt DateTime?
-  sales     PackagingSale[]
-  movements PackagingMovement[]
-  tenant    Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tracksStock Boolean             @default(false)
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  deletedAt   DateTime?
+  sales       PackagingSale[]
+  movements   PackagingMovement[]
+  tenant      Tenant              @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, name])
   @@map("packaging_types")
@@ -669,6 +691,14 @@ enum ExpenseType {
   VARIAVEL
 }
 
+enum ExpensePaymentMethod {
+  PIX
+  DINHEIRO
+  TRANSFERENCIA
+  BOLETO
+  CARTAO
+}
+
 enum ExpenseStatus {
   PENDENTE
   PAGO
@@ -732,6 +762,7 @@ enum ReportType {
   CAIXAS_PLASTICAS
   HIGIENIZACAO
   EMBALAGENS
+  CONTAS_PAGAS
 }
 
 enum PackagingMovementType {

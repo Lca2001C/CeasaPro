@@ -4,6 +4,7 @@ import { FinancialCalc } from "./financial-calc.service";
 import { add, mul, money } from "@/lib/money";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import { CaixasService } from "./caixas.service";
+import { DespesasService } from "./despesas.service";
 import type { CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -140,3 +141,35 @@ export const ComprasService = {
     });
   },
 };
+
+/**
+ * Compra + frete lançado como despesa operacional.
+ *
+ * A despesa fica FORA da transação da compra de propósito: a compra é o fato
+ * principal (estoque, custo, caixas) e não pode ser desfeita porque o
+ * lançamento do frete falhou. O vínculo `purchaseId` garante uma despesa por
+ * compra, então repetir a operação não duplica o frete.
+ */
+export async function registrarCompraComFrete(input: CompraInput, ctx: TenantCtx) {
+  const purchase = await ComprasService.registrarCompra(input, ctx);
+
+  if (input.lancarFreteComoDespesa) {
+    const fornecedor = purchase.supplierId
+      ? await getTenantPrisma(ctx.tenantId).supplier.findFirst({
+          where: { id: purchase.supplierId },
+          select: { name: true },
+        })
+      : null;
+    await DespesasService.lancarFreteDaCompra(
+      {
+        purchaseId: purchase.id,
+        amount: purchase.freight,
+        purchaseDate: purchase.purchaseDate,
+        supplierName: fornecedor?.name ?? null,
+      },
+      ctx,
+    );
+  }
+
+  return purchase;
+}

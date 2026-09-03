@@ -31,6 +31,15 @@ export const EXPENSE_STATUS_LABELS: Record<string, string> = {
   PAGO: "Pago",
 };
 
+/** Por onde o dinheiro da conta saiu. Sem FIADO: conta a pagar não é fiado. */
+export const EXPENSE_PAYMENT_METHOD_LABELS: Record<string, string> = {
+  PIX: "PIX",
+  DINHEIRO: "Dinheiro",
+  TRANSFERENCIA: "Transferência",
+  BOLETO: "Boleto",
+  CARTAO: "Cartão",
+};
+
 export const CREDIT_STATUS_LABELS: Record<string, string> = {
   EM_ABERTO: "Em aberto",
   PAGO: "Pago",

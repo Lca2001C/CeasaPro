@@ -68,7 +68,10 @@ export function BottomNav({ modules }: { modules?: string[] }) {
   const moreItems = more.filter((item) => allowed(item.href));
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 backdrop-blur md:hidden">
+    // O recuo de baixo é o que mantém os rótulos acima da barra de gestos do
+    // iPhone: com `viewport-fit=cover` a nav encosta na borda física da tela, e
+    // o toque na faixa da barra de gestos vai para o sistema, não para o app.
+    <nav className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden">
       <div className="mx-auto flex max-w-lg items-stretch justify-around">
         {primary.map((item) => {
           const Icon = item.icon;

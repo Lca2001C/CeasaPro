@@ -1,9 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
-import { Download, Plus, Share, Smartphone, SquarePlus } from "lucide-react";
+import { Bell, Check, Copy, Download, Plus, Share, Smartphone, SquarePlus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import {
+  assinarInstalado,
+  estaInstalado,
+  plataformaAtual,
+  semMudanca,
+} from "@/lib/pwa/plataforma";
 
 /**
  * Convite para instalar o app / criar atalho na tela inicial.
@@ -13,13 +19,17 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sh
  * navegador, então o convite tem de ir ao usuário — uma vez, na hora em que ele
  * acabou de entrar e ainda está disposto a configurar algo.
  *
- * Duas plataformas, dois fluxos que NÃO se parecem:
+ * Três plataformas, três caminhos que NÃO se parecem (ver `lib/pwa/plataforma`):
  *
  * - **Android / Chrome / Edge:** o navegador dispara `beforeinstallprompt`. Guardamos
  *   o evento e o botão chama `prompt()` — instalação nativa, um toque.
- * - **iOS / Safari:** `beforeinstallprompt` não existe e não há API para disparar a
+ * - **Safari no iPhone:** `beforeinstallprompt` não existe e não há API para disparar a
  *   instalação nem para saber se o usuário a fez. O único caminho é ensinar o passo
  *   a passo (Compartilhar → Adicionar à Tela de Início). Daí o card com instruções.
+ * - **Chrome/Firefox/Edge no iPhone:** nem o passo a passo existe ali. Ensinar
+ *   "Compartilhar → Adicionar à Tela de Início" nesses navegadores é mandar o
+ *   comerciante procurar um item de menu que o aparelho dele não tem — por isso
+ *   este caso ganhou tela própria, que manda abrir no Safari.
  *
  * Sobre a forma do componente: o estado do ambiente (app já instalado, plataforma)
  * é lido com `useSyncExternalStore`, e a abertura automática é DERIVADA em vez de
@@ -40,51 +50,41 @@ interface BeforeInstallPromptEvent extends Event {
   userChoice: Promise<{ outcome: "accepted" | "dismissed" }>;
 }
 
-// ─────────────────── Leitura do ambiente ───────────────────
-
-/** Já está rodando como app instalado? */
-function lerInstalado(): boolean {
-  if (typeof window === "undefined") return false;
-  if (window.matchMedia("(display-mode: standalone)").matches) return true;
-  // iOS antigo não expõe display-mode; `standalone` é o sinal dele.
-  return (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-}
-
 /**
- * Assina as duas formas de o app "virar instalado" durante a sessão: a mudança do
- * display-mode e o evento `appinstalled`. Sem isto o convite continuaria aberto
- * depois de o usuário instalar.
+ * O passo a passo do iPhone, numerado.
+ *
+ * Numerado porque é uma sequência dentro de um menu do sistema que o usuário não
+ * conhece: sem a ordem explícita, os três ícones parecem três opções entre as
+ * quais escolher uma.
  */
-function assinarInstalado(notificar: () => void): () => void {
-  const mq = window.matchMedia("(display-mode: standalone)");
-  mq.addEventListener("change", notificar);
-  window.addEventListener("appinstalled", notificar);
-  return () => {
-    mq.removeEventListener("change", notificar);
-    window.removeEventListener("appinstalled", notificar);
-  };
-}
-
-function lerIOS(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent;
-  // iPadOS 13+ se identifica como Mac; o toque é o que o distingue.
-  const iPadOSNovo = /Macintosh/.test(ua) && navigator.maxTouchPoints > 1;
-  return /iPad|iPhone|iPod/.test(ua) || iPadOSNovo;
-}
-
-/** A plataforma não muda no meio da sessão: assinatura vazia, de propósito. */
-const semMudanca = () => () => {};
-
-/**
- * No iOS, só o Safari adiciona à tela de início com suporte a PWA. Chrome e Firefox
- * no iPhone usam o mesmo motor, mas não oferecem o item no menu — mandar o usuário
- * procurar ali seria mandá-lo procurar o que não existe.
- */
-function ehSafariNoIOS(): boolean {
-  if (!lerIOS()) return false;
-  return !/CriOS|FxiOS|EdgiOS|OPiOS|YaBrowser/.test(navigator.userAgent);
-}
+const PASSOS_IOS = [
+  {
+    icone: Share,
+    texto: (
+      <>
+        Toque em <strong>Compartilhar</strong> na barra do Safari (o quadrado com a seta
+        para cima).
+      </>
+    ),
+  },
+  {
+    icone: SquarePlus,
+    texto: (
+      <>
+        Role a lista e escolha <strong>Adicionar à Tela de Início</strong>.
+      </>
+    ),
+  },
+  {
+    icone: Plus,
+    texto: (
+      <>
+        Confirme em <strong>Adicionar</strong>. O ícone do CeasaPro aparece junto dos
+        seus outros apps.
+      </>
+    ),
+  },
+] as const;
 
 // ─────────────────── Memória entre sessões ───────────────────
 
@@ -153,6 +153,9 @@ function lerEntrada(): { pedido: boolean; dispensado: boolean } {
 const lerPedido = () => lerEntrada().pedido;
 const lerDispensado = () => lerEntrada().dispensado;
 
+/** Domínio a ditar para quem precisa trocar de navegador. Vazio no servidor. */
+const lerHost = () => (typeof window === "undefined" ? "" : window.location.host);
+
 function limparPedidoDeInstalacao() {
   try {
     sessionStorage.removeItem(CHAVE_MOSTRAR);
@@ -179,17 +182,19 @@ export function InstallPrompt({
   autoOpen?: boolean;
   triggerLabel?: string;
 }) {
-  const instalado = useSyncExternalStore(assinarInstalado, lerInstalado, () => false);
-  const ios = useSyncExternalStore(semMudanca, lerIOS, () => false);
+  const instalado = useSyncExternalStore(assinarInstalado, estaInstalado, () => false);
+  const plataforma = useSyncExternalStore(semMudanca, plataformaAtual, () => "outro" as const);
 
   const [evento, setEvento] = useState<BeforeInstallPromptEvent | null>(null);
   const [fechadoPeloUsuario, setFechadoPeloUsuario] = useState(false);
   const [abertoManual, setAbertoManual] = useState(false);
+  const [enderecoCopiado, setEnderecoCopiado] = useState(false);
 
   // No servidor não há storage: os padrões são os conservadores (não pediu,
   // considerado dispensado), então o HTML do servidor nunca traz o painel aberto.
   const pedido = useSyncExternalStore(semMudanca, lerPedido, () => false);
   const dispensado = useSyncExternalStore(semMudanca, lerDispensado, () => true);
+  const host = useSyncExternalStore(semMudanca, lerHost, () => "");
 
   // Assinatura do evento do navegador: setState em CALLBACK de evento externo é
   // exatamente o uso previsto para efeito.
@@ -210,15 +215,20 @@ export function InstallPrompt({
 
   /**
    * Abertura DERIVADA, não setada. No Android depende do `beforeinstallprompt`
-   * (sem ele o botão "Instalar" não teria o que chamar); no iOS não há evento
-   * algum, então basta ser Safari.
+   * (sem ele o botão "Instalar" não teria o que chamar); no Safari do iPhone não
+   * há evento algum, então basta a plataforma.
+   *
+   * `ios-outro` nunca abre sozinho: ali o convite não tem ação a oferecer, só o
+   * pedido de trocar de navegador. Interromper a primeira tela depois do login
+   * para isso é custo sem retorno — quem quiser instalar chega pelo gatilho de
+   * Configurações, que continua funcionando nesses navegadores.
    */
   const podeAbrirAuto =
     autoOpen &&
     !instalado &&
     !dispensado &&
-    (pedido || evento !== null || ios) &&
-    (!ios || ehSafariNoIOS());
+    plataforma !== "ios-outro" &&
+    (pedido || evento !== null || plataforma === "ios-safari");
 
   const aberto = abertoManual || (podeAbrirAuto && !fechadoPeloUsuario);
 
@@ -248,15 +258,30 @@ export function InstallPrompt({
 
   const abrirManual = useCallback(() => {
     setFechadoPeloUsuario(false);
+    setEnderecoCopiado(false);
     setAbertoManual(true);
+  }, []);
+
+  /**
+   * Copia o endereço para o usuário colar no Safari. Não existe forma de abrir
+   * outro navegador a partir da página, e digitar um domínio à mão no celular é
+   * onde essa jornada morre.
+   *
+   * Falha em silêncio de propósito: a área de transferência pode estar bloqueada
+   * por política do aparelho, e o endereço está escrito no texto acima — o
+   * usuário ainda consegue seguir sem o atalho.
+   */
+  const copiarEndereco = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(window.location.origin);
+      setEnderecoCopiado(true);
+    } catch {
+      setEnderecoCopiado(false);
+    }
   }, []);
 
   // App já instalado: nada a oferecer, nem o gatilho manual.
   if (instalado) return null;
-
-  // No iOS o passo a passo é a única coisa que existe — não há instalação nativa
-  // para oferecer antes dele. Um botão intermediário só somaria um toque.
-  const mostrarPassosIOS = ios;
 
   return (
     <>
@@ -279,34 +304,61 @@ export function InstallPrompt({
               de vender.
             </p>
 
-            {mostrarPassosIOS ? (
+            {plataforma === "ios-safari" ? (
               <>
                 <ol className="flex flex-col gap-3 text-sm">
-                  <li className="flex items-start gap-3">
-                    <Share className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <span>
-                      Toque em <strong>Compartilhar</strong> na barra do Safari (o quadrado
-                      com a seta para cima).
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <SquarePlus className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <span>
-                      Role a lista e escolha <strong>Adicionar à Tela de Início</strong>.
-                    </span>
-                  </li>
-                  <li className="flex items-start gap-3">
-                    <Plus className="mt-0.5 size-5 shrink-0 text-primary" />
-                    <span>
-                      Confirme em <strong>Adicionar</strong>. O ícone do CeasaPro aparece
-                      junto dos seus outros apps.
-                    </span>
-                  </li>
+                  {PASSOS_IOS.map(({ icone: Icone, texto }, i) => (
+                    <li key={i} className="flex items-start gap-3">
+                      <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary/10 text-xs font-bold text-primary">
+                        {i + 1}
+                      </span>
+                      <Icone className="mt-0.5 size-5 shrink-0 text-primary" />
+                      <span>{texto}</span>
+                    </li>
+                  ))}
                 </ol>
+                {/*
+                  Ponte para a Fase 3. No iPhone o Web Push só funciona com o app
+                  na tela de início, e quem não souber disso ativa os avisos numa
+                  aba do Safari, falha, e conclui que o recurso é quebrado. O
+                  momento de contar é agora, que é quando ele acabou de instalar.
+                */}
+                <p className="flex items-start gap-2 rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                  <Bell className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Depois de adicionar, abra o CeasaPro <strong>pelo ícone</strong>. É
+                    só assim que o iPhone deixa ligar os avisos de fiado e despesa
+                    vencendo, em Configurações.
+                  </span>
+                </p>
                 <Button variant="outline" onClick={agoraNao}>
                   Entendi
                 </Button>
               </>
+            ) : plataforma === "ios-outro" ? (
+              <div className="flex flex-col gap-2">
+                <p className="rounded-md bg-muted p-3 text-sm text-muted-foreground">
+                  No iPhone, só o <strong>Safari</strong> consegue criar o atalho na tela
+                  inicial. Abra o Safari, entre em <strong>{host}</strong> e o passo a
+                  passo aparece por lá.
+                </p>
+                <Button variant="outline" onClick={() => void copiarEndereco()}>
+                  {enderecoCopiado ? (
+                    <>
+                      <Check className="size-4" />
+                      Endereço copiado
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="size-4" />
+                      Copiar o endereço
+                    </>
+                  )}
+                </Button>
+                <Button variant="ghost" onClick={agoraNao}>
+                  Agora não
+                </Button>
+              </div>
             ) : (
               <div className="flex flex-col gap-2">
                 {evento ? (

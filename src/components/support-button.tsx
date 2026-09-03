@@ -28,9 +28,10 @@ export function SupportButton({ companyName }: { companyName: string }) {
       rel="noopener noreferrer"
       aria-label="Falar com o suporte pelo WhatsApp"
       title="Falar com o suporte"
-      // No mobile fica acima da BottomNav (z-40, ~56px de altura); no desktop,
-      // onde a navegação é lateral, desce para o canto.
-      className="fixed bottom-24 right-4 z-50 flex size-12 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-6"
+      // No mobile fica acima da BottomNav (z-40, ~56px de altura) — e a nav
+      // cresce com o recorte de baixo do iPhone, por isso o mesmo `env()` entra
+      // aqui. No desktop, onde a navegação é lateral, desce para o canto.
+      className="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] right-4 z-50 flex size-12 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg transition-transform hover:scale-105 active:scale-95 md:bottom-6"
     >
       <MessageCircle className="size-6" />
     </a>

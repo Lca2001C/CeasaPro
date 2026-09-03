@@ -147,7 +147,10 @@ describe("PushAvisosService.enviarAvisosDiarios", () => {
       tag: string;
     };
     expect(payload.body).toContain("despesa");
-    expect(payload.url).toBe("/despesas");
+    // Com UMA conta vencida, a notificação leva à PRÓPRIA despesa — antes caía
+    // na lista inteira e a pessoa tinha de procurar entre meses de histórico.
+    expect(payload.url.startsWith("/despesas/")).toBe(true);
+    expect(payload.url.length).toBeGreaterThan("/despesas/".length);
     // `tag` fixa: o aviso de hoje substitui o de ontem na bandeja em vez de
     // empilhar uma pilha que ninguém lê.
     expect(payload.tag).toBe("avisos-operacionais");

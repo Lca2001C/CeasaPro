@@ -40,6 +40,8 @@ export default async function EditarDespesaPage({
           type: e.type,
           status: e.status,
           categoryId: e.categoryId ?? null,
+          paymentMethod: e.paymentMethod ?? null,
+          recurring: e.recurring,
           dueDate: toInput(e.dueDate),
           paidDate: toInput(e.paidDate),
         }}

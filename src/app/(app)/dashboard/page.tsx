@@ -17,6 +17,10 @@ import {
 import { requireTenant } from "@/lib/auth/session";
 import { DashboardService, type DashboardProductRow } from "@/lib/services/dashboard.service";
 import { AvisosService } from "@/lib/services/avisos.service";
+import { ContasPagarService } from "@/lib/services/contas-pagar.service";
+import { DespesasService } from "@/lib/services/despesas.service";
+import { ContasAPagarCard } from "@/components/data/contas-a-pagar-card";
+import { startOfDayTz } from "@/lib/tz";
 import { formatBRL, formatDate, formatQty, valorExibivel } from "@/lib/format";
 import { StatCard } from "@/components/data/stat-card";
 import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
@@ -28,11 +32,16 @@ import { Button } from "@/components/ui/button";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const { tenantId } = await requireTenant();
-  const [s, avisos] = await Promise.all([
+  const { tenantId, session } = await requireTenant();
+  const [s, avisos, contas, proximas] = await Promise.all([
     DashboardService.getSummary(tenantId),
     AvisosService.get(tenantId),
+    // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
+    // em "quanto tenho que pagar", não em módulos.
+    ContasPagarService.get(tenantId, session.modules),
+    DespesasService.proximasContas(tenantId),
   ]);
+  const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
   const margemTone = s.margemLiquidaMes.isNegative() ? "destructive" : "success";
 
@@ -86,6 +95,23 @@ export default async function DashboardPage() {
           </CardContent>
         </Card>
       )}
+
+      {/* Contas a pagar reunidas: despesas + higienização, com as três mais
+          próximas clicáveis. Fica logo abaixo dos avisos porque responde a
+          pergunta que eles levantam: "o que eu preciso resolver hoje?". */}
+      <ContasAPagarCard
+        contas={contas}
+        proximas={proximas.itens.map((c) => ({
+          id: c.id,
+          description: c.description,
+          amount: c.amount.toString(),
+          dueDate: c.dueDate?.toISOString() ?? null,
+          categoryName: c.category?.name ?? null,
+          vencida: c.dueDate !== null && c.dueDate < hoje,
+        }))}
+        totalProximas={proximas.total.toString()}
+        countProximas={proximas.count}
+      />
 
       {/* A ação principal fica no TOPO: quem abre o app no balcão quer vender,
           não rolar doze números até achar o botão. */}

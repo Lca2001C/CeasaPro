@@ -18,6 +18,9 @@ const querySchema = z.object({
   from: z.string().optional(),
   to: z.string().optional(),
   format: z.enum(["excel", "pdf"]).default("excel"),
+  // Só o relatório de despesas usa: por qual data filtrar e se agrupa por categoria.
+  campo: z.enum(["dueDate", "paidDate", "createdAt"]).optional(),
+  agrupar: z.enum(["categoria"]).optional(),
 });
 
 export const GET = withTenantRoute({
@@ -40,6 +43,8 @@ export const GET = withTenantRoute({
       tenantId: ctx.tenantId,
       from: period.from,
       to: period.to,
+      dateField: input.campo,
+      agruparPorCategoria: input.agrupar === "categoria",
     });
     const isPdf = input.format === "pdf";
     const buffer = isPdf ? await toPdf(result) : await toExcel(result);

@@ -46,6 +46,7 @@ export function CompraForm({
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
   const [caixasSujas, setCaixasSujas] = useState(false);
+  const [lancarFrete, setLancarFrete] = useState(false);
 
   const subtotal = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
   const total = subtotal + (freight || 0);
@@ -80,6 +81,7 @@ export function CompraForm({
       caixasRecebidas: caixas,
       caixasQuebradas: quebradas,
       caixasSujas: veioEmCaixa && caixasSujas,
+      lancarFreteComoDespesa: lancarFrete && (freight || 0) > 0,
       items: items.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
@@ -178,6 +180,23 @@ export function CompraForm({
         <span className="text-xs text-muted-foreground">
           O frete entra no custo de cada produto automaticamente, rateado pelo valor.
         </span>
+        {(freight || 0) > 0 && (
+          <label className="mt-1 flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 size-4"
+              checked={lancarFrete}
+              onChange={(e) => setLancarFrete(e.target.checked)}
+            />
+            <span>
+              Lançar o frete como despesa
+              <span className="mt-0.5 block text-xs text-muted-foreground">
+                Cria uma conta a pagar de {formatBRL(freight || 0)} em Despesas, para o frete
+                aparecer no fluxo de caixa. O custo do produto não muda.
+              </span>
+            </span>
+          </label>
+        )}
       </div>
 
       {/* Caixas plásticas que vieram junto: registrar aqui evita o segundo

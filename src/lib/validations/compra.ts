@@ -27,5 +27,14 @@ export const compraSchema = z.object({
   caixasSujas: z.boolean().optional(),
   /** Quantas já vieram quebradas — entram como perda, não como estoque. */
   caixasQuebradas: z.number().int().nonnegative().optional(),
+  /**
+   * Lançar o frete como despesa operacional.
+   *
+   * Frete é a despesa mais comum do CEASA e vivia fora do módulo de despesas:
+   * quem queria vê-la no fluxo de caixa lançava à mão — às vezes duas vezes.
+   * Opcional porque o frete já entra no custo do produto; a despesa é para
+   * quem também controla a saída de caixa.
+   */
+  lancarFreteComoDespesa: z.boolean().optional(),
 });
 export type CompraInput = z.infer<typeof compraSchema>;

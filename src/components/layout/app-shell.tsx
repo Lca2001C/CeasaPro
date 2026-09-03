@@ -48,7 +48,14 @@ export function AppShell({
         dentro dela, que é o comportamento correto.
       */}
       <div className="flex min-h-screen min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-30 flex h-14 items-center justify-between border-b bg-background/95 px-4 backdrop-blur">
+        {/*
+          A altura soma o recorte do topo (barra de status / notch) e o recuo
+          empurra o conteúdo para baixo dele. Com `viewport-fit=cover` no
+          viewport, sem isto o nome da empresa fica atrás da barra de status no
+          app instalado. `env()` vale 0 no navegador e no Android — fora do
+          iPhone o header continua com os mesmos 3.5rem.
+        */}
+        <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between border-b bg-background/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur">
           <div className="min-w-0">
             <p className="truncate text-sm font-semibold">{companyName}</p>
             <p className="truncate text-xs text-muted-foreground">{userName}</p>
@@ -92,7 +99,12 @@ export function AppShell({
           </div>
         )}
 
-        <main className="mx-auto w-full max-w-3xl flex-1 px-4 py-4 pb-24 md:pb-8">
+        {/*
+          O recuo do fim acompanha a BottomNav, que agora é mais alta pelo
+          recorte de baixo. Sem somar o mesmo `env()` aqui, o último cartão da
+          lista ficaria escondido atrás da navegação no iPhone.
+        */}
+        <main className="mx-auto w-full max-w-3xl flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8">
           {children}
         </main>
 

@@ -9,7 +9,9 @@ import { TERMS_UPDATED_AT } from "@/lib/legal";
 export default function PublicLayout({ children }: { children: React.ReactNode }) {
   return (
     <div className="flex min-h-screen flex-col bg-secondary/30">
-      <header className="border-b bg-background">
+      {/* Termos e privacidade também abrem do app instalado (rodapé, checkout):
+          o recuo evita a marca atrás da barra de status no iPhone. */}
+      <header className="border-b bg-background pt-[env(safe-area-inset-top)]">
         <div className="mx-auto flex w-full max-w-3xl items-center justify-between px-4 py-3">
           <Link href="/login" className="text-lg font-bold text-primary">
             CeasaPro

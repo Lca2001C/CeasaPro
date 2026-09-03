@@ -20,7 +20,12 @@ function SheetContent({
   const sideClasses = {
     right: "inset-y-0 right-0 h-full w-4/5 max-w-sm border-l",
     left: "inset-y-0 left-0 h-full w-4/5 max-w-sm border-r",
-    bottom: "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t",
+    // A folha de baixo encosta na borda física da tela (`viewport-fit=cover`), e
+    // é nela que ficam os botões de ação — o convite de instalação e o menu
+    // "Mais" são folhas. O recuo mantém o respiro de 1.25rem do `p-5` e SOMA o
+    // recorte de baixo, senão o último botão fica sob a barra de gestos.
+    bottom:
+      "inset-x-0 bottom-0 max-h-[85vh] rounded-t-2xl border-t pb-[calc(1.25rem+env(safe-area-inset-bottom))]",
   } as const;
 
   return (

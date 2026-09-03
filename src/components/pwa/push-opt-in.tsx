@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState, useSyncExternalStore } from "react";
 import { Bell, BellOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { estaInstalado, plataformaAtual, semMudanca } from "@/lib/pwa/plataforma";
 
 /**
  * Opt-in de notificações.
@@ -47,22 +48,12 @@ function chaveParaBytes(base64url: string): ArrayBuffer {
   return bytes.buffer;
 }
 
-function lerIOS(): boolean {
-  if (typeof navigator === "undefined") return false;
-  const ua = navigator.userAgent;
-  return (
-    /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1)
-  );
-}
-
-function lerInstalado(): boolean {
-  if (typeof window === "undefined") return false;
-  if (window.matchMedia("(display-mode: standalone)").matches) return true;
-  return (window.navigator as Navigator & { standalone?: boolean }).standalone === true;
-}
-
-/** A plataforma e a permissão não mudam sozinhas no meio da sessão. */
-const semMudanca = () => () => {};
+/**
+ * Qualquer navegador no iPhone/iPad. Aqui não importa QUAL deles (isso é assunto
+ * do convite de instalação): o pré-requisito do Web Push é o mesmo em todos —
+ * o app na tela de início.
+ */
+const lerIOS = () => plataformaAtual() !== "outro";
 
 const lerSuporte = () =>
   typeof window !== "undefined" &&
@@ -77,7 +68,7 @@ export function PushOptIn({ vapidPublicKey }: { vapidPublicKey: string | null })
   const suporte = useSyncExternalStore(semMudanca, lerSuporte, () => false);
   const permissao = useSyncExternalStore(semMudanca, lerPermissao, () => "default" as const);
   const ios = useSyncExternalStore(semMudanca, lerIOS, () => false);
-  const instalado = useSyncExternalStore(semMudanca, lerInstalado, () => false);
+  const instalado = useSyncExternalStore(semMudanca, estaInstalado, () => false);
 
   /**
    * `null` = ainda consultando. É o único pedaço genuinamente assíncrono: saber se

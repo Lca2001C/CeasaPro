@@ -11,6 +11,7 @@ import {
   PAYMENT_METHOD_LABELS,
   EXPENSE_TYPE_LABELS,
   EXPENSE_STATUS_LABELS,
+  EXPENSE_PAYMENT_METHOD_LABELS,
   CREDIT_STATUS_LABELS,
   CRATE_MOVEMENT_LABELS,
   CRATE_CLEANING_STATUS_LABELS,
@@ -22,6 +23,59 @@ interface Params {
   tenantId: string;
   from: Date;
   to: Date;
+  /**
+   * Qual data do lançamento o período filtra. Só o relatório de despesas usa.
+   *
+   * O padrão era `createdAt` — a data de CADASTRO. Lançar em fevereiro uma
+   * conta de janeiro jogava a despesa no relatório de fevereiro, e o
+   * contador recebia o mês errado. Agora o padrão é o vencimento, e o usuário
+   * escolhe entre vencimento, pagamento e cadastro.
+   */
+  dateField?: "dueDate" | "paidDate" | "createdAt";
+  /** Agrupa as linhas por categoria, com subtotal em cada grupo. */
+  agruparPorCategoria?: boolean;
+}
+
+/** Como o período aparece no título e na coluna de data do relatório. */
+const LABEL_CAMPO_DATA: Record<"dueDate" | "paidDate" | "createdAt", string> = {
+  dueDate: "vencimento",
+  paidDate: "pagamento",
+  createdAt: "cadastro",
+};
+
+/** Linha de relatório que sabe a que categoria pertence. */
+interface LinhaAgrupavel {
+  categoria: string;
+  amount: Prisma.Decimal;
+  [key: string]: unknown;
+}
+
+/**
+ * Reordena as linhas por categoria e insere um subtotal ao fim de cada grupo.
+ *
+ * É o formato que contador e gestor esperam ("Aluguel: R$ X, Energia: R$ Y").
+ * O subtotal entra como uma LINHA comum, e não numa estrutura nova de grupos:
+ * assim a tela, o Excel e o PDF continuam consumindo o mesmo `ReportResult`,
+ * sem nenhuma mudança nos exportadores.
+ */
+function agruparPorCategoria<T extends LinhaAgrupavel>(linhas: T[]): Record<string, unknown>[] {
+  const grupos = new Map<string, T[]>();
+  for (const l of linhas) {
+    const atual = grupos.get(l.categoria) ?? [];
+    atual.push(l);
+    grupos.set(l.categoria, atual);
+  }
+
+  const saida: Record<string, unknown>[] = [];
+  for (const nome of [...grupos.keys()].sort((a, b) => a.localeCompare(b, "pt-BR"))) {
+    const doGrupo = grupos.get(nome)!;
+    saida.push(...doGrupo);
+    saida.push({
+      description: `Subtotal — ${nome}`,
+      amount: add(...doGrupo.map((l) => l.amount)),
+    });
+  }
+  return saida;
 }
 
 export async function buildReport(kind: ReportKind, p: Params): Promise<ReportResult> {
@@ -125,28 +179,82 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "DESPESAS": {
+      // Padrão: VENCIMENTO. Antes era `createdAt` — lançar em fevereiro uma
+      // conta de janeiro jogava a despesa no mês errado, e era o relatório que
+      // o contador recebia.
+      const campo = p.dateField ?? "dueDate";
       const despesas = await db.expense.findMany({
-        where: { createdAt: { gte: p.from, lte: p.to } },
+        where: { [campo]: { gte: p.from, lte: p.to } },
         include: { category: true },
-        orderBy: { createdAt: "asc" },
+        orderBy: [{ [campo]: "asc" }],
       });
+      const linhas = despesas.map((d) => ({
+        categoria: d.category?.name ?? "Sem categoria",
+        data: d[campo],
+        description: d.description,
+        category: d.category?.name ?? "-",
+        type: EXPENSE_TYPE_LABELS[d.type],
+        status: EXPENSE_STATUS_LABELS[d.status],
+        paymentMethod: d.paymentMethod
+          ? EXPENSE_PAYMENT_METHOD_LABELS[d.paymentMethod]
+          : "-",
+        amount: d.amount,
+      }));
       return {
         ...base,
+        title: `${REPORT_LABELS[kind]} (por ${LABEL_CAMPO_DATA[campo]})`,
         columns: [
+          { key: "data", label: LABEL_CAMPO_DATA[campo], format: "date" },
           { key: "description", label: "Descricao" },
           { key: "category", label: "Categoria" },
           { key: "type", label: "Tipo" },
           { key: "status", label: "Situacao" },
+          { key: "paymentMethod", label: "Forma" },
           { key: "amount", label: "Valor", align: "right", format: "money" },
         ],
-        rows: despesas.map((d) => ({
-          description: d.description,
-          category: d.category?.name ?? "-",
-          type: EXPENSE_TYPE_LABELS[d.type],
-          status: EXPENSE_STATUS_LABELS[d.status],
-          amount: d.amount,
-        })),
+        rows: p.agruparPorCategoria ? agruparPorCategoria(linhas) : linhas,
         totals: { description: "TOTAL", amount: add(...despesas.map((d) => d.amount)) },
+      };
+    }
+
+    /**
+     * Contas pagas no período — o que realmente SAIU do caixa.
+     *
+     * Separado do relatório de despesas de propósito: aquele mostra o que foi
+     * lançado (inclusive o que ainda não foi pago), e é o que o contador e o IR
+     * não querem. Aqui o recorte é a data de pagamento, e só o que está pago.
+     */
+    case "CONTAS_PAGAS": {
+      const pagas = await db.expense.findMany({
+        where: { status: "PAGO", paidDate: { gte: p.from, lte: p.to } },
+        include: { category: true },
+        orderBy: [{ paidDate: "asc" }],
+      });
+      const linhas = pagas.map((d) => ({
+        categoria: d.category?.name ?? "Sem categoria",
+        paidDate: d.paidDate,
+        description: d.description,
+        category: d.category?.name ?? "-",
+        type: EXPENSE_TYPE_LABELS[d.type],
+        paymentMethod: d.paymentMethod
+          ? EXPENSE_PAYMENT_METHOD_LABELS[d.paymentMethod]
+          : "-",
+        dueDate: d.dueDate,
+        amount: d.amount,
+      }));
+      return {
+        ...base,
+        columns: [
+          { key: "paidDate", label: "Pagamento", format: "date" },
+          { key: "description", label: "Descricao" },
+          { key: "category", label: "Categoria" },
+          { key: "type", label: "Tipo" },
+          { key: "paymentMethod", label: "Forma" },
+          { key: "dueDate", label: "Vencimento", format: "date" },
+          { key: "amount", label: "Valor", align: "right", format: "money" },
+        ],
+        rows: p.agruparPorCategoria ? agruparPorCategoria(linhas) : linhas,
+        totals: { description: "TOTAL PAGO", amount: add(...pagas.map((d) => d.amount)) },
       };
     }
 

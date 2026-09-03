@@ -90,7 +90,10 @@ export function ConsultaOfflineClient() {
   const antigo = minutos !== null && minutos >= 60;
 
   return (
-    <div className="mx-auto w-full max-w-3xl p-4 pb-16">
+    // Esta é a tela que o app INSTALADO abre quando falta rede, e ela não passa
+    // pelo AppShell — os recuos do recorte do iPhone precisam estar aqui, senão
+    // o aviso "Dados de..." nasce atrás da barra de status.
+    <div className="mx-auto w-full max-w-3xl p-4 pt-[calc(1rem+env(safe-area-inset-top))] pb-[calc(4rem+env(safe-area-inset-bottom))]">
       {/* Cabeçalho: o quê e de quando. Nunca um sem o outro. */}
       <div
         className={`mb-4 flex items-start gap-2 rounded-md border p-3 text-sm ${

@@ -1,5 +1,6 @@
 import { timingSafeEqual } from "node:crypto";
 import { BillingService } from "@/lib/services/billing.service";
+import { gerarRecorrentesDeTodosOsTenants } from "@/lib/services/despesas.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
 import { purgeDeadRefreshTokens } from "@/lib/auth/refresh";
 import { describeError, logger } from "@/lib/logger";
@@ -22,7 +23,8 @@ function authorized(req: Request): boolean {
  *  1. reconcilia cobranças no Mercado Pago (cura webhook perdido, nos dois sentidos);
  *  2. recalcula o status das assinaturas (ATIVO/VENCIDO/SUSPENSO);
  *  3. avisa por e-mail quem vence nos próximos dias;
- *  4. limpa as janelas de rate limit já vencidas (só higiene de tabela).
+ *  4. gera as parcelas das despesas fixas marcadas como "repetir todo mês";
+ *  5. limpa as janelas de rate limit já vencidas (só higiene de tabela).
  * A ordem importa: reconciliar antes evita suspender quem já pagou, e recalcular
  * antes do aviso evita mandar "vence em 3 dias" para quem acabou de pagar.
  * Protegido por CRON_SECRET. Configurado em vercel.json.
@@ -41,6 +43,12 @@ async function handle(req: Request): Promise<Response> {
       logger.error({ err: describeError(e) }, "Falha ao enviar lembretes de vencimento");
       return { candidatos: 0, enviados: 0 };
     });
+    // Despesas recorrentes: quem não deu baixa no aluguel não deve perder a
+    // conta do mês seguinte. Falhar aqui não afeta a cobrança da plataforma.
+    const despesasRecorrentes = await gerarRecorrentesDeTodosOsTenants().catch((e) => {
+      logger.error({ err: describeError(e) }, "Falha ao gerar despesas recorrentes");
+      return { empresas: 0, geradas: 0 };
+    });
     // Não pode derrubar o cron: as linhas vencidas são inertes de qualquer forma.
     const rateLimitsRemovidos = await purgeExpiredRateLimits().catch(() => 0);
     // Idem para as sessões mortas: cada login e cada renovação deixam uma linha,
@@ -51,6 +59,7 @@ async function handle(req: Request): Promise<Response> {
       reconciliacao,
       statuses,
       lembretes,
+      despesasRecorrentes,
       rateLimitsRemovidos,
       sessoesRemovidas,
     });
