@@ -27,6 +27,7 @@ const BADGE_VARIANT: Record<string, "success" | "warning" | "secondary" | "destr
   QUEBRA: "destructive",
   SAIDA_HIGIENIZACAO: "warning",
   RETORNO_HIGIENIZACAO: "success",
+  ESTORNO_SAIDA: "secondary",
 };
 
 /**

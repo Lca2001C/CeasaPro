@@ -1,12 +1,13 @@
 import Link from "next/link";
 import type { Metadata } from "next";
-import { ArrowRight, CircleHelp, Lightbulb, Lock, TriangleAlert } from "lucide-react";
+import { ArrowRight, CircleHelp, Compass, Lightbulb, Lock, TriangleAlert } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { OPTIONAL_MODULES, ALL_OPTIONAL_KEYS, isModuleEnabled } from "@/lib/plan/modules";
 import { PageHeader } from "@/components/data/page-header";
 import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { BotaoTour } from "@/components/tour/botao-tour";
 import { AREAS, PRIMEIROS_PASSOS, DUVIDAS } from "./_conteudo";
 
 export const metadata: Metadata = {
@@ -64,6 +65,30 @@ export default async function AjudaPage() {
             Este guia mostra só as telas que o seu plano inclui. Leva uns cinco minutos
             de leitura.
           </p>
+        </CardContent>
+      </Card>
+
+      {/* ─── Tour guiado ─── */}
+      {/*
+        Fica ANTES do texto: quem chega aqui perdido prefere ser levado a ler.
+        O `data-tour` é o alvo do último balão do próprio tour, que termina nesta
+        tela mostrando por onde refazê-lo (ver `lib/tour/roteiro`).
+      */}
+      <Card className="mb-4 border-primary/30 bg-accent/40">
+        <CardContent className="flex flex-col gap-3 pt-6">
+          <div className="flex gap-2">
+            <Compass className="mt-0.5 size-5 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="font-medium">Prefere que eu te mostre?</p>
+              <p className="text-sm text-muted-foreground">
+                O tour guiado passa pelas telas do seu sistema, uma por uma, apontando
+                para onde olhar. São uns três minutos, e dá para sair no meio.
+              </p>
+            </div>
+          </div>
+          <div data-tour="tour-refazer" className="self-start">
+            <BotaoTour size="sm" />
+          </div>
         </CardContent>
       </Card>
 

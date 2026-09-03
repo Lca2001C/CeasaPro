@@ -28,6 +28,7 @@ import { SalesChart } from "@/components/data/sales-chart";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { ConviteTour } from "@/components/tour/convite-tour";
 
 export const dynamic = "force-dynamic";
 
@@ -54,6 +55,10 @@ export default async function DashboardPage() {
         Não renderiza nada; tem debounce de 5 min por dentro.
       */}
       <OfflineSync />
+
+      {/* Convite ao tour guiado. Some depois de aceito ou dispensado — a
+          discussão de por que é um cartão, e não um painel, está no componente. */}
+      <ConviteTour />
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-bold">Início</h1>
@@ -99,30 +104,33 @@ export default async function DashboardPage() {
       {/* Contas a pagar reunidas: despesas + higienização, com as três mais
           próximas clicáveis. Fica logo abaixo dos avisos porque responde a
           pergunta que eles levantam: "o que eu preciso resolver hoje?". */}
-      <ContasAPagarCard
-        contas={contas}
-        proximas={proximas.itens.map((c) => ({
-          id: c.id,
-          description: c.description,
-          amount: c.amount.toString(),
-          dueDate: c.dueDate?.toISOString() ?? null,
-          categoryName: c.category?.name ?? null,
-          vencida: c.dueDate !== null && c.dueDate < hoje,
-        }))}
-        totalProximas={proximas.total.toString()}
-        countProximas={proximas.count}
-      />
+      {/* `data-tour`: âncoras do tour guiado (ver `lib/tour/roteiro`). */}
+      <div data-tour="dashboard-a-pagar">
+        <ContasAPagarCard
+          contas={contas}
+          proximas={proximas.itens.map((c) => ({
+            id: c.id,
+            description: c.description,
+            amount: c.amount.toString(),
+            dueDate: c.dueDate?.toISOString() ?? null,
+            categoryName: c.category?.name ?? null,
+            vencida: c.dueDate !== null && c.dueDate < hoje,
+          }))}
+          totalProximas={proximas.total.toString()}
+          countProximas={proximas.count}
+        />
+      </div>
 
       {/* A ação principal fica no TOPO: quem abre o app no balcão quer vender,
           não rolar doze números até achar o botão. */}
-      <Button asChild size="lg" className="h-14 w-full text-base">
+      <Button asChild size="lg" className="h-14 w-full text-base" data-tour="dashboard-vender">
         <Link href="/vendas/nova">
           <ShoppingCart className="size-5" /> Nova venda
         </Link>
       </Button>
 
       {/* Os quatro números do dia a dia. O resto vive nas seções abaixo. */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-2 gap-3" data-tour="dashboard-numeros">
         <StatCard
           label="Hoje vendi"
           value={formatBRL(s.hojeVendi)}
@@ -154,6 +162,7 @@ export default async function DashboardPage() {
       <SecaoRecolhivel
         titulo="Ver financeiro completo"
         descricao="Vendas da semana e do mês, contas e lucro"
+        ancoraTour="dashboard-detalhes"
       >
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           <StatCard

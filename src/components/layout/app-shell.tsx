@@ -9,6 +9,7 @@ import { SupportButton } from "@/components/support-button";
 import { encerrarSessao } from "@/lib/session-nav";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { NetworkStatus } from "@/components/pwa/network-status";
+import { TourGuiado } from "@/components/tour/tour-guiado";
 
 interface Props {
   companyName: string;
@@ -111,6 +112,14 @@ export function AppShell({
         <InstallPrompt autoOpen={showInstallPrompt} />
         <SupportButton companyName={companyName} />
         <BottomNav modules={modules} />
+
+        {/*
+          Motor do tour guiado. Não renderiza nada — destaca elementos das telas
+          que passam por baixo dele. Fica no layout, e não nas páginas, porque é
+          isso que permite ao tour atravessar rotas: uma navegação desmontaria
+          um componente que morasse dentro da página.
+        */}
+        <TourGuiado modules={modules} />
       </div>
     </div>
   );

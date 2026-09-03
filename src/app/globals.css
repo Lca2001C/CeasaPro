@@ -102,6 +102,96 @@
   }
 }
 
+/*
+  Tour guiado (driver.js) — aparência.
+  A folha da biblioteca vem do pacote, importada pelo motor do tour.
+
+  Os seletores levam a classe `.tour-ceasapro` (aplicada via `popoverClass`) e
+  não apenas `.driver-popover`: a especificidade maior vence a folha da
+  biblioteca independentemente da ORDEM em que os dois arquivos entram no
+  bundle — ordem que o empacotador não garante.
+*/
+.driver-popover.tour-ceasapro {
+  font-family: var(--font-sans);
+  background-color: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--radius);
+  padding: 1rem;
+  /* O balão tem de caber num celular estreito sem encostar nas bordas. */
+  max-width: min(20rem, calc(100vw - 2rem));
+  box-shadow: 0 12px 32px -12px hsl(240 10% 12% / 0.45);
+}
+
+.tour-ceasapro .driver-popover-title {
+  font-size: 0.9375rem;
+  font-weight: 600;
+  line-height: 1.4;
+  /* Espaço para o X, que é posicionado no canto superior direito. */
+  padding-right: 1.75rem;
+}
+
+.tour-ceasapro .driver-popover-description {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.875rem;
+  line-height: 1.6;
+}
+
+.tour-ceasapro .driver-popover-progress-text {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.tour-ceasapro .driver-popover-close-btn {
+  color: hsl(var(--muted-foreground));
+  /* 2.25rem: alvo de toque no celular, em vez dos 28px da biblioteca. */
+  width: 2.25rem;
+  height: 2.25rem;
+  font-size: 1.25rem;
+}
+
+.tour-ceasapro .driver-popover-footer {
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.tour-ceasapro .driver-popover-footer-btn {
+  height: 2.25rem;
+  padding: 0 0.875rem;
+  border-radius: calc(var(--radius) - 8px);
+  border-color: hsl(var(--input));
+  background-color: hsl(var(--background));
+  color: hsl(var(--foreground));
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.tour-ceasapro .driver-popover-next-btn {
+  border-color: transparent;
+  background-color: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+/*
+  A seta: a biblioteca a desenha com quatro bordas, três transparentes e uma
+  opaca conforme o lado. Aqui só a face OPACA de cada lado é recolorida — pintar
+  `border-color` de uma vez venceria as três transparências e transformaria a
+  seta num quadrado.
+*/
+.tour-ceasapro .driver-popover-arrow-side-left {
+  border-left-color: hsl(var(--popover));
+}
+.tour-ceasapro .driver-popover-arrow-side-right {
+  border-right-color: hsl(var(--popover));
+}
+.tour-ceasapro .driver-popover-arrow-side-top {
+  border-top-color: hsl(var(--popover));
+}
+.tour-ceasapro .driver-popover-arrow-side-bottom {
+  border-bottom-color: hsl(var(--popover));
+}
+
 /* Impressão de relatórios */
 @media print {
   .no-print {

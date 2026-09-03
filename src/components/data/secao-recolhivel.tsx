@@ -20,14 +20,24 @@ export function SecaoRecolhivel({
   descricao,
   children,
   abertaPorPadrao = false,
+  ancoraTour,
 }: {
   titulo: string;
   descricao?: string;
   children: ReactNode;
   abertaPorPadrao?: boolean;
+  /**
+   * Marca a seção como alvo do tour guiado (ver `lib/tour/roteiro`).
+   *
+   * É um parâmetro, e não um `<div>` de fora, porque envolver a seção num
+   * elemento a mais mudaria o espaçamento da coluna onde ela vive — e o motivo
+   * de o tour destacar isto é justamente que a seção fechada é o recurso que as
+   * pessoas menos descobrem sozinhas.
+   */
+  ancoraTour?: string;
 }) {
   return (
-    <Card className="overflow-hidden">
+    <Card className="overflow-hidden" data-tour={ancoraTour}>
       <details open={abertaPorPadrao} className="group">
         <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-4 transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
           <span className="min-w-0">

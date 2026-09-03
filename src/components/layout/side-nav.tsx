@@ -55,7 +55,11 @@ export function SideNav({ modules }: { modules?: string[] }) {
     return !m || isModuleEnabled(modules, m);
   });
   return (
-    <aside className="hidden w-60 shrink-0 border-r md:block">
+    <aside
+      // Âncora do tour guiado; a barra de baixo tem a dela. Ver `nav-mobile`.
+      data-tour="nav-desktop"
+      className="hidden w-60 shrink-0 border-r md:block"
+    >
       <div className="sticky top-0 flex h-screen flex-col p-3">
         <div className="px-2 py-3 text-lg font-bold text-primary">CeasaPro</div>
         <nav className="mt-2 flex flex-col gap-1 overflow-y-auto">
