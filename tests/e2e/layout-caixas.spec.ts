@@ -149,3 +149,52 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     });
   }
 });
+
+/**
+ * Todas as OUTRAS telas da empresa, também em 320px.
+ *
+ * A varredura acima cobre oito telas — as que têm cartão de número. Metade da
+ * aplicação ficava de fora, incluindo as que mais mudaram: histórico de vendas,
+ * detalhe da venda, categorias de despesa. Uma tela que rola de lado no celular
+ * é defeito visível para o usuário, não detalhe.
+ *
+ * Aqui a exigência é mais fraca de propósito: não exige que a tela TENHA cartão
+ * (várias abrem em estado vazio), então mede o estouro da página sempre e o
+ * vazamento de cartão só quando existe algum. Assim a lista pode crescer sem
+ * ficar refém de dados de seed.
+ */
+const OUTRAS_PAGINAS = [
+  { url: "/vendas", nome: "Vendas (histórico)" },
+  { url: "/produtos", nome: "Produtos" },
+  { url: "/compras", nome: "Compras" },
+  { url: "/fornecedores", nome: "Fornecedores" },
+  { url: "/relatorios", nome: "Relatórios" },
+  { url: "/despesas/categorias", nome: "Categorias de despesa" },
+  { url: "/despesas/nova", nome: "Nova despesa" },
+  { url: "/fiado/novo", nome: "Novo fiado" },
+  { url: "/configuracoes", nome: "Configurações" },
+  { url: "/ajuda", nome: "Como usar" },
+];
+
+test.describe("Telas em tela estreita (320px)", () => {
+  // Só o viewport: aproveita a sessão do projeto `authed` em vez de fazer login
+  // dez vezes. Com a sessão pronta, `/login` redirecionaria para o painel e o
+  // helper `entrar` não acharia o campo de e-mail — e dez logins seguidos ainda
+  // esbarrariam no rate limit.
+  test.use({ viewport: { width: 320, height: 720 } });
+
+  for (const pagina of OUTRAS_PAGINAS) {
+    test(`${pagina.nome}: não rola de lado nem vaza`, async ({ page }) => {
+      await page.goto(pagina.url);
+      // Espera a tela pintar: o título é o que toda página tem.
+      await expect(page.locator("h1, h2").first()).toBeVisible();
+
+      expect(await estouroHorizontalDaPagina(page), `${pagina.nome} rola de lado`).toBe(0);
+
+      if ((await page.locator(".bg-card").count()) > 0) {
+        const problemas = await vazamentos(page);
+        expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
+      }
+    });
+  }
+});
