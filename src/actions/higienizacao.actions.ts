@@ -19,6 +19,7 @@ export const criarHigienizacao = withTenantAction({
 
 export const atualizarHigienizacao = withTenantAction({
   schema: higienizacaoUpdateSchema,
+  module: "higienizacao",
   handler: (input, ctx) => HigienizacaoService.update(input, ctx),
 });
 
