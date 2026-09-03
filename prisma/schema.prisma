@@ -301,24 +301,66 @@ model PurchaseItem {
 }
 
 model Sale {
-  id              String                 @id @default(cuid())
+  id              String        @id @default(cuid())
   tenantId        String
   customerName    String?
-  saleDate        DateTime               @default(now())
+  saleDate        DateTime      @default(now())
   paymentMethod   PaymentMethod
-  totalAmount     Decimal                @db.Decimal(14, 2)
-  plasticCrateQty Int                    @default(0)
+  totalAmount     Decimal       @db.Decimal(14, 2)
+  plasticCrateQty Int           @default(0)
+
+  /// Telefone do cliente (WhatsApp de cobrança / comprovante). Opcional.
+  customerPhone   String?
+  /// Soma dos itens ANTES de qualquer desconto. `totalAmount` continua sendo o
+  /// valor efetivamente cobrado — é ele que todo o resto do sistema consome.
+  subtotalAmount  Decimal                @default(0) @db.Decimal(14, 2)
+  /// Desconto aplicado sobre o total da venda (os descontos por item ficam na linha).
+  discountAmount  Decimal                @default(0) @db.Decimal(14, 2)
+  /// Motivo do desconto — fica na auditoria, não é obrigatório.
+  discountReason  String?
+  /// Troco: com quanto o cliente pagou e quanto voltou. Só em dinheiro.
+  amountReceived  Decimal?               @db.Decimal(14, 2)
+  changeGiven     Decimal?               @db.Decimal(14, 2)
+  /// Cancelamento. A venda continua na base (auditoria), mas sai dos totais.
+  cancelledAt     DateTime?
+  cancelledReason String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   deletedAt       DateTime?
   creditAccount   CreditAccount?
   crateMovements  PlasticCrateMovement[]
   items           SaleItem[]
+  payments        SalePayment[]
   tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, saleDate])
   @@index([tenantId, paymentMethod])
+  @@index([tenantId, cancelledAt])
   @@map("sales")
+}
+
+/// Uma parcela do pagamento de uma venda — é o que permite pagamento misto
+/// ("metade PIX, metade dinheiro"), corriqueiro no Ceasa.
+///
+/// `Sale.paymentMethod` continua existindo e não muda de significado para quem
+/// já o consome: numa venda mista ele guarda a forma predominante (FIADO, se
+/// houver parte fiada; senão a de maior valor). O detalhe fica aqui.
+///
+/// Toda venda nova grava as suas parcelas, inclusive quando há só uma forma —
+/// assim o fluxo de caixa tem uma fonte única. Vendas antigas não têm parcela
+/// nenhuma, e por isso as consultas caem de volta em `Sale.paymentMethod`.
+model SalePayment {
+  id        String        @id @default(cuid())
+  tenantId  String
+  saleId    String
+  method    PaymentMethod
+  amount    Decimal       @db.Decimal(14, 2)
+  createdAt DateTime      @default(now())
+  sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, saleId])
+  @@index([saleId])
+  @@map("sale_payments")
 }
 
 model SaleItem {
@@ -330,6 +372,8 @@ model SaleItem {
   unitPrice      Decimal        @db.Decimal(14, 2)
   recipientType  RecipientType?
   crateQty       Int            @default(0)
+  /// Desconto desta linha. `lineTotal` já vem líquido (qtd × preço − desconto).
+  discountAmount Decimal        @default(0) @db.Decimal(14, 2)
   lineTotal      Decimal        @db.Decimal(14, 2)
   unitCostAtSale Decimal        @default(0) @db.Decimal(14, 4)
   createdAt      DateTime       @default(now())
@@ -779,6 +823,7 @@ enum PlasticCrateMovementType {
   QUEBRA
   SAIDA_HIGIENIZACAO
   RETORNO_HIGIENIZACAO
+  ESTORNO_SAIDA // cancelamento de venda: as caixas nunca saíram de fato
 }
 
 enum CrateCleaningStatus {

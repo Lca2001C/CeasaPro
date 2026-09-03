@@ -1,7 +1,10 @@
 import { describe, it, expect } from "vitest";
 import { computeCrateSaldo, assertCrateMovement } from "@/lib/services/caixas.service";
-import type { CrateSaldo, SaldoRow } from "@/lib/services/caixas.service";
-import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
+import type {
+  CrateSaldo,
+  MovimentoCaixaInterno,
+  SaldoRow,
+} from "@/lib/services/caixas.service";
 
 const ZERO: SaldoRow = {
   entrada_limpa: 0,
@@ -15,13 +18,16 @@ const ZERO: SaldoRow = {
   quebra_higienizador: 0,
   quebra_limpa: 0,
   quebra_suja: 0,
+  estorno_saida: 0,
 };
 
 const row = (patch: Partial<SaldoRow>): SaldoRow => ({ ...ZERO, ...patch });
 
 const hoje = "2026-08-11";
-const mov = (patch: Partial<CaixaMovimentoInput>): CaixaMovimentoInput =>
-  ({ type: "SAIDA", quantity: 1, movementDate: hoje, ...patch }) as CaixaMovimentoInput;
+// `MovimentoCaixaInterno` e não o input do formulário: o estorno de venda só é
+// criado por serviço, e de propósito não aparece no dropdown de movimentação.
+const mov = (patch: Partial<MovimentoCaixaInterno>): MovimentoCaixaInterno =>
+  ({ type: "SAIDA", quantity: 1, movementDate: hoje, ...patch }) as MovimentoCaixaInterno;
 
 const saldo = (patch: Partial<CrateSaldo>): CrateSaldo => ({
   limpas: 0,
@@ -112,6 +118,32 @@ describe("computeCrateSaldo — potes do estoque de caixas", () => {
     expect(s.limpas + s.sujas).toBe(vaziasAntigo);
     expect(s.comClientes).toBe(90 - 40 - 5);
     expect(s.perdidas).toBe(6 + 5 + 7);
+  });
+});
+
+describe("estorno de venda cancelada", () => {
+  it("devolve a caixa às limpas e tira do cliente", () => {
+    // A caixa nunca saiu do box: volta limpa, e não para a fila de higienização.
+    const s = computeCrateSaldo(row({ entrada_limpa: 100, saida: 20, estorno_saida: 20 }));
+    expect(s.limpas).toBe(100);
+    expect(s.sujas).toBe(0);
+    expect(s.comClientes).toBe(0);
+    expect(s.vazias).toBe(100);
+  });
+
+  it("estorno parcial deixa o resto com o cliente", () => {
+    const s = computeCrateSaldo(row({ entrada_limpa: 100, saida: 20, estorno_saida: 8 }));
+    expect(s.limpas).toBe(88);
+    expect(s.comClientes).toBe(12);
+  });
+
+  it("não pode estornar mais do que está com clientes", () => {
+    expect(() =>
+      assertCrateMovement(
+        saldo({ comClientes: 3 }),
+        mov({ type: "ESTORNO_SAIDA", quantity: 5, customerName: "Cliente" }),
+      ),
+    ).toThrow(/clientes/i);
   });
 });
 

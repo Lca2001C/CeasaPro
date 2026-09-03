@@ -355,7 +355,10 @@ export const DespesasService = {
         _count: { _all: true },
         where: { status: "PENDENTE", dueDate: { lt: hoje } },
       }),
-      db.sale.aggregate({ _sum: { totalAmount: true }, where: { saleDate: noMes } }),
+      db.sale.aggregate({
+        _sum: { totalAmount: true },
+        where: { saleDate: noMes, cancelledAt: null },
+      }),
     ]);
 
     const doMes = FinancialCalc.totaisDespesas(

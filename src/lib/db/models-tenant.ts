@@ -11,6 +11,7 @@ export const TENANT_MODELS = new Set<string>([
   "PurchaseItem",
   "Sale",
   "SaleItem",
+  "SalePayment",
   "CreditAccount",
   "CreditPayment",
   "StockMovement",
@@ -22,6 +23,11 @@ export const TENANT_MODELS = new Set<string>([
   "CrateCleaning",
   "PackagingType",
   "PackagingSale",
+  // Tinha `tenantId` e era consultado via `getTenantPrisma`, mas estava fora
+  // desta lista: a extensão não injetava filtro nenhum. Hoje todas as chamadas
+  // passam o tenantId à mão, então nada vazava — mas a primeira que esquecesse
+  // cruzaria empresas em silêncio.
+  "PackagingMovement",
 ]);
 
 export const SOFT_DELETE_MODELS = new Set<string>([

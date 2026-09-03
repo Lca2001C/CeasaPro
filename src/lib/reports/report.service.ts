@@ -89,7 +89,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
   switch (kind) {
     case "VENDAS": {
       const vendas = await db.sale.findMany({
-        where: { saleDate: { gte: p.from, lte: p.to } },
+        where: { saleDate: { gte: p.from, lte: p.to }, cancelledAt: null },
         orderBy: { saleDate: "asc" },
       });
       return {
@@ -290,7 +290,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL
+        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
           AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
         GROUP BY pr.name
         ORDER BY (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) DESC
@@ -331,7 +331,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL
+        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
           AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
         GROUP BY pr.name
         ORDER BY COALESCE(SUM(si.quantity), 0) DESC
@@ -384,7 +384,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           JOIN sales sa ON sa.id = si."saleId"
           JOIN last_supplier ls ON ls."productId" = si."productId"
           WHERE si."tenantId" = ${p.tenantId}
-            AND sa."deletedAt" IS NULL
+            AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
             AND sa."saleDate" >= ${p.from}
             AND sa."saleDate" <= ${p.to}
           GROUP BY ls.supplier_key, ls.supplier
@@ -450,7 +450,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         JOIN sales s ON s.id = si."saleId"
         JOIN products pr ON pr.id = si."productId"
         WHERE si."tenantId" = ${p.tenantId}
-          AND s."deletedAt" IS NULL
+          AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
           AND s."saleDate" >= ${p.from}
           AND s."saleDate" <= ${p.to}
         GROUP BY pr.name
@@ -507,7 +507,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           FROM sale_items si
           JOIN sales sa ON sa.id = si."saleId"
           WHERE si."tenantId" = ${p.tenantId}
-            AND sa."deletedAt" IS NULL
+            AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
           GROUP BY si."productId"
         )
         SELECT pr.name AS name,
@@ -590,7 +590,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         JOIN sales sa ON sa.id = si."saleId"
         JOIN products pr ON pr.id = si."productId"
         WHERE si."tenantId" = ${p.tenantId}
-          AND sa."deletedAt" IS NULL
+          AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
           AND sa."saleDate" >= ${p.from}
           AND sa."saleDate" <= ${p.to}
           AND COALESCE(si."recipientType", pr."recipientType") = 'PAPELAO'
@@ -709,10 +709,30 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         Prisma.raw(`DATE_TRUNC('day', ${col} AT TIME ZONE 'UTC' AT TIME ZONE '${APP_TIME_ZONE}')::date`);
       const [vendasVista, recebFiado, vendEmb, compras, despesasPagas, pagHig] =
         await Promise.all([
+          // Entrada de venda: o que NÃO foi fiado.
+          //
+          // Com pagamento misto ("metade PIX, metade fiado") nem `totalAmount`
+          // nem `paymentMethod` respondem sozinhos: a venda fica marcada como
+          // FIADO e o PIX sumiria do caixa. Então quando a venda tem parcelas
+          // registradas, valem as parcelas; as vendas antigas (sem parcela
+          // nenhuma) continuam pelo total, como antes.
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
-            SELECT ${dayExpr('"saleDate"')} AS d, SUM("totalAmount") AS total FROM sales
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paymentMethod" <> 'FIADO'
-              AND "saleDate" >= ${p.from} AND "saleDate" <= ${p.to} GROUP BY 1`,
+            SELECT d, SUM(total) AS total FROM (
+              SELECT ${dayExpr('s."saleDate"')} AS d, s."totalAmount" AS total
+              FROM sales s
+              WHERE s."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL
+                AND s."cancelledAt" IS NULL AND s."paymentMethod" <> 'FIADO'
+                AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
+                AND NOT EXISTS (SELECT 1 FROM sale_payments sp WHERE sp."saleId" = s.id)
+              UNION ALL
+              SELECT ${dayExpr('s."saleDate"')} AS d, sp.amount AS total
+              FROM sale_payments sp
+              JOIN sales s ON s.id = sp."saleId"
+              WHERE s."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL
+                AND s."cancelledAt" IS NULL AND sp.method <> 'FIADO'
+                AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
+            ) entradas_de_venda
+            GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidAt"')} AS d, SUM(amount) AS total FROM credit_payments
             WHERE "tenantId" = ${p.tenantId}

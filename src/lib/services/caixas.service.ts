@@ -1,4 +1,4 @@
-import type { Prisma, PlasticCrateMovement } from "@prisma/client";
+import type { Prisma, PlasticCrateMovement, PlasticCrateMovementType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
@@ -14,6 +14,17 @@ export interface CrateSaldo {
   perdidas: number; // quebradas/sumidas (inclui as que chegaram quebradas)
   vazias: number; // limpas + sujas — total no estoque (mantido por compatibilidade)
 }
+
+/**
+ * Movimento como os SERVIÇOS o enxergam.
+ *
+ * O `type` aqui é o enum do banco, não o do formulário: `ESTORNO_SAIDA` só é
+ * criado pelo cancelamento de venda e de propósito não aparece no dropdown de
+ * "Movimentar caixas" — ninguém lança estorno à mão.
+ */
+export type MovimentoCaixaInterno = Omit<CaixaMovimentoInput, "type"> & {
+  type: PlasticCrateMovementType;
+};
 
 /** Dados internos do movimento — nunca vêm do cliente, só de outros serviços. */
 export interface CrateMovementLink {
@@ -45,6 +56,7 @@ interface SaldoRow {
   quebra_higienizador: number;
   quebra_limpa: number;
   quebra_suja: number;
+  estorno_saida: number;
 }
 
 const ZERO_ROW: SaldoRow = {
@@ -59,6 +71,7 @@ const ZERO_ROW: SaldoRow = {
   quebra_higienizador: 0,
   quebra_limpa: 0,
   quebra_suja: 0,
+  estorno_saida: 0,
 };
 
 /**
@@ -67,11 +80,12 @@ const ZERO_ROW: SaldoRow = {
  *  - true  → caixas sujas (aguardando higienização)
  * Na ENTRADA e na QUEBRA quem decide é o usuário; nos outros tipos é o próprio tipo.
  */
-function resolveDirty(input: CaixaMovimentoInput): boolean {
+function resolveDirty(input: MovimentoCaixaInterno): boolean {
   switch (input.type) {
     case "RETORNO": // cliente devolve — volta suja
     case "SAIDA_HIGIENIZACAO": // sai do pote das sujas
       return true;
+    case "ESTORNO_SAIDA": // cancelamento de venda: a caixa nunca saiu, volta limpa
     case "SAIDA": // sai do pote das limpas
     case "RETORNO_HIGIENIZACAO": // volta limpa do higienizador
       return false;
@@ -84,7 +98,7 @@ function resolveDirty(input: CaixaMovimentoInput): boolean {
  * Consistência do livro-razão: nenhum pote pode ficar negativo.
  * Função pura — o saldo é lido antes e passado aqui, para poder rodar dentro de transações.
  */
-export function assertCrateMovement(saldo: CrateSaldo, input: CaixaMovimentoInput): void {
+export function assertCrateMovement(saldo: CrateSaldo, input: MovimentoCaixaInterno): void {
   switch (input.type) {
     case "SAIDA":
       if (input.quantity > saldo.limpas) {
@@ -95,6 +109,7 @@ export function assertCrateMovement(saldo: CrateSaldo, input: CaixaMovimentoInpu
         );
       }
       return;
+    case "ESTORNO_SAIDA":
     case "RETORNO":
       if (input.quantity > saldo.comClientes) {
         throw new BusinessRuleError(
@@ -171,7 +186,8 @@ export const CaixasService = {
         COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_cliente,
         COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_higienizador,
         COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS quebra_limpa,
-        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja
+        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja,
+        COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::int AS estorno_saida
       FROM plastic_crate_movements
       WHERE "tenantId" = ${tenantId}
     `;
@@ -224,7 +240,7 @@ export const CaixasService = {
    */
   async registrarInTx(
     tx: CrateTxClient,
-    input: CaixaMovimentoInput & CrateMovementLink,
+    input: MovimentoCaixaInterno & CrateMovementLink,
     ctx: TenantCtx,
     saldo: CrateSaldo,
   ) {
@@ -268,7 +284,7 @@ export const CaixasService = {
     return movement;
   },
 
-  async registrar(input: CaixaMovimentoInput & CrateMovementLink, ctx: TenantCtx) {
+  async registrar(input: MovimentoCaixaInterno & CrateMovementLink, ctx: TenantCtx) {
     const saldo = await this.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction((tx) => this.registrarInTx(tx, input, ctx, saldo));
@@ -277,7 +293,10 @@ export const CaixasService = {
 
 /** Exposta para teste unitário das fórmulas de saldo. */
 export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
-  const limpas = r.entrada_limpa + r.retorno_hig - r.saida - r.quebra_limpa;
+  // O estorno de venda desfaz uma SAIDA: a caixa volta para as limpas (nunca
+  // chegou a sair do box) e deixa de estar com o cliente.
+  const limpas =
+    r.entrada_limpa + r.retorno_hig + r.estorno_saida - r.saida - r.quebra_limpa;
   const sujas = r.entrada_suja + r.retorno - r.saida_hig - r.quebra_suja;
   const quebraTotal =
     r.quebra_cliente + r.quebra_higienizador + r.quebra_limpa + r.quebra_suja;
@@ -285,7 +304,7 @@ export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
     limpas,
     sujas,
     emHigienizacao: r.saida_hig - r.retorno_hig - r.quebra_higienizador,
-    comClientes: r.saida - r.retorno - r.quebra_cliente,
+    comClientes: r.saida - r.retorno - r.quebra_cliente - r.estorno_saida,
     perdidas: quebraTotal + r.entrada_quebrada,
     vazias: limpas + sujas,
   };

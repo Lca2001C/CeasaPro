@@ -70,11 +70,12 @@ export const DashboardService = {
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: { gte: todayStart } },
+        // Canceladas fora: a venda desfeita não é faturamento.
+        where: { saleDate: { gte: todayStart }, cancelledAt: null },
       }),
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: { gte: weekStart } },
+        where: { saleDate: { gte: weekStart }, cancelledAt: null },
       }),
       db.creditAccount.aggregate({
         _sum: { totalAmount: true, paidAmount: true },
@@ -90,13 +91,13 @@ export const DashboardService = {
       }),
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: { gte: monthStart } },
+        where: { saleDate: { gte: monthStart }, cancelledAt: null },
       }),
       prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS cmv
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
-        WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."deletedAt" IS NULL
+        WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
       `,
       prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
@@ -113,7 +114,7 @@ export const DashboardService = {
         SELECT DATE_TRUNC('day', "saleDate" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE}) AS d,
                SUM("totalAmount") AS total
         FROM sales
-        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "saleDate" >= ${chartStart}
+        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL AND "saleDate" >= ${chartStart}
         GROUP BY d ORDER BY d ASC
       `,
       EstoqueService.getTotalValue(tenantId),
@@ -126,7 +127,7 @@ export const DashboardService = {
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."saleDate" >= ${monthStart}
+        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
         GROUP BY p.id, p.name
         ORDER BY quantity DESC, total DESC
         LIMIT 5
@@ -140,7 +141,7 @@ export const DashboardService = {
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."saleDate" >= ${monthStart}
+        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
         GROUP BY p.id, p.name
         ORDER BY profit DESC, total DESC
         LIMIT 5
@@ -154,7 +155,7 @@ export const DashboardService = {
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."saleDate" >= ${monthStart}
+        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
         GROUP BY p.id, p.name
         HAVING COALESCE(SUM(si."lineTotal" - (si.quantity * si."unitCostAtSale")), 0) < 0
         ORDER BY profit ASC
@@ -184,7 +185,7 @@ export const DashboardService = {
             JOIN sales s ON s.id = si."saleId"
             WHERE si."tenantId" = ${tenantId}
               AND si."productId" = p.id
-              AND s."deletedAt" IS NULL
+              AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
               AND s."saleDate" >= ${idleCutoff}
           )
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
