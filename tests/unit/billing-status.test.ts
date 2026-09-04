@@ -66,10 +66,33 @@ describe("computeStatus — ciclo de vida da assinatura", () => {
     ).toBe("BLOQUEADO");
   });
 
-  it("cancelada → CANCELADO, mesmo com datas em dia", () => {
+  it("cancelada no período pago → ATIVO até o vencimento (Termos §5)", () => {
     expect(
       computeStatus(sub({ cancelledAt: days(-1), currentPeriodEnd: days(30) }), NOW),
+    ).toBe("ATIVO");
+  });
+
+  it("cancelada depois do vencimento → CANCELADO, sem tolerância", () => {
+    expect(
+      computeStatus(
+        sub({ cancelledAt: days(-1), currentPeriodEnd: days(-2), graceDays: 5 }),
+        NOW,
+      ),
     ).toBe("CANCELADO");
+  });
+
+  it("estorno MANUAL vence o cancelamento ainda no período", () => {
+    expect(
+      computeStatus(
+        sub({
+          cancelledAt: days(-1),
+          currentPeriodEnd: days(30),
+          status: "SUSPENSO",
+          statusSource: "MANUAL",
+        }),
+        NOW,
+      ),
+    ).toBe("SUSPENSO");
   });
 });
 

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import { billingNotice } from "@/lib/billing/status";
+import { formatDate } from "@/lib/format";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessaoViva } from "@/components/auth/sessao-viva";
 import { accessTokenMaxAgeSeconds } from "@/lib/auth/jwt";
@@ -24,7 +25,7 @@ export default async function AppLayout({
     select: {
       tradeName: true,
       onboardingCompletedAt: true,
-      subscription: { select: { trialEndsAt: true } },
+      subscription: { select: { trialEndsAt: true, cancelledAt: true, currentPeriodEnd: true } },
     },
   });
 
@@ -33,11 +34,13 @@ export default async function AppLayout({
     redirect("/onboarding");
   }
 
-  // Duas situações, duas mensagens: teste acabando (nunca pagou, precisa
-  // contratar) e mensalidade vencida (é cliente, precisa regularizar).
+  // Três situações, três mensagens: teste acabando, mensalidade vencida, e
+  // cancelamento com período pago ainda valendo.
   const notice = billingNotice({
     subStatus: session.subStatus,
     trialEndsAt: tenant?.subscription?.trialEndsAt ?? null,
+    cancelledAt: tenant?.subscription?.cancelledAt ?? null,
+    currentPeriodEnd: tenant?.subscription?.currentPeriodEnd ?? null,
   });
   const billingWarning =
     notice?.kind === "trial_ending"
@@ -48,13 +51,20 @@ export default async function AppLayout({
           }. Contrate um plano para não perder o acesso.`
       : notice?.kind === "overdue"
         ? "Sua assinatura venceu. Regularize para não perder o acesso."
-        : null;
+        : notice?.kind === "cancelled"
+          ? `Assinatura cancelada — você usa o sistema até ${formatDate(notice.accessUntil)}. Não haverá próxima cobrança.`
+          : null;
+  const billingCta =
+    notice?.kind === "cancelled"
+      ? { href: "/plano", label: "Ver plano" }
+      : undefined;
 
   return (
     <AppShell
       companyName={tenant?.tradeName ?? "Minha empresa"}
       userName={session.name}
       billingWarning={billingWarning}
+      billingCta={billingCta}
       trialLabel={
         notice?.kind === "trial_ending"
           ? notice.daysLeft <= 0

@@ -66,6 +66,15 @@ export default async function ClienteDetailPage({
               <span className="block text-xs text-muted-foreground">Vencimento atual</span>
               {formatDate(sub.currentPeriodEnd)}
             </div>
+            {sub.cancelledAt && (
+              <div className="col-span-2">
+                <span className="block text-xs text-muted-foreground">Cancelada em</span>
+                {formatDate(sub.cancelledAt)}
+                {sub.status !== "CANCELADO" && (
+                  <span className="text-muted-foreground"> — acesso até o vencimento</span>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

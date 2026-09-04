@@ -248,6 +248,18 @@ describe("billingNotice (banner do topo)", () => {
     expect(billingNotice({ subStatus: "ATIVO", trialEndsAt: null, now: NOW })).toBeNull();
   });
 
+  it("cancelada no período pago avisa a data de corte, não pede pagamento", () => {
+    expect(
+      billingNotice({
+        subStatus: "ATIVO",
+        trialEndsAt: null,
+        cancelledAt: days(-1),
+        currentPeriodEnd: days(10),
+        now: NOW,
+      }),
+    ).toEqual({ kind: "cancelled", accessUntil: days(10) });
+  });
+
   it("já bloqueada não vê banner (a tela de bloqueio fala por si)", () => {
     expect(billingNotice({ subStatus: "SUSPENSO", trialEndsAt: days(-1), now: NOW })).toBeNull();
   });

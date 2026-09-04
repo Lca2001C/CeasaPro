@@ -11,6 +11,7 @@ export interface PlanoView {
   priceMonthly: unknown; // Prisma.Decimal (formatado na borda)
   status: string;
   currentPeriodEnd: Date | null;
+  cancelledAt: Date | null;
   modules: { key: OptionalModuleKey; label: string; description: string; enabled: boolean }[];
   usage: { produtos: number };
 }
@@ -59,6 +60,7 @@ export const PlanoService = {
       priceMonthly: sub.monthlyAmount,
       status: sub.status,
       currentPeriodEnd: sub.currentPeriodEnd,
+      cancelledAt: sub.cancelledAt,
       modules,
       usage: { produtos },
     };
@@ -127,6 +129,11 @@ export const PlanoService = {
       include: { plan: true },
     });
     if (!sub) throw new NotFoundError("Assinatura não encontrada");
+    if (sub.cancelledAt) {
+      throw new BusinessRuleError(
+        "A assinatura está cancelada. Desfaça o cancelamento ou contrate de novo antes de trocar de plano.",
+      );
+    }
 
     const target = await prisma.plan.findUnique({ where: { id: planId } });
     if (!target || !target.active) throw new NotFoundError("Plano indisponível");

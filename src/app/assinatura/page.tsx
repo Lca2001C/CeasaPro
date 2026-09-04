@@ -51,6 +51,12 @@ export default async function AssinaturaPage() {
             O acesso ao sistema é liberado automaticamente assim que o pagamento for aprovado.
           </p>
         )}
+        {sub?.cancelledAt && sub.activatedAt && (
+          <p className="mt-2 text-sm text-muted-foreground">
+            Assinatura cancelada. Pagar de novo reativa o plano; o acesso atual vale até{" "}
+            {formatDate(sub.currentPeriodEnd)}.
+          </p>
+        )}
       </div>
 
       <AssinaturaClient

@@ -568,6 +568,8 @@ export const BillingService = {
               currentPeriodEnd: periodEnd,
               // Marca a primeira ativação; nas renovações o valor é preservado.
               activatedAt: sub.activatedAt ?? mp.paidAt ?? now,
+              // Pagar de novo desfaz o cancelamento: o cliente voltou a contratar.
+              cancelledAt: null,
             },
           });
           await tx.subscriptionPayment.update({
@@ -844,5 +846,128 @@ export const BillingService = {
       }
     }
     return { total: subs.length, updated };
+  },
+
+  /**
+   * O dono cancela a assinatura. Sem multa: o mês já pago segue até o vencimento
+   * (Termos §5). Teste grátis e período já vencido encerram na hora. Cobranças
+   * PIX/cartão ainda abertas são baixadas para não gerar pagamento depois do
+   * pedido. Quem cancelou no meio do mês pago pode desfazer com `reativarAssinatura`.
+   */
+  async cancelarAssinatura(ctx: TenantCtx) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: ctx.tenantId },
+    });
+    if (!sub) throw new NotFoundError("Assinatura não encontrada");
+    if (sub.cancelledAt) {
+      throw new BusinessRuleError("Esta assinatura já está cancelada.");
+    }
+
+    const agora = new Date();
+    const antes = computeStatus(sub, agora);
+    if (antes === "SUSPENSO" || antes === "BLOQUEADO" || antes === "CANCELADO") {
+      throw new BusinessRuleError("Esta assinatura já está encerrada.");
+    }
+
+    const depois = computeStatus(
+      { ...sub, cancelledAt: agora, statusSource: "AUTO" },
+      agora,
+    );
+
+    await prisma.$transaction(async (tx) => {
+      await tx.subscriptionPayment.updateMany({
+        where: { tenantId: ctx.tenantId, status: "PENDENTE" },
+        data: { status: "CANCELADO" },
+      });
+      await tx.tenantSubscription.update({
+        where: { id: sub.id },
+        data: {
+          cancelledAt: agora,
+          status: depois,
+          // Volta ao AUTO para o cron encerrar no vencimento, sem herdar MANUAL
+          // de um episódio antigo (a action só chega aqui com acesso liberado).
+          statusSource: "AUTO",
+          statusReason: "Cancelamento pedido pelo dono da empresa",
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "SUBSCRIPTION_CANCELLED",
+          entity: "TenantSubscription",
+          entityId: sub.id,
+          oldData: { status: sub.status, cancelledAt: null },
+          newData: {
+            status: depois,
+            cancelledAt: agora,
+            accessUntil: depois === "ATIVO" ? sub.currentPeriodEnd : null,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+    });
+
+    if (depois === "CANCELADO") {
+      await revokeAllForTenant(ctx.tenantId);
+    }
+
+    logger.info(
+      { tenantId: ctx.tenantId, status: depois },
+      "Assinatura cancelada pelo dono",
+    );
+
+    return {
+      status: depois,
+      accessUntil: depois === "ATIVO" ? sub.currentPeriodEnd : null,
+    };
+  },
+
+  /**
+   * Desfaz o cancelamento enquanto o período pago ainda vale. Depois do
+   * vencimento o caminho é pagar de novo em `/assinatura`.
+   */
+  async reativarAssinatura(ctx: TenantCtx) {
+    const sub = await prisma.tenantSubscription.findUnique({
+      where: { tenantId: ctx.tenantId },
+    });
+    if (!sub) throw new NotFoundError("Assinatura não encontrada");
+    if (!sub.cancelledAt) {
+      throw new BusinessRuleError("A assinatura não está cancelada.");
+    }
+
+    const agora = new Date();
+    const depois = computeStatus({ ...sub, cancelledAt: null }, agora);
+    if (depois === "SUSPENSO" || depois === "BLOQUEADO" || depois === "CANCELADO") {
+      throw new BusinessRuleError(
+        "O período pago já acabou. Contrate de novo em Assinatura.",
+      );
+    }
+
+    await prisma.tenantSubscription.update({
+      where: { id: sub.id },
+      data: {
+        cancelledAt: null,
+        status: depois,
+        statusSource: "AUTO",
+        statusReason: null,
+      },
+    });
+
+    await audit({
+      tenantId: ctx.tenantId,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "STATUS_CHANGE",
+      entity: "TenantSubscription",
+      entityId: sub.id,
+      oldData: { cancelledAt: sub.cancelledAt, status: sub.status },
+      newData: { cancelledAt: null, status: depois },
+      ip: ctx.ip,
+    });
+
+    return { status: depois };
   },
 };

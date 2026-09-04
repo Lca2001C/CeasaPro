@@ -66,7 +66,8 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
     };
 
     // `.bg-card` é a assinatura do componente `Card` — a "caixa" do requisito.
-    for (const caixa of Array.from(document.querySelectorAll(".bg-card"))) {
+    // Só `main`: a barra lateral também usa `bg-card` de fundo, e não é cartão.
+    for (const caixa of Array.from(document.querySelectorAll("main .bg-card"))) {
       const r = caixa.getBoundingClientRect();
       if (r.width === 0) continue;
 

@@ -18,6 +18,10 @@ const PUBLIC_PREFIXES = [
   // Documentos legais: precisam abrir sem sessão (são linkados no checkout e no login).
   "/termos",
   "/privacidade",
+  // Sitemap e robots do Google Search Console: sem isto o proxy manda o
+  // crawler (sem sessão) para /login e o XML nunca é lido.
+  "/sitemap.xml",
+  "/robots.txt",
   "/api/auth",
   "/api/webhooks",
   "/api/cron",

@@ -117,7 +117,7 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     // significa que o sinal se separou.
     const sinaisSeparados = await page.evaluate(() => {
       const quebrados: string[] = [];
-      for (const el of Array.from(document.querySelectorAll(".bg-card *"))) {
+      for (const el of Array.from(document.querySelectorAll("main .bg-card *"))) {
         if (el.children.length > 0) continue;
         const no = el.firstChild;
         if (!no || no.nodeType !== Node.TEXT_NODE) continue;
@@ -140,8 +140,10 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     test(`${pagina.nome}: nada vaza dos cartões`, async ({ page }) => {
       await entrar(page);
       await page.goto(pagina.url);
-      // Os cartões são a primeira coisa da tela em todas essas páginas.
-      await expect(page.locator(".bg-card").first()).toBeVisible();
+      // Cartões do conteúdo, não o aside: a barra lateral também usa `bg-card`
+      // de fundo e, em 320px, fica `hidden` — o primeiro `.bg-card` da página
+      // seria o menu, invisível, e o teste esperaria 10s à toa.
+      await expect(page.locator("main .bg-card").first()).toBeVisible();
 
       const problemas = await vazamentos(page);
       expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
@@ -202,7 +204,7 @@ test.describe("Telas em tela estreita (320px)", () => {
 
       expect(await estouroHorizontalDaPagina(page), `${pagina.nome} rola de lado`).toBe(0);
 
-      if ((await page.locator(".bg-card").count()) > 0) {
+      if ((await page.locator("main .bg-card").count()) > 0) {
         const problemas = await vazamentos(page);
         expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
       }
@@ -390,7 +392,7 @@ test.describe("Telas de detalhe em tela estreita (320px)", () => {
 
       expect(await estouroHorizontalDaPagina(page), `${detalhe.nome} rola de lado`).toBe(0);
 
-      if ((await page.locator(".bg-card").count()) > 0) {
+      if ((await page.locator("main .bg-card").count()) > 0) {
         const problemas = await vazamentos(page);
         expect(problemas, `${detalhe.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
       }

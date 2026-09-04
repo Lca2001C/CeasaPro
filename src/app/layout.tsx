@@ -15,6 +15,9 @@ export const metadata: Metadata = {
   title: "CeasaPro — Gestão para comercializadores do CEASA",
   description:
     "Sistema simples de gestão de produtos, vendas, fiado, estoque, despesas e financeiro para comerciantes do CEASA.",
+  verification: {
+    google: "Ot8CbUdqquSApG960z4a2BMiH-mCUNWZj5uFkbqpxkM",
+  },
   appleWebApp: {
     capable: true,
     title: "CeasaPro",

@@ -75,6 +75,7 @@ export function accessDecision(
 export type BillingNotice =
   | { kind: "trial_ending"; daysLeft: number }
   | { kind: "overdue" }
+  | { kind: "cancelled"; accessUntil: Date }
   | null;
 
 /**
@@ -89,9 +90,22 @@ export type BillingNotice =
 export function billingNotice(args: {
   subStatus: SubscriptionStatus | null | undefined;
   trialEndsAt: Date | null | undefined;
+  cancelledAt?: Date | null;
+  currentPeriodEnd?: Date | null;
   now?: Date;
 }): BillingNotice {
   const now = args.now ?? new Date();
+
+  // Cancelou e o mês pago ainda vale: avisa que não haverá renovação, sem
+  // empurrar para "Pagar agora" — o período já está quitado.
+  if (
+    args.cancelledAt &&
+    args.subStatus === "ATIVO" &&
+    args.currentPeriodEnd &&
+    now <= args.currentPeriodEnd
+  ) {
+    return { kind: "cancelled", accessUntil: args.currentPeriodEnd };
+  }
 
   if (args.subStatus === "TRIAL" && args.trialEndsAt) {
     const daysLeft = trialDaysLeft(args.trialEndsAt, now);
@@ -169,6 +183,9 @@ export function situacaoCobranca(
  * Recalcula o status da assinatura a partir das datas (usado pelo cron e no refresh).
  * Respeita override manual (statusSource = MANUAL).
  *
+ * Ordem: MANUAL (estorno/admin) → cancelamento (período pago até o vencimento) →
+ * trial / ciclo pago / tolerância.
+ *
  * Antes do primeiro pagamento (`activatedAt` nulo) o único acesso possível é o
  * teste grátis, e ele é regido SÓ por `trialEndsAt`:
  *  - trial correndo  → TRIAL (uso ilimitado);
@@ -195,8 +212,17 @@ export function computeStatus(
   },
   now: Date = new Date(),
 ): SubscriptionStatus {
-  if (sub.cancelledAt) return "CANCELADO";
-  if (sub.statusSource === "MANUAL") return sub.status; // override do super-admin
+  // Estorno/chargeback e bloqueio do super-admin vencem o pedido de cancelar:
+  // o mês pago deixou de valer (ou a plataforma cortou o acesso).
+  if (sub.statusSource === "MANUAL") return sub.status;
+
+  // Termos §5: cancelar interrompe as renovações; o período JÁ PAGO segue até
+  // o vencimento. Sem tolerância depois disso — quem cancelou não entra em
+  // VENCIDO. Teste grátis e período já vencido encerram na hora.
+  if (sub.cancelledAt) {
+    if (sub.activatedAt && now <= sub.currentPeriodEnd) return "ATIVO";
+    return "CANCELADO";
+  }
 
   // Nunca houve pagamento aprovado: só o teste grátis pode liberar acesso.
   if (!sub.activatedAt) {

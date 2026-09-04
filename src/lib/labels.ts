@@ -55,6 +55,7 @@ export const STOCK_MOVEMENT_LABELS: Record<string, string> = {
 
 export const SUBSCRIPTION_STATUS_LABELS: Record<string, string> = {
   ATIVO: "Ativo",
+  TRIAL: "Teste grátis",
   VENCIDO: "Vencido",
   SUSPENSO: "Suspenso",
   BLOQUEADO: "Bloqueado",

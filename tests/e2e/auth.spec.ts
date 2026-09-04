@@ -80,3 +80,36 @@ test.describe("Esqueci minha senha", () => {
     await expect(page.getByRole("link", { name: "Pedir um link novo" })).toBeVisible();
   });
 });
+
+test.describe("Sitemap e robots (Google Search Console)", () => {
+  test("sitemap.xml é público e lista só as páginas de aquisição", async ({ request }) => {
+    const res = await request.get("/sitemap.xml", { maxRedirects: 0 });
+    expect(res.status()).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("<urlset");
+    expect(body).toContain("/cadastro");
+    expect(body).toContain("/login");
+    expect(body).toContain("/termos");
+    expect(body).toContain("/privacidade");
+    expect(body).not.toContain("/dashboard");
+    expect(body).not.toContain("/admin");
+  });
+
+  test("robots.txt é público e aponta o sitemap", async ({ request }) => {
+    const res = await request.get("/robots.txt", { maxRedirects: 0 });
+    expect(res.status()).toBe(200);
+    const body = await res.text();
+    expect(body).toMatch(/User-Agent:\s*\*/i);
+    expect(body).toMatch(/Disallow:\s*\/dashboard/i);
+    expect(body).toMatch(/Sitemap:\s*.*\/sitemap\.xml/i);
+  });
+
+  test("página inicial tem a metatag de verificação do Google no <head>", async ({ request }) => {
+    const res = await request.get("/", { maxRedirects: 0 });
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+    expect(html).toContain(
+      'name="google-site-verification" content="Ot8CbUdqquSApG960z4a2BMiH-mCUNWZj5uFkbqpxkM"',
+    );
+  });
+});

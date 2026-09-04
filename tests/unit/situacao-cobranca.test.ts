@@ -94,8 +94,17 @@ describe("situacaoCobranca — quem não está pagando", () => {
     expect(r.statusEfetivo).toBe("SUSPENSO");
   });
 
-  it("assinatura cancelada → inadimplente, com o motivo visível", () => {
+  it("assinatura cancelada ainda no período pago → em dia (acesso até o vencimento)", () => {
     const r = situacaoCobranca({ ...base, cancelledAt: dias(-1) }, AGORA);
+    expect(r.situacao).toBe("em_dia");
+    expect(r.statusEfetivo).toBe("ATIVO");
+  });
+
+  it("assinatura cancelada depois do vencimento → inadimplente, com o motivo visível", () => {
+    const r = situacaoCobranca(
+      { ...base, cancelledAt: dias(-1), currentPeriodEnd: dias(-1) },
+      AGORA,
+    );
     expect(r.situacao).toBe("inadimplente");
     expect(r.statusEfetivo).toBe("CANCELADO");
   });

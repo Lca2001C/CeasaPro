@@ -17,6 +17,7 @@ interface Props {
   userName: string;
   billingWarning?: string | null;
   trialLabel?: string | null;
+  billingCta?: { href: string; label: string } | null;
   modules?: string[];
   /** Sessão de super-admin no ambiente próprio: mostra o caminho de volta. */
   isSuperAdmin?: boolean;
@@ -33,6 +34,7 @@ export function AppShell({
   userName,
   billingWarning,
   trialLabel,
+  billingCta,
   modules,
   isSuperAdmin,
   showInstallPrompt = false,
@@ -98,9 +100,14 @@ export function AppShell({
         {billingWarning && (
           <div className="bg-warning/15 px-4 py-2 text-center text-sm text-warning">
             {billingWarning}{" "}
-            <a href="/assinatura" className="font-semibold underline">
-              Pagar agora
-            </a>
+            {billingCta !== null && (
+              <a
+                href={billingCta?.href ?? "/assinatura"}
+                className="font-semibold underline"
+              >
+                {billingCta?.label ?? "Pagar agora"}
+              </a>
+            )}
           </div>
         )}
 

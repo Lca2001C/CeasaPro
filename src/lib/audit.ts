@@ -19,7 +19,9 @@ export type AuditAction =
    * Lembrete de vencimento enviado ao dono da empresa. Registrado por período —
    * é o próprio log que impede o cron diário de reenviar o aviso todo dia.
    */
-  | "SUBSCRIPTION_DUE_REMINDER";
+  | "SUBSCRIPTION_DUE_REMINDER"
+  /** Dono pediu o cancelamento: não renova; o mês pago segue até o vencimento. */
+  | "SUBSCRIPTION_CANCELLED";
 
 export interface AuditInput {
   tenantId?: string | null;

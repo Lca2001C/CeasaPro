@@ -12,6 +12,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/cn";
 import { TrocarPlano } from "./_components/trocar-plano";
+import { CancelarAssinatura } from "@/components/billing/cancelar-assinatura";
 
 export const dynamic = "force-dynamic";
 
@@ -62,9 +63,9 @@ export default async function MeuPlanoPage({
             <div className="min-w-0">
               <p className="font-semibold [overflow-wrap:anywhere]">{view.planName}</p>
               <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
-                {SUBSCRIPTION_STATUS_LABELS[view.status] ?? view.status} ·{" "}
-                {formatBRL(view.priceMonthly as number)}/mês
-                {view.currentPeriodEnd ? ` · vence ${formatDate(view.currentPeriodEnd)}` : ""}
+                {view.cancelledAt
+                  ? `Cancelada · acesso até ${view.currentPeriodEnd ? formatDate(view.currentPeriodEnd) : "o vencimento"}`
+                  : `${SUBSCRIPTION_STATUS_LABELS[view.status] ?? view.status} · ${formatBRL(view.priceMonthly as number)}/mês${view.currentPeriodEnd ? ` · vence ${formatDate(view.currentPeriodEnd)}` : ""}`}
               </p>
             </div>
           </div>
@@ -106,7 +107,12 @@ export default async function MeuPlanoPage({
         </CardContent>
       </Card>
 
-      <TrocarPlano plans={availablePlans} />
+      {!view.cancelledAt && <TrocarPlano plans={availablePlans} />}
+      <CancelarAssinatura
+        cancelledAt={view.cancelledAt}
+        currentPeriodEnd={view.currentPeriodEnd}
+        status={view.status}
+      />
     </div>
   );
 }

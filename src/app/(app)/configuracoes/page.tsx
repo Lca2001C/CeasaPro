@@ -10,6 +10,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { PushOptIn } from "@/components/pwa/push-opt-in";
 import { EmpresaConfigForm } from "./_components/empresa-form";
+import { CancelarAssinatura } from "@/components/billing/cancelar-assinatura";
 
 export const dynamic = "force-dynamic";
 
@@ -39,38 +40,47 @@ export default async function ConfiguracoesPage() {
           />
         </TabsContent>
         <TabsContent value="assinatura">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Sua assinatura</CardTitle>
-            </CardHeader>
-            <CardContent className="flex flex-col gap-2 text-sm">
-              {sub ? (
-                <>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Plano</span>
-                    <span>{sub.plan.name}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Situação</span>
-                    <span>{SUBSCRIPTION_STATUS_LABELS[sub.status]}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Mensalidade</span>
-                    <span>{formatBRL(sub.monthlyAmount)}</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-muted-foreground">Vencimento</span>
-                    <span>{formatDate(sub.currentPeriodEnd)}</span>
-                  </div>
-                  <Button asChild className="mt-2">
-                    <Link href="/assinatura">Ver / pagar mensalidade</Link>
-                  </Button>
-                </>
-              ) : (
-                <p className="text-muted-foreground">Nenhuma assinatura ativa.</p>
-              )}
-            </CardContent>
-          </Card>
+          <div className="flex flex-col gap-4">
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">Sua assinatura</CardTitle>
+              </CardHeader>
+              <CardContent className="flex flex-col gap-2 text-sm">
+                {sub ? (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Plano</span>
+                      <span>{sub.plan.name}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Situação</span>
+                      <span>{SUBSCRIPTION_STATUS_LABELS[sub.status]}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Mensalidade</span>
+                      <span>{formatBRL(sub.monthlyAmount)}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Vencimento</span>
+                      <span>{formatDate(sub.currentPeriodEnd)}</span>
+                    </div>
+                    <Button asChild className="mt-2">
+                      <Link href="/assinatura">Ver / pagar mensalidade</Link>
+                    </Button>
+                  </>
+                ) : (
+                  <p className="text-muted-foreground">Nenhuma assinatura ativa.</p>
+                )}
+              </CardContent>
+            </Card>
+            {sub && (
+              <CancelarAssinatura
+                cancelledAt={sub.cancelledAt}
+                currentPeriodEnd={sub.currentPeriodEnd}
+                status={sub.status}
+              />
+            )}
+          </div>
         </TabsContent>
       </Tabs>
 
