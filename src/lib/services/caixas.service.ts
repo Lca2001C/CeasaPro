@@ -39,6 +39,10 @@ type CrateTxClient = {
     create(args: {
       data: Prisma.PlasticCrateMovementUncheckedCreateInput;
     }): Promise<PlasticCrateMovement>;
+    findMany(args: {
+      where: Prisma.PlasticCrateMovementWhereInput;
+      select: { type: true; quantity: true };
+    }): Promise<{ type: PlasticCrateMovementType; quantity: number }[]>;
   };
   auditLog: {
     create(args: { data: Prisma.AuditLogUncheckedCreateInput }): Promise<unknown>;
@@ -99,7 +103,31 @@ function resolveDirty(input: MovimentoCaixaInterno): boolean {
  * Consistência do livro-razão: nenhum pote pode ficar negativo.
  * Função pura — o saldo é lido antes e passado aqui, para poder rodar dentro de transações.
  */
-export function assertCrateMovement(saldo: CrateSaldo, input: MovimentoCaixaInterno): void {
+/**
+ * @param saldoDoCliente saldo de caixas do cliente do movimento, quando há um.
+ *   O saldo global não basta: uma devolução de 40 caixas em nome de quem levou
+ *   20 passava, porque a empresa tinha 100 na rua com outros fregueses. O
+ *   ledger daquele cliente ia a negativo e o estoque de sujas ganhava caixas
+ *   que não existem. Quem chama por `registrarInTx` nunca precisa lembrar:
+ *   o saldo é lido lá dentro.
+ */
+export function assertCrateMovement(
+  saldo: CrateSaldo,
+  input: MovimentoCaixaInterno,
+  saldoDoCliente?: number,
+): void {
+  if (input.customerName && saldoDoCliente !== undefined) {
+    const tiraDoCliente =
+      input.type === "RETORNO" ||
+      input.type === "ESTORNO_SAIDA" ||
+      input.type === "QUEBRA";
+    if (tiraDoCliente && input.quantity > saldoDoCliente) {
+      throw new BusinessRuleError(
+        `${input.customerName} está com ${saldoDoCliente} caixa(s). ` +
+          "Confira o nome e a quantidade.",
+      );
+    }
+  }
   switch (input.type) {
     case "SAIDA":
       if (input.quantity > saldo.limpas) {
@@ -195,13 +223,21 @@ export const CaixasService = {
     return computeCrateSaldo(rows[0] ?? ZERO_ROW);
   },
 
-  /** Saldo de caixas em poder de cada cliente (SAIDA − RETORNO − QUEBRA com cliente). */
+  /**
+   * Saldo de caixas em poder de cada cliente.
+   *
+   * A conta é a mesma de `comClientes` em `computeCrateSaldo` — inclusive o
+   * `ESTORNO_SAIDA`. Sem descontá-lo, a venda cancelada deixava caixas
+   * fantasma no nome do cliente: a tela do fiado pedia devolução de caixas que
+   * o estorno já havia trazido de volta, e o formulário aceitava a devolução —
+   * que então tirava do saldo global caixas que ninguém devia.
+   */
   async saldoPorCliente(tenantId: string): Promise<Map<string, number>> {
     const rows = await prisma.$queryRaw<{ customer: string; saldo: number }[]>`
       SELECT "customerName" AS customer,
              COALESCE(SUM(
                CASE WHEN type::text = 'SAIDA' THEN quantity
-                    WHEN type::text IN ('RETORNO', 'QUEBRA') THEN -quantity
+                    WHEN type::text IN ('RETORNO', 'QUEBRA', 'ESTORNO_SAIDA') THEN -quantity
                     ELSE 0 END
              ), 0)::int AS saldo
       FROM plastic_crate_movements
@@ -245,7 +281,12 @@ export const CaixasService = {
     ctx: TenantCtx,
     saldo: CrateSaldo,
   ) {
-    assertCrateMovement(saldo, input);
+    // Lido dentro da transação: vê os movimentos que ela mesma acabou de
+    // gravar (uma venda cancelada estorna item por item).
+    const saldoDoCliente = input.customerName
+      ? await saldoDoClienteInTx(tx, ctx.tenantId, input.customerName)
+      : undefined;
+    assertCrateMovement(saldo, input, saldoDoCliente);
 
     const movement = await tx.plasticCrateMovement.create({
       data: {
@@ -293,6 +334,32 @@ export const CaixasService = {
 };
 
 /** Exposta para teste unitário das fórmulas de saldo. */
+/**
+ * Quantas caixas estão com este cliente, contadas dentro da transação.
+ *
+ * Mesma fórmula de `comClientes`: SAIDA − RETORNO − QUEBRA − ESTORNO_SAIDA,
+ * restrita ao nome. O `where` leva `tenantId` explícito porque o `tx` aqui é
+ * o cliente cru da transação, sem a extensão que injeta o tenant.
+ */
+async function saldoDoClienteInTx(
+  tx: CrateTxClient,
+  tenantId: string,
+  customerName: string,
+): Promise<number> {
+  const movs = await tx.plasticCrateMovement.findMany({
+    where: { tenantId, customerName },
+    select: { type: true, quantity: true },
+  });
+  let saldo = 0;
+  for (const m of movs) {
+    if (m.type === "SAIDA") saldo += m.quantity;
+    else if (m.type === "RETORNO" || m.type === "QUEBRA" || m.type === "ESTORNO_SAIDA") {
+      saldo -= m.quantity;
+    }
+  }
+  return saldo;
+}
+
 export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
   // O estorno de venda desfaz uma SAIDA: a caixa volta para as limpas (nunca
   // chegou a sair do box) e deixa de estar com o cliente.

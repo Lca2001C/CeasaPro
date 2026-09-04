@@ -86,7 +86,9 @@ describe("Caixas plásticas — saldos derivados do ledger", () => {
         { type: "RETORNO", quantity: 999, customerName: "X", movementDate: hoje },
         ctx,
       ),
-    ).rejects.toThrow(/clientes/i);
+      // A mensagem nomeia o cliente e o saldo DELE: antes o retorno passava
+      // porque a empresa tinha caixas na rua com outros fregueses.
+    ).rejects.toThrow(/X está com 0 caixa/);
   });
 
   it("expõe o saldo de caixas por cliente", async () => {
@@ -240,5 +242,64 @@ describe("Venda de embalagens", () => {
     await expect(EmbalagensService.createType({ name: "Sacaria" }, ctx)).rejects.toThrow(
       /existe/i,
     );
+  });
+});
+
+/**
+ * Tenant separado: estas devoluções mexem em `sujas`/`limpas`, e os describes
+ * acima cobram saldos absolutos numa sequência compartilhada.
+ */
+describe("Caixas — a devolução é limitada ao saldo do cliente", () => {
+  let t2 = "";
+  let ctx2 = makeCtx("");
+
+  beforeAll(async () => {
+    t2 = await createTestTenant("FASE2 POR CLIENTE");
+    ctx2 = makeCtx(t2);
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 100, movementDate: hoje },
+      ctx2,
+    );
+    await CaixasService.registrar(
+      { type: "SAIDA", quantity: 17, customerName: "Mercadinho A", movementDate: hoje },
+      ctx2,
+    );
+    await CaixasService.registrar(
+      { type: "SAIDA", quantity: 25, customerName: "Mercadinho B", movementDate: hoje },
+      ctx2,
+    );
+  });
+
+  afterAll(async () => {
+    await cleanupTenants([t2]);
+  });
+
+  it("recusa devolver mais do que o cliente levou, mesmo com caixas na rua com outros", async () => {
+    // A empresa tem 42 caixas na rua, e era contra esse total que a devolução
+    // era validada: dava para devolver 30 no nome de quem levou 17. O ledger
+    // daquele cliente ia a negativo e o estoque de sujas ganhava caixas que não
+    // existem fisicamente.
+    const antes = await CaixasService.getSaldo(t2);
+    expect(antes.comClientes).toBe(42);
+
+    await expect(
+      CaixasService.registrar(
+        { type: "RETORNO", quantity: 30, customerName: "Mercadinho A", movementDate: hoje },
+        ctx2,
+      ),
+    ).rejects.toThrow(/Mercadinho A está com 17 caixa/);
+
+    const depois = await CaixasService.getSaldo(t2);
+    expect(depois.comClientes).toBe(42); // nada foi gravado
+  });
+
+  it("o que o cliente realmente levou continua podendo voltar", async () => {
+    await CaixasService.registrar(
+      { type: "RETORNO", quantity: 17, customerName: "Mercadinho A", movementDate: hoje },
+      ctx2,
+    );
+    const porCliente = await CaixasService.saldoPorCliente(t2);
+    expect(porCliente.get("Mercadinho A")).toBeUndefined(); // zerou
+    expect(porCliente.get("Mercadinho B")).toBe(25);
   });
 });

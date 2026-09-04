@@ -194,6 +194,12 @@ describe("Cancelamento de venda", () => {
     expect(saldo.limpas).toBe(50);
     expect(saldo.sujas).toBe(0);
 
+    // ...e saem do saldo DAQUELE cliente, não só do total. O `saldoPorCliente`
+    // não descontava o ESTORNO_SAIDA, então a tela do fiado seguia pedindo a
+    // devolução de 6 caixas que o estorno já havia trazido de volta — e o
+    // formulário aceitava, tirando do estoque caixas que ninguém devia.
+    expect((await CaixasService.saldoPorCliente(tenantId)).get("João")).toBeUndefined();
+
     // A conta de fiado sai da listagem.
     const { contas } = await FiadoService.listOpen(tenantId);
     expect(contas.filter((c) => c.saleId === s.id)).toHaveLength(0);

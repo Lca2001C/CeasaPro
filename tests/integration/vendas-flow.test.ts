@@ -209,7 +209,8 @@ describe("Fiado com itens, data da venda e caixas plásticas", () => {
         { accountId: conta.id, quantity: 99, movementDate: hoje },
         ctx,
       ),
-    ).rejects.toThrow(/clientes/i);
+      // O limite é o saldo deste cliente, não o total da empresa na rua.
+    ).rejects.toThrow(/Cliente Caixas está com 3 caixa/);
   });
 
   it("atualizar a conta muda só os dados cadastrais", async () => {
