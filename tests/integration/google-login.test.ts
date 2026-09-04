@@ -360,4 +360,87 @@ describe("resolverLoginGoogle", () => {
     expect(sub.status).toBe("SUSPENSO");
     expect(sub.trialEndsAt).toBeNull();
   });
+  it("cliente que teve a conta excluída consegue voltar pelo Google", async () => {
+    // Estado que a produção já tem: contas excluídas antes da correção seguem
+    // ocupando o `googleSub` (@unique) na linha soft-deletada. Sem liberar o
+    // valor, o passo 3 estourava violação de índice dentro da transação e o
+    // callback — que não tem try/catch — devolvia 500 a cada tentativa.
+    const p = perfil();
+    const antigo = await prisma.user.create({
+      data: {
+        name: "Conta antiga",
+        email: `excluido-cuid-antigo-${uniq()}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER",
+        googleSub: p.sub,
+        deletedAt: new Date(),
+        active: false,
+      },
+    });
+    emails.push(antigo.email);
+
+    const res = await resolverLoginGoogle(p, { ip: "203.0.113.40" });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.criado).toBe(true);
+
+    const novo = await prisma.user.findUniqueOrThrow({ where: { id: res.userId } });
+    tenants.push(novo.tenantId!);
+    expect(novo.googleSub).toBe(p.sub);
+    // A linha velha continua excluída, agora sem o vínculo.
+    const velha = await prisma.user.findUniqueOrThrow({ where: { id: antigo.id } });
+    expect(velha.googleSub).toBeNull();
+    expect(velha.deletedAt).not.toBeNull();
+  });
+  it("cliente excluído que se recadastrou por senha também volta pelo Google", async () => {
+    // Mesmo vínculo preso, outro caminho: ele voltou pelo cadastro comum e
+    // depois clicou no botão do Google. Aqui o passo 2 acha a linha nova pelo
+    // e-mail e grava o `googleSub` — que a linha excluída ainda ocupava.
+    const p = perfil();
+    const antigo = await prisma.user.create({
+      data: {
+        name: "Conta antiga",
+        email: `excluido-cuid-recad-${uniq()}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER",
+        googleSub: p.sub,
+        deletedAt: new Date(),
+        active: false,
+      },
+    });
+    emails.push(antigo.email);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        tradeName: "Recadastrada",
+        status: "ACTIVE",
+        subscription: {
+          create: {
+            planId: planoId,
+            status: "SUSPENSO",
+            monthlyAmount: 49,
+            currentPeriodEnd: new Date(),
+            graceDays: 5,
+          },
+        },
+      },
+    });
+    tenants.push(tenant.id);
+    const vivo = await prisma.user.create({
+      data: {
+        tenantId: tenant.id,
+        name: "De volta",
+        email: p.email,
+        passwordHash: await hashPassword("senhaDele1"),
+        role: "OWNER",
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    const res = await resolverLoginGoogle(p, { ip: null });
+    expect(res.ok && res.userId).toBe(vivo.id);
+
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: vivo.id } });
+    expect(depois.googleSub).toBe(p.sub);
+  });
 });

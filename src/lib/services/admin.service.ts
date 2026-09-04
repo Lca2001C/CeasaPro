@@ -345,6 +345,10 @@ export const AdminService = {
             deletedAt: agora,
             active: false,
             email: emailDeExcluido(u.id, u.email),
+            // `googleSub` é @unique: se a linha excluída continuasse ocupando o
+            // valor, o cliente que voltasse pelo botão do Google derrubaria o
+            // cadastro no índice único (ver liberarEmailDeContaExcluida).
+            googleSub: null,
             resetTokenHash: null,
             resetTokenExpiresAt: null,
           },
@@ -791,6 +795,9 @@ export const AdminService = {
         active: false,
         // Libera o endereço para um cadastro novo (ver `emailDeExcluido`).
         email: emailDeExcluido(user.id, user.email),
+        // Junto com o endereço, libera o vínculo do Google: `googleSub` é
+        // @unique e travaria o recadastro de quem voltasse por lá.
+        googleSub: null,
         // Um link de recuperação pendente não pode sobreviver à exclusão.
         resetTokenHash: null,
         resetTokenExpiresAt: null,

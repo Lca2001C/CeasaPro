@@ -46,6 +46,18 @@ export async function resolverLoginGoogle(
     return { ok: true, userId: porGoogle.id, role: porGoogle.role, criado: false };
   }
 
+  // Ninguém ativo usa este `googleSub`, mas uma conta EXCLUÍDA pode continuar
+  // ocupando o valor: `googleSub` é @unique e a exclusão só passou a liberá-lo
+  // agora (admin.service.ts), então a base tem linhas antigas presas. Com o
+  // vínculo preso, gravar o `googleSub` mais abaixo estourava violação de índice
+  // dentro da transação e o callback — que não tem try/catch — devolvia 500: o
+  // cliente que voltava nunca mais entrava pelo Google. Quem está na frente do
+  // Google agora é o dono comprovado da identidade; a conta excluída a solta.
+  await prisma.user.updateMany({
+    where: { googleSub: perfil.sub, deletedAt: { not: null } },
+    data: { googleSub: null },
+  });
+
   const porEmail = await prisma.user.findFirst({
     where: { email: perfil.email, deletedAt: null },
   });

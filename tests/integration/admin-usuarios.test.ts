@@ -297,6 +297,31 @@ describe("Recadastro de empresa com o mesmo e-mail do dono", () => {
     expect(recriado.email).toBe(email);
   });
 
+  it("excluir a empresa libera o vínculo do Google do dono", async () => {
+    // `googleSub` é @unique. Se a linha excluída continuasse ocupando o valor,
+    // o cliente que voltasse pelo botão do Google batia em violação de índice
+    // e recebia 500 — o callback não tem try/catch — sem nunca conseguir
+    // recadastrar. Caso comum: "errou no cadastro, exclui e faz de novo".
+    const tenantId = await createTestTenant("COM GOOGLE");
+    tenants.push(tenantId);
+    const dono = await prisma.user.create({
+      data: {
+        tenantId,
+        name: "Dono Google",
+        email: `dono-google-${uniq()}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER",
+        googleSub: `sub-excluido-${uniq()}`,
+      },
+    });
+    usuarios.push(dono.id);
+
+    await AdminService.deleteTenant(tenantId, ctx);
+
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: dono.id } });
+    expect(depois.googleSub).toBeNull();
+  });
+
   it("createTenantWithOwner aceita e-mail de conta excluída", async () => {
     const email = `owner-${uniq()}@teste.com`;
     const orfao = await prisma.user.create({
