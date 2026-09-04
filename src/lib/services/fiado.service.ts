@@ -324,13 +324,29 @@ export const FiadoService = {
 
       const novoPago = add(conta.paidAmount, input.amount);
       const quitado = !gt(conta.totalAmount, novoPago); // total <= pago
-      const updated = await tx.creditAccount.update({
-        where: { id: conta.id },
-        data: {
-          paidAmount: novoPago,
-          status: quitado ? "PAGO" : "EM_ABERTO",
-        },
+      const status = quitado ? "PAGO" : "EM_ABERTO";
+
+      // O `paidAmount` lido acima entra na condição do UPDATE. Sem isso era
+      // leitura-soma-escrita comum: em READ COMMITTED (o padrão do Postgres),
+      // dois pagamentos simultâneos leem o mesmo saldo e o segundo grava o total
+      // dele por cima do primeiro. Ficavam dois `CreditPayment` no extrato e só
+      // um valor somado na conta — dinheiro recebido que continuava aparecendo
+      // como dívida do cliente. Acontece com o dono e o funcionário lançando ao
+      // mesmo tempo, ou com um duplo toque no botão em rede ruim.
+      //
+      // O Postgres reavalia o WHERE depois de esperar o lock da linha, então o
+      // segundo não casa e é recusado — em dinheiro, recusar e avisar é melhor
+      // que somar errado em silêncio. Mesmo padrão de `applyPaymentStatus`.
+      const escrito = await tx.creditAccount.updateMany({
+        where: { id: conta.id, paidAmount: conta.paidAmount },
+        data: { paidAmount: novoPago, status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outro pagamento desta conta foi registrado agora mesmo. " +
+            "Confira o saldo e lance de novo.",
+        );
+      }
 
       await audit(
         {
@@ -341,13 +357,14 @@ export const FiadoService = {
           entity: "CreditAccount",
           entityId: conta.id,
           oldData: { paidAmount: conta.paidAmount.toString() },
-          newData: { paidAmount: novoPago.toString(), status: updated.status },
+          newData: { paidAmount: novoPago.toString(), status },
           ip: ctx.ip,
         },
         tx,
       );
 
-      return updated;
+      // Relê depois da guarda: o registro devolvido é o que ficou gravado.
+      return tx.creditAccount.findFirstOrThrow({ where: { id: conta.id } });
     });
   },
 };

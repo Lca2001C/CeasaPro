@@ -205,3 +205,61 @@ describe("Edição de lançamento de fiado", () => {
     expect(Number(atualizada.paidAmount)).toBe(0);
   });
 });
+
+/**
+ * Pagamentos simultâneos na mesma conta.
+ *
+ * O serviço lia o `paidAmount`, somava e gravava o total. Em READ COMMITTED
+ * (padrão do Postgres) duas transações leem o mesmo saldo e a segunda grava o
+ * dela por cima: sobravam dois `CreditPayment` no extrato e um só valor somado
+ * na conta — dinheiro recebido continuando a aparecer como dívida do cliente.
+ *
+ * O que este teste fixa é a invariante, não o interleaving: o `paidAmount` da
+ * conta tem de ser igual à soma dos pagamentos gravados, em qualquer ordem.
+ */
+describe("pagamentos simultâneos", () => {
+  it("o saldo da conta fecha com a soma dos pagamentos do extrato", async () => {
+    const { conta } = await vendaFiada({ qtd: 10, preco: 10 }); // total 100
+
+    const tentativas = await Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        FiadoService.registrarPagamento(
+          { accountId: conta.id, amount: 10, method: "DINHEIRO" },
+          ctx,
+        ),
+      ),
+    );
+
+    const aceitos = tentativas.filter((t) => t.status === "fulfilled").length;
+    expect(aceitos).toBeGreaterThan(0);
+
+    const pagamentos = await prisma.creditPayment.findMany({
+      where: { accountId: conta.id },
+    });
+    const somaExtrato = pagamentos.reduce((t, p) => t + Number(p.amount), 0);
+    const depois = await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } });
+
+    expect(Number(depois.paidAmount)).toBe(somaExtrato);
+    // E nada de recibo gravado sem entrar no saldo.
+    expect(pagamentos.length).toBe(aceitos);
+  });
+
+  it("pagamentos em sequência continuam somando (a guarda não atrapalha o normal)", async () => {
+    // O caminho de todo dia é este: o cliente paga em parcelas, uma depois da
+    // outra. A condição do UPDATE não pode recusar o segundo lançamento.
+    const { conta } = await vendaFiada({ qtd: 10, preco: 10 });
+    await FiadoService.registrarPagamento(
+      { accountId: conta.id, amount: 40, method: "PIX" },
+      ctx,
+    );
+    await FiadoService.registrarPagamento(
+      { accountId: conta.id, amount: 20, method: "PIX" },
+      ctx,
+    );
+
+    const depois = await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } });
+    expect(Number(depois.paidAmount)).toBe(60);
+    expect(depois.status).toBe("EM_ABERTO");
+    expect(await prisma.creditPayment.count({ where: { accountId: conta.id } })).toBe(2);
+  });
+});
