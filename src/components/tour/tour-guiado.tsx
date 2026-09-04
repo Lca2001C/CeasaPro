@@ -150,7 +150,7 @@ function montarPassos(
 
 function concluir() {
   encerrarTour();
-  toast.success("Tour concluído. Em Como usar você reencontra tudo isto escrito.");
+  toast.success("Tour concluído. Pelo Tutorial no topo você reencontra o guia escrito.");
 }
 
 const CONFIG_BASE: Config = {

@@ -19,7 +19,7 @@ import {
  * Convite ao tour, no Início.
  *
  * Sem ele o tour existiria e ninguém saberia: quem acaba de entrar não vai
- * procurar "Como usar" no menu antes de ter um problema. Então o convite tem de
+ * procurar Tutorial no topo antes de ter um problema. Então o convite tem de
  * ir à pessoa — uma vez, na tela que todo mundo abre primeiro.
  *
  * É um CARTÃO, e não um painel que abre sozinho, por duas razões. A primeira
@@ -30,7 +30,7 @@ import {
  * caminho, e espera.
  *
  * Aparece uma vez só: entrar no tour ou dispensar o convite grava a resposta
- * (ver `marcarConvidado`). Depois disso o caminho é o botão em "Como usar".
+ * (ver `marcarConvidado`). Depois disso o caminho é o botão Tutorial no topo.
  */
 export function ConviteTour() {
   const jaConvidado = useSyncExternalStore(

@@ -50,6 +50,26 @@ test.afterAll(async () => {
 });
 
 test.describe("Guia de uso (/ajuda)", () => {
+  test("Tutorial no topo abre o guia e o tour, fora do menu", async ({ page }) => {
+    await page.goto("/dashboard");
+
+    await expect(page.locator("aside").getByRole("link", { name: "Como usar" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Tutorial" }).click();
+    await page.getByRole("menuitem", { name: "Página de uso" }).click();
+    await expect(page).toHaveURL(/\/ajuda$/);
+    await expect(
+      page.getByRole("heading", { name: "Como usar o CeasaPro" }),
+    ).toBeVisible();
+
+    await page.goto("/dashboard");
+    await page.getByRole("button", { name: "Tutorial" }).click();
+    await page.getByRole("menuitem", { name: "Tour guiado" }).click();
+    await expect(page.locator(".driver-popover-title")).toHaveText(
+      "Vamos dar uma volta pelo sistema",
+    );
+  });
+
   test("explica o núcleo e se ajusta ao plano do cliente", async ({ page }) => {
     // ─── 1. Plano completo: o guia mostra tudo ───
     await page.goto("/ajuda");

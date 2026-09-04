@@ -67,7 +67,7 @@ const rotaAtual = (page: Page) => new URL(page.url()).pathname;
 const TRANSICAO_MS = 500;
 
 test.describe("Tour guiado", () => {
-  test("atravessa todas as telas do plano e termina em Como usar", async ({ page }) => {
+  test("atravessa todas as telas do plano e termina no guia de uso", async ({ page }) => {
     // Treze navegações contra o build de produção: lento por natureza.
     test.setTimeout(180_000);
 
@@ -136,7 +136,7 @@ test.describe("Tour guiado", () => {
   });
 
   test("Voltar atravessa telas para trás, e o Esc encerra", async ({ page }) => {
-    // Entrada por "Como usar": o caminho de quem dispensou o convite ou quer
+    // Entrada pelo guia escrito: o caminho de quem dispensou o convite ou quer
     // rever o tour depois. Sem ele o tour seria de uso único.
     await page.goto("/ajuda");
     await page.getByRole("button", { name: "Fazer o tour guiado" }).click();

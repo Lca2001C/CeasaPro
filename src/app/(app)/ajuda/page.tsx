@@ -71,8 +71,8 @@ export default async function AjudaPage() {
       {/* ─── Tour guiado ─── */}
       {/*
         Fica ANTES do texto: quem chega aqui perdido prefere ser levado a ler.
-        O `data-tour` é o alvo do último balão do próprio tour, que termina nesta
-        tela mostrando por onde refazê-lo (ver `lib/tour/roteiro`).
+        O tour termina nesta tela; o último balão aponta o botão Tutorial do
+        header, que é por onde se refaz o percurso (ver `lib/tour/roteiro`).
       */}
       <Card className="mb-4 border-primary/30 bg-accent/40">
         <CardContent className="flex flex-col gap-3 pt-6">

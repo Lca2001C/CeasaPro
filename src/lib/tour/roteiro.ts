@@ -296,12 +296,13 @@ export const CAPITULOS: CapituloTour[] = [
           "comuns. Abre sem internet, para servir também quando algo dá errado no box.",
       },
       {
-        alvo: '[data-tour="tour-refazer"]',
+        alvo: '[data-tour="tutorial"]',
         titulo: "Pronto. É este o sistema.",
         texto:
           "O caminho é sempre o mesmo: lance a compra, lance a venda, e estoque, lucro, " +
-          "fiado e relatórios saem calculados. Pode refazer o tour por aqui quando " +
-          "quiser — e o botão verde de WhatsApp, no canto da tela, fala com a gente.",
+          "fiado e relatórios saem calculados. O botão Tutorial no topo reabre este tour " +
+          "e o guia escrito — e o WhatsApp no canto da tela fala com a gente.",
+        lado: "bottom",
       },
     ],
   },

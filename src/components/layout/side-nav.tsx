@@ -18,7 +18,6 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
-  CircleHelp,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
@@ -40,7 +39,7 @@ const items = [
   // Auditoria é da administração da plataforma (`/admin/auditoria`), não do
   // dia a dia do box: mistura eventos técnicos com operação e não tem ação
   // associada para quem está vendendo.
-  { href: "/ajuda", label: "Como usar", icon: CircleHelp },
+  // O guia e o tour ficam no botão Tutorial do header, não no menu operacional.
   { href: "/plano", label: "Meu plano", icon: BadgeCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];

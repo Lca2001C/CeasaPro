@@ -4,6 +4,7 @@ import Link from "next/link";
 import { LogOut, ShieldCheck } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { BottomNav } from "./bottom-nav";
+import { BotaoTutorial } from "./botao-tutorial";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
@@ -65,7 +66,8 @@ export function AppShell({
             <p className="truncate text-sm font-semibold">{companyName}</p>
             <p className="truncate text-xs text-muted-foreground">{userName}</p>
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
+            <BotaoTutorial />
             {isSuperAdmin && (
               <Button asChild variant="outline" size="sm">
                 <Link href="/admin">
