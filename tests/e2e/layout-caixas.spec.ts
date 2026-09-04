@@ -169,11 +169,22 @@ const OUTRAS_PAGINAS = [
   { url: "/compras", nome: "Compras" },
   { url: "/fornecedores", nome: "Fornecedores" },
   { url: "/relatorios", nome: "Relatórios" },
+  { url: "/relatorios/vendas", nome: "Relatório de vendas" },
   { url: "/despesas/categorias", nome: "Categorias de despesa" },
   { url: "/despesas/nova", nome: "Nova despesa" },
   { url: "/fiado/novo", nome: "Novo fiado" },
   { url: "/configuracoes", nome: "Configurações" },
   { url: "/ajuda", nome: "Como usar" },
+  // Telas de cadastro. Ficaram fora da lista original e são metade dos
+  // formulários da aplicação — é onde campo lado a lado aperta primeiro.
+  { url: "/vendas/nova", nome: "Frente de caixa (carrinho vazio)" },
+  { url: "/produtos/novo", nome: "Novo produto" },
+  { url: "/compras/nova", nome: "Nova compra" },
+  { url: "/fornecedores/novo", nome: "Novo fornecedor" },
+  { url: "/estoque/ajuste", nome: "Ajuste de estoque" },
+  { url: "/embalagens/nova", nome: "Nova embalagem" },
+  { url: "/caixas-plasticas/novo", nome: "Nova movimentação de caixas" },
+  { url: "/higienizacao/nova", nome: "Nova higienização" },
 ];
 
 test.describe("Telas em tela estreita (320px)", () => {
@@ -194,6 +205,194 @@ test.describe("Telas em tela estreita (320px)", () => {
       if ((await page.locator(".bg-card").count()) > 0) {
         const problemas = await vazamentos(page);
         expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
+      }
+    });
+  }
+});
+
+/**
+ * A frente de caixa **com o carrinho cheio**.
+ *
+ * A tela vazia não reproduz nada: o item do carrinho é que traz a linha de três
+ * colunas (quantidade, preço, total), e é ela que não cabia em 320px — o campo
+ * de preço ficava com 32px e o "R$" aparecia cortado na borda do cartão.
+ *
+ * Abrir a tela vazia, como faz a varredura acima, passava com o defeito
+ * presente. Por isso este teste monta o carrinho antes de medir.
+ */
+test.describe("Frente de caixa em tela estreita (320px)", () => {
+  test.use({ viewport: { width: 320, height: 720 } });
+
+  /** Produto criado pelo `global-setup` (unidade CAIXA, com estoque). */
+  const PRODUTO = "Tomate E2E";
+
+  async function comItemNoCarrinho(page: import("@playwright/test").Page) {
+    await page.goto("/vendas/nova");
+    await page.getByPlaceholder("Buscar produto...").fill(PRODUTO);
+    await page.getByRole("button", { name: new RegExp(PRODUTO) }).first().click();
+    // Preço de 4 dígitos + centavos: o pior caso realista do balcão, e o que
+    // enche a coluna do meio e a do total ao mesmo tempo.
+    await page.getByLabel(`Preço de ${PRODUTO}`).fill("1234,56");
+    await expect(page.getByLabel(`Preço de ${PRODUTO}`)).toHaveValue("R$ 1.234,56");
+  }
+
+  test("o item do carrinho cabe na tela, com preço de 4 dígitos", async ({ page }) => {
+    await comItemNoCarrinho(page);
+
+    const problemas = await vazamentos(page);
+    expect(problemas, JSON.stringify(problemas, null, 2)).toEqual([]);
+    expect(await estouroHorizontalDaPagina(page)).toBe(0);
+  });
+
+  test("o campo de preço fica largo o bastante para o valor aparecer", async ({ page }) => {
+    await comItemNoCarrinho(page);
+
+    // Medir a largura, e não só a existência do valor: o defeito original
+    // mantinha o texto no DOM (o `toHaveValue` acima passava) e escondia o
+    // campo atrás da borda. Empilhado, o campo ocupa a largura do cartão; o
+    // piso de 100px continua sendo o mínimo para "R$ 1.234,56" se ler.
+    const caixa = await page.getByLabel(`Preço de ${PRODUTO}`).boundingBox();
+    expect(caixa, "o campo de preço não está na tela").not.toBeNull();
+    expect(caixa!.width).toBeGreaterThan(100);
+  });
+
+  test("o rótulo do preço não compete com quantidade e total na mesma linha", async ({ page }) => {
+    await comItemNoCarrinho(page);
+
+    // Os três empilhados: o rótulo "Preço da unidade" precisa caber numa linha
+    // só. Quebrar no meio da palavra era o que se via no celular.
+    const rotulo = page.getByText("Preço da unidade");
+    await expect(rotulo).toBeVisible();
+    const linhas = await rotulo.evaluate((el) => {
+      const no = el.firstChild;
+      if (!no || no.nodeType !== Node.TEXT_NODE) return 1;
+      const faixa = document.createRange();
+      faixa.selectNodeContents(el);
+      return faixa.getClientRects().length;
+    });
+    expect(linhas, "o rótulo 'Preço da unidade' quebrou em mais de uma linha").toBe(1);
+  });
+
+  test("vasilhame e desconto por item também cabem", async ({ page }) => {
+    await comItemNoCarrinho(page);
+    await page.getByRole("button", { name: /Vasilhame e desconto/i }).click();
+
+    const problemas = await vazamentos(page);
+    expect(problemas, JSON.stringify(problemas, null, 2)).toEqual([]);
+    expect(await estouroHorizontalDaPagina(page)).toBe(0);
+  });
+
+  test("os rótulos das formas de pagamento cabem no botão", async ({ page }) => {
+    await comItemNoCarrinho(page);
+
+    // No celular as formas ficam em 2×2 (`whitespace-nowrap`): se a coluna
+    // aperta, o texto vaza do botão em vez de quebrar, e "Dinheiro" invade o
+    // vizinho.
+    for (const forma of ["Dinheiro", "PIX", "Cartão", "Fiado"]) {
+      const botao = page.getByRole("button", { name: forma, exact: true });
+      await expect(botao).toBeVisible();
+      const excesso = await botao.evaluate((el) => el.scrollWidth - el.clientWidth);
+      expect(excesso, `o rótulo "${forma}" não cabe no botão`).toBeLessThanOrEqual(1);
+    }
+
+    expect(await estouroHorizontalDaPagina(page)).toBe(0);
+  });
+
+  test("desconto e pagamento não ficam atrás da barra de finalizar", async ({ page }) => {
+    await comItemNoCarrinho(page);
+    await page.getByRole("button", { name: /Desconto na venda/i }).click();
+
+    const campoDesconto = page.getByLabel("Valor do desconto");
+    await campoDesconto.scrollIntoViewIfNeeded();
+
+    const campo = campoDesconto.boundingBox();
+    const barra = page.getByRole("button", { name: /Finalizar venda/i }).boundingBox();
+    const [c, b] = await Promise.all([campo, barra]);
+    expect(c, "o campo de desconto não está na tela").not.toBeNull();
+    expect(b, "o botão finalizar não está na tela").not.toBeNull();
+
+    // Depois de rolar o campo para a vista, ele tem de ficar ACIMA da barra
+    // fixa — não escondido atrás dela, que era o que o print do celular
+    // mostrava.
+    expect(c!.y + c!.height, "desconto ficou atrás de Finalizar venda").toBeLessThanOrEqual(
+      b!.y + 1,
+    );
+  });
+
+  test("o pagamento dividido cabe na tela", async ({ page }) => {
+    await comItemNoCarrinho(page);
+    await page.getByRole("button", { name: /Dividir em mais de uma forma/i }).click();
+    // Duas parcelas: é onde a linha (forma + valor + remover) mais aperta.
+    await page.getByRole("button", { name: /Adicionar forma/i }).click();
+
+    const problemas = await vazamentos(page);
+    expect(problemas, JSON.stringify(problemas, null, 2)).toEqual([]);
+    expect(await estouroHorizontalDaPagina(page)).toBe(0);
+  });
+});
+
+/**
+ * Telas de DETALHE, que só existem com dado real.
+ *
+ * Ficavam fora de qualquer varredura porque a URL depende de um id. Os ids vêm
+ * do banco da empresa demo; quando não há registro daquele tipo, o teste é
+ * marcado como pulado em vez de falhar — assim a lista não fica refém do seed.
+ */
+test.describe("Telas de detalhe em tela estreita (320px)", () => {
+  test.use({ viewport: { width: 320, height: 720 } });
+
+  const ids: Record<string, string | null> = {};
+
+  test.beforeAll(async () => {
+    const dono = await prisma.user.findFirstOrThrow({
+      where: { email: DEMO.email },
+      select: { tenantId: true },
+    });
+    const tenantId = dono.tenantId!;
+    const primeiro = async <T extends { id: string }>(p: Promise<T | null>) =>
+      (await p)?.id ?? null;
+
+    ids["/produtos"] = await primeiro(
+      prisma.product.findFirst({ where: { tenantId, deletedAt: null }, select: { id: true } }),
+    );
+    ids["/fornecedores"] = await primeiro(
+      prisma.supplier.findFirst({ where: { tenantId, deletedAt: null }, select: { id: true } }),
+    );
+    ids["/despesas"] = await primeiro(
+      prisma.expense.findFirst({ where: { tenantId, deletedAt: null }, select: { id: true } }),
+    );
+    ids["/fiado"] = await primeiro(
+      prisma.creditAccount.findFirst({
+        where: { tenantId, deletedAt: null },
+        select: { id: true },
+      }),
+    );
+    ids["/vendas"] = await primeiro(
+      prisma.sale.findFirst({ where: { tenantId, deletedAt: null }, select: { id: true } }),
+    );
+  });
+
+  const DETALHES = [
+    { base: "/produtos", nome: "Detalhe do produto" },
+    { base: "/fornecedores", nome: "Detalhe do fornecedor" },
+    { base: "/despesas", nome: "Detalhe da despesa" },
+    { base: "/fiado", nome: "Detalhe do fiado" },
+    { base: "/vendas", nome: "Detalhe da venda" },
+  ];
+
+  for (const detalhe of DETALHES) {
+    test(`${detalhe.nome}: não rola de lado nem vaza`, async ({ page }) => {
+      const id = ids[detalhe.base];
+      test.skip(!id, `sem registro em ${detalhe.base} na empresa demo`);
+
+      await page.goto(`${detalhe.base}/${id}`);
+      await expect(page.locator("h1, h2").first()).toBeVisible();
+
+      expect(await estouroHorizontalDaPagina(page), `${detalhe.nome} rola de lado`).toBe(0);
+
+      if ((await page.locator(".bg-card").count()) > 0) {
+        const problemas = await vazamentos(page);
+        expect(problemas, `${detalhe.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
       }
     });
   }

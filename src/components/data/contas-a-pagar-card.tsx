@@ -70,7 +70,7 @@ export function ContasAPagarCard({
               <Link
                 key={c.id}
                 href={`/despesas/${c.id}`}
-                className="flex items-center justify-between gap-3 py-2 text-sm transition-colors hover:bg-muted/50"
+                className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-x-3 py-2 text-sm transition-colors hover:bg-muted/50"
               >
                 <span className="flex min-w-0 items-center gap-2">
                   {c.vencida && <AlertTriangle className="size-4 shrink-0 text-destructive" />}
@@ -85,7 +85,7 @@ export function ContasAPagarCard({
                 </span>
                 <span
                   className={cn(
-                    "shrink-0 font-semibold tabular-nums",
+                    "min-w-0 text-right font-semibold tabular-nums [overflow-wrap:anywhere]",
                     c.vencida && "text-destructive",
                   )}
                 >

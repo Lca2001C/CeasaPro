@@ -234,8 +234,8 @@ export default async function DespesasPage({
           de olhar os totais. */}
       <Card className="mb-4">
         <CardContent className="pt-4">
-          <div className="mb-1 flex items-center justify-between gap-2">
-            <span className="min-w-0 truncate text-sm font-semibold">
+          <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
+            <span className="text-sm font-semibold [overflow-wrap:anywhere]">
               Contas de {resumo.referencia} vs. mês anterior
             </span>
             <Button asChild variant="ghost" size="sm" className="shrink-0">

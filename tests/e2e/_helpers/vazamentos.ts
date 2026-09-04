@@ -46,6 +46,25 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
     const achados: { caixa: string; conteudo: string; excessoPx: number }[] = [];
     const texto = (el: Element | null) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
 
+    /**
+     * O elemento está dentro de algo que rola de lado?
+     *
+     * Uma tabela mais larga que o cartão, dentro de um container
+     * `overflow-x-auto`, é decisão de layout e não vazamento: quem lê arrasta a
+     * tabela e a página fica quieta. Pular só o container — o que este helper
+     * fazia — não bastava, porque a `<table>` dentro dele *é* mais larga que o
+     * cartão, e era ela (com cabeçalho e todas as células) que entrava na lista.
+     * O detalhe da venda aparecia com 25px de "vazamento" sem ter defeito algum.
+     */
+    const dentroDeAlgoQueRola = (el: Element, limite: Element) => {
+      for (let no: Element | null = el; no; no = no.parentElement) {
+        const ox = getComputedStyle(no).overflowX;
+        if (ox === "auto" || ox === "scroll") return true;
+        if (no === limite) break;
+      }
+      return false;
+    };
+
     // `.bg-card` é a assinatura do componente `Card` — a "caixa" do requisito.
     for (const caixa of Array.from(document.querySelectorAll(".bg-card"))) {
       const r = caixa.getBoundingClientRect();
@@ -65,10 +84,7 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
       for (const filho of Array.from(caixa.querySelectorAll("*"))) {
         const f = filho.getBoundingClientRect();
         if (f.width === 0 && f.height === 0) continue;
-        // Elemento com rolagem própria (tabela larga) é decisão de layout, não
-        // vazamento: o que ele contém fica dentro dele.
-        const estilo = getComputedStyle(filho);
-        if (estilo.overflowX === "auto" || estilo.overflowX === "scroll") continue;
+        if (dentroDeAlgoQueRola(filho, caixa)) continue;
 
         const excesso = Math.max(f.right - r.right, r.left - f.left);
         if (excesso > TOLERANCIA) {

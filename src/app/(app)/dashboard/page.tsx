@@ -77,22 +77,13 @@ export default async function DashboardPage() {
               <Link
                 key={aviso.tipo}
                 href={aviso.href}
-                className="flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50"
+                className="flex flex-col gap-1 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
               >
-                <span className="flex min-w-0 items-center gap-2">
-                  <AlertTriangle className="size-4 shrink-0 text-warning" />
-                  {/*
-                    `min-w-0` no PRÓPRIO elemento que trunca, não só no pai.
-                    `truncate` inclui `white-space: nowrap`, e como item flex ele
-                    tem `min-width: auto` — ou seja, se recusa a encolher abaixo
-                    do texto inteiro, e quem cede é a página, que passa a rolar
-                    de lado no celular. Era a causa de 29px de estouro aqui.
-                  */}
-                  <span className="min-w-0 truncate">{aviso.label}</span>
+                <span className="flex min-w-0 items-start gap-2">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
+                  <span className="min-w-0 [overflow-wrap:anywhere]">{aviso.label}</span>
                 </span>
-                {/* `valorExibivel`: com o espaço quebrável, a menor largura que
-                    este trecho exige passa a ser o número, e não "R$ + número". */}
-                <span className="shrink-0 font-semibold tabular-nums">
+                <span className="shrink-0 self-end font-semibold tabular-nums sm:self-auto">
                   {valorExibivel(formatBRL(aviso.total))}
                 </span>
               </Link>

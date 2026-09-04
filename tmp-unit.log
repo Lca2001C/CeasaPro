@@ -1,0 +1,177 @@
+﻿
+> ceasapro@0.1.0 test
+> vitest run
+
+
+ RUN  v4.1.9 C:/Users/x19991860/Documents/Lucas/CeasaPro
+
+ ÔØ» tests/integration/despesas-fluxo.test.ts (32 tests | 2 failed) 861ms
+     ├ù quita com a data de hoje sem precisar do formul├írio 34ms
+     ├ù lista s├│ as pendentes com vencimento no passado 42ms
+{"level":30,"time":1788525301117,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301066a9mp2@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301117,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsajo0002rcg48ir3ocmr","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301155,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301122juwdu@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301155,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsal4000qrcg44ywcy4bg","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301187,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301157qknub@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301188,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsam0001ercg4qig3vnm2","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301223,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-178852530119146so7@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301224,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsan10022rcg4f3efnfwf","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301257,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-17885253012250ylni@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301257,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsany002qrcg4nj6d2nrt","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301309,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301267qfp4e@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301310,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsap6003ercg4ip7buf28","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301312,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301267qfp4e@teste-ceasapro.com.br"],"subject":"CeasaPro - Voce ja tem uma conta","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301312,"pid":48532,"hostname":"D10MASLA7930FF3","ip":"203.0.113.11","msg":"Cadastro em e-mail que j├í tem conta ÔÇö nada criado"}
+{"level":30,"time":1788525301342,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301313nxc0c@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301342,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsaqa0042rcg427vgkuxx","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301352,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsaqa0042rcg427vgkuxx","trialEndsAt":"2026-09-11T12:35:01.345Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525301385,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301354yiyq1@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301385,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsarf004rrcg4jnqytryp","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301395,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsarf004rrcg4jnqytryp","trialEndsAt":"2026-09-11T12:35:01.388Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525301436,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301400icqmx@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301436,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsasv005grcg4dpeje2sq","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301443,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsasv005grcg4dpeje2sq","trialEndsAt":"2026-09-11T12:35:01.438Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525301481,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301448syrbi@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301481,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsau50065rcg4jqlauoc0","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301518,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301487fgnrd@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301518,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsav5006trcg4rr37hl7p","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301525,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsav5006trcg4rr37hl7p","trialEndsAt":"2026-09-11T12:35:01.520Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525301562,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301535p8lhh@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301562,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsawg007ircg4qhrs8c0w","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301569,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsawg007ircg4qhrs8c0w","trialEndsAt":"2026-09-11T12:35:01.564Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525301599,"pid":48532,"hostname":"D10MASLA7930FF3","to":["cadastro-1788525301571i6jk8@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525301599,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsaxf0087rcg41ioputfl","ip":"203.0.113.10","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525301607,"pid":48532,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsaxf0087rcg41ioputfl","trialEndsAt":"2026-09-11T12:35:01.600Z","msg":"E-mail confirmado ÔÇö teste gr├ítis liberado"}
+{"level":30,"time":1788525302754,"pid":45744,"hostname":"D10MASLA7930FF3","to":["u-eg7g8w@teste.com"],"subject":"CeasaPro - Sua senha foi alterada","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525302810,"pid":45744,"hostname":"D10MASLA7930FF3","to":["u-rilh18@teste.com"],"subject":"CeasaPro - Sua senha foi alterada","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525302981,"pid":45744,"hostname":"D10MASLA7930FF3","to":["owner-g8bfkn@teste.com"],"subject":"Bem-vindo ao CeasaPro","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525304229,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxscwv0001rcxciznzxv3x@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304229,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxscwv0001rcxciznzxv3x","mpPaymentId":"mp-rev-1","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304270,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxscyz000drcxca5r93d7v@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304282,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxscyz000drcxca5r93d7v","mpPaymentId":"mp-rev-2","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304318,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd0c000prcxcz5qro04y@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304328,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd0c000prcxcz5qro04y","mpPaymentId":"mp-rev-3","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304364,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd1n0011rcxcobjyx4mi@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304375,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd1n0011rcxcobjyx4mi","mpPaymentId":"mp-rev-4","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304415,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd31001drcxckj0qxqxg@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304426,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd31001drcxckj0qxqxg","mpPaymentId":"mp-rev-5","mpStatus":"charged_back","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304463,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd4f001prcxc2q7f6rcb@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304474,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd4f001prcxc2q7f6rcb","mpPaymentId":"mp-rev-6","mpStatus":"charged_back","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304511,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd5q0021rcxcila6ptep@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304520,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd5q0021rcxcila6ptep","mpPaymentId":"mp-rev-7","mpStatus":"cancelled","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304553,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd6z002drcxcq65x8f4e@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525304565,"pid":31008,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsd6z002drcxcq65x8f4e","mpPaymentId":"mp-rev-8","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525304585,"pid":31008,"hostname":"D10MASLA7930FF3","to":["reversao-cmtmxsd6z002drcxcq65x8f4e@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525305560,"pid":16160,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsdyu000nrcgw343wgl9t","chargeId":"cmtmxsdza000trcgw86f8neec","motivo":"expirada","msg":"Cobran├ºa PIX anterior cancelada ÔÇö gerando nova"}
+{"level":30,"time":1788525305599,"pid":16160,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxse00000wrcgwfvh3mcvp","chargeId":"cmtmxse0i0012rcgwp8maivrx","motivo":"expirada","msg":"Cobran├ºa PIX anterior cancelada ÔÇö gerando nova"}
+{"level":30,"time":1788525305668,"pid":16160,"hostname":"D10MASLA7930FF3","to":["dono-0bxrz8@t.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525305709,"pid":16160,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxse2q001drcgwin4570j5","chargeId":"cmtmxse38001jrcgw0si6lpbw","motivo":"valor mudou","msg":"Cobran├ºa PIX anterior cancelada ÔÇö gerando nova"}
+{"level":30,"time":1788525305744,"pid":16160,"hostname":"D10MASLA7930FF3","to":["dono-1q2e5z@t.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525305780,"pid":16160,"hostname":"D10MASLA7930FF3","to":["dono-rt0nfj@t.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525305820,"pid":16160,"hostname":"D10MASLA7930FF3","to":["dono-brt76k@t.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525312831,"pid":7112,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsjk20000rchkf3thw7o8","chargeId":"cmtmxsjl40007rchk9zt2hi06","motivo":"expirada","msg":"Cobran├ºa PIX anterior cancelada ÔÇö gerando nova"}
+{"level":30,"time":1788525312856,"pid":7112,"hostname":"D10MASLA7930FF3","to":["billing-1788525312783@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525312883,"pid":7112,"hostname":"D10MASLA7930FF3","mpPaymentId":"mp-fantasma","msg":"Webhook: pagamento n├úo encontrado no banco"}
+{"level":30,"time":1788525313251,"pid":7112,"hostname":"D10MASLA7930FF3","to":["card-cmtmxsjng000erchki187t45x@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525313555,"pid":7112,"hostname":"D10MASLA7930FF3","to":["card-cmtmxsjxg000mrchk8mlbqtgb@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525313620,"pid":7112,"hostname":"D10MASLA7930FF3","to":["card-cmtmxsk6l0012rchkelbq04o0@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525313648,"pid":7112,"hostname":"D10MASLA7930FF3","to":["card-cmtmxsk7o001crchkfu8puxtl@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525313671,"pid":7112,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsk8l001krchkw0qq9bs3","mpPaymentId":"mpc-6","msg":"Cart├úo exigiu desafio 3DS"}
+{"level":30,"time":1788525313685,"pid":7112,"hostname":"D10MASLA7930FF3","to":["card-cmtmxsk8l001krchkw0qq9bs3@teste.com"],"subject":"CeasaPro - Pagamento confirmado (2026-09)","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525314511,"pid":49112,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxskv7000hrcw85zqkpw8l","chargeId":"cmtmxskvq000nrcw8lvdgz15b","motivo":"valor mudou","msg":"Cobran├ºa PIX anterior cancelada ÔÇö gerando nova"}
+{"level":50,"time":1788525314682,"pid":49112,"hostname":"D10MASLA7930FF3","mpPaymentId":"pago-wuipp8","err":"pagamento fora deste teste: pago-wuipp8","msg":"Falha ao reconciliar cobran├ºa"}
+{"level":50,"time":1788525314682,"pid":49112,"hostname":"D10MASLA7930FF3","mpPaymentId":"pago-cod-eg2ipe","err":"pagamento fora deste teste: pago-cod-eg2ipe","msg":"Falha ao reconciliar cobran├ºa"}
+{"level":40,"time":1788525314694,"pid":49112,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsl0n001rrcw84eprkz8d","mpPaymentId":"estorno-8ozp5l","mpStatus":"refunded","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":40,"time":1788525314724,"pid":49112,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsl1m0020rcw80dzy5qrw","mpPaymentId":"chargeback-g2yr3x","mpStatus":"charged_back","msg":"Pagamento revertido ÔÇö assinatura bloqueada e sess├Áes revogadas"}
+{"level":30,"time":1788525316166,"pid":41816,"hostname":"D10MASLA7930FF3","to":["dono-3hkylnko@teste.com"],"subject":"Bem-vindo ao CeasaPro","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525316208,"pid":41816,"hostname":"D10MASLA7930FF3","to":["publico-tpjuxcct@teste.com"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525316208,"pid":41816,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsm78000rrc9kmm25rua6","ip":null,"msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525316245,"pid":41816,"hostname":"D10MASLA7930FF3","to":["dup-317etize@teste.com"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525316245,"pid":41816,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsm8a001frc9k6lsyr78f","ip":null,"msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":30,"time":1788525316248,"pid":41816,"hostname":"D10MASLA7930FF3","to":["dup-317etize@teste.com"],"subject":"CeasaPro - Voce ja tem uma conta","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525316248,"pid":41816,"hostname":"D10MASLA7930FF3","ip":null,"msg":"Cadastro em e-mail que j├í tem conta ÔÇö nada criado"}
+{"level":50,"time":1788525316278,"pid":41816,"hostname":"D10MASLA7930FF3","err":"banco indisponivel","kind":"USER_CREATED","msg":"Falha ao gravar notificacao do admin"}
+{"level":30,"time":1788525316278,"pid":41816,"hostname":"D10MASLA7930FF3","to":["resiliente-cr8m83o3@teste.com"],"subject":"CeasaPro - Confirme seu e-mail","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525316278,"pid":41816,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxsm9a0023rc9k3a5wh8sf","ip":null,"msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":50,"time":1788525316381,"pid":41816,"hostname":"D10MASLA7930FF3","err":"timeout","msg":"Falha ao contar notificacoes nao lidas"}
+{"level":30,"time":1788525321418,"pid":32816,"hostname":"D10MASLA7930FF3","to":["lembrete-fiiys7@t.com"],"subject":"CeasaPro - Sua mensalidade vence em 2 dias","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525321441,"pid":32816,"hostname":"D10MASLA7930FF3","to":["lembrete-12be9k@t.com"],"subject":"CeasaPro - Sua mensalidade vence amanh├ú","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525321474,"pid":32816,"hostname":"D10MASLA7930FF3","to":["lembrete-5dswzi@t.com"],"subject":"CeasaPro - Sua mensalidade vence em 2 dias","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":30,"time":1788525321495,"pid":32816,"hostname":"D10MASLA7930FF3","to":["lembrete-5dswzi@t.com"],"subject":"CeasaPro - Sua mensalidade vence em 2 dias","msg":"[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)"}
+{"level":40,"time":1788525323673,"pid":44268,"hostname":"D10MASLA7930FF3","dataIds":["456"],"temRequestId":true,"variantesTestadas":2,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525323677,"pid":44268,"hostname":"D10MASLA7930FF3","ts":"1787226899","atrasoSegundos":301,"janelaSegundos":300,"msg":"Webhook Mercado Pago com timestamp fora da janela (replay ou rel├│gio dessincronizado)"}
+{"level":30,"time":1788525326125,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326132,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326136,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326139,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326146,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuh0001rcr89i3xw0tm","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326149,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326155,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326158,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326163,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":30,"time":1788525326171,"pid":30788,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxstuc0000rcr8jb83o5f8","msg":"Inscricao de push registrada"}
+{"level":40,"time":1788525328428,"pid":10064,"hostname":"D10MASLA7930FF3","dataIds":["1234567890"],"temRequestId":true,"variantesTestadas":2,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525328429,"pid":10064,"hostname":"D10MASLA7930FF3","dataIds":["1234567890"],"temRequestId":true,"variantesTestadas":2,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525328431,"pid":10064,"hostname":"D10MASLA7930FF3","dataIds":["1234567890","9999"],"temRequestId":true,"variantesTestadas":4,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525328432,"pid":10064,"hostname":"D10MASLA7930FF3","dataIds":["1234567890"],"temRequestId":true,"variantesTestadas":2,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","dataIds":["9999"],"temRequestId":true,"variantesTestadas":2,"msg":"Webhook Mercado Pago com assinatura inv├ílida ÔÇö confira se MERCADOPAGO_WEBHOOK_SECRET ├® a chave secreta DESTE webhook no painel do Mercado Pago"}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","ts":"1786449240","atrasoSegundos":360,"janelaSegundos":300,"msg":"Webhook Mercado Pago com timestamp fora da janela (replay ou rel├│gio dessincronizado)"}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","ts":"1786449960","atrasoSegundos":360,"janelaSegundos":300,"msg":"Webhook Mercado Pago com timestamp fora da janela (replay ou rel├│gio dessincronizado)"}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","ts":"abc","msg":"Webhook Mercado Pago com ts ileg├¡vel"}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","msg":"Webhook Mercado Pago sem cabe├ºalho x-signature ÔÇö a URL pode estar cadastrada em 'Notifica├º├Áes IPN' (legado, sem assinatura) em vez de 'Webhooks'."}
+{"level":40,"time":1788525328433,"pid":10064,"hostname":"D10MASLA7930FF3","temTs":false,"temV1":true,"msg":"x-signature em formato inesperado"}
+{"level":50,"time":1788525328434,"pid":10064,"hostname":"D10MASLA7930FF3","msg":"MERCADOPAGO_WEBHOOK_SECRET ausente em produ├º├úo ÔÇö webhook rejeitado."}
+{"level":40,"time":1788525328434,"pid":10064,"hostname":"D10MASLA7930FF3","msg":"MERCADOPAGO_WEBHOOK_SECRET ausente ÔÇö pulando verifica├º├úo (apenas dev)."}
+node.exe : 
+No linha:1 caractere:1
++ & "C:\Program Files\nodejs/node.exe" "C:\Program Files\nodejs/node_mo ...
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ» Failed Tests 2 ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»
+
+ FAIL  tests/integration/despesas-fluxo.test.ts > Marcar como pago em um toque > quita com a data de hoje sem precisar 
+do formul├írio
+AssertionError: expected '2026-09-04' to be '2026-09-03' // Object.is equality
+
+Expected: "2026-09-03"
+Received: "2026-09-04"
+
+ ÔØ» tests/integration/despesas-fluxo.test.ts:60:39
+     58|     expect(pago.status).toBe("PAGO");
+     59|     expect(pago.paidDate).not.toBeNull();
+     60|     expect(isoDateTz(pago.paidDate!)).toBe(hoje);
+       |                                       ^
+     61|   });
+     62|
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[1/2]ÔÄ»
+
+ FAIL  tests/integration/despesas-fluxo.test.ts > Filtro de vencidas > lista s├│ as pendentes com vencimento no passado
+AssertionError: expected [ 'cmtmxs9bw000jrcj0v7boyev6', ÔÇª(1) ] to deeply equal [ 'cmtmxs9bw000jrcj0v7boyev6' ]
+
+- Expected
++ Received
+
+  [
+    "cmtmxs9bw000jrcj0v7boyev6",
++   "cmtmxs9c3000mrcj0szacp8af",
+  ]
+
+ ÔØ» tests/integration/despesas-fluxo.test.ts:97:36
+     95|
+     96|     const lista = await DespesasService.list(tenantId, { vencidas: truÔÇª
+     97|     expect(lista.map((d) => d.id)).toEqual([vencida.id]);
+       |                                    ^
+     98|
+     99|     // Conta que vence HOJE n├úo est├í vencida, e paga com atraso j├í foiÔÇª
+
+ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»ÔÄ»[2/2]ÔÄ»
+
+
+ Test Files  1 failed | 66 passed (67)
+      Tests  2 failed | 722 passed (724)
+   Start at  09:34:56
+   Duration  44.80s (transform 3.18s, setup 2.17s, import 14.75s, tests 11.60s, environment 5ms)
+

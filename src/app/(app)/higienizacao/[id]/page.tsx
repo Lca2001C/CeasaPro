@@ -48,39 +48,39 @@ export default async function HigienizacaoDetailPage({
 
       <Card>
         <CardContent className="grid grid-cols-2 gap-3 pt-4 text-sm sm:grid-cols-4">
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Enviadas</span>
             <span className="font-semibold tabular-nums">{c.sentQty}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Devolvidas</span>
             <span className="font-semibold tabular-nums">{c.returnedQty}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Caixas a receber</span>
             <span className="font-semibold tabular-nums text-warning">{c.caixasAReceber}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Valor por caixa</span>
-            <span className="font-semibold tabular-nums">{formatBRL(c.unitPrice)}</span>
+            <span className="font-semibold tabular-nums [overflow-wrap:anywhere]">{formatBRL(c.unitPrice)}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Valor total</span>
-            <span className="font-semibold tabular-nums">{formatBRL(c.totalAmount)}</span>
+            <span className="font-semibold tabular-nums [overflow-wrap:anywhere]">{formatBRL(c.totalAmount)}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Pago</span>
-            <span className="font-semibold tabular-nums text-success">
+            <span className="font-semibold tabular-nums text-success [overflow-wrap:anywhere]">
               {formatBRL(c.paidAmount)}
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">A pagar</span>
-            <span className="font-semibold tabular-nums text-destructive">
+            <span className="font-semibold tabular-nums text-destructive [overflow-wrap:anywhere]">
               {formatBRL(c.valorAPagar)}
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Última devolução</span>
             <span className="font-semibold">{formatDate(c.returnedDate)}</span>
           </div>

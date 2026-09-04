@@ -484,7 +484,7 @@ export function Pdv({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-4 pb-[11rem] [&>*]:scroll-mb-[11rem] md:pb-0 md:[&>*]:scroll-mb-0">
       <h1 className="text-xl font-bold">Frente de caixa</h1>
 
       {/* Sem internet a venda NÃO é registrada — decisão de produto, por causa
@@ -657,7 +657,12 @@ export function Pdv({
 
                 {/* Rótulos explícitos: sem eles é fácil digitar o preço no campo
                     da quantidade e só perceber no total. */}
-                <div className="mt-2 grid grid-cols-[auto_1fr_6rem] items-end gap-2">
+                {/* No celular os três campos empilham. Quantidade + preço + total
+                    lado a lado pedem ~272px e o cartão tem ~264px num aparelho
+                    de 320px: o "Preço da unidade" quebrava em duas linhas e o
+                    campo de moeda ficava estreito demais para "R$ 1.234,56".
+                    Do `sm` para cima os três cabem numa linha — menos rolagem. */}
+                <div className="mt-2 flex flex-col gap-3 sm:grid sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-end sm:gap-3">
                   <div className="flex flex-col gap-1">
                     <span className="text-[11px] text-muted-foreground">
                       Quantidade{unidadeDe(i.saleUnit) ? ` (${unidadeDe(i.saleUnit)})` : ""}
@@ -665,7 +670,7 @@ export function Pdv({
                     {ehPeso(i.saleUnit) ? (
                       // Peso: ±1 kg não serve. Tomate sai a 2,350 kg, e o campo
                       // decimal é o único jeito de registrar isso sem arredondar.
-                      <div className="w-28">
+                      <div className="w-full max-w-40">
                         <QuantityInput
                           value={i.quantity}
                           onChange={(v) => updateItem(i.productId, { quantity: v ?? 0 })}
@@ -678,7 +683,7 @@ export function Pdv({
                           type="button"
                           variant="outline"
                           size="icon"
-                          className="size-11"
+                          className="size-11 shrink-0"
                           aria-label="Diminuir quantidade"
                           onClick={() =>
                             updateItem(i.productId, {
@@ -695,7 +700,7 @@ export function Pdv({
                           min={0}
                           step="any"
                           aria-label={`Quantidade de ${i.name}`}
-                          className="h-11 w-16 px-1 text-center tabular-nums"
+                          className="h-11 min-w-0 flex-1 px-1 text-center tabular-nums sm:w-16 sm:flex-none"
                           value={i.quantity}
                           onChange={(e) =>
                             updateItem(i.productId, { quantity: Number(e.target.value) || 0 })
@@ -705,7 +710,7 @@ export function Pdv({
                           type="button"
                           variant="outline"
                           size="icon"
-                          className="size-11"
+                          className="size-11 shrink-0"
                           aria-label="Aumentar quantidade"
                           onClick={() =>
                             updateItem(i.productId, { quantity: arredonda(i.quantity + 1) })
@@ -716,7 +721,7 @@ export function Pdv({
                       </div>
                     )}
                   </div>
-                  <div className="flex flex-col gap-1">
+                  <div className="flex min-w-0 flex-col gap-1">
                     <span className="text-[11px] text-muted-foreground">Preço da unidade</span>
                     <CurrencyInput
                       value={i.unitPrice}
@@ -724,14 +729,18 @@ export function Pdv({
                       aria-label={`Preço de ${i.name}`}
                     />
                   </div>
-                  <div className="flex flex-col gap-1 text-right">
+                  <div className="flex items-baseline justify-between gap-2 sm:flex-col sm:items-end sm:justify-end sm:text-right">
                     <span className="text-[11px] text-muted-foreground">Total</span>
-                    <span className="font-semibold tabular-nums">{formatBRL(liquido)}</span>
-                    {i.discountAmount > 0 && (
-                      <span className="text-[11px] text-muted-foreground line-through">
-                        {formatBRL(bruto)}
+                    <span className="text-right">
+                      <span className="text-lg font-semibold tabular-nums sm:text-base">
+                        {formatBRL(liquido)}
                       </span>
-                    )}
+                      {i.discountAmount > 0 && (
+                        <span className="block text-[11px] text-muted-foreground line-through">
+                          {formatBRL(bruto)}
+                        </span>
+                      )}
+                    </span>
                   </div>
                 </div>
 
@@ -871,7 +880,11 @@ export function Pdv({
                     {descontoTipo === "valor" ? "Valor" : "Percentual"}
                   </span>
                   {descontoTipo === "valor" ? (
-                    <CurrencyInput value={descontoValor} onChange={setDescontoValor} />
+                    <CurrencyInput
+                      value={descontoValor}
+                      onChange={setDescontoValor}
+                      aria-label="Valor do desconto"
+                    />
                   ) : (
                     <Input
                       type="number"
@@ -902,14 +915,14 @@ export function Pdv({
       {/* Pagamento */}
       {!dividido ? (
         <div className="flex flex-col gap-2">
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
             {PAYMENTS.map((p) => (
               <Button
                 key={p.value}
                 type="button"
                 variant={payment === p.value ? "default" : "outline"}
                 onClick={() => setPayment(p.value)}
-                className="h-12"
+                className="h-12 px-2"
               >
                 {p.label}
               </Button>
@@ -930,8 +943,8 @@ export function Pdv({
             </Button>
           </div>
           {parcelas.map((p, idx) => (
-            <div key={idx} className="flex items-end gap-2">
-              <div className="flex-1">
+            <div key={idx} className="flex flex-col gap-2 sm:flex-row sm:items-end">
+              <div className="min-w-0 flex-1">
                 <Select
                   value={p.method}
                   onChange={(e) => setParcela(idx, { method: e.target.value as Parcela["method"] })}
@@ -944,22 +957,25 @@ export function Pdv({
                   ))}
                 </Select>
               </div>
-              <div className="w-32">
-                <CurrencyInput
-                  value={p.amount}
-                  onChange={(v) => setParcela(idx, { amount: v ?? 0 })}
-                />
+              <div className="flex items-end gap-2">
+                <div className="min-w-0 flex-1 sm:w-32 sm:flex-none">
+                  <CurrencyInput
+                    value={p.amount}
+                    onChange={(v) => setParcela(idx, { amount: v ?? 0 })}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  className="shrink-0"
+                  aria-label="Remover forma de pagamento"
+                  onClick={() => removeParcela(idx)}
+                  disabled={parcelas.length === 1}
+                >
+                  <Trash2 className="size-4 text-destructive" />
+                </Button>
               </div>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon"
-                aria-label="Remover forma de pagamento"
-                onClick={() => removeParcela(idx)}
-                disabled={parcelas.length === 1}
-              >
-                <Trash2 className="size-4 text-destructive" />
-              </Button>
             </div>
           ))}
           <div className="flex items-center justify-between gap-2">
@@ -1083,8 +1099,12 @@ export function Pdv({
         </div>
       )}
 
-      {/* Total + finalizar (rodapé fixo no mobile) */}
-      <div className="sticky bottom-16 z-10 mt-2 rounded-lg border bg-background p-3 shadow-lg md:bottom-0">
+      {/* Total + finalizar.
+          No celular é `fixed` (não `sticky`): `sticky` deixa os últimos campos
+          — desconto, pagamento — passarem por baixo da barra enquanto o
+          operador ainda está preenchendo. O recuo `pb-[11rem]` no casco da
+          tela reserva o espaço. No desktop a barra volta para o fluxo. */}
+      <div className="fixed inset-x-4 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-30 mt-2 rounded-lg border bg-background p-3 shadow-lg md:static md:inset-auto md:bottom-auto md:z-10">
         {semEstoque.length > 0 && (
           // Aviso ANTES do clique. A validação de verdade continua no servidor;
           // aqui o objetivo é o operador não descobrir a falta com o cliente na
@@ -1102,8 +1122,8 @@ export function Pdv({
           </div>
         )}
 
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="min-w-0 truncate text-sm text-muted-foreground">
+        <div className="mb-2 flex items-end justify-between gap-3">
+          <span className="min-w-0 text-sm text-muted-foreground">
             {customer.trim() ? (
               <>
                 Vendendo para <b className="text-foreground">{customer.trim()}</b>
@@ -1111,7 +1131,11 @@ export function Pdv({
             ) : (
               "Venda avulsa"
             )}
-            {cart.length > 0 && ` · ${cart.length} produto(s)`}
+            {cart.length > 0 && (
+              <span className="block text-xs">
+                {cart.length} {cart.length === 1 ? "produto" : "produtos"}
+              </span>
+            )}
           </span>
           <span className="shrink-0 text-right">
             {descontoTotal > 0 && (

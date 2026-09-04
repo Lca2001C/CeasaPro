@@ -56,16 +56,16 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
             className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
           >
             <div className="min-w-0">
-              <div className="flex items-baseline gap-2">
-                <p className="font-semibold">{plan.name}</p>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="min-w-0 font-semibold [overflow-wrap:anywhere]">{plan.name}</p>
                 <span className="text-sm text-muted-foreground">
                   {formatBRL(plan.priceMonthly)}/mês
                 </span>
               </div>
-              <p className="mt-0.5 text-xs text-muted-foreground">
+              <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
                 {plan.modules.length > 0
-                  ? ` · Inclui: ${plan.modules.join(", ")}`
-                  : " · Somente recursos básicos"}
+                  ? `Inclui: ${plan.modules.join(", ")}`
+                  : "Somente recursos básicos"}
               </p>
             </div>
             <Button

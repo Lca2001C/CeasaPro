@@ -56,19 +56,19 @@ export default async function MeuPlanoPage({
       )}
 
       <Card>
-        <CardContent className="flex items-center justify-between pt-4">
-          <div className="flex items-center gap-3">
-            <BadgeCheck className="size-8 text-primary" />
-            <div>
-              <p className="font-semibold">{view.planName}</p>
-              <p className="text-sm text-muted-foreground">
+        <CardContent className="flex items-start justify-between gap-3 pt-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <BadgeCheck className="size-8 shrink-0 text-primary" />
+            <div className="min-w-0">
+              <p className="font-semibold [overflow-wrap:anywhere]">{view.planName}</p>
+              <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
                 {SUBSCRIPTION_STATUS_LABELS[view.status] ?? view.status} ·{" "}
                 {formatBRL(view.priceMonthly as number)}/mês
                 {view.currentPeriodEnd ? ` · vence ${formatDate(view.currentPeriodEnd)}` : ""}
               </p>
             </div>
           </div>
-          <Button asChild size="sm">
+          <Button asChild size="sm" className="shrink-0">
             <Link href="/assinatura">Assinatura</Link>
           </Button>
         </CardContent>
@@ -91,11 +91,11 @@ export default async function MeuPlanoPage({
               >
                 {m.enabled ? <Check className="size-3.5" /> : <X className="size-3.5" />}
               </span>
-              <div>
-                <p className={cn("text-sm font-medium", !m.enabled && "text-muted-foreground")}>
+              <div className="min-w-0">
+                <p className={cn("text-sm font-medium [overflow-wrap:anywhere]", !m.enabled && "text-muted-foreground")}>
                   {m.label}
                 </p>
-                <p className="text-xs text-muted-foreground">{m.description}</p>
+                <p className="text-xs text-muted-foreground [overflow-wrap:anywhere]">{m.description}</p>
               </div>
             </div>
           ))}

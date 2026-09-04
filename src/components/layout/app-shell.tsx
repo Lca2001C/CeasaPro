@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { LogOut, ShieldCheck } from "lucide-react";
+import { usePathname } from "next/navigation";
 import { BottomNav } from "./bottom-nav";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
@@ -35,6 +36,9 @@ export function AppShell({
   showInstallPrompt = false,
   children,
 }: Props) {
+  const pathname = usePathname();
+  // Na frente de caixa o botão de WhatsApp cobria o "Finalizar venda".
+  const mostrarSuporte = !pathname.startsWith("/vendas/nova");
   return (
     <div className="flex min-h-screen">
       <SideNav modules={modules} />
@@ -110,7 +114,7 @@ export function AppShell({
         </main>
 
         <InstallPrompt autoOpen={showInstallPrompt} />
-        <SupportButton companyName={companyName} />
+        {mostrarSuporte && <SupportButton companyName={companyName} />}
         <BottomNav modules={modules} />
 
         {/*

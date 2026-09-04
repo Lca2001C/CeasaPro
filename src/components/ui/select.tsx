@@ -11,7 +11,7 @@ const Select = React.forwardRef<
   React.SelectHTMLAttributes<HTMLSelectElement>
 >(({ className, children, ...props }, ref) => {
   return (
-    <div className="relative">
+    <div className="relative w-full min-w-0">
       <select
         ref={ref}
         className={cn(

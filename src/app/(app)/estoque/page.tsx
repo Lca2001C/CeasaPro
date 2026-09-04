@@ -161,13 +161,13 @@ export default async function EstoquePage({
 
                 {/* Três leituras: quanto tem, quanto custou, quanto vale. */}
                 <div className="mt-2 grid grid-cols-3 gap-2 text-center">
-                  <div>
+                  <div className="min-w-0">
                     <span className="block text-[11px] uppercase tracking-wide text-muted-foreground">
                       Quantidade
                     </span>
                     <span
                       className={cn(
-                        "text-lg font-bold tabular-nums",
+                        "text-lg font-bold tabular-nums [overflow-wrap:anywhere]",
                         nivel === "acabando" && "text-warning",
                         nivel === "zerado" && "text-muted-foreground",
                       )}
@@ -178,11 +178,11 @@ export default async function EstoquePage({
                       <span className="block text-[11px] text-muted-foreground">{unidade}</span>
                     )}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="block text-[11px] uppercase tracking-wide text-muted-foreground">
                       Custo médio
                     </span>
-                    <span className="text-sm font-medium tabular-nums">
+                    <span className="text-sm font-medium tabular-nums [overflow-wrap:anywhere]">
                       {formatBRL(p.avgCost)}
                     </span>
                     {unidade && (
@@ -191,11 +191,11 @@ export default async function EstoquePage({
                       </span>
                     )}
                   </div>
-                  <div>
+                  <div className="min-w-0">
                     <span className="block text-[11px] uppercase tracking-wide text-muted-foreground">
                       Valor
                     </span>
-                    <span className="text-sm font-semibold tabular-nums">
+                    <span className="text-sm font-semibold tabular-nums [overflow-wrap:anywhere]">
                       {formatBRL(p.value)}
                     </span>
                   </div>

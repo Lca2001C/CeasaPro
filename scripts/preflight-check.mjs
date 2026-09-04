@@ -195,6 +195,31 @@ function checkEnv() {
     else ok(`${rule.name} — ${rule.description}`);
   }
 
+
+  // Flags que ABREM uma exceção de segurança. Nenhum é exigido, e o padrão de
+  // ambos é o seguro — o risco é ligar para depurar e esquecer de desligar.
+  // Nada no sistema avisava: o cookie de sessão simplesmente perdia o `Secure`,
+  // e o CSP simplesmente deixava de bloquear.
+  const FLAGS_PERIGOSOS = [
+    {
+      name: "ALLOW_INSECURE_COOKIES",
+      efeito:
+        "o cookie de sessão é gravado SEM `Secure` — qualquer rede no caminho lê a sessão",
+      porque: "existe para testar na LAN por IP (http://192.168.x.x), onde o navegador não considera a origem segura",
+    },
+    {
+      name: "CSP_REPORT_ONLY",
+      efeito: "o Content-Security-Policy é publicado mas NÃO é aplicado — XSS deixa de ser bloqueado",
+      porque: "existe para observar violações antes de endurecer uma diretiva",
+    },
+  ];
+  for (const flag of FLAGS_PERIGOSOS) {
+    if (process.env[flag.name] !== "1") continue;
+    const msg = `${flag.name}=1 — ${flag.efeito}. ${flag.porque}.`;
+    if (isProd) fail(`${msg} NÃO pode ficar ligado em produção.`);
+    else advise(msg);
+  }
+
   // Nomes antigos deixados para trás na migração: se ainda estiverem no
   // ambiente, alguém provavelmente esqueceu de atualizar a Vercel/o CI.
   const RENAMED = {

@@ -1,0 +1,13 @@
+﻿
+> ceasapro@0.1.0 start
+> next start --hostname 0.0.0.0
+
+Ôû▓ Next.js 16.3.3
+- Local:         http://localhost:3000
+- Network:       http://0.0.0.0:3000
+Ô£ô Ready in 1232ms
+Ô£ô Running next.config.ts took 110ms
+{"level":50,"time":1788525479400,"pid":44340,"hostname":"D10MASLA7930FF3","err":"Connection timeout","code":"ETIMEDOUT","to":["lead-17885254475227ce0@teste-ceasapro.com.br"],"subject":"CeasaPro - Confirme seu e-mail","attempt":3,"msg":"Falha ao enviar e-mail"}
+{"level":50,"time":1788525479402,"pid":44340,"hostname":"D10MASLA7930FF3","err":"Connection timeout","tenantId":"cmtmxvg4a0003rc7opx7gw5d9","msg":"Falha ao enviar e-mail de confirma├º├úo"}
+{"level":30,"time":1788525479402,"pid":44340,"hostname":"D10MASLA7930FF3","tenantId":"cmtmxvg4a0003rc7opx7gw5d9","ip":"127.0.0.1","msg":"Cadastro p├║blico criado, aguardando confirma├º├úo"}
+{"level":50,"time":1788525481635,"pid":44340,"hostname":"D10MASLA7930FF3","err":"Connection timeout","code":"ETIMEDOUT","to":["painel-17885254475227ce0@teste-ceasapro.com.br"],"subject":"Bem-vindo ao CeasaPro","attempt":3,"msg":"Falha ao enviar e-mail"}

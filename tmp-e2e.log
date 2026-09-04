@@ -1,0 +1,24 @@
+﻿
+[e2e] setup ok ÔÇö tenant demo + produto 'Tomate E2E' com estoque.
+
+Running 92 tests using 1 worker
+
+(node:11336) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  1 [setup] ÔÇ║ tests\e2e\auth.setup.ts:6:6 ÔÇ║ autenticar como empresa demo (2.5s)
+(node:20152) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  2 [public] ÔÇ║ tests\e2e\auth.spec.ts:5:7 ÔÇ║ Autentica├º├úo e prote├º├úo de rotas ÔÇ║ rota protegida sem login 
+redireciona para /login (597ms)
+  ok  3 [public] ÔÇ║ tests\e2e\auth.spec.ts:11:7 ÔÇ║ Autentica├º├úo e prote├º├úo de rotas ÔÇ║ credenciais inv├ílidas 
+mostram erro e n├úo entram (722ms)
+  ok  4 [public] ÔÇ║ tests\e2e\auth.spec.ts:24:7 ÔÇ║ Esqueci minha senha ÔÇ║ do login at├® a confirma├º├úo de envio 
+(854ms)
+  ok  5 [public] ÔÇ║ tests\e2e\auth.spec.ts:39:7 ÔÇ║ Esqueci minha senha ÔÇ║ link inv├ílido n├úo mostra formul├írio de 
+senha (527ms)
+(node:44952) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  6 [authed] ÔÇ║ tests\e2e\admin-painel.spec.ts:185:7 ÔÇ║ Notifica├º├Áes do painel ÔÇ║ cadastro pelo site chega na 
+campainha e pode ser marcado como lido (1.6s)
+  x   7 [authed] ÔÇ║ tests\e2e\admin-painel.spec.ts:229:7 ÔÇ║ Notifica├º├Áes do painel ÔÇ║ empresa cadastrada pelo 
+painel tamb├®m vira aviso (11.3s)
+(node:46500) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  8 [authed] ÔÇ║ tests\e2e\admin-painel.spec.ts:273:7 ÔÇ║ Acompanhamento de usu├írios ÔÇ║ mostra quem est├í online 
+e como est├í o pagamento de cada empresa (922ms)

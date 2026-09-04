@@ -1,0 +1,91 @@
+﻿
+[e2e] setup ok ÔÇö tenant demo + produto 'Tomate E2E' com estoque.
+
+Running 40 tests using 1 worker
+
+(node:8948) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  1 [setup] ÔÇ║ tests\e2e\auth.setup.ts:6:6 ÔÇ║ autenticar como empresa demo (3.8s)
+(node:38532) Warning: The 'NO_COLOR' env is ignored due to the 'FORCE_COLOR' env being set.
+  ok  2 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:87:7 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ o 
+valor extremo aparece INTEIRO e dentro da caixa (934ms)
+  ok  3 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:106:7 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ o 
+sinal de negativo n├úo fica sozinho numa linha (927ms)
+  ok  4 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+In├¡cio: nada vaza dos cart├Áes (1.0s)
+  ok  5 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Despesas: nada vaza dos cart├Áes (1.1s)
+  ok  6 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Estoque: nada vaza dos cart├Áes (998ms)
+  ok  7 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Fiado: nada vaza dos cart├Áes (969ms)
+  ok  8 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Embalagens: nada vaza dos cart├Áes (1.0s)
+  ok  9 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Caixas pl├ísticas: nada vaza dos cart├Áes (987ms)
+  ok 10 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ 
+Higieniza├º├úo: nada vaza dos cart├Áes (941ms)
+  ok 11 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:140:9 ÔÇ║ Cart├Áes de n├║mero ÔÇö tela estreita (320px) ÔÇ║ Meu 
+plano: nada vaza dos cart├Áes (1.0s)
+  ok 12 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Vendas (hist├│rico): 
+n├úo rola de lado nem vaza (690ms)
+  ok 13 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Produtos: n├úo rola 
+de lado nem vaza (662ms)
+  ok 14 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Compras: n├úo rola 
+de lado nem vaza (671ms)
+  ok 15 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Fornecedores: n├úo 
+rola de lado nem vaza (642ms)
+  ok 16 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Relat├│rios: n├úo 
+rola de lado nem vaza (675ms)
+  ok 17 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Relat├│rio de 
+vendas: n├úo rola de lado nem vaza (704ms)
+  ok 18 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Categorias de 
+despesa: n├úo rola de lado nem vaza (672ms)
+  ok 19 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Nova despesa: n├úo 
+rola de lado nem vaza (714ms)
+  ok 20 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Novo fiado: n├úo 
+rola de lado nem vaza (742ms)
+  ok 21 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Configura├º├Áes: 
+n├úo rola de lado nem vaza (699ms)
+  ok 22 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Como usar: n├úo rola 
+de lado nem vaza (689ms)
+  ok 23 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Frente de caixa 
+(carrinho vazio): n├úo rola de lado nem vaza (708ms)
+  ok 24 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Novo produto: n├úo 
+rola de lado nem vaza (702ms)
+  ok 25 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Nova compra: n├úo 
+rola de lado nem vaza (703ms)
+  ok 26 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Novo fornecedor: 
+n├úo rola de lado nem vaza (681ms)
+  ok 27 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Ajuste de estoque: 
+n├úo rola de lado nem vaza (654ms)
+  ok 28 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Nova embalagem: n├úo 
+rola de lado nem vaza (725ms)
+  ok 29 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Nova movimenta├º├úo 
+de caixas: n├úo rola de lado nem vaza (706ms)
+  ok 30 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:198:9 ÔÇ║ Telas em tela estreita (320px) ÔÇ║ Nova higieniza├º├úo: 
+n├úo rola de lado nem vaza (688ms)
+  ok 31 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:239:7 ÔÇ║ Frente de caixa em tela estreita (320px) ÔÇ║ o item do 
+carrinho cabe na tela, com pre├ºo de 4 d├¡gitos (767ms)
+  ok 32 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:247:7 ÔÇ║ Frente de caixa em tela estreita (320px) ÔÇ║ o campo de 
+pre├ºo fica largo o bastante para o valor aparecer (753ms)
+  ok 33 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:259:7 ÔÇ║ Frente de caixa em tela estreita (320px) ÔÇ║ vasilhame 
+e desconto por item tamb├®m cabem (834ms)
+  ok 34 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:268:7 ÔÇ║ Frente de caixa em tela estreita (320px) ÔÇ║ as quatro 
+formas de pagamento cabem lado a lado (857ms)
+  ok 35 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:283:7 ÔÇ║ Frente de caixa em tela estreita (320px) ÔÇ║ o 
+pagamento dividido cabe na tela (867ms)
+  ok 36 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:345:9 ÔÇ║ Telas de detalhe em tela estreita (320px) ÔÇ║ Detalhe 
+do produto: n├úo rola de lado nem vaza (679ms)
+  -  37 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:345:9 ÔÇ║ Telas de detalhe em tela estreita (320px) ÔÇ║ Detalhe 
+do fornecedor: n├úo rola de lado nem vaza
+  ok 38 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:345:9 ÔÇ║ Telas de detalhe em tela estreita (320px) ÔÇ║ Detalhe 
+da despesa: n├úo rola de lado nem vaza (684ms)
+  -  39 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:345:9 ÔÇ║ Telas de detalhe em tela estreita (320px) ÔÇ║ Detalhe 
+do fiado: n├úo rola de lado nem vaza
+  ok 40 [authed] ÔÇ║ tests\e2e\layout-caixas.spec.ts:345:9 ÔÇ║ Telas de detalhe em tela estreita (320px) ÔÇ║ Detalhe 
+da venda: n├úo rola de lado nem vaza (661ms)
+
+  2 skipped
+  38 passed (43.2s)
+
+

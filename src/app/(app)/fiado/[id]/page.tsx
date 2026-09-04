@@ -45,19 +45,19 @@ export default async function FiadoDetailPage({
 
       <Card>
         <CardContent className="grid grid-cols-3 gap-2 pt-4 text-center">
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Total</span>
-            <span className="font-semibold tabular-nums">{formatBRL(conta.totalAmount)}</span>
+            <span className="font-semibold tabular-nums [overflow-wrap:anywhere]">{formatBRL(conta.totalAmount)}</span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Pago</span>
-            <span className="font-semibold tabular-nums text-success">
+            <span className="font-semibold tabular-nums text-success [overflow-wrap:anywhere]">
               {formatBRL(conta.paidAmount)}
             </span>
           </div>
-          <div>
+          <div className="min-w-0">
             <span className="block text-xs text-muted-foreground">Saldo</span>
-            <span className="font-semibold tabular-nums text-warning">
+            <span className="font-semibold tabular-nums text-warning [overflow-wrap:anywhere]">
               {formatBRL(conta.saldo)}
             </span>
           </div>
