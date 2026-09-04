@@ -18,24 +18,25 @@ import { iniciarTour } from "@/lib/tour/estado";
  * Um botão só, com as duas saídas: a página de uso (leitura) e o tour (mostrar
  * as telas). Começar o tour daqui é o mesmo `iniciarTour` do convite do Início
  * e do botão dentro de `/ajuda`.
+ *
+ * Aberto/fechado é derivado da rota: guardar um boolean e zerá-lo num efeito
+ * quando a URL muda viola `react-hooks/set-state-in-effect` (o lint do CI).
+ * Guardar em *qual rota* o menu foi aberto faz a navegação fechá-lo sozinha.
  */
 export function BotaoTutorial() {
-  const [aberto, setAberto] = useState(false);
+  const pathname = usePathname();
+  const [rotaDoMenu, setRotaDoMenu] = useState<string | null>(null);
+  const aberto = rotaDoMenu === pathname;
   const raiz = useRef<HTMLDivElement>(null);
   const menuId = useId();
-  const pathname = usePathname();
-
-  useEffect(() => {
-    setAberto(false);
-  }, [pathname]);
 
   useEffect(() => {
     if (!aberto) return;
     function fora(e: MouseEvent) {
-      if (!raiz.current?.contains(e.target as Node)) setAberto(false);
+      if (!raiz.current?.contains(e.target as Node)) setRotaDoMenu(null);
     }
     function esc(e: KeyboardEvent) {
-      if (e.key === "Escape") setAberto(false);
+      if (e.key === "Escape") setRotaDoMenu(null);
     }
     document.addEventListener("mousedown", fora);
     document.addEventListener("keydown", esc);
@@ -56,7 +57,7 @@ export function BotaoTutorial() {
         aria-expanded={aberto}
         aria-haspopup="menu"
         aria-controls={menuId}
-        onClick={() => setAberto((v) => !v)}
+        onClick={() => setRotaDoMenu((atual) => (atual === pathname ? null : pathname))}
       >
         <span className="flex size-5 items-center justify-center rounded-full bg-primary text-primary-foreground [&_svg]:size-2.5">
           <Play className="fill-current" />
@@ -73,7 +74,7 @@ export function BotaoTutorial() {
             role="menuitem"
             href="/ajuda"
             className="flex items-center gap-2 rounded-sm px-3 py-2 text-sm hover:bg-accent"
-            onClick={() => setAberto(false)}
+            onClick={() => setRotaDoMenu(null)}
           >
             <BookOpen className="size-4 shrink-0 text-primary" />
             Página de uso
@@ -83,7 +84,7 @@ export function BotaoTutorial() {
             role="menuitem"
             className="flex w-full items-center gap-2 rounded-sm px-3 py-2 text-left text-sm hover:bg-accent"
             onClick={() => {
-              setAberto(false);
+              setRotaDoMenu(null);
               iniciarTour();
             }}
           >
