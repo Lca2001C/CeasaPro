@@ -18,9 +18,11 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
+  LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
+import { encerrarSessao } from "@/lib/session-nav";
 
 const items = [
   { href: "/dashboard", label: "Início", icon: Home },
@@ -45,7 +47,17 @@ const items = [
 ];
 
 /** Barra lateral fixa no desktop (>= md). No mobile usa-se a BottomNav. */
-export function SideNav({ modules }: { modules?: string[] }) {
+export function SideNav({
+  modules,
+  companyName,
+  userName,
+  trialLabel,
+}: {
+  modules?: string[];
+  companyName?: string;
+  userName?: string;
+  trialLabel?: string | null;
+}) {
   const pathname = usePathname();
   const isActive = (href: string) =>
     pathname === href || pathname.startsWith(href + "/");
@@ -57,7 +69,7 @@ export function SideNav({ modules }: { modules?: string[] }) {
     <aside
       // Âncora do tour guiado; a barra de baixo tem a dela. Ver `nav-mobile`.
       data-tour="nav-desktop"
-      className="hidden w-60 shrink-0 border-r md:block"
+      className="hidden w-60 shrink-0 border-r bg-card md:block"
     >
       <div className="sticky top-0 flex h-screen flex-col p-3">
         <div className="px-2 py-3 text-lg font-bold text-primary">CeasaPro</div>
@@ -82,6 +94,32 @@ export function SideNav({ modules }: { modules?: string[] }) {
             );
           })}
         </nav>
+
+        <div className="mt-auto flex flex-col gap-2 border-t pt-3">
+          {(companyName || trialLabel) && (
+            <div className="rounded-lg bg-accent/70 px-3 py-2">
+              {companyName && (
+                <p className="truncate text-xs font-semibold text-accent-foreground">
+                  {companyName}
+                </p>
+              )}
+              {trialLabel && (
+                <p className="truncate text-xs text-muted-foreground">{trialLabel}</p>
+              )}
+            </div>
+          )}
+          {userName && (
+            <p className="truncate px-3 text-sm font-medium">{userName}</p>
+          )}
+          <button
+            type="button"
+            onClick={() => void encerrarSessao()}
+            className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-2.5 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
+          >
+            <LogOut className="size-5" />
+            Sair
+          </button>
+        </div>
       </div>
     </aside>
   );

@@ -15,11 +15,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { BotaoGoogle, mensagemErroGoogle } from "@/components/auth/botao-google";
 
 export function LoginForm({ trialDays }: { trialDays: number }) {
   const router = useRouter();
   const params = useSearchParams();
   const [loading, setLoading] = useState(false);
+  const avisoGoogle = mensagemErroGoogle(params.get("erro"));
+  const next = safeRedirectPath(params.get("next"), "") || null;
   const {
     register,
     handleSubmit,
@@ -49,8 +52,21 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
   }
 
   return (
-    <Card>
+    <Card className="border-primary/15 shadow-md">
       <CardContent className="pt-6">
+        {avisoGoogle && (
+          <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+            {avisoGoogle}
+          </p>
+        )}
+        <div className="mb-5">
+          <BotaoGoogle next={next} />
+        </div>
+        <div className="mb-5 flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="h-px flex-1 bg-border" />
+          ou com e-mail
+          <span className="h-px flex-1 bg-border" />
+        </div>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="email">E-mail</Label>
@@ -71,7 +87,7 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
               <span className="text-xs text-destructive">{errors.password.message}</span>
             )}
           </div>
-          <Button type="submit" size="lg" disabled={loading}>
+          <Button type="submit" size="lg" disabled={loading} className="bg-primary shadow-md">
             {loading && <Loader2 className="animate-spin" />}
             Entrar
           </Button>
@@ -91,7 +107,7 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
           <p className="text-center text-sm text-muted-foreground">
             Ainda não tem conta?
           </p>
-          <Button asChild variant="outline" size="lg">
+          <Button asChild variant="info" size="lg">
             <Link href="/cadastro">Criar conta — {trialDays} dias grátis</Link>
           </Button>
           <Button asChild variant="ghost">

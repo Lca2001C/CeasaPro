@@ -60,6 +60,8 @@ jobs:
       SEED_SUPERADMIN_EMAIL: admin@ceasapro.com.br
       SEED_SUPERADMIN_PASSWORD: ci-superadmin-password-123
       SEED_DEMO: "true"
+      GOOGLE_CLIENT_ID: ci-google-client-id.apps.googleusercontent.com
+      GOOGLE_CLIENT_SECRET: ci-google-client-secret
 
     steps:
       - name: Checkout

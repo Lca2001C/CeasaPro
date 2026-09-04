@@ -1,14 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { LogOut, ShieldCheck } from "lucide-react";
+import { ShieldCheck } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { BottomNav } from "./bottom-nav";
 import { BotaoTutorial } from "./botao-tutorial";
 import { SideNav } from "./side-nav";
 import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
-import { encerrarSessao } from "@/lib/session-nav";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { NetworkStatus } from "@/components/pwa/network-status";
 import { TourGuiado } from "@/components/tour/tour-guiado";
@@ -17,6 +16,7 @@ interface Props {
   companyName: string;
   userName: string;
   billingWarning?: string | null;
+  trialLabel?: string | null;
   modules?: string[];
   /** Sessão de super-admin no ambiente próprio: mostra o caminho de volta. */
   isSuperAdmin?: boolean;
@@ -32,6 +32,7 @@ export function AppShell({
   companyName,
   userName,
   billingWarning,
+  trialLabel,
   modules,
   isSuperAdmin,
   showInstallPrompt = false,
@@ -42,7 +43,12 @@ export function AppShell({
   const mostrarSuporte = !pathname.startsWith("/vendas/nova");
   return (
     <div className="flex min-h-screen">
-      <SideNav modules={modules} />
+      <SideNav
+        modules={modules}
+        companyName={companyName}
+        userName={userName}
+        trialLabel={trialLabel}
+      />
       {/*
         `min-w-0` na coluna principal.
 
@@ -76,14 +82,6 @@ export function AppShell({
                 </Link>
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void encerrarSessao()}
-              aria-label="Sair"
-            >
-              <LogOut className="size-5" />
-            </Button>
           </div>
         </header>
 
@@ -117,7 +115,7 @@ export function AppShell({
 
         <InstallPrompt autoOpen={showInstallPrompt} />
         {mostrarSuporte && <SupportButton companyName={companyName} />}
-        <BottomNav modules={modules} />
+        <BottomNav modules={modules} userName={userName} />
 
         {/*
           Motor do tour guiado. Não renderiza nada — destaca elementos das telas

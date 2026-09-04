@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { BotaoGoogle } from "@/components/auth/botao-google";
 
 /**
  * Schema do FORMULÁRIO = schema da API + confirmação de senha.
@@ -93,8 +94,16 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
   }
 
   return (
-    <Card>
+    <Card className="border-primary/15 shadow-md">
       <CardContent className="pt-6">
+        <div className="mb-5">
+          <BotaoGoogle />
+        </div>
+        <div className="mb-5 flex items-center gap-3 text-xs text-muted-foreground">
+          <span className="h-px flex-1 bg-border" />
+          ou cadastre com e-mail
+          <span className="h-px flex-1 bg-border" />
+        </div>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             {trialDays} dias grátis para testar tudo. Não pedimos cartão de crédito.
@@ -197,7 +206,7 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
             )}
           </div>
 
-          <Button type="submit" size="lg" disabled={loading}>
+          <Button type="submit" size="lg" disabled={loading} className="shadow-md">
             {loading && <Loader2 className="animate-spin" />}
             Criar conta e testar grátis
           </Button>

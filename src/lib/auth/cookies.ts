@@ -1,6 +1,7 @@
 import { cookies, headers } from "next/headers";
 import { ACCESS_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
 import { COOKIE_TENTATIVA_RENOVACAO, TENTATIVA_MAX_AGE_SEGUNDOS } from "./renovacao";
+import { GOOGLE_OAUTH_COOKIE, oauthCookieMaxAge } from "./google-oauth";
 
 const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? "30");
 
@@ -86,4 +87,19 @@ export async function readAccessCookie(): Promise<string | undefined> {
 export async function readRefreshCookie(): Promise<string | undefined> {
   const c = await cookies();
   return c.get(REFRESH_COOKIE)?.value;
+}
+
+export async function setGoogleOAuthCookie(value: string) {
+  const [c, base] = await Promise.all([cookies(), cookieBase()]);
+  c.set(GOOGLE_OAUTH_COOKIE, value, { ...base, maxAge: oauthCookieMaxAge() });
+}
+
+export async function readGoogleOAuthCookie(): Promise<string | undefined> {
+  const c = await cookies();
+  return c.get(GOOGLE_OAUTH_COOKIE)?.value;
+}
+
+export async function clearGoogleOAuthCookie() {
+  const [c, base] = await Promise.all([cookies(), cookieBase()]);
+  c.set(GOOGLE_OAUTH_COOKIE, "", { ...base, maxAge: 0 });
 }

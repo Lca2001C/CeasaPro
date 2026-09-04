@@ -93,7 +93,19 @@ export function StatCard({ label, value, hint, icon, tone = "default" }: Props) 
         <span className="min-w-0 text-sm font-medium text-muted-foreground [overflow-wrap:anywhere]">
           {label}
         </span>
-        {icon && <span className="shrink-0 text-muted-foreground">{icon}</span>}
+        {icon && (
+          <span
+            className={cn(
+              "flex size-8 shrink-0 items-center justify-center rounded-full",
+              tone === "success" && "bg-success/15 text-success",
+              tone === "warning" && "bg-warning/15 text-warning",
+              tone === "destructive" && "bg-destructive/15 text-destructive",
+              tone === "default" && "bg-primary/10 text-primary",
+            )}
+          >
+            {icon}
+          </span>
+        )}
       </div>
       <div
         className={cn(

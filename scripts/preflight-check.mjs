@@ -159,6 +159,16 @@ const ENV_RULES = [
     validate: (v) => (v.includes("@") ? null : "deveria conter um endereço de e-mail"),
   },
   {
+    name: "GOOGLE_CLIENT_ID",
+    description: "OAuth Google (login facilitado)",
+    optional: true,
+  },
+  {
+    name: "GOOGLE_CLIENT_SECRET",
+    description: "Segredo OAuth Google",
+    optional: true,
+  },
+  {
     name: "CRON_SECRET",
     description: "Protege /api/cron/billing",
     prodOnly: true,
@@ -195,6 +205,11 @@ function checkEnv() {
     else ok(`${rule.name} — ${rule.description}`);
   }
 
+  const googleId = process.env.GOOGLE_CLIENT_ID?.trim();
+  const googleSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
+  if (Boolean(googleId) !== Boolean(googleSecret)) {
+    fail("GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET precisam existir juntas (ou nenhuma)");
+  }
 
   // Flags que ABREM uma exceção de segurança. Nenhum é exigido, e o padrão de
   // ambos é o seguro — o risco é ligar para depurar e esquecer de desligar.

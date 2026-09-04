@@ -18,6 +18,42 @@ test.describe("Autenticação e proteção de rotas", () => {
     await expect(page.getByText(/incorretos|inválid/i)).toBeVisible();
     await expect(page).toHaveURL(/\/login/);
   });
+
+  test("botão de Google está na tela e o callback sem state volta ao login", async ({
+    page,
+    request,
+  }) => {
+    await page.goto("/login");
+    const google = page.getByRole("link", { name: "Entrar com Google" });
+    await expect(google).toBeVisible();
+    await expect(google).toHaveAttribute("href", "/api/auth/google");
+
+    await page.goto("/cadastro");
+    await expect(page.getByRole("link", { name: "Entrar com Google" })).toBeVisible();
+
+    // Sem cookie de state o callback não troca code com o Google — cai no login.
+    const res = await request.get("/api/auth/google/callback?code=x&state=y", {
+      maxRedirects: 0,
+    });
+    expect(res.status()).toBe(302);
+    const location = res.headers()["location"] ?? "";
+    // Sem cookie de state: `google-falhou`. Sem GOOGLE_CLIENT_* no .env:
+    // o callback nem chega a validar o state e avisa `google-indisponivel`.
+    expect(location).toMatch(/\/login\?erro=google-(falhou|indisponivel)/);
+  });
+
+  test("iniciar Google redireciona para o Google quando as credenciais existem", async ({
+    request,
+  }) => {
+    const res = await request.get("/api/auth/google", { maxRedirects: 0 });
+    expect(res.status()).toBe(302);
+    const location = res.headers()["location"] ?? "";
+    // Com GOOGLE_CLIENT_* no CI: vai para accounts.google.com.
+    // Sem elas (dev local sem env): volta ao login avisando.
+    expect(
+      location.includes("accounts.google.com") || location.includes("erro=google-indisponivel"),
+    ).toBeTruthy();
+  });
 });
 
 test.describe("Esqueci minha senha", () => {

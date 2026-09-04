@@ -75,6 +75,7 @@ model User {
   role                 UserRole           @default(OWNER)
   active               Boolean            @default(true)
   mustChangePassword   Boolean            @default(false)
+  googleSub            String?            @unique
   lastLoginAt          DateTime?
   resetTokenHash       String?
   resetTokenExpiresAt  DateTime?

@@ -19,10 +19,12 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
+  LogOut,
 } from "lucide-react";
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
+import { encerrarSessao } from "@/lib/session-nav";
 import {
   Sheet,
   SheetContent,
@@ -55,7 +57,13 @@ const more = [
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 
-export function BottomNav({ modules }: { modules?: string[] }) {
+export function BottomNav({
+  modules,
+  userName,
+}: {
+  modules?: string[];
+  userName?: string;
+}) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
   const isActive = (href: string) =>
@@ -118,6 +126,22 @@ export function BottomNav({ modules }: { modules?: string[] }) {
                   </SheetClose>
                 );
               })}
+            </div>
+            <div className="border-t pt-3">
+              {userName && (
+                <p className="mb-2 truncate px-1 text-sm font-medium">{userName}</p>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  void encerrarSessao();
+                }}
+                className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-3 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
+              >
+                <LogOut className="size-5" />
+                Sair
+              </button>
             </div>
           </SheetContent>
         </Sheet>

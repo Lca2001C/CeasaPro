@@ -36,6 +36,8 @@ test.describe("Logout", () => {
     await page.getByRole("button", { name: "Agora não" }).click();
 
     await expect(page.locator("aside")).toBeVisible();
+    await expect(page.locator("header").getByRole("button", { name: "Sair" })).toHaveCount(0);
+    await expect(page.locator("aside").getByRole("button", { name: "Sair" })).toBeVisible();
 
     await page.getByRole("button", { name: "Sair" }).click();
 

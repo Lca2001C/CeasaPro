@@ -55,6 +55,13 @@ export default async function AppLayout({
       companyName={tenant?.tradeName ?? "Minha empresa"}
       userName={session.name}
       billingWarning={billingWarning}
+      trialLabel={
+        notice?.kind === "trial_ending"
+          ? notice.daysLeft <= 0
+            ? "trial hoje"
+            : `${notice.daysLeft}d trial`
+          : null
+      }
       modules={session.modules}
       isSuperAdmin={session.role === "SUPER_ADMIN"}
       // Sempre true aqui, e isso NAO ignora as regras do convite: este layout so

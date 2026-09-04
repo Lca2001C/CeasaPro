@@ -114,11 +114,23 @@ export default async function DashboardPage() {
 
       {/* A ação principal fica no TOPO: quem abre o app no balcão quer vender,
           não rolar doze números até achar o botão. */}
-      <Button asChild size="lg" className="h-14 w-full text-base" data-tour="dashboard-vender">
-        <Link href="/vendas/nova">
-          <ShoppingCart className="size-5" /> Nova venda
-        </Link>
-      </Button>
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+        <Button asChild size="lg" className="h-14 w-full text-base shadow-md [&_svg]:size-5" data-tour="dashboard-vender">
+          <Link href="/vendas/nova">
+            <ShoppingCart /> Nova venda
+          </Link>
+        </Button>
+        <Button asChild size="lg" variant="info" className="h-14 w-full text-base shadow-md [&_svg]:size-5">
+          <Link href="/produtos/novo">
+            <Boxes /> Novo produto
+          </Link>
+        </Button>
+        <Button asChild size="lg" variant="violet" className="h-14 w-full text-base shadow-md [&_svg]:size-5">
+          <Link href="/fiado/novo">
+            <HandCoins /> Novo fiado
+          </Link>
+        </Button>
+      </div>
 
       {/* Os quatro números do dia a dia. O resto vive nas seções abaixo. */}
       <div className="grid grid-cols-2 gap-3" data-tour="dashboard-numeros">

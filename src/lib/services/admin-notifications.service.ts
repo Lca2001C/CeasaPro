@@ -178,17 +178,22 @@ export const AdminNotificationsService = {
     userId: string;
     tradeName: string;
     email: string;
-    origem: "cadastro-publico" | "admin";
+    origem: "cadastro-publico" | "admin" | "google";
   }): Promise<boolean> {
     const publico = input.origem === "cadastro-publico";
+    const google = input.origem === "google";
     return this.criar({
       kind: "USER_CREATED",
-      title: publico
-        ? "Novo cadastro pelo site"
-        : "Empresa cadastrada pelo painel",
-      body: publico
-        ? `${input.tradeName} (${input.email}) se cadastrou e vai começar o teste ao confirmar o e-mail.`
-        : `${input.tradeName} (${input.email}) foi cadastrada pelo painel administrativo.`,
+      title: google
+        ? "Novo cadastro pelo Google"
+        : publico
+          ? "Novo cadastro pelo site"
+          : "Empresa cadastrada pelo painel",
+      body: google
+        ? `${input.tradeName} (${input.email}) entrou com o Google e o teste já está liberado.`
+        : publico
+          ? `${input.tradeName} (${input.email}) se cadastrou e vai começar o teste ao confirmar o e-mail.`
+          : `${input.tradeName} (${input.email}) foi cadastrada pelo painel administrativo.`,
       href: `/admin/clientes/${input.tenantId}`,
       tenantId: input.tenantId,
       userId: input.userId,
