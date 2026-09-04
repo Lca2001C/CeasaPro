@@ -79,7 +79,15 @@ export const FiadoService = {
     }));
     const emAberto = withSaldo.filter((c) => c.status === "EM_ABERTO");
     const totalGeral = add(...emAberto.map((c) => c.saldo));
-    const totalCaixas = emAberto.reduce((a, c) => a + c.caixasComCliente, 0);
+    // O saldo de caixas é por CLIENTE, não por conta. Cada venda fiada abre uma
+    // conta nova (vendas.service.ts:607), então um cliente que compra a prazo
+    // duas vezes tem duas contas em aberto — e somar linha a linha contava o
+    // saldo dele uma vez por conta. O painel mostrava o dobro (ou o triplo) de
+    // caixas na rua, justamente para o cliente que mais compra.
+    const totalCaixas = [...new Set(emAberto.map((c) => c.customerName))].reduce(
+      (a, nome) => a + (caixasPorCliente.get(nome) ?? 0),
+      0,
+    );
     return { contas: withSaldo, totalGeral, totalCaixas };
   },
 

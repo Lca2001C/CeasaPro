@@ -263,3 +263,49 @@ describe("pagamentos simultâneos", () => {
     expect(await prisma.creditPayment.count({ where: { accountId: conta.id } })).toBe(2);
   });
 });
+
+describe("caixas na listagem do fiado", () => {
+  it("cliente com duas contas não conta as caixas duas vezes", async () => {
+    // O saldo de caixas é por cliente; a conta é por venda. Quem compra a prazo
+    // duas vezes tem duas contas, e o painel somava o saldo dele em cada uma.
+    const cliente = `Freguês ${uniq()}`;
+    // O painel soma o tenant inteiro, e outras contas deste arquivo já pesam:
+    // o que este teste mede é a contribuição DESTE cliente.
+    const { totalCaixas: antes } = await FiadoService.listOpen(tenantId, "EM_ABERTO");
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 50, movementDate: new Date().toISOString() },
+      ctx,
+    );
+
+    for (let i = 0; i < 2; i++) {
+      await VendasService.registrarVenda(
+        {
+          customerName: cliente,
+          paymentMethod: "FIADO",
+          saleDate: new Date().toISOString(),
+          plasticCrateQty: 6,
+          items: [
+            {
+              productId: produtoId,
+              quantity: 1,
+              unitPrice: 10,
+              recipientType: "PLASTICA" as const,
+              crateQty: 6,
+            },
+          ],
+        },
+        ctx,
+      );
+    }
+
+    const { contas, totalCaixas } = await FiadoService.listOpen(tenantId, "EM_ABERTO");
+    const doCliente = contas.filter((c) => c.customerName === cliente);
+    expect(doCliente.length).toBe(2);
+
+    // 12 caixas saíram (6 + 6). O painel tem de crescer 12, não 24 — que é o
+    // que dava ao somar o saldo do cliente uma vez por conta em aberto.
+    const saldos = await CaixasService.saldoPorCliente(tenantId);
+    expect(saldos.get(cliente)).toBe(12);
+    expect(totalCaixas - antes).toBe(12);
+  });
+});
