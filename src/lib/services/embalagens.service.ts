@@ -8,6 +8,7 @@ import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { TipoEmbalagemInput, VendaEmbalagemInput } from "@/lib/validations/embalagem";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { parseFormDateTz } from "@/lib/tz";
 
 type DbClient = Pick<PrismaClient, "packagingType">;
 
@@ -192,7 +193,7 @@ export const EmbalagensService = {
           tenantId: ctx.tenantId,
           packagingTypeId: input.packagingTypeId,
           customerName: input.customerName || null,
-          saleDate: new Date(input.saleDate),
+          saleDate: parseFormDateTz(input.saleDate),
           quantity: input.quantity,
           unitPrice: input.unitPrice,
           totalAmount,
@@ -206,7 +207,7 @@ export const EmbalagensService = {
             packagingTypeId: tipo.id,
             type: "SAIDA",
             quantity: input.quantity,
-            movedAt: new Date(input.saleDate),
+            movedAt: parseFormDateTz(input.saleDate),
             sourceType: "PACKAGING_SALE",
             sourceId: criada.id,
           },

@@ -10,7 +10,7 @@ import {
   civilParts,
   endOfDayTz,
   isoDateTz,
-  parseIsoDateTz,
+  parseFormDateTz,
   startOfDayTz,
   startOfMonthTz,
   startOfNextMonthTz,
@@ -40,9 +40,7 @@ export const CONTAS_PROXIMAS_LIMITE = 3;
 
 function toDate(v?: string | null): Date | null {
   if (!v) return null;
-  // "YYYY-MM-DD" de um <input type="date"> significa aquele dia NO BRASIL.
-  // `new Date(v)` daria meia-noite UTC, ou seja, 21h do dia anterior aqui.
-  return parseIsoDateTz(v) ?? new Date(v);
+  return parseFormDateTz(v);
 }
 
 async function assertCategory(db: ReturnType<typeof getTenantPrisma>, categoryId?: string | null) {

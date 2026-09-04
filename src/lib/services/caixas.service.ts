@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import { BusinessRuleError } from "@/lib/http/app-error";
 import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { parseFormDateTz } from "@/lib/tz";
 
 export interface CrateSaldo {
   limpas: number; // no estoque, prontas para vender
@@ -258,7 +259,7 @@ export const CaixasService = {
         cleanerName: input.cleanerName || null,
         saleId: input.saleId ?? null,
         crateCleaningId: input.crateCleaningId ?? null,
-        movementDate: new Date(input.movementDate),
+        movementDate: parseFormDateTz(input.movementDate),
         notes: input.notes ?? null,
       },
     });

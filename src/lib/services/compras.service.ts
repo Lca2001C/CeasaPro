@@ -7,6 +7,7 @@ import { CaixasService } from "./caixas.service";
 import { DespesasService } from "./despesas.service";
 import type { CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { parseFormDateTz } from "@/lib/tz";
 
 export const ComprasService = {
   async list(tenantId: string) {
@@ -81,7 +82,7 @@ export const ComprasService = {
         data: {
           tenantId: ctx.tenantId,
           supplierId: input.supplierId || null,
-          purchaseDate: new Date(input.purchaseDate),
+          purchaseDate: parseFormDateTz(input.purchaseDate),
           freight: input.freight,
           totalAmount,
           notes: input.notes ?? null,

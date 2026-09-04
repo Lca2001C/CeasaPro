@@ -13,6 +13,7 @@ import type {
 } from "@/lib/validations/higienizacao";
 import type { TenantCtx } from "@/lib/http/with-action";
 import type { CrateCleaningStatus } from "@prisma/client";
+import { parseFormDateTz } from "@/lib/tz";
 
 /**
  * Situação do lote a partir das DUAS pontas do ciclo: caixas e dinheiro.
@@ -171,7 +172,7 @@ export const HigienizacaoService = {
         data: {
           tenantId: ctx.tenantId,
           cleanerName: input.cleanerName,
-          sentDate: new Date(input.sentDate),
+          sentDate: parseFormDateTz(input.sentDate),
           sentQty: input.sentQty,
           unitPrice: input.unitPrice,
           totalAmount,
@@ -266,7 +267,7 @@ export const HigienizacaoService = {
         where: { id: before.id },
         data: {
           cleanerName: input.cleanerName,
-          sentDate: new Date(input.sentDate),
+          sentDate: parseFormDateTz(input.sentDate),
           sentQty: input.sentQty,
           unitPrice: input.unitPrice,
           totalAmount,
@@ -320,7 +321,7 @@ export const HigienizacaoService = {
       });
       const updated = await tx.crateCleaning.update({
         where: { id: c.id },
-        data: { returnedQty: novoDevolvido, returnedDate: new Date(input.returnedDate), status },
+        data: { returnedQty: novoDevolvido, returnedDate: parseFormDateTz(input.returnedDate), status },
       });
 
       await CaixasService.registrarInTx(
@@ -450,7 +451,7 @@ export const HigienizacaoService = {
       });
       const updated = await tx.crateCleaning.update({
         where: { id: c.id },
-        data: { paidAmount: novoPago, paidDate: new Date(input.paidDate), status },
+        data: { paidAmount: novoPago, paidDate: parseFormDateTz(input.paidDate), status },
       });
       await audit(
         {

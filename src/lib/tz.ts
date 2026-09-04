@@ -167,6 +167,19 @@ export function refMonthTz(date: Date = new Date()): string {
  * início daquele dia no fuso do app. `new Date("2026-08-26")` interpretaria
  * como meia-noite **UTC**, ou seja, 21h do dia 25 no Brasil.
  */
+/**
+ * Data escolhida num `<input type="date">`.
+ *
+ * O "YYYY-MM-DD" que o navegador manda significa aquele dia **no Brasil**, mas
+ * `new Date(v)` o lê como meia-noite UTC — 21h do dia anterior aqui. O efeito
+ * aparecia na cara do usuário: vencimento digitado 10/09 voltava 09/09 na tela
+ * (o formatador usa APP_TIME_ZONE) e a conta nascia vencida um dia antes do
+ * combinado. Valor que já venha com hora (ISO completo) passa direto.
+ */
+export function parseFormDateTz(value: string): Date {
+  return parseIsoDateTz(value) ?? new Date(value);
+}
+
 export function parseIsoDateTz(value: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!m) return null;

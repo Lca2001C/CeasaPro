@@ -1,9 +1,11 @@
 import { describe, it, expect } from "vitest";
+import { readdirSync, readFileSync } from "node:fs";
 import {
   addDaysTz,
   civilParts,
   endOfDayTz,
   isoDateTz,
+  parseFormDateTz,
   parseIsoDateTz,
   refMonthTz,
   startOfDayTz,
@@ -117,5 +119,96 @@ describe("períodos do painel", () => {
     });
     expect(p.from.toISOString()).toBe("2026-08-10T03:00:00.000Z");
     expect(p.to.toISOString()).toBe("2026-08-21T02:59:59.999Z");
+  });
+});
+
+/**
+ * Data vinda de `<input type="date">`.
+ *
+ * O navegador manda "YYYY-MM-DD" e `new Date(v)` lê isso como meia-noite UTC —
+ * 21h do dia anterior no Brasil. Como `formatDate` formata em APP_TIME_ZONE, o
+ * vencimento digitado 10/09 voltava 09/09 na tela, e a conta nascia vencida um
+ * dia antes do combinado. Valia para fiado, compras, caixas, embalagens e
+ * higienização — todos gravavam a data crua.
+ */
+describe("parseFormDateTz", () => {
+  it("o dia digitado é o dia mostrado (não volta 24h)", () => {
+    const d = parseFormDateTz("2026-09-10");
+    expect(d.toISOString()).toBe("2026-09-10T03:00:00.000Z");
+    expect(formatDate(d)).toBe("10/09/2026");
+  });
+
+  it("é isso que `new Date` cru errava", () => {
+    // O teste guarda o contraste: se alguém "simplificar" de volta, quebra.
+    expect(formatDate(new Date("2026-09-10"))).toBe("09/09/2026");
+  });
+
+  it("vale na virada do mês e do ano", () => {
+    expect(formatDate(parseFormDateTz("2026-01-01"))).toBe("01/01/2026");
+    expect(formatDate(parseFormDateTz("2026-03-01"))).toBe("01/03/2026");
+  });
+
+  it("valor que já tem hora passa direto", () => {
+    const iso = "2026-09-10T18:45:00.000Z";
+    expect(parseFormDateTz(iso).toISOString()).toBe(iso);
+  });
+
+  it("a meia-noite gravada é a do Brasil, então startOfDayTz não muda o dia", () => {
+    // Garantia contra o efeito colateral: conta com vencimento hoje não pode
+    // aparecer como vencida na comparação com o começo do dia.
+    const venc = parseFormDateTz("2026-09-10");
+    expect(startOfDayTz(venc).toISOString()).toBe(venc.toISOString());
+  });
+});
+
+/**
+ * Nenhum serviço volta a gravar data de formulário crua.
+ *
+ * O defeito era invisível em revisão: `new Date(input.dueDate)` parece certo e
+ * só erra por 3 horas — o suficiente para mudar o dia. Estava em 5 serviços ao
+ * mesmo tempo, então o que sustenta a correção é cobrar o padrão, não confiar
+ * em lembrar dele.
+ */
+describe("data de formulário nos serviços", () => {
+  /**
+   * Pendências conhecidas, com motivo. Acrescentar um nome aqui é decisão
+   * explícita de deixar o defeito de pé — não é jeito de calar o teste.
+   */
+  const PENDENTE: Record<string, string> = {
+    "vendas.service.ts":
+      "PDV congelado neste ciclo por combinação com o usuário (saleDate e dueDate seguem crus, mesmo defeito). Corrigir junto do próximo trabalho no PDV.",
+  };
+
+  const dir = "src/lib/services";
+  const crua = /new Date[(](?:input|i|dados)[.][A-Za-z]*[Dd]ate[^A-Za-z]/;
+
+  it("o diretório de serviços foi lido de verdade", () => {
+    expect(readdirSync(dir).filter((n) => n.endsWith(".ts")).length).toBeGreaterThan(10);
+  });
+
+  it("todo serviço usa parseFormDateTz, ou está declarado como pendência", () => {
+    const reincidentes: string[] = [];
+    for (const nome of readdirSync(dir).filter((n) => n.endsWith(".ts"))) {
+      if (nome in PENDENTE) continue;
+      const src = readFileSync(`${dir}/${nome}`, "utf8");
+      if (crua.test(src)) reincidentes.push(nome);
+    }
+    expect(
+      reincidentes,
+      "data de <input type=\"date\"> gravada crua: o dia volta 24h na tela",
+    ).toEqual([]);
+  });
+
+  it("as pendências declaradas ainda existem e ainda estão erradas", () => {
+    // Pendência resolvida (ou arquivo renomeado) tem de sair da lista, senão a
+    // lista vira folclore.
+    const obsoletas = Object.keys(PENDENTE).filter((nome) => {
+      try {
+        return !crua.test(readFileSync(`${dir}/${nome}`, "utf8"));
+      } catch {
+        return true;
+      }
+    });
+    expect(obsoletas, "pendência já resolvida: remover de PENDENTE").toEqual([]);
   });
 });

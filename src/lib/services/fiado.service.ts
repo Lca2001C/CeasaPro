@@ -13,6 +13,7 @@ import type {
   FiadoStatusFiltro,
 } from "@/lib/validations/fiado";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { parseFormDateTz } from "@/lib/tz";
 
 const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
@@ -159,7 +160,7 @@ export const FiadoService = {
       where: { id: before.id },
       data: {
         customerPhone: input.customerPhone ?? null,
-        dueDate: input.dueDate ? new Date(input.dueDate) : null,
+        dueDate: input.dueDate ? parseFormDateTz(input.dueDate) : null,
         notes: input.notes ?? null,
       },
     });
