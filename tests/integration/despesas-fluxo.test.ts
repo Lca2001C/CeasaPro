@@ -57,7 +57,7 @@ describe("Marcar como pago em um toque", () => {
 
     expect(pago.status).toBe("PAGO");
     expect(pago.paidDate).not.toBeNull();
-    expect(isoDateTz(pago.paidDate!)).toBe(hoje);
+    expect(isoDateTz(pago.paidDate!)).toBe(isoDateTz());
   });
 
   it("aceita data e forma de pagamento quando informadas", async () => {
@@ -93,11 +93,11 @@ describe("Filtro de vencidas", () => {
     const paga = await criar({ description: "Gás (paga com atraso)", dueDate: ontem });
     await DespesasService.marcarComoPago({ id: paga.id }, ctx);
 
-    const lista = await DespesasService.list(tenantId, { vencidas: true });
+    const lista = await DespesasService.list(tenantId, { vencidas: true }, HOJE);
     expect(lista.map((d) => d.id)).toEqual([vencida.id]);
 
     // Conta que vence HOJE não está vencida, e paga com atraso já foi resolvida.
-    const count = await DespesasService.count(tenantId, { vencidas: true });
+    const count = await DespesasService.count(tenantId, { vencidas: true }, HOJE);
     expect(count).toBe(1);
   });
 

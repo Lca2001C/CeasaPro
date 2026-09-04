@@ -271,10 +271,14 @@ export const DespesasService = {
    * 4 anos passa de meio segundo, mais o peso de serializar tudo para o celular
    * do cliente. Filtro, ordem e limite agora são do banco.
    */
-  async list(tenantId: string, opts: DespesaFiltro & { take?: number; skip?: number } = {}) {
+  async list(
+    tenantId: string,
+    opts: DespesaFiltro & { take?: number; skip?: number } = {},
+    agora = new Date(),
+  ) {
     const db = getTenantPrisma(tenantId);
     return db.expense.findMany({
-      where: whereDeFiltro(opts),
+      where: whereDeFiltro(opts, agora),
       include: { category: true },
       // A ordem reproduz o que a tela fazia em JS: o que vence primeiro no topo,
       // e sem vencimento no fim (não há prazo correndo). Para as já pagas, o
@@ -289,9 +293,9 @@ export const DespesasService = {
   },
 
   /** Quantas despesas existem no filtro atual (para a paginação). */
-  async count(tenantId: string, opts: DespesaFiltro = {}) {
+  async count(tenantId: string, opts: DespesaFiltro = {}, agora = new Date()) {
     const db = getTenantPrisma(tenantId);
-    return db.expense.count({ where: whereDeFiltro(opts) });
+    return db.expense.count({ where: whereDeFiltro(opts, agora) });
   },
 
   /**
