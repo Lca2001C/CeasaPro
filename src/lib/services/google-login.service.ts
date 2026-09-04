@@ -4,7 +4,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { signAccess } from "@/lib/auth/jwt";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
-import { createRefreshToken } from "@/lib/auth/refresh";
+import { createRefreshToken, revokeAllForUser } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { trialEndFrom } from "@/lib/billing/status";
@@ -27,8 +27,10 @@ export type GoogleLoginResult =
  * Assim o serviço é testável sem o runtime de `cookies()` do Next.
  *
  * 1. Já tem `googleSub` — é a mesma conta.
- * 2. Já tem o e-mail — entra e grava o `googleSub` (e confirma o e-mail se o
- *    cadastro público ainda estava pendente).
+ * 2. Já tem o e-mail — entra e grava o `googleSub`. Se o cadastro público ainda
+ *    estava pendente, este login vale como a confirmação: confirma o e-mail,
+ *    libera o teste grátis e **descarta a credencial anterior**, que veio de
+ *    origem não comprovada.
  * 3. E-mail novo — cria a empresa e libera o trial: o Google já verificou o
  *    endereço, então o link de confirmação seria teatro.
  */
@@ -52,14 +54,39 @@ export async function resolverLoginGoogle(
     if (porEmail.googleSub && porEmail.googleSub !== perfil.sub) {
       return { ok: false, code: "google-falhou" };
     }
+    // Linha de cadastro público que nunca confirmou o e-mail: até este instante
+    // NINGUÉM provou ser dono do endereço. Qualquer pessoa pode ter se cadastrado
+    // com o e-mail de um comerciante e escolhido a senha, e o `/api/auth/login`
+    // não exige e-mail confirmado. Se a credencial local sobrevivesse ao vínculo,
+    // quem plantou a conta continuaria entrando por e-mail+senha na empresa da
+    // vítima — que só passa a ser usada de verdade porque este login liberou o
+    // acesso. O Google acabou de provar quem é o dono; a senha de origem não
+    // comprovada é descartada (a pessoa entra pelo Google ou usa /recuperar-senha).
+    const pendente = !porEmail.emailVerifiedAt;
     await prisma.user.update({
       where: { id: porEmail.id },
-      data: {
-        googleSub: perfil.sub,
-        emailVerifiedAt: porEmail.emailVerifiedAt ?? new Date(),
-      },
+      data: pendente
+        ? {
+            googleSub: perfil.sub,
+            emailVerifiedAt: new Date(),
+            passwordHash: await hashPassword(randomBytes(32).toString("hex")),
+            // Tokens em aberto também são do impostor: o de confirmação nasceu do
+            // cadastro dele e o de recuperação ele pode ter pedido antes.
+            verifyTokenHash: null,
+            verifyTokenExpiresAt: null,
+            resetTokenHash: null,
+            resetTokenExpiresAt: null,
+          }
+        : { googleSub: perfil.sub },
     });
-    await concederTrialSePendente(porEmail.id);
+    if (pendente) {
+      // Sessão que ele já tenha aberto (refresh de 30 dias) cai junto.
+      await revokeAllForUser(porEmail.id);
+      // O teste grátis é do cadastro público, e é este login que faz o papel do
+      // clique no e-mail de confirmação. Empresa cadastrada pelo admin nasce
+      // SUSPENSA de propósito (admin.service.ts:134) e não passa por aqui.
+      await concederTrialSePendente(porEmail.id);
+    }
     return { ok: true, userId: porEmail.id, role: porEmail.role, criado: false };
   }
 

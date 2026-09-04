@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { hashPassword } from "@/lib/auth/password";
+import { hashPassword, verifyPassword } from "@/lib/auth/password";
+import { createRefreshToken } from "@/lib/auth/refresh";
 import { resolverLoginGoogle } from "@/lib/services/google-login.service";
 import { cleanupTenants } from "../helpers/factory";
 import type { GoogleProfile } from "@/lib/auth/google-oauth";
@@ -215,5 +216,148 @@ describe("resolverLoginGoogle", () => {
     expect(sub.trialEndsAt).not.toBeNull();
     const atualizado = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(atualizado.emailVerifiedAt).not.toBeNull();
+  });
+  /**
+   * Sequestro de conta por cadastro plantado ("account pre-hijacking").
+   *
+   * O cadastro público cria o `User` com a senha de quem preencheu o formulário
+   * e `emailVerifiedAt: null`, e o `/api/auth/login` não exige e-mail confirmado.
+   * Então dava para se cadastrar com o e-mail de um comerciante, esperar ele
+   * entrar pelo botão do Google — que confirma o e-mail e libera o acesso — e
+   * depois entrar na empresa dele com a senha plantada.
+   */
+  describe("cadastro pendente adotado pelo Google", () => {
+    async function cadastroPendente(senha: string) {
+      const tenant = await prisma.tenant.create({
+        data: {
+          tradeName: "Plantado",
+          status: "ACTIVE",
+          subscription: {
+            create: {
+              planId: planoId,
+              status: "SUSPENSO",
+              monthlyAmount: 49,
+              activatedAt: null,
+              trialEndsAt: null,
+              currentPeriodEnd: new Date(),
+              graceDays: 5,
+            },
+          },
+        },
+      });
+      tenants.push(tenant.id);
+      const p = perfil();
+      const user = await prisma.user.create({
+        data: {
+          tenantId: tenant.id,
+          name: "Dono",
+          email: p.email,
+          passwordHash: await hashPassword(senha),
+          role: "OWNER",
+          emailVerifiedAt: null,
+          verifyTokenHash: `pendente-${uniq()}`,
+          resetTokenHash: `reset-${uniq()}`,
+          resetTokenExpiresAt: new Date(Date.now() + 3600_000),
+        },
+      });
+      return { tenant, user, p };
+    }
+
+    it("a senha plantada deixa de valer depois do login pelo Google", async () => {
+      const { user, p } = await cadastroPendente("senhaDoImpostor1");
+
+      await resolverLoginGoogle(p, { ip: "203.0.113.30" });
+
+      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(await verifyPassword(depois.passwordHash, "senhaDoImpostor1")).toBe(false);
+      // E-mail confirmado: o dono real entra pelo Google, ou define senha nova
+      // em /recuperar-senha — que agora chega no endereço certo.
+      expect(depois.emailVerifiedAt).not.toBeNull();
+    });
+
+    it("os tokens de confirmação e de recuperação do impostor são apagados", async () => {
+      const { user, p } = await cadastroPendente("senhaDoImpostor2");
+
+      await resolverLoginGoogle(p, { ip: null });
+
+      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(depois.verifyTokenHash).toBeNull();
+      expect(depois.resetTokenHash).toBeNull();
+      expect(depois.resetTokenExpiresAt).toBeNull();
+    });
+
+    it("a sessão que o impostor já tinha aberto é revogada", async () => {
+      const { user, p } = await cadastroPendente("senhaDoImpostor3");
+      // Refresh dura 30 dias: sem revogar, ele voltaria mesmo sem a senha.
+      await createRefreshToken(user.id, { ip: "198.51.100.9" });
+
+      await resolverLoginGoogle(p, { ip: null });
+
+      const vivos = await prisma.refreshToken.count({
+        where: { userId: user.id, revokedAt: null },
+      });
+      expect(vivos).toBe(0);
+    });
+
+    it("conta JÁ confirmada mantém a senha (é a mesma pessoa, não há impostor)", async () => {
+      const { user, p } = await cadastroPendente("senhaLegitima1");
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date() },
+      });
+
+      await resolverLoginGoogle(p, { ip: null });
+
+      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      expect(await verifyPassword(depois.passwordHash, "senhaLegitima1")).toBe(true);
+      expect(depois.googleSub).toBe(p.sub);
+    });
+  });
+
+  it("empresa cadastrada pelo admin não ganha teste grátis ao entrar pelo Google", async () => {
+    // `provisionTenant` cria toda empresa SUSPENSA com trialEndsAt/activatedAt
+    // nulos, e o cadastro pelo admin decide de propósito não dar os 7 dias
+    // (admin.service.ts:134) — só o cadastro público tem teste grátis. Como o
+    // admin já confirma o e-mail na criação, é `emailVerifiedAt` que separa os
+    // dois casos; sem isso, um clique no botão do Google dava o mês de graça.
+    const tenant = await prisma.tenant.create({
+      data: {
+        tradeName: "Cadastrada pelo admin",
+        status: "ACTIVE",
+        subscription: {
+          create: {
+            planId: planoId,
+            status: "SUSPENSO",
+            monthlyAmount: 49,
+            activatedAt: null,
+            trialEndsAt: null,
+            currentPeriodEnd: new Date(),
+            graceDays: 5,
+          },
+        },
+      },
+    });
+    tenants.push(tenant.id);
+    const p = perfil();
+    await prisma.user.create({
+      data: {
+        tenantId: tenant.id,
+        name: "Dono do admin",
+        email: p.email,
+        passwordHash: await hashPassword("temporaria1"),
+        role: "OWNER",
+        mustChangePassword: true,
+        emailVerifiedAt: new Date(),
+      },
+    });
+
+    const res = await resolverLoginGoogle(p, { ip: null });
+    expect(res.ok).toBe(true);
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { tenantId: tenant.id },
+    });
+    expect(sub.status).toBe("SUSPENSO");
+    expect(sub.trialEndsAt).toBeNull();
   });
 });
