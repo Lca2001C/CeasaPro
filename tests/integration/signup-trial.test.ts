@@ -42,13 +42,25 @@ async function registrar(input: SignupInput) {
   return res;
 }
 
+/**
+ * Preço do plano barato: um centavo.
+ *
+ * A regra sob teste é "entra no mais barato dos ativos", e a tabela `plans` é
+ * global — `cleanupTenants` não a limpa, e cada arquivo apaga só os planos que
+ * ele criou. Quando a suíte quebra no meio (banco desatualizado, por exemplo),
+ * o `afterAll` não roda e sobram planos ativos de R$ 29,90 e R$ 49,90 na base.
+ * Com um preço fixo de R$ 99,90, este teste passava a falhar para sempre
+ * naquele banco, com cara de bug de billing e sem relação com o que mudou.
+ */
+const PRECO_BARATO = 0.01;
+
 beforeAll(async () => {
   // Dois planos: o cadastro deve entrar no MAIS BARATO dos ativos.
   const barato = await prisma.plan.create({
     data: {
       name: "Plano Teste Barato",
       slug: `teste-barato-${uniq()}`,
-      priceMonthly: 99.9,
+      priceMonthly: PRECO_BARATO,
       active: true,
     },
   });
@@ -113,7 +125,7 @@ describe("POST /api/auth/signup (via SignupService)", () => {
       include: { plan: true },
     });
     expect(sub?.planId).toBe(planoBaratoId);
-    expect(Number(sub?.monthlyAmount)).toBe(99.9);
+    expect(Number(sub?.monthlyAmount)).toBe(PRECO_BARATO);
   });
 
   it("grava os dados do formulário na empresa", async () => {
