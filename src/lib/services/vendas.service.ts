@@ -3,12 +3,19 @@ import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { add, mul, money, sub, toDecimal, gt } from "@/lib/money";
+import { money, toDecimal, gt } from "@/lib/money";
 import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
 import { addDaysTz, endOfDayTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
+import { resolvePlasticCrateQty } from "@/lib/validations/venda";
+import {
+  calcularTotaisVenda,
+  centsParaString,
+  paraCentavos,
+  parteEmDinheiroCents,
+} from "@/lib/venda/total";
 import type {
   CancelarVendaInput,
   VendaFiltro,
@@ -23,6 +30,13 @@ const IN_TYPES = new Set(["ENTRADA", "AJUSTE"]);
 export const VENDAS_POR_PAGINA = 50;
 
 /**
+ * Reexportado de `validations/venda` — a resolução mora lá porque o refine que
+ * exige o cliente precisa da MESMA resposta que o serviço vai gravar. Continua
+ * visível aqui para não quebrar quem já importava do serviço.
+ */
+export { resolvePlasticCrateQty };
+
+/**
  * Até quando uma venda pode ser cancelada.
  *
  * Cancelar devolve mercadoria ao estoque e desfaz caixas — mexer numa venda de
@@ -31,15 +45,6 @@ export const VENDAS_POR_PAGINA = 50;
  * sem abrir essa porta.
  */
 export const HORAS_PARA_CANCELAR = 24;
-
-/** Caixas plásticas da venda: valor informado ou soma dos itens em caixa plástica. */
-export function resolvePlasticCrateQty(input: VendaInput): number {
-  if (input.plasticCrateQty !== undefined) return input.plasticCrateQty;
-  return input.items.reduce(
-    (total, i) => total + (i.recipientType === "PLASTICA" ? (i.crateQty ?? 0) : 0),
-    0,
-  );
-}
 
 /**
  * Forma de pagamento "predominante" de uma venda mista.
@@ -56,6 +61,34 @@ export function formaPredominante(
   if (payments.length === 0) return fallback;
   if (payments.some((p) => p.method === "FIADO")) return "FIADO";
   return payments.reduce((maior, p) => (p.amount > maior.amount ? p : maior)).method;
+}
+
+/**
+ * Faz as parcelas somarem EXATAMENTE o total, absorvendo o resíduo numa delas.
+ *
+ * A validação tolera um centavo, porque o operador digita as parcelas à mão e
+ * "3,33 + 3,33 + 3,34 = 10,00" tem de passar. Mas gravar a folga deixaria
+ * `sale_payments` sem fechar com `sales.totalAmount` — e o fluxo de caixa soma
+ * as parcelas enquanto o relatório de vendas soma o total, então as duas
+ * visões da mesma venda divergiriam sem nada acusar.
+ *
+ * O resíduo vai para a maior parcela NÃO fiada. Mexer numa parcela fiada
+ * mudaria o valor da conta a receber, que é o que o cliente vai pagar depois;
+ * só se recorre a ela quando a venda é inteiramente fiada.
+ */
+export function ajustarParcelasAoTotal(
+  parcelas: readonly VendaPagamentoInput[],
+  totalCents: bigint,
+): { method: PaymentMethod; cents: bigint }[] {
+  const ajustadas = parcelas.map((p) => ({ method: p.method, cents: paraCentavos(p.amount) }));
+  const resto = totalCents - ajustadas.reduce((a, p) => a + p.cents, 0n);
+  if (resto === 0n || ajustadas.length === 0) return ajustadas;
+
+  const naoFiadas = ajustadas.filter((p) => p.method !== "FIADO");
+  const candidatas = naoFiadas.length > 0 ? naoFiadas : ajustadas;
+  const alvo = candidatas.reduce((maior, p) => (p.cents > maior.cents ? p : maior));
+  alvo.cents += resto;
+  return ajustadas;
 }
 
 export const VendasService = {
@@ -495,41 +528,66 @@ export const VendasService = {
       // bruto (o que a mercadoria valia), `lineTotal` já é líquido do desconto
       // da linha, e `totalAmount` é o que o cliente pagou — é ele que o resto
       // do sistema consome (fluxo de caixa, fiado, lucro).
-      const brutos = input.items.map((i) => mul(i.quantity, i.unitPrice));
-      const lineTotals = input.items.map((i, idx) =>
-        money(sub(brutos[idx]!, i.discountAmount ?? 0)),
-      );
-      const subtotalAmount = money(add(...brutos));
-      const descontoDaVenda = toDecimal(input.discountAmount ?? 0);
-      const totalAmount = money(sub(add(...lineTotals), descontoDaVenda));
-      if (totalAmount.isNegative()) {
+      // A conta é a do contrato compartilhado (`lib/venda/total`), a MESMA que o
+      // PDV e o refine do Zod executam. Antes eram três algoritmos diferentes e
+      // a tela podia mostrar R$ 2,23 para uma venda gravada como R$ 2,24.
+      const totais = calcularTotaisVenda(input);
+      const emDecimal = (centavos: bigint) => new Prisma.Decimal(centsParaString(centavos));
+
+      const somaDasLinhasCents = totais.lineTotalsCents.reduce((a, l) => a + l, 0n);
+      if (totais.descontoVendaCents > somaDasLinhasCents) {
         throw new BusinessRuleError("O desconto não pode passar do total da venda.");
       }
 
+      const lineTotals = totais.lineTotalsCents.map(emDecimal);
+      const subtotalAmount = emDecimal(totais.subtotalCents);
+      const descontoDaVenda = emDecimal(totais.descontoVendaCents);
+      const totalAmount = emDecimal(totais.totalCents);
+
       // Parcelas de pagamento: uma venda de forma única também grava a sua, para
-      // o fluxo de caixa ter uma fonte só. As parcelas já vieram conferidas
-      // contra o total pela validação.
-      const parcelas: VendaPagamentoInput[] =
+      // o fluxo de caixa ter uma fonte só.
+      //
+      // A validação aceita um centavo de folga (o operador digita as parcelas à
+      // mão). Gravar a folga faria `sale_payments` não fechar com
+      // `sales.totalAmount`, e o fluxo de caixa soma as parcelas enquanto o
+      // relatório de vendas soma o total — as duas visões divergiriam em
+      // silêncio. Então o resíduo é absorvido aqui, de preferência numa parcela
+      // NÃO fiada: mexer na fiada mudaria o valor da conta a receber.
+      const parcelasCents = ajustarParcelasAoTotal(
         input.payments && input.payments.length > 0
           ? input.payments
-          : [{ method: input.paymentMethod, amount: Number(totalAmount) }];
+          : [{ method: input.paymentMethod, amount: Number(totalAmount) }],
+        totais.totalCents,
+      );
+      const parcelas: VendaPagamentoInput[] = parcelasCents.map((p) => ({
+        method: p.method,
+        amount: Number(centsParaString(p.cents)),
+      }));
       const paymentMethod = formaPredominante(parcelas, input.paymentMethod);
-      const totalFiado = money(
-        add(...parcelas.filter((p) => p.method === "FIADO").map((p) => p.amount)),
+      const totalFiado = emDecimal(
+        parcelasCents.filter((p) => p.method === "FIADO").reduce((a, p) => a + p.cents, 0n),
       );
 
-      // Troco só faz sentido quando alguma parte foi em dinheiro.
-      const pagouEmDinheiro = parcelas.some((p) => p.method === "DINHEIRO");
+      // Troco: conferido contra a PARTE EM ESPÉCIE, nunca contra o total.
+      //
+      // Numa venda de R$ 100 com R$ 60 em PIX e R$ 40 em dinheiro, o cliente que
+      // entrega uma nota de R$ 50 tem R$ 10 de troco. Comparando com o total, o
+      // sistema dizia "troco R$ 0,00" e ainda gravava `amountReceived = 100`
+      // numa venda em que só entraram R$ 40 em espécie — a conferência de
+      // gaveta não fechava nunca.
+      const emEspecieCents = parteEmDinheiroCents({ ...input, payments: parcelas });
       const amountReceived =
-        pagouEmDinheiro && input.amountReceived != null
+        emEspecieCents > 0n && input.amountReceived != null
           ? money(toDecimal(input.amountReceived))
           : null;
-      const changeGiven =
-        amountReceived && gt(amountReceived, totalAmount)
-          ? money(sub(amountReceived, totalAmount))
-          : amountReceived
-            ? new Prisma.Decimal(0)
-            : null;
+      const changeGiven = amountReceived
+        ? emDecimal(
+            (() => {
+              const troco = paraCentavos(amountReceived.toFixed(2)) - emEspecieCents;
+              return troco > 0n ? troco : 0n;
+            })(),
+          )
+        : null;
 
       const sale = await tx.sale.create({
         data: {

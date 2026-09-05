@@ -381,3 +381,113 @@ describe("Módulo de caixas desabilitado", () => {
     expect(await prisma.plasticCrateMovement.count({ where: { tenantId, saleId: s.id } })).toBe(0);
   });
 });
+
+describe("Troco em pagamento misto (regressao)", () => {
+  // Venda de R$ 50: R$ 30 em PIX + R$ 20 em dinheiro. O cliente entrega uma
+  // nota de R$ 50 pela parte em especie e tem R$ 30 de troco.
+  //
+  // O codigo antigo comparava o recebido com o TOTAL: 50 nao e maior que 50,
+  // entao gravava troco R$ 0,00 — e ainda registrava amountReceived = 50 numa
+  // venda em que so entraram R$ 20 em especie. A gaveta nunca fechava.
+  it("calcula o troco contra a parte em especie, nao contra o total", async () => {
+    const s = await venda({
+      paymentMethod: "PIX",
+      payments: [
+        { method: "PIX", amount: 30 },
+        { method: "DINHEIRO", amount: 20 },
+      ],
+      amountReceived: 50,
+    });
+    expect(s.totalAmount.toString()).toBe("50");
+    expect(s.amountReceived?.toString()).toBe("50");
+    expect(s.changeGiven?.toString()).toBe("30");
+  });
+
+  it("sem sobra na parte em especie, o troco e zero", async () => {
+    const s = await venda({
+      paymentMethod: "PIX",
+      payments: [
+        { method: "PIX", amount: 30 },
+        { method: "DINHEIRO", amount: 20 },
+      ],
+      amountReceived: 20,
+    });
+    expect(s.changeGiven?.toString()).toBe("0");
+  });
+
+  it("forma unica em dinheiro continua como sempre foi", async () => {
+    const s = await venda({ amountReceived: 100 });
+    expect(s.totalAmount.toString()).toBe("50");
+    expect(s.changeGiven?.toString()).toBe("50");
+  });
+});
+
+describe("Ledger de parcelas fecha com o total da venda (regressao)", () => {
+  // A validacao tolera um centavo porque o operador digita as parcelas a mao.
+  // Gravar a folga deixava `sale_payments` sem fechar com `sales.totalAmount`:
+  // o fluxo de caixa soma as parcelas e o relatorio de vendas soma o total, e
+  // as duas visoes da mesma venda divergiam sem nada acusar.
+  it("absorve o residuo de centavo numa parcela nao fiada", async () => {
+    const s = await venda({
+      paymentMethod: "PIX",
+      items: [{ productId, quantity: 1, unitPrice: 10 }],
+      payments: [
+        { method: "PIX", amount: 3.33 },
+        { method: "DINHEIRO", amount: 3.33 },
+        { method: "CARTAO", amount: 3.33 },
+      ],
+    });
+    expect(s.totalAmount.toString()).toBe("10");
+
+    const soma = s.payments.reduce((a, p) => a + Number(p.amount), 0);
+    expect(soma.toFixed(2)).toBe(Number(s.totalAmount).toFixed(2));
+  });
+
+  it("nao mexe na parcela fiada ao acertar o residuo", async () => {
+    const s = await venda({
+      customerName: "Joao",
+      paymentMethod: "FIADO",
+      items: [{ productId, quantity: 1, unitPrice: 10 }],
+      payments: [
+        { method: "PIX", amount: 3.33 },
+        { method: "DINHEIRO", amount: 3.33 },
+        { method: "FIADO", amount: 3.33 },
+      ],
+    });
+    const fiada = s.payments.find((p) => p.method === "FIADO");
+    expect(fiada?.amount.toString()).toBe("3.33");
+
+    // A conta a receber cobra exatamente a parcela fiada.
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: s.id } });
+    expect(conta.totalAmount.toString()).toBe("3.33");
+
+    const soma = s.payments.reduce((a, p) => a + Number(p.amount), 0);
+    expect(soma.toFixed(2)).toBe(Number(s.totalAmount).toFixed(2));
+  });
+});
+
+describe("Caixas plasticas declaradas no item (regressao)", () => {
+  // O PDV manda plasticCrateQty: 0 sempre que o checkbox esta desmarcado. O
+  // zero vencia a soma por item, e as caixas saiam do box sem movimento nenhum
+  // — apesar de aparecerem na tela de detalhe da venda.
+  it("zero no cabecalho nao apaga as caixas do item", async () => {
+    const s = await venda({
+      customerName: "Joao",
+      plasticCrateQty: 0,
+      items: [
+        { productId, quantity: 10, unitPrice: 5, recipientType: "PLASTICA", crateQty: 4 },
+      ],
+    });
+    expect(s.plasticCrateQty).toBe(4);
+
+    const movimentos = await prisma.plasticCrateMovement.findMany({
+      where: { tenantId, saleId: s.id },
+    });
+    expect(movimentos).toHaveLength(1);
+    expect(movimentos[0]!.quantity).toBe(4);
+    expect(movimentos[0]!.customerName).toBe("Joao");
+
+    const saldo = await CaixasService.getSaldo(tenantId);
+    expect(saldo.comClientes).toBe(4);
+  });
+});
