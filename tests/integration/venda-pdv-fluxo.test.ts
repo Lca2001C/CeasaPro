@@ -491,3 +491,50 @@ describe("Caixas plasticas declaradas no item (regressao)", () => {
     expect(saldo.comClientes).toBe(4);
   });
 });
+
+describe("Cancelamento concorrente (regressao)", () => {
+  // O teste que ja existia ("nao cancela duas vezes") e SEQUENCIAL: a segunda
+  // chamada so acontece depois da primeira terminar, entao a checagem feita
+  // fora da transacao ja enxerga cancelledAt preenchido e recusa. Ele nao
+  // detecta corrida nenhuma.
+  //
+  // Com duas chamadas de verdade simultaneas, as duas passavam pela checagem
+  // (que roda ANTES da transacao) e as duas gravavam AJUSTE: a mercadoria
+  // voltava ao estoque DUAS vezes e o estorno de caixas rodava duas vezes.
+  it("duas chamadas simultaneas creditam o estoque uma vez so", async () => {
+    const s = await venda();
+    const antes = Number(await EstoqueService.getQuantity(tenantId, productId));
+
+    const resultados = await Promise.allSettled([
+      VendasService.cancelarVenda({ id: s.id }, ctx),
+      VendasService.cancelarVenda({ id: s.id }, ctx),
+    ]);
+
+    const aceitos = resultados.filter((r) => r.status === "fulfilled");
+    expect(aceitos).toHaveLength(1);
+
+    const estornos = await prisma.stockMovement.count({
+      where: { tenantId, sourceId: s.id, sourceType: "SALE_CANCELLED" },
+    });
+    expect(estornos).toBe(s.items.length);
+
+    const depois = Number(await EstoqueService.getQuantity(tenantId, productId));
+    expect(depois).toBe(antes + 10);
+  });
+
+  it("duas chamadas simultaneas estornam as caixas uma vez so", async () => {
+    const s = await venda({ customerName: "Joao", plasticCrateQty: 6 });
+    const saldoAntes = await CaixasService.getSaldo(tenantId);
+    expect(saldoAntes.comClientes).toBe(6);
+
+    const resultados = await Promise.allSettled([
+      VendasService.cancelarVenda({ id: s.id }, ctx),
+      VendasService.cancelarVenda({ id: s.id }, ctx),
+    ]);
+    expect(resultados.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+
+    const saldoDepois = await CaixasService.getSaldo(tenantId);
+    expect(saldoDepois.comClientes).toBe(0);
+    expect(saldoDepois.limpas).toBe(saldoAntes.limpas + 6);
+  });
+});

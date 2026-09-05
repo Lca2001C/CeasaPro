@@ -28,6 +28,18 @@ export const ESCALA_QUANTIDADE = 3;
 export const ESCALA_DINHEIRO = 2;
 
 /**
+ * Tolerância ao conferir somas: UM centavo, em centavos inteiros.
+ *
+ * Era 0,005 comparado em ponto flutuante — o que não é tolerância de centavo,
+ * é meio centavo medido com a régua errada. O operador digita as parcelas à
+ * mão, e 3,33 + 3,33 + 3,34 para um total de R$ 10,00 tem de passar.
+ *
+ * Mora aqui, e não em `validations/venda`, para o PDV poder usá-la sem
+ * arrastar o zod para o bundle do navegador.
+ */
+export const TOLERANCIA_CENTAVOS_BIG = 1n;
+
+/**
  * Normaliza para notação decimal simples, resolvendo o expoente.
  *
  * `String(0.0000001)` devolve "1e-7"; sem isto o parser leria 1.

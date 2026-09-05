@@ -5,6 +5,7 @@ import {
   paraCentavos,
   parteEmDinheiroCents,
   somaParcelasCents,
+  TOLERANCIA_CENTAVOS_BIG,
   totalDaVendaCents,
 } from "@/lib/venda/total";
 
@@ -29,14 +30,8 @@ export const vendaPagamentoSchema = z.object({
 });
 export type VendaPagamentoInput = z.infer<typeof vendaPagamentoSchema>;
 
-/**
- * Tolerância ao conferir somas: UM centavo, comparado em centavos inteiros.
- *
- * Era 0,005 comparado em ponto flutuante, o que não é tolerância de centavo —
- * é tolerância de meio centavo medida com a régua errada. O operador digita as
- * parcelas à mão, e 3,33 + 3,33 + 3,34 para um total de 10,00 tem de passar.
- */
-export const TOLERANCIA_CENTAVOS_BIG = 1n;
+/** Tolerância de um centavo — definida no contrato compartilhado. */
+export { TOLERANCIA_CENTAVOS_BIG };
 /** A mesma tolerância em reais, para a interface. */
 export const TOLERANCIA_CENTAVOS = 0.01;
 

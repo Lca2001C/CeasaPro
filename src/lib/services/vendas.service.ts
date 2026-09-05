@@ -378,10 +378,26 @@ export const VendasService = {
       : 0;
 
     await db.$transaction(async (tx) => {
-      await tx.sale.update({
-        where: { id: venda.id },
+      // Guarda otimista. A checagem de `venda.cancelledAt` lá em cima acontece
+      // FORA da transação: dois cliques no botão (ou uma retentativa depois de
+      // um timeout) passavam os dois, e o `update` por id sobrescrevia a marca
+      // sem reclamar — a mercadoria voltava ao estoque DUAS vezes, e o estorno
+      // de caixas rodava duas vezes.
+      //
+      // Com `cancelledAt: null` no `where`, o perdedor da corrida espera o lock
+      // da linha, reavalia o predicado depois do commit do vencedor e acha
+      // `count === 0`, parando ANTES de creditar qualquer coisa. É o mesmo
+      // padrão de `billing.service.ts:536`, que já fazia certo.
+      //
+      // `updateMany` continua isolado por empresa: a extensão de tenant injeta
+      // `tenantId` e `deletedAt` em operações de escrita com `where`.
+      const marcada = await tx.sale.updateMany({
+        where: { id: venda.id, cancelledAt: null },
         data: { cancelledAt: new Date(), cancelledReason: input.motivo || null },
       });
+      if (marcada.count !== 1) {
+        throw new BusinessRuleError("Esta venda já foi cancelada.");
+      }
 
       await tx.stockMovement.createMany({
         data: venda.items.map((it) => ({
