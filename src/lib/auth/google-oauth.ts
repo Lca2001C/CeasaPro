@@ -2,6 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { absoluteUrl } from "@/lib/app-url";
 import { safeRedirectPath } from "@/lib/safe-redirect";
+import { chaveDerivada, CHAVE_OAUTH_STATE } from "./keys";
+import { EMISSOR } from "./jwt";
 
 /**
  * Login com Google (OAuth 2 + PKCE, redirecionamento no servidor).
@@ -68,11 +70,16 @@ export function loginComErroGoogle(code: GoogleLoginErro): string {
   return `/login?erro=${code}`;
 }
 
-function oauthSecret(): Uint8Array {
-  const s = process.env.JWT_SECRET;
-  if (!s) throw new Error("JWT_SECRET não configurado");
-  return new TextEncoder().encode(s);
-}
+/**
+ * Identidade do token de state.
+ *
+ * Ele e o access token liam a MESMA `JWT_SECRET` e não tinham `aud` nem `typ`,
+ * então o state — que o dono da máquina lê do próprio cookie `cp_google_oauth`
+ * — era aceito como sessão. Agora são três diferenças independentes: chave
+ * derivada com rótulo próprio, público próprio e tipo próprio.
+ */
+const PUBLICO_STATE = "ceasapro:oauth-state";
+const TIPO_STATE = "oauth-state";
 
 export function novoPkce(): { verifier: string; challenge: string; state: string } {
   const verifier = randomBytes(32).toString("base64url");
@@ -103,17 +110,26 @@ export async function assinarEstadoOAuth(dados: GoogleOAuthState): Promise<strin
     state: dados.state,
     verifier: dados.verifier,
     next: dados.next,
+    typ: TIPO_STATE,
   })
     .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(EMISSOR)
+    .setAudience(PUBLICO_STATE)
     .setIssuedAt()
     .setExpirationTime(`${COOKIE_TTL_SEGUNDOS}s`)
-    .sign(oauthSecret());
+    .sign(await chaveDerivada(CHAVE_OAUTH_STATE));
 }
 
 export async function lerEstadoOAuth(token: string | undefined): Promise<GoogleOAuthState | null> {
   if (!token) return null;
   try {
-    const { payload } = await jwtVerify(token, oauthSecret());
+    const { payload } = await jwtVerify(token, await chaveDerivada(CHAVE_OAUTH_STATE), {
+      algorithms: ["HS256"],
+      issuer: EMISSOR,
+      audience: PUBLICO_STATE,
+      requiredClaims: ["typ"],
+    });
+    if (payload.typ !== TIPO_STATE) return null;
     const state = typeof payload.state === "string" ? payload.state : "";
     const verifier = typeof payload.verifier === "string" ? payload.verifier : "";
     if (!state || !verifier) return null;

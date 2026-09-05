@@ -45,8 +45,13 @@ describe("moduleForPath", () => {
 });
 
 describe("isModuleEnabled", () => {
-  it("token legado (undefined) → tudo liberado", () => {
-    expect(isModuleEnabled(undefined, "caixas")).toBe(true);
+  // Era o contrário: `undefined` liberava tudo, para o rollout do claim ser
+  // suave. O problema é que `undefined` tinha dois donos — "token legado" e
+  // "super-admin" — e a colisão obrigava o guard a ser permissivo para todo
+  // mundo, inclusive para uma sessão forjada sem o claim. Hoje `build-session`
+  // emite a lista sempre, e o super-admin recebe a lista completa explícita.
+  it("sem a lista, NADA é liberado (fail-closed)", () => {
+    expect(isModuleEnabled(undefined, "caixas")).toBe(false);
   });
   it("respeita a lista", () => {
     expect(isModuleEnabled(["caixas"], "caixas")).toBe(true);
@@ -56,9 +61,11 @@ describe("isModuleEnabled", () => {
 });
 
 describe("requireModule (guard de servidor)", () => {
-  it("passa quando habilitado e quando token é legado", () => {
+  it("passa quando o módulo está na lista", () => {
     expect(() => requireModule(["caixas"], "caixas")).not.toThrow();
-    expect(() => requireModule(undefined, "caixas")).not.toThrow();
+  });
+  it("lança quando a lista não veio — sessão sem claim não é sessão liberada", () => {
+    expect(() => requireModule(undefined, "caixas")).toThrow(ForbiddenError);
   });
   it("lança ForbiddenError quando o módulo não está no plano", () => {
     expect(() => requireModule([], "caixas")).toThrow(ForbiddenError);
