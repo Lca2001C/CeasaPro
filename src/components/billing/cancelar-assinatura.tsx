@@ -7,6 +7,7 @@ import { toast } from "sonner";
 import { cancelarAssinatura, reativarAssinatura } from "@/actions/plano.actions";
 import { apiPost } from "@/lib/api-client";
 import { formatDate } from "@/lib/format";
+import { irComSessaoNova } from "@/lib/session-nav";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -62,7 +63,7 @@ export function CancelarAssinatura({
       }
       toast.success("Assinatura encerrada.");
       await aposAcao();
-      window.location.assign("/conta/suspensa");
+      irComSessaoNova("/conta/suspensa");
     });
   }
 
