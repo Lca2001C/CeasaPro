@@ -672,3 +672,29 @@ describe("Data digitada no formulario nao volta um dia (regressao)", () => {
     expect(isoDateTz(conta.dueDate!)).toBe(DIA);
   });
 });
+
+describe("Corrida no saldo de caixas plasticas (regressao)", () => {
+  // Sete lugares liam `getSaldo` ANTES de abrir a transacao e passavam o
+  // retrato adiante — os proprios comentarios admitiam ("Saldo lido FORA da
+  // transacao"). TOCTOU classico: com 50 caixas limpas, duas vendas
+  // simultaneas de 30 liam as duas o mesmo 50, as duas passavam em
+  // `assertCrateMovement` e o pote terminava NEGATIVO. E `computeCrateSaldo`
+  // nao tem piso, entao a tela passava a exibir estoque negativo.
+  it("duas vendas simultaneas de 30 caixas sobre 50 limpas: so uma passa", async () => {
+    const antes = await CaixasService.getSaldo(tenantId);
+    expect(antes.limpas).toBe(50);
+
+    const resultados = await Promise.allSettled([
+      venda({ customerName: "Joao", plasticCrateQty: 30 }),
+      venda({ customerName: "Maria", plasticCrateQty: 30 }),
+    ]);
+
+    expect(resultados.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(resultados.filter((r) => r.status === "rejected")).toHaveLength(1);
+
+    const depois = await CaixasService.getSaldo(tenantId);
+    expect(depois.limpas).toBe(20);
+    expect(depois.comClientes).toBe(30);
+    expect(depois.limpas).toBeGreaterThanOrEqual(0);
+  });
+});

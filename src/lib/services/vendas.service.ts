@@ -64,19 +64,6 @@ export function formaPredominante(
   return payments.reduce((maior, p) => (p.amount > maior.amount ? p : maior)).method;
 }
 
-/**
- * Faz as parcelas somarem EXATAMENTE o total, absorvendo o resíduo numa delas.
- *
- * A validação tolera um centavo, porque o operador digita as parcelas à mão e
- * "3,33 + 3,33 + 3,34 = 10,00" tem de passar. Mas gravar a folga deixaria
- * `sale_payments` sem fechar com `sales.totalAmount` — e o fluxo de caixa soma
- * as parcelas enquanto o relatório de vendas soma o total, então as duas
- * visões da mesma venda divergiriam sem nada acusar.
- *
- * O resíduo vai para a maior parcela NÃO fiada. Mexer numa parcela fiada
- * mudaria o valor da conta a receber, que é o que o cliente vai pagar depois;
- * só se recorre a ela quando a venda é inteiramente fiada.
- */
 /** Nome do índice único que garante uma venda por chave de idempotência. */
 const INDICE_IDEMPOTENCIA = "sales_tenantId_idempotencyKey_key";
 
@@ -95,6 +82,19 @@ function ehConflitoDeIdempotencia(e: unknown): boolean {
   return false;
 }
 
+/**
+ * Faz as parcelas somarem EXATAMENTE o total, absorvendo o resíduo numa delas.
+ *
+ * A validação tolera um centavo, porque o operador digita as parcelas à mão e
+ * "3,33 + 3,33 + 3,34 = 10,00" tem de passar. Mas gravar a folga deixaria
+ * `sale_payments` sem fechar com `sales.totalAmount` — e o fluxo de caixa soma
+ * as parcelas enquanto o relatório de vendas soma o total, então as duas
+ * visões da mesma venda divergiriam sem nada acusar.
+ *
+ * O resíduo vai para a maior parcela NÃO fiada. Mexer numa parcela fiada
+ * mudaria o valor da conta a receber, que é o que o cliente vai pagar depois;
+ * só se recorre a ela quando a venda é inteiramente fiada.
+ */
 export function ajustarParcelasAoTotal(
   parcelas: readonly VendaPagamentoInput[],
   totalCents: bigint,
@@ -387,14 +387,10 @@ export const VendasService = {
       );
     }
 
-    // Só volta para o estoque de caixas o que ainda está com o cliente: se ele
-    // já devolveu parte, aquelas caixas já foram contabilizadas de volta e
-    // estornar de novo deixaria o saldo com clientes negativo.
-    const crateSaldo =
-      venda.plasticCrateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
-    const caixasEstornadas = crateSaldo
-      ? Math.min(venda.plasticCrateQty, Math.max(0, crateSaldo.comClientes))
-      : 0;
+    // Quantas caixas voltam ao estoque é decidido DENTRO da transação (abaixo),
+    // porque depende do saldo — e um retrato lido aqui fora outra operação já
+    // poderia ter invalidado.
+    let caixasEstornadas = 0;
 
     await db.$transaction(async (tx) => {
       // Guarda otimista. A checagem de `venda.cancelledAt` lá em cima acontece
@@ -431,7 +427,15 @@ export const VendasService = {
         })),
       });
 
-      if (caixasEstornadas > 0 && crateSaldo) {
+      // Só volta para o estoque de caixas o que ainda está com o cliente: se ele
+      // já devolveu parte, aquelas caixas já foram contabilizadas de volta e
+      // estornar de novo deixaria o saldo com clientes negativo.
+      if (venda.plasticCrateQty > 0) {
+        const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
+        caixasEstornadas = Math.min(venda.plasticCrateQty, Math.max(0, saldo.comClientes));
+      }
+
+      if (caixasEstornadas > 0) {
         await CaixasService.registrarInTx(
           tx,
           {
@@ -443,7 +447,7 @@ export const VendasService = {
             notes: "Estorno pelo cancelamento da venda",
           },
           ctx,
-          crateSaldo,
+
         );
       }
 
@@ -550,9 +554,6 @@ export const VendasService = {
     // quem não usa caixa retornável, e barrava a venda por um saldo irrelevante.
     const caixasHabilitado = isModuleEnabled(ctx.session.modules, "caixas");
     const plasticCrateQty = caixasHabilitado ? resolvePlasticCrateQty(input) : 0;
-    // Saldo lido fora da transação (igual ao fluxo de CaixasService.registrar).
-    const crateSaldo =
-      plasticCrateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
 
     return db.$transaction(async (tx) => {
       // Trava as linhas de produto ANTES de ler o saldo.
@@ -756,7 +757,7 @@ export const VendasService = {
       });
 
       // 5. Caixas plásticas que saíram com a mercadoria (livro-razão de caixas)
-      if (plasticCrateQty > 0 && crateSaldo) {
+      if (plasticCrateQty > 0) {
         await CaixasService.registrarInTx(
           tx,
           {
@@ -768,7 +769,7 @@ export const VendasService = {
             notes: "Saída automática pela venda",
           },
           ctx,
-          crateSaldo,
+
         );
       }
 

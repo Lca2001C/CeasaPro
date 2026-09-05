@@ -37,7 +37,6 @@ export const ComprasService = {
     }
     // Saldo lido FORA da transação, como em `registrarVenda`: `registrarInTx`
     // valida o movimento contra ele e não pode reabrir conexão no meio.
-    const crateSaldo = caixasRecebidas > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
     const fornecedorNome = input.supplierId
       ? ((await db.supplier.findFirst({
           where: { id: input.supplierId },
@@ -107,7 +106,7 @@ export const ComprasService = {
       // Caixas plásticas que vieram com a mercadoria, na MESMA transação.
       // Antes era um segundo lançamento em outra tela — e a metade esquecida
       // fazia o saldo de caixas divergir do que existe no box.
-      if (caixasRecebidas > 0 && crateSaldo) {
+      if (caixasRecebidas > 0) {
         await CaixasService.registrarInTx(
           tx,
           {
@@ -120,7 +119,7 @@ export const ComprasService = {
             notes: "Entrada automática pela compra",
           },
           ctx,
-          crateSaldo,
+
         );
       }
 

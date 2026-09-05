@@ -164,7 +164,6 @@ export const HigienizacaoService = {
   /** Envia caixas sujas ao higienizador — baixa do estoque de sujas (atômico). */
   async create(input: HigienizacaoInput, ctx: TenantCtx) {
     const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -191,7 +190,7 @@ export const HigienizacaoService = {
           notes: "Envio para higienização",
         },
         ctx,
-        saldo,
+
       );
 
       await audit(
@@ -217,7 +216,6 @@ export const HigienizacaoService = {
 
   /** Ajusta o lote antes de qualquer devolução/pagamento. */
   async update(input: HigienizacaoUpdateInput, ctx: TenantCtx) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -245,7 +243,7 @@ export const HigienizacaoService = {
             notes: "Ajuste do envio para higienização",
           },
           ctx,
-          saldo,
+
         );
       } else if (delta < 0) {
         await CaixasService.registrarInTx(
@@ -259,7 +257,7 @@ export const HigienizacaoService = {
             notes: "Ajuste do envio para higienização",
           },
           ctx,
-          saldo,
+
         );
       }
 
@@ -295,7 +293,6 @@ export const HigienizacaoService = {
 
   /** Higienizador devolveu caixas limpas — voltam ao estoque de limpas. */
   async registrarDevolucao(input: HigienizacaoDevolucaoInput, ctx: TenantCtx) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -335,7 +332,7 @@ export const HigienizacaoService = {
           notes: "Devolução da higienização",
         },
         ctx,
-        saldo,
+
       );
 
       await audit(
@@ -372,7 +369,6 @@ export const HigienizacaoService = {
     input: { id: string; quantity: number; movementDate: string; notes?: string | null },
     ctx: TenantCtx,
   ) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -401,7 +397,7 @@ export const HigienizacaoService = {
           notes: input.notes ?? "Caixa perdida no higienizador",
         },
         ctx,
-        saldo,
+
       );
 
       const status = computeCleaningStatus({
