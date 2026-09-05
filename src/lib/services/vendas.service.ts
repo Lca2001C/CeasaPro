@@ -77,6 +77,24 @@ export function formaPredominante(
  * mudaria o valor da conta a receber, que é o que o cliente vai pagar depois;
  * só se recorre a ela quando a venda é inteiramente fiada.
  */
+/** Nome do índice único que garante uma venda por chave de idempotência. */
+const INDICE_IDEMPOTENCIA = "sales_tenantId_idempotencyKey_key";
+
+/**
+ * O erro é a colisão da chave de idempotência (e não outra unicidade qualquer)?
+ *
+ * Conferir o alvo do P2002 importa: tratar QUALQUER violação de unicidade como
+ * retentativa devolveria "sucesso" para uma venda que na verdade não foi
+ * gravada.
+ */
+function ehConflitoDeIdempotencia(e: unknown): boolean {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return false;
+  const alvo = (e.meta as { target?: unknown } | undefined)?.target;
+  if (typeof alvo === "string") return alvo === INDICE_IDEMPOTENCIA;
+  if (Array.isArray(alvo)) return alvo.includes("idempotencyKey");
+  return false;
+}
+
 export function ajustarParcelasAoTotal(
   parcelas: readonly VendaPagamentoInput[],
   totalCents: bigint,
@@ -472,8 +490,54 @@ export const VendasService = {
     };
   },
 
+  /**
+   * Recupera a venda já gravada com esta chave de idempotência.
+   *
+   * O `include` casa com o que a transação devolve, para o chamador não
+   * perceber diferença entre a primeira chamada e a retentativa.
+   */
+  async porChaveDeIdempotencia(tenantId: string, chave: string) {
+    return getTenantPrisma(tenantId).sale.findFirst({
+      where: { idempotencyKey: chave },
+      include: { items: true, payments: true },
+    });
+  },
+
   async registrarVenda(input: VendaInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
+
+    // Caminho rápido da retentativa: a mesma chave já virou venda?
+    //
+    // Um "não encontrei" aqui é inofensivo — quem realmente fecha a porta é o
+    // índice único, mais abaixo. Este atalho existe para a retentativa comum
+    // (rede voltou, operador tocou de novo) não pagar o custo de abrir a
+    // transação, travar produtos e falhar no commit.
+    if (input.idempotencyKey) {
+      const jaExiste = await this.porChaveDeIdempotencia(ctx.tenantId, input.idempotencyKey);
+      if (jaExiste) return Object.assign(jaExiste, { jaRegistrada: true });
+    }
+
+    try {
+      return Object.assign(await this.gravarVenda(db, input, ctx), { jaRegistrada: false });
+    } catch (e) {
+      // Corrida de verdade: dois toques simultâneos com a mesma chave. O
+      // segundo INSERT bloqueia no índice único até o primeiro commitar e então
+      // levanta P2002. É ESTE ramo que pega o duplo clique — o atalho lá em
+      // cima só pega a retentativa depois de a primeira ter terminado.
+      if (input.idempotencyKey && ehConflitoDeIdempotencia(e)) {
+        const existente = await this.porChaveDeIdempotencia(ctx.tenantId, input.idempotencyKey);
+        if (existente) return Object.assign(existente, { jaRegistrada: true });
+      }
+      throw e;
+    }
+  },
+
+  /** O trabalho em si. Separado para `registrarVenda` cuidar só da idempotência. */
+  async gravarVenda(
+    db: ReturnType<typeof getTenantPrisma>,
+    input: VendaInput,
+    ctx: TenantCtx,
+  ) {
     const productIds = [...new Set(input.items.map((i) => i.productId))];
     const saleDate = input.saleDate ? new Date(input.saleDate) : new Date();
     // Empresa sem o módulo de caixas não deve ter movimento de caixa criado
@@ -648,6 +712,7 @@ export const VendasService = {
           amountReceived,
           changeGiven,
           plasticCrateQty,
+          idempotencyKey: input.idempotencyKey ?? null,
           items: {
             create: input.items.map((i, idx) => ({
               tenantId: ctx.tenantId,

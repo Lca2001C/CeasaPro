@@ -582,3 +582,66 @@ describe("Checagem de estoque arredonda como o PDV (regressao)", () => {
     expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(0);
   });
 });
+
+describe("Idempotencia da venda (regressao)", () => {
+  const chave = () => globalThis.crypto.randomUUID();
+
+  // Rede do CEASA oscilando: o POST chega, a transacao commita e a resposta se
+  // perde. O operador via "Falha de conexao. Tente novamente." — uma mensagem
+  // que MANDA repetir — e o segundo toque registrava tudo de novo: estoque
+  // baixado em dobro, segunda conta de fiado no mesmo nome, duas saidas de
+  // caixa. O servidor nao tinha como distinguir retentativa de venda nova.
+  it("retentativa com a mesma chave devolve a venda original, sem duplicar nada", async () => {
+    const k = chave();
+    const primeira = await venda({ idempotencyKey: k, customerName: "Joao", paymentMethod: "FIADO" });
+    const segunda = await venda({ idempotencyKey: k, customerName: "Joao", paymentMethod: "FIADO" });
+
+    expect(segunda.id).toBe(primeira.id);
+    expect(primeira.jaRegistrada).toBe(false);
+    expect(segunda.jaRegistrada).toBe(true);
+
+    expect(await prisma.sale.count({ where: { tenantId, idempotencyKey: k } })).toBe(1);
+    expect(
+      await prisma.stockMovement.count({ where: { tenantId, sourceId: primeira.id } }),
+    ).toBe(1);
+    expect(await prisma.creditAccount.count({ where: { tenantId, saleId: primeira.id } })).toBe(1);
+    // E o estoque baixou UMA vez: 100 comprados menos os 10 da venda.
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(90);
+  });
+
+  // O caminho rapido (buscar antes de abrir a transacao) nao cobre o duplo
+  // clique: as duas chamadas comecam juntas e nenhuma enxerga a outra. Quem
+  // fecha essa porta e o indice unico, e este teste exercita esse ramo.
+  it("duplo clique simultaneo grava uma venda so", async () => {
+    const k = chave();
+    const resultados = await Promise.allSettled([
+      venda({ idempotencyKey: k }),
+      venda({ idempotencyKey: k }),
+    ]);
+
+    const aceitas = resultados.filter(
+      (r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof venda>>> =>
+        r.status === "fulfilled",
+    );
+    expect(aceitas).toHaveLength(2);
+    expect(aceitas[0]!.value.id).toBe(aceitas[1]!.value.id);
+    expect(await prisma.sale.count({ where: { tenantId, idempotencyKey: k } })).toBe(1);
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(90);
+  });
+
+  it("chaves diferentes continuam sendo vendas diferentes", async () => {
+    // Duas vendas identicas em sequencia sao corriqueiras no balcao — mesmo
+    // cliente, mesmos 10 kg. Deduplicar por conteudo recusaria dinheiro real.
+    const a = await venda({ idempotencyKey: chave() });
+    const b = await venda({ idempotencyKey: chave() });
+    expect(a.id).not.toBe(b.id);
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(80);
+  });
+
+  it("sem chave, o comportamento antigo continua valendo", async () => {
+    const a = await venda();
+    const b = await venda();
+    expect(a.id).not.toBe(b.id);
+    expect(a.idempotencyKey).toBeNull();
+  });
+});

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -168,6 +168,8 @@ export function Pdv({
   const [saving, setSaving] = useState(false);
   const [confirmarPrecoZero, setConfirmarPrecoZero] = useState(false);
   const [resumo, setResumo] = useState<ResumoVenda | null>(null);
+  /** Chave de idempotência do carrinho atual — ver o uso em `finalizar`. */
+  const chaveDoCarrinho = useRef<string | null>(null);
 
   // Atalho "Vender" do Estoque: começa com o produto já no carrinho.
   const [carrinhoIniciado, setCarrinhoIniciado] = useState(false);
@@ -398,7 +400,15 @@ export function Pdv({
     const caixas = caixasHabilitado && usaCaixaPlastica ? parseInt(crateQty, 10) || 0 : 0;
 
     setSaving(true);
-    const res = await apiPost<{ id: string }>("/api/vendas", {
+    // Uma chave por CARRINHO, criada no primeiro envio e mantida enquanto este
+    // carrinho existir. É ela que faz a retentativa devolver a venda original
+    // em vez de registrar outra — e ela não pode ser derivada do conteúdo do
+    // carrinho, porque no balcão duas vendas idênticas em sequência (mesmo
+    // cliente, mesmos 10 kg de tomate) são corriqueiras e recusá-las seria
+    // recusar dinheiro real.
+    chaveDoCarrinho.current ??= crypto.randomUUID();
+    const res = await apiPost<{ id: string; jaRegistrada: boolean }>("/api/vendas", {
+      idempotencyKey: chaveDoCarrinho.current,
       customerName: customer.trim() || null,
       customerPhone: phone.trim() || null,
       paymentMethod: dividido ? (parcelas[0]?.method ?? payment) : payment,
@@ -424,7 +434,24 @@ export function Pdv({
     setSaving(false);
     setConfirmarPrecoZero(false);
     if (!res.ok) {
+      // A chave de idempotência é MANTIDA no erro: nada foi gravado, e o
+      // operador vai corrigir o mesmo carrinho e tentar de novo. Se por acaso a
+      // venda tiver sido gravada e só a resposta ter se perdido, a repetição
+      // com a mesma chave devolve a venda original em vez de criar outra.
       toast.error(res.error.message);
+      return;
+    }
+
+    // Deu certo: a partir daqui o próximo carrinho é uma venda NOVA.
+    chaveDoCarrinho.current = null;
+
+    if (res.data.jaRegistrada) {
+      // Retentativa de uma venda que já estava gravada. Não dá para mostrar o
+      // resumo daqui: os números viriam do carrinho atual, e a venda gravada
+      // pode ser outra. Melhor levar o operador para a venda de verdade.
+      toast.success("Esta venda já havia sido registrada — nada foi duplicado.");
+      setCart([]);
+      router.push(`/vendas/${res.data.id}`);
       return;
     }
 

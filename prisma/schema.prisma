@@ -325,6 +325,17 @@ model Sale {
   /// Cancelamento. A venda continua na base (auditoria), mas sai dos totais.
   cancelledAt     DateTime?
   cancelledReason String?
+  /// Chave de idempotência do carrinho, gerada pelo PDV (UUID por carrinho).
+  ///
+  /// Sem ela, uma resposta perdida depois do commit — rede do CEASA oscilando —
+  /// fazia o operador tocar de novo e registrava a venda DUAS vezes: estoque
+  /// baixado em dobro, segunda conta de fiado no mesmo nome, duas saídas de
+  /// caixa. Não havia como o servidor distinguir retentativa de venda nova.
+  ///
+  /// Nula nas vendas antigas e no fiado manual (que não tem carrinho); no
+  /// Postgres vários NULL não colidem no índice único, então convivem sem
+  /// precisar de índice parcial.
+  idempotencyKey  String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt
   deletedAt       DateTime?
@@ -334,6 +345,7 @@ model Sale {
   payments        SalePayment[]
   tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, saleDate])
   @@index([tenantId, paymentMethod])
   @@index([tenantId, cancelledAt])

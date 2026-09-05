@@ -78,6 +78,13 @@ const vendaBase = z.object({
    * entrava zerada — distorcendo faturamento e lucro sem ninguém perceber.
    */
   permitirPrecoZero: z.boolean().optional(),
+  /**
+   * Chave de idempotência do carrinho, gerada pelo PDV.
+   *
+   * Opcional de propósito: um PWA com bundle antigo em cache continua
+   * funcionando depois do deploy, e o fiado manual não tem carrinho.
+   */
+  idempotencyKey: z.uuid().optional(),
   items: z.array(vendaItemSchema).min(1, "Adicione ao menos um item"),
 });
 
