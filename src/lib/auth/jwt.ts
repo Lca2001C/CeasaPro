@@ -11,8 +11,18 @@ export interface AccessPayload {
   mustChangePassword: boolean;
   tenantStatus?: TenantStatus | null;
   subStatus?: SubscriptionStatus | null;
-  /** Módulos opcionais habilitados pelo plano. `undefined` = token legado (tudo liberado). */
+  /** Módulos opcionais do plano. Sempre emitido; sem ele, nada é liberado. */
   modules?: string[];
+  /**
+   * Contadores de revogação, do USUÁRIO (`sev`) e da EMPRESA (`tev`).
+   *
+   * Conferidos contra o banco nos wrappers de escrita: qualquer incremento
+   * invalida na hora as sessões emitidas antes, em vez de esperar o access
+   * token vencer. É o que faz logout global, exclusão de usuário, bloqueio de
+   * empresa e troca de senha valerem imediatamente.
+   */
+  sev?: number;
+  tev?: number;
 }
 
 const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL ?? "15m";
@@ -80,6 +90,8 @@ export async function verifyAccess(token: string): Promise<AccessPayload | null>
       modules: Array.isArray(payload.modules)
         ? (payload.modules as string[])
         : undefined,
+      sev: typeof payload.sev === "number" ? payload.sev : undefined,
+      tev: typeof payload.tev === "number" ? payload.tev : undefined,
     };
   } catch {
     return null;

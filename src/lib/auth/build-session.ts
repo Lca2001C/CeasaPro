@@ -65,5 +65,9 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     tenantStatus,
     subStatus,
     modules,
+    // Carimbo de revogação no momento da emissão. `assertSessaoValida` compara
+    // com o banco e derruba a sessão se qualquer um dos dois tiver avançado.
+    sev: user.sessionEpoch,
+    tev: user.tenant?.sessionEpoch ?? 0,
   };
 }

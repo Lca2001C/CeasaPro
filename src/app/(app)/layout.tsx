@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
+import { assertSessaoValida } from "@/lib/auth/revogacao";
 import { prisma } from "@/lib/db/prisma";
 import { accessDecision, billingNotice } from "@/lib/billing/status";
 import { formatDate } from "@/lib/format";
@@ -15,6 +16,7 @@ export default async function AppLayout({
   const session = await getSession();
   if (!session) redirect("/login");
   if (session.mustChangePassword) redirect("/alterar-senha");
+  await assertSessaoValida(session);
   // Assinatura bloqueada não lê dado da empresa.
   //
   // Isto ESPELHA o proxy, que já decide o mesmo — e é justamente esse o ponto:

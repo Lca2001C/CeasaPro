@@ -138,7 +138,7 @@ describe("Estorno (refunded)", () => {
     expect(sub?.statusReason).toContain("refunded");
 
     // Sessão aberta não renova mais: o refresh token foi revogado.
-    expect(await rotateRefreshToken(refreshToken)).toBeNull();
+    expect((await rotateRefreshToken(refreshToken)).tipo).toBe("invalido");
   });
 
   it("bloqueia o acesso e faz a API responder 402", async () => {
@@ -200,7 +200,7 @@ describe("Chargeback (charged_back)", () => {
     expect(sub?.status).toBe("BLOQUEADO");
     expect(sub?.statusSource).toBe("MANUAL");
     expect(accessDecision("ACTIVE", sub!.status)).toBe("blocked");
-    expect(await rotateRefreshToken(refreshToken)).toBeNull();
+    expect((await rotateRefreshToken(refreshToken)).tipo).toBe("invalido");
 
     const log = await prisma.auditLog.findFirst({
       where: { tenantId, action: "ACCESS_REVOKED" },

@@ -18,6 +18,11 @@ model Tenant {
   logoUrl               String?
   businessHours         String?
   status                TenantStatus           @default(ACTIVE)
+  /// Contador de revogação de sessão da EMPRESA (vai no token como `tev`).
+  ///
+  /// Bloqueio pelo super-admin, exclusão e estorno/chargeback derrubam todas as
+  /// sessões da empresa na hora, em vez de esperar o access token vencer.
+  sessionEpoch          Int                    @default(0)
   /// Tipo de estabelecimento / número do box no Ceasa, informado no cadastro
   /// público. Livre e opcional: no Ceasa a mesma pessoa opera box, banca ou
   /// galpão, e travar em enum obrigaria migration a cada arranjo novo.
@@ -75,6 +80,14 @@ model User {
   role                 UserRole           @default(OWNER)
   active               Boolean            @default(true)
   mustChangePassword   Boolean            @default(false)
+  /// Contador de revogação de sessão do USUÁRIO.
+  ///
+  /// Vai no access token como `sev` e é conferido nos wrappers de escrita.
+  /// Sem ele, a sessão era 100% stateless na leitura: logout, exclusão de
+  /// usuário, desativação e troca de senha só mexiam em `refresh_tokens`, e o
+  /// access token continuava autorizando tudo por até 15 minutos — enquanto a
+  /// tela prometia "todos os dispositivos conectados serão desconectados".
+  sessionEpoch         Int                @default(0)
   googleSub            String?            @unique
   lastLoginAt          DateTime?
   resetTokenHash       String?
@@ -108,9 +121,33 @@ model RefreshToken {
   userAgent String?
   ip        String?
   createdAt DateTime  @default(now())
+
+  /// Linhagem de um aparelho: no login recebe o próprio id, e a rotação herda.
+  ///
+  /// É a unidade que se revoga quando um token roubado é reapresentado. Revogar
+  /// a conta inteira derrubaria o celular do dono porque o notebook foi
+  /// comprometido; a família é a menor unidade que CERTAMENTE contém o token
+  /// vazado.
+  /// O default é a hipótese conservadora: um token criado sem linhagem
+  /// explícita é a própria linhagem, e revogá-la atinge só ele.
+  familyId       String    @default(cuid())
+  /// Quem sucedeu este token. Prova que a revogação foi por ROTAÇÃO.
+  replacedById   String?
+  /// Por que foi revogado. Sem isto, `revokedAt != null` significava quatro
+  /// coisas diferentes (rotação, logout, ação do admin, troca de senha) e não
+  /// havia como detectar reuso sem transformar todo logout em falso alarme.
+  revokedReason  String?
+  /// Quantas vezes este token já foi aceito dentro da janela de graça.
+  ///
+  /// Duas abas renovam concorrentemente (`SessaoViva` e `api-client` têm travas
+  /// que não se enxergam), e uma resposta perdida faz o cliente reenviar com o
+  /// cookie antigo. Sem a janela, esses casos legítimos viravam "ataque".
+  graceUses      Int       @default(0)
+
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
+  @@index([familyId])
   @@map("refresh_tokens")
 }
 

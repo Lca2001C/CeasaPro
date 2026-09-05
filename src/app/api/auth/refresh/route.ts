@@ -5,7 +5,7 @@ import {
   setAuthCookies,
   clearAuthCookies,
 } from "@/lib/auth/cookies";
-import { rotateRefreshToken } from "@/lib/auth/refresh";
+import { auditarReusoDeSessao, rotateRefreshToken } from "@/lib/auth/refresh";
 import { clientIp, userAgent } from "@/lib/http/request";
 
 export const runtime = "nodejs";
@@ -19,11 +19,16 @@ export async function POST() {
     );
   }
 
-  const rotated = await rotateRefreshToken(current, {
-    ip: (await clientIp()) ?? undefined,
-    userAgent: (await userAgent()) ?? undefined,
-  });
-  if (!rotated) {
+  const ip = (await clientIp()) ?? undefined;
+  const ua = (await userAgent()) ?? undefined;
+  const rotated = await rotateRefreshToken(current, { ip, userAgent: ua });
+
+  if (rotated.tipo === "reuso") {
+    await auditarReusoDeSessao(rotated.userId, rotated.familyId, { ip, userAgent: ua });
+  }
+  // Resposta IDÊNTICA para reuso e para inválido: o atacante não recebe sinal
+  // de que foi detectado, e a vítima cai no login como cairia de qualquer forma.
+  if (rotated.tipo === "reuso" || rotated.tipo === "invalido") {
     await clearAuthCookies();
     return Response.json(
       { ok: false, error: { code: "UNAUTHORIZED", message: "Sessão inválida" } },

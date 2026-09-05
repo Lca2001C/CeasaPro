@@ -68,7 +68,7 @@ export async function POST(req: Request) {
     },
   });
 
-  await revokeAllForUser(user.id);
+  await revokeAllForUser(user.id, "PASSWORD");
   const refreshToken = await createRefreshToken(user.id, {
     ip,
     userAgent: (await userAgent()) ?? undefined,

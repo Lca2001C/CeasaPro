@@ -6,7 +6,7 @@ import {
   clearAuthCookies,
   marcarTentativaDeRenovacao,
 } from "@/lib/auth/cookies";
-import { rotateRefreshToken } from "@/lib/auth/refresh";
+import { auditarReusoDeSessao, rotateRefreshToken } from "@/lib/auth/refresh";
 import { clientIp, userAgent } from "@/lib/http/request";
 import { destinoSeguro, ehNavegacaoDeTopo } from "@/lib/auth/renovacao";
 
@@ -59,12 +59,16 @@ export async function GET(req: Request): Promise<Response> {
   const atual = await readRefreshCookie();
   if (!atual) return paraLogin();
 
-  const rotated = await rotateRefreshToken(atual, {
-    ip: (await clientIp()) ?? undefined,
-    userAgent: (await userAgent()) ?? undefined,
-  });
-  if (!rotated) {
-    // Refresh token inválido de verdade (expirado, revogado, ou já usado).
+  const ip = (await clientIp()) ?? undefined;
+  const ua = (await userAgent()) ?? undefined;
+  const rotated = await rotateRefreshToken(atual, { ip, userAgent: ua });
+
+  if (rotated.tipo === "reuso") {
+    await auditarReusoDeSessao(rotated.userId, rotated.familyId, { ip, userAgent: ua });
+  }
+  // Reuso e inválido levam ao MESMO lugar, de propósito: o atacante não recebe
+  // sinal de que foi detectado.
+  if (rotated.tipo === "reuso" || rotated.tipo === "invalido") {
     await clearAuthCookies();
     return paraLogin();
   }

@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
+import { assertSessaoValida } from "@/lib/auth/revogacao";
 import { AdminShell } from "@/components/layout/admin-shell";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
 
@@ -12,6 +13,7 @@ export default async function AdminLayout({
   if (!session) redirect("/login");
   if (session.mustChangePassword) redirect("/alterar-senha");
   if (session.role !== "SUPER_ADMIN") redirect("/dashboard");
+  await assertSessaoValida(session);
 
   // Depois dos redirecionamentos: contar notificacoes de quem nem vai ver o
   // painel seria consulta jogada fora em todo acesso indevido.
