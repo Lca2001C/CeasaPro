@@ -1,7 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
-import { billingNotice } from "@/lib/billing/status";
+import { accessDecision, billingNotice } from "@/lib/billing/status";
 import { formatDate } from "@/lib/format";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessaoViva } from "@/components/auth/sessao-viva";
@@ -15,6 +15,19 @@ export default async function AppLayout({
   const session = await getSession();
   if (!session) redirect("/login");
   if (session.mustChangePassword) redirect("/alterar-senha");
+  // Assinatura bloqueada não lê dado da empresa.
+  //
+  // Isto ESPELHA o proxy, que já decide o mesmo — e é justamente esse o ponto:
+  // até aqui, a única camada que decidia assinatura para uma NAVEGAÇÃO era o
+  // middleware. Os wrappers de escrita já se defendiam sozinhos (`assertActive`
+  // em `with-action`/`with-route`); a leitura de página, não.
+  //
+  // Sem mudança de comportamento: `/conta` e `/assinatura` ficam fora deste
+  // grupo, e `/plano`, que está dentro, não é rota de regularização — o proxy
+  // já mandava o bloqueado para `/conta/suspensa` antes de chegar nela.
+  if (accessDecision(session.tenantStatus, session.subStatus) === "blocked") {
+    redirect("/conta/suspensa");
+  }
   // O super-admin usa esta área no ambiente PRÓPRIO dele. Sem ambiente
   // provisionado não há o que mostrar aqui — volta para a gestão do sistema.
   if (session.role === "SUPER_ADMIN" && !session.tenantId) redirect("/admin");
