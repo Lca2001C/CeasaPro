@@ -1,6 +1,6 @@
 import { after } from "next/server";
 import { signupSchema } from "@/lib/validations/auth";
-import { rateLimitDb } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { hasConfiguredAppUrl } from "@/lib/app-url";
@@ -49,6 +49,11 @@ export async function POST(req: Request) {
     limit: 3,
     windowMs: 60 * 60 * 1000,
   });
+  // Banco fora: o genérico diria que o cadastro seguiu, e nada foi criado.
+  // 503 não distingue e-mail nenhum, então não reabre a enumeração.
+  if (byIp.indisponivel || byEmail.indisponivel) {
+    return respostaDeLimite(byIp.indisponivel ? byIp : byEmail);
+  }
   if (!byIp.ok || !byEmail.ok) {
     logger.warn({ ip, scope: byIp.ok ? "email" : "ip" }, "Rate limit em /api/auth/signup");
     // Também genérico: dizer "muitas tentativas" já confirmaria que houve
