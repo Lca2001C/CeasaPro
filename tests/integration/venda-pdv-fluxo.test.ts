@@ -538,3 +538,47 @@ describe("Cancelamento concorrente (regressao)", () => {
     expect(saldoDepois.limpas).toBe(saldoAntes.limpas + 6);
   });
 });
+
+describe("Corrida de estoque (regressao)", () => {
+  // Em READ COMMITTED (o padrao do Postgres) a validacao de saldo lia o mesmo
+  // groupBy em todas as transacoes concorrentes: as N passavam e o estoque
+  // terminava NEGATIVO. O lock nas linhas de `products` serializa as vendas do
+  // mesmo produto, entao o resultado passa a ser deterministico.
+  it("cinco vendas simultaneas de um saldo de 6 nao levam o estoque a negativo", async () => {
+    // beforeEach compra 100. Consome 94 para sobrar exatamente 6.
+    await venda({ items: [{ productId, quantity: 94, unitPrice: 1 }] });
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(6);
+
+    const resultados = await Promise.allSettled(
+      Array.from({ length: 5 }, () =>
+        venda({ items: [{ productId, quantity: 2, unitPrice: 1 }] }),
+      ),
+    );
+
+    const aceitas = resultados.filter((r) => r.status === "fulfilled");
+    const recusadas = resultados.filter((r) => r.status === "rejected");
+    expect(aceitas).toHaveLength(3);
+    expect(recusadas).toHaveLength(2);
+    for (const r of recusadas) {
+      expect(String((r as PromiseRejectedResult).reason)).toMatch(/estoque/i);
+    }
+
+    const saldo = Number(await EstoqueService.getQuantity(tenantId, productId));
+    expect(saldo).toBe(0);
+    expect(saldo).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Checagem de estoque arredonda como o PDV (regressao)", () => {
+  // O PDV monta 0.1 + 0.2 como 0.30000000000000004 e aprova, porque
+  // `passaDoEstoque` arredonda para 3 casas — a precisao da coluna. O servidor
+  // comparava com `gt` cru e RECUSAVA uma venda que cabia.
+  it("aceita a quantidade que o browser monta com ruido de ponto flutuante", async () => {
+    await venda({ items: [{ productId, quantity: 99.7, unitPrice: 1 }] });
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(0.3);
+
+    const s = await venda({ items: [{ productId, quantity: 0.1 + 0.2, unitPrice: 1 }] });
+    expect(s.id).toBeTruthy();
+    expect(Number(await EstoqueService.getQuantity(tenantId, productId))).toBe(0);
+  });
+});

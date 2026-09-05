@@ -3,9 +3,10 @@ import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { money, toDecimal, gt } from "@/lib/money";
+import { money, toDecimal } from "@/lib/money";
 import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
 import { addDaysTz, endOfDayTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
@@ -485,10 +486,33 @@ export const VendasService = {
       plasticCrateQty > 0 ? await CaixasService.getSaldo(ctx.tenantId) : null;
 
     return db.$transaction(async (tx) => {
-      const products = await tx.product.findMany({
-        where: { id: { in: productIds }, active: true },
-        select: { id: true },
-      });
+      // Trava as linhas de produto ANTES de ler o saldo.
+      //
+      // `stock_movements` é um livro-razão só-de-inserção: não existe linha de
+      // saldo para travar, e travar as movimentações existentes não impede a
+      // inserção concorrente (é problema de fantasma, não de linha). Travar a
+      // linha PAI do produto é o padrão canônico para invariante derivada de
+      // ledger — e serializa só as vendas do mesmo produto, na mesma empresa.
+      //
+      // Sem isto, em READ COMMITTED (o padrão do Postgres), duas vendas
+      // simultâneas do mesmo produto liam o mesmo saldo, as duas passavam na
+      // validação e o estoque terminava NEGATIVO.
+      //
+      // `ORDER BY id` é obrigatório: dois carrinhos com os mesmos produtos em
+      // ordens diferentes travariam em ordem oposta e entrariam em deadlock.
+      //
+      // O `FOR UPDATE` substitui — e não acrescenta — a consulta de existência
+      // que estava aqui. SQL cru não passa pela extensão de tenant, então o
+      // `tenantId` vai explícito, como já é convenção no `estoque.service`.
+      const products = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM products
+        WHERE "tenantId" = ${ctx.tenantId}
+          AND id = ANY(${productIds}::text[])
+          AND active = true
+          AND "deletedAt" IS NULL
+        ORDER BY id
+        FOR UPDATE
+      `;
       if (products.length !== productIds.length) {
         throw new NotFoundError("Um ou mais produtos nao foram encontrados");
       }
@@ -530,7 +554,12 @@ export const VendasService = {
       }
       for (const [pid, qty] of requested) {
         const avail = available.get(pid) ?? new Prisma.Decimal(0);
-        if (gt(qty, avail)) {
+        // `passaDoEstoque` arredonda os dois lados para 3 casas — a precisão do
+        // `Decimal(14,3)` da coluna. É a mesma regra que o PDV usa para avisar
+        // antes de finalizar. Comparando com `gt` cru, uma quantidade montada
+        // no browser como `0.1 + 0.2` chegava valendo 0.30000000000000004 e o
+        // servidor recusava uma venda que cabia — depois de o PDV ter aprovado.
+        if (passaDoEstoque(avail, qty)) {
           const prod = await tx.product.findFirst({ where: { id: pid } });
           throw new BusinessRuleError(
             `Estoque insuficiente de ${prod?.name ?? "produto"} (disponível: ${avail.toString()}).`,
