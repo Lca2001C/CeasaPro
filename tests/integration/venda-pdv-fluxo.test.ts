@@ -645,3 +645,30 @@ describe("Idempotencia da venda (regressao)", () => {
     expect(a.idempotencyKey).toBeNull();
   });
 });
+
+describe("Data digitada no formulario nao volta um dia (regressao)", () => {
+  // `new Date("2026-09-04")` e meia-noite UTC — 03/09 as 21h em Sao Paulo. A
+  // venda caia no dia ANTERIOR no painel, no historico com preset "hoje", no
+  // fluxo de caixa e no relatorio. Estes eram os dois unicos
+  // `new Date(<entrada do usuario>)` do projeto; todos os outros servicos ja
+  // usavam `parseFormDateTz`. A prova de que era inconsistencia, e nao regra:
+  // editar o fiado pelo formulario "consertava" a data, porque `FiadoService`
+  // ja convertia com fuso.
+  const DIA = "2026-09-04";
+
+  it("a venda fica no dia escolhido", async () => {
+    const s = await venda({ saleDate: DIA });
+    expect(isoDateTz(s.saleDate)).toBe(DIA);
+  });
+
+  it("o vencimento do fiado fica no dia escolhido", async () => {
+    const s = await venda({
+      customerName: "Joao",
+      paymentMethod: "FIADO",
+      dueDate: DIA,
+    });
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: s.id } });
+    expect(conta.dueDate).not.toBeNull();
+    expect(isoDateTz(conta.dueDate!)).toBe(DIA);
+  });
+});

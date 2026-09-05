@@ -9,7 +9,7 @@ import { isModuleEnabled } from "@/lib/plan/modules";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
-import { addDaysTz, endOfDayTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
+import { addDaysTz, endOfDayTz, parseFormDateTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
 import { resolvePlasticCrateQty } from "@/lib/validations/venda";
 import {
   calcularTotaisVenda,
@@ -539,7 +539,12 @@ export const VendasService = {
     ctx: TenantCtx,
   ) {
     const productIds = [...new Set(input.items.map((i) => i.productId))];
-    const saleDate = input.saleDate ? new Date(input.saleDate) : new Date();
+    // `parseFormDateTz` e nao `new Date`: `new Date("2026-09-04")` e meia-noite UTC,
+    // ou seja, 03/09 as 21h em Sao Paulo. A venda caia no dia ANTERIOR no painel,
+    // no historico "hoje", no fluxo de caixa e no relatorio. Estes eram os dois
+    // unicos `new Date(<entrada do usuario>)` do projeto; todo o resto ja usava a
+    // conversao com fuso.
+    const saleDate = input.saleDate ? parseFormDateTz(input.saleDate) : new Date();
     // Empresa sem o módulo de caixas não deve ter movimento de caixa criado
     // pelas costas — o servidor validava estoque de caixas limpas mesmo para
     // quem não usa caixa retornável, e barrava a venda por um saldo irrelevante.
@@ -781,7 +786,7 @@ export const VendasService = {
             totalAmount: totalFiado,
             paidAmount: new Prisma.Decimal(0),
             status: "EM_ABERTO",
-            dueDate: input.dueDate ? new Date(input.dueDate) : null,
+            dueDate: input.dueDate ? parseFormDateTz(input.dueDate) : null,
           },
         });
       }
