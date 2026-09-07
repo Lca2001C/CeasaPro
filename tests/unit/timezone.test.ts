@@ -77,6 +77,42 @@ describe("fuso do app (America/Sao_Paulo)", () => {
     expect(parseIsoDateTz("26/08/2026")).toBeNull();
     expect(parseIsoDateTz("")).toBeNull();
   });
+
+  /**
+   * Data com formato certo e valor impossível.
+   *
+   * A checagem era só do FORMATO, e a montagem da data transborda em silêncio:
+   * "2026-13-45" virava 14/02/2027 e "2026-02-31" vira 03/03. O valor passava
+   * pela validação e era GRAVADO como outra data — sem erro, sem aviso, com a
+   * tela depois mostrando um dia que ninguém digitou.
+   *
+   * Valia para todo campo de data escolhido pelo usuário: vencimento de fiado,
+   * vencimento de despesa, data de compra, de venda, de caixas, de embalagens e
+   * de higienização. Uma conta nasceria vencida em fevereiro do ano seguinte.
+   */
+  it("recusa data com formato válido mas que NÃO EXISTE", () => {
+    expect(parseIsoDateTz("2026-13-45")).toBeNull(); // virava 14/02/2027
+    expect(parseIsoDateTz("2026-02-31")).toBeNull(); // vira 03/03
+    expect(parseIsoDateTz("2026-04-31")).toBeNull(); // abril tem 30
+    expect(parseIsoDateTz("2026-00-10")).toBeNull(); // mês zero
+    expect(parseIsoDateTz("2026-01-00")).toBeNull(); // dia zero
+    expect(parseIsoDateTz("9999-99-99")).toBeNull();
+  });
+
+  it("continua aceitando data real, inclusive 29 de fevereiro em ano bissexto", () => {
+    expect(parseIsoDateTz("2026-02-28")).not.toBeNull();
+    // 2028 é bissexto; 2026 não é.
+    expect(parseIsoDateTz("2028-02-29")).not.toBeNull();
+    expect(parseIsoDateTz("2026-02-29")).toBeNull();
+    expect(parseIsoDateTz("2026-12-31")).not.toBeNull();
+  });
+
+  it("data impossível deixa de virar outra data no formulário", () => {
+    // `parseFormDateTz` cai para `new Date(v)` quando o ISO é recusado: o
+    // resultado passa a ser Invalid Date, que o banco rejeita ruidosamente, em
+    // vez de uma data errada gravada em silêncio.
+    expect(Number.isNaN(parseFormDateTz("2026-13-45").getTime())).toBe(true);
+  });
 });
 
 describe("formatação", () => {

@@ -65,6 +65,33 @@ describe("frescorDoBoletim", () => {
     // Relógio do servidor adiantado, ou boletim publicado com data de amanhã.
     expect(frescorDoBoletim(dia("2026-09-11"), AGORA).nivel).toBe("atual");
   });
+
+  /**
+   * O "agora" é lido no fuso do BRASIL, não no do servidor.
+   *
+   * A Vercel roda em UTC. Entre 21h e meia-noite no Brasil já é o dia seguinte
+   * em UTC, e o boletim publicado hoje de manhã passava a contar como sendo de
+   * ontem — deslocando toda a escala em um dia justamente no fim da tarde, que é
+   * quando o comerciante fecha o dia e olha preço.
+   *
+   * É o mesmo defeito que `src/lib/tz.ts` foi criado para eliminar; ele valia
+   * aqui também e passou despercebido na primeira escrita.
+   */
+  it("às 22h no Brasil, o boletim de HOJE ainda é de hoje", () => {
+    // 10/09 22:00 em São Paulo = 11/09 01:00 UTC.
+    const noiteNoBrasil = new Date("2026-09-11T01:00:00.000Z");
+    expect(noiteNoBrasil.toISOString().slice(0, 10)).toBe("2026-09-11"); // o servidor já virou
+
+    const f = frescorDoBoletim(dia("2026-09-10"), noiteNoBrasil);
+    expect(f.dias).toBe(0);
+    expect(f.nivel).toBe("atual");
+  });
+
+  it("a virada de dia acompanha o Brasil, não o UTC", () => {
+    // 11/09 00:30 em São Paulo = 11/09 03:30 UTC. Agora sim o dia virou.
+    const depoisDaMeiaNoite = new Date("2026-09-11T03:30:00.000Z");
+    expect(frescorDoBoletim(dia("2026-09-10"), depoisDaMeiaNoite).dias).toBe(1);
+  });
 });
 
 describe("rotuloDeFrescor", () => {

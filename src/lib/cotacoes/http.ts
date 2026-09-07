@@ -17,8 +17,8 @@ import { logger } from "@/lib/logger";
  *    seguir para a próxima central mesmo quando uma falha.
  */
 
-const TEMPO_LIMITE_MS = 25_000;
-const MAX_TENTATIVAS = 3;
+const TEMPO_LIMITE_MS = 12_000;
+const MAX_TENTATIVAS = 2;
 const BACKOFF_BASE_MS = 1_000;
 
 export interface RespostaHttp {

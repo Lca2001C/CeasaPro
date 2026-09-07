@@ -54,14 +54,11 @@ export default async function ConfiguracoesPage() {
               establishmentType: t?.establishmentType ?? "",
             }}
           />
-        </TabsContent>
-        <TabsContent value="perfil">
-          <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
           {/*
-            A central do CEASA mora aqui porque é dado da empresa que se troca
-            uma vez e não se mexe mais — não faz sentido só existir dentro do
-            módulo. Some para quem não tem Cotações no plano: um campo que
-            configura algo inacessível é ruído.
+            A central do CEASA é dado da EMPRESA — onde ela compra —, então mora
+            nesta aba e não em "Meu perfil", que é sobre a pessoa. Some para quem
+            não tem Cotações no plano: um campo que configura algo inacessível é
+            só ruído.
           */}
           {temCotacoes && (
             <Card className="mt-4">
@@ -73,6 +70,9 @@ export default async function ConfiguracoesPage() {
               </CardContent>
             </Card>
           )}
+        </TabsContent>
+        <TabsContent value="perfil">
+          <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
         </TabsContent>
         <TabsContent value="assinatura">
           <div className="flex flex-col gap-4">

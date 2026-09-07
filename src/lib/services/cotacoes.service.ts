@@ -1,3 +1,4 @@
+import { after } from "next/server";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
@@ -141,6 +142,12 @@ export const CotacoesService = {
    * As sugestões NUNCA são aplicadas sozinhas — ver `sugerirVinculos`.
    */
   async getTelaDeVinculo(tenantId: string) {
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: tenantId },
+      select: { ceasaCentralCode: true },
+    });
+    const central = tenant?.ceasaCentralCode ?? null;
+
     const [meus, links, doBoletim] = await Promise.all([
       prisma.product.findMany({
         where: { tenantId, deletedAt: null, active: true },
@@ -151,11 +158,22 @@ export const CotacoesService = {
         where: { tenantId },
         select: { productId: true, ceasaProduct: { select: { id: true, name: true } } },
       }),
-      prisma.ceasaProduct.findMany({
-        where: { active: true },
-        orderBy: { name: "asc" },
-        select: { id: true, name: true },
-      }),
+      /*
+        Só os produtos que a central DESTA empresa realmente cota.
+
+        Antes a consulta trazia o catálogo global, e isso não era só desperdício:
+        um cliente da Grande BH podia vincular seu tomate a um item que existe
+        apenas no boletim de Uberlândia. O vínculo ficava gravado, `getPainel`
+        filtrava por central e nunca encontrava preço — o produto seguia
+        aparecendo como "sem cotação" para sempre, sem nada explicando por quê.
+      */
+      central
+        ? prisma.ceasaProduct.findMany({
+            where: { active: true, quotes: { some: { centralCode: central } } },
+            orderBy: { name: "asc" },
+            select: { id: true, name: true },
+          })
+        : Promise.resolve([]),
     ]);
 
     const porProduto = new Map(links.map((l) => [l.productId, l.ceasaProduct]));
@@ -195,6 +213,39 @@ export const CotacoesService = {
       newData: { ceasaCentralCode: input.centralCode },
       ip: ctx.ip,
     });
+
+    /*
+      Partida a frio.
+
+      Sem isto, quem acabou de contratar o módulo e escolheu a central abria uma
+      tela vazia e ficava assim até o cron da madrugada seguinte — pagando por um
+      recurso que, na primeira impressão, não faz nada. A cotação é o produto;
+      entregá-la só no dia seguinte é entregar mal.
+
+      Roda DEPOIS da resposta (`after`), pelo mesmo motivo do cadastro público: a
+      importação fala com um site externo lento, e ninguém deve esperar por isso
+      com o botão girando. Se falhar, o cron tenta de novo amanhã e a tela já
+      explica que ainda não chegou boletim.
+
+      Só quando a central não tem NADA: trocar de central de volta para uma já
+      importada não dispara requisição nenhuma.
+    */
+    if (input.centralCode) {
+      const jaTem = await prisma.ceasaQuote.findFirst({
+        where: { centralCode: input.centralCode },
+        select: { id: true },
+      });
+      if (!jaTem) {
+        const codigo = input.centralCode;
+        after(async () => {
+          const { CotacoesImportService } = await import("./cotacoes-import.service");
+          await CotacoesImportService.importarCentral(codigo).catch(() => {
+            // O serviço já registra a falha e avisa o super-admin; aqui só não
+            // se pode deixar a exceção escapar para o runtime.
+          });
+        });
+      }
+    }
   },
 
   async vincular(input: { productId: string; ceasaProductId: string }, ctx: TenantCtx) {

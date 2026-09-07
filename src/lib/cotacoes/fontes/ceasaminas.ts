@@ -91,6 +91,15 @@ function dataDaPagina(html: string): string | null {
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
+/** Token de sessão do ScriptCase, lido da página do filtro. */
+function scriptCaseInit(htmlDaSessao: string): string {
+  const m = /name="script_case_init"\s+value="(\d+)"/.exec(htmlDaSessao);
+  // Sem o valor, manda um conhecido em vez de desistir: a fonte aparentemente
+  // não o valida, e falhar aqui seria trocar um risco hipotético por uma falha
+  // certa.
+  return m?.[1] ?? "3279";
+}
+
 export const ceasaminas: FonteDeCotacao = {
   chave: "ceasaminas",
 
@@ -117,7 +126,12 @@ export const ceasaminas: FonteDeCotacao = {
       // O separador `?#?` / `?@?` é do ScriptCase, e o nome do campo é `mercod`
       // (com a abreviação deles), não `mercado`.
       nmgp_parms: `mercod?#?${mercado}?@?data?#?${dataParaFonte(data)}?@?numero?#?1?@?`,
-      script_case_init: "3279",
+      // Lido da página da sessão, não fixo. O valor muda a cada sessão do
+      // ScriptCase (foram observados 5708 e 3279 em sessões diferentes) e a
+      // fonte parece ignorá-lo hoje — mas depender disso é apostar num
+      // comportamento não documentado de um sistema legado. Extrair custa nada,
+      // porque a página já foi baixada para abrir a sessão.
+      script_case_init: scriptCaseInit(sessao.corpo),
     });
 
     const resposta = await buscarHtml(
@@ -133,7 +147,10 @@ export const ceasaminas: FonteDeCotacao = {
       return { ok: false, linhas: [], httpStatus: resposta.status, erro: resposta.erro };
     }
 
-    const lido = this.parse(resposta.corpo);
+    // `parseBoletim` e não `this.parse`: desestruturar a fonte
+    // (`const { buscar } = ceasaminas`) deixaria `this` indefinido, e o erro
+    // apareceria só em produção, na primeira execução do cron.
+    const lido = parseBoletim(resposta.corpo);
     // Confere que veio o dia pedido. Sem isto, um erro de formato de data
     // devolveria 200 com o boletim de OUTRO dia e nós gravaríamos dado errado
     // com cara de certo.
@@ -148,11 +165,15 @@ export const ceasaminas: FonteDeCotacao = {
     return { ...lido, httpStatus: resposta.status };
   },
 
-  /**
-   * PURO: recebe o HTML e devolve as linhas. Sem rede, sem relógio, sem banco.
-   * É o que permite testar contra os arquivos de `tests/fixtures/cotacoes`.
-   */
-  parse(corpo: string): ResultadoDaFonte {
+  parse: parseBoletim,
+};
+
+/**
+ * PURO: recebe o HTML e devolve as linhas. Sem rede, sem relógio, sem banco.
+ * É o que permite testar contra os arquivos de `tests/fixtures/cotacoes`.
+ */
+function parseBoletim(corpo: string): ResultadoDaFonte {
+  {
     if (corpo.includes(MARCADOR_ERRO)) {
       const m = /scErrorMessage[^>]*>([\s\S]{0,300}?)</.exec(corpo);
       return {
@@ -208,8 +229,8 @@ export const ceasaminas: FonteDeCotacao = {
       fingerprint: assinatura(corpo),
       dataDaResposta: dataDaPagina(corpo),
     };
-  },
-};
+  }
+}
 
 /**
  * Assinatura ESTRUTURAL da resposta.

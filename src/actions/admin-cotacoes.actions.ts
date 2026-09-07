@@ -4,12 +4,26 @@ import { z } from "zod";
 import { withAdminAction } from "@/lib/http/with-action";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { lerCsvDeCotacoes } from "@/lib/cotacoes/csv";
-import { parseFormDateTz } from "@/lib/tz";
+import { endOfDayTz, parseFormDateTz, parseIsoDateTz } from "@/lib/tz";
 import { BusinessRuleError } from "@/lib/http/app-error";
 
 const importarSchema = z.object({
   centralCode: z.string().trim().min(1, "Escolha a central").max(20),
-  quoteDate: z.string().trim().min(1, "Informe a data do boletim"),
+  /**
+   * A data é validada aqui, e não só no `parseFormDateTz`, por causa do efeito
+   * que uma data errada tem NESTE módulo: a tela do cliente mostra o boletim de
+   * `MAX(quoteDate)`. Um erro de digitação com data futura viraria "o mais
+   * recente" e passaria a ser o preço exibido para todos os clientes daquela
+   * central — indefinidamente, já que nenhum boletim real o superaria.
+   */
+  quoteDate: z
+    .string()
+    .trim()
+    .refine((v) => parseIsoDateTz(v) !== null, "Data inválida (use o seletor de data)")
+    .refine((v) => {
+      const d = parseIsoDateTz(v);
+      return d !== null && d.getTime() <= endOfDayTz(new Date()).getTime();
+    }, "Boletim não pode ter data futura"),
   // Um boletim grande tem centenas de linhas; o teto existe para não aceitar um
   // arquivo inteiro colado por engano.
   texto: z.string().min(1, "Cole o boletim").max(500_000, "Texto grande demais"),

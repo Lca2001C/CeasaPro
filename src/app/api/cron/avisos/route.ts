@@ -5,6 +5,16 @@ import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+/**
+ * A rota passou a falar com um site externo (importação dos boletins), e o
+ * padrão da função serverless é curto demais para isso: duas requisições HTTP
+ * por central, contra um PHP legado, mais a pausa entre elas.
+ *
+ * 60 s é o teto do plano Hobby. O serviço tem orçamento PRÓPRIO menor
+ * (`ORCAMENTO_PADRAO_MS`) e para sozinho antes: ser morto pela plataforma no
+ * meio de uma gravação deixaria a central pela metade e sem registro nenhum.
+ */
+export const maxDuration = 60;
 
 /**
  * Mesma verificação do cron de billing: comparação em tempo constante para o

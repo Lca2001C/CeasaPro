@@ -1,3 +1,5 @@
+import { civilParts } from "@/lib/tz";
+
 /**
  * Quão velho está o boletim que a tela está mostrando.
  *
@@ -36,12 +38,20 @@ export interface Frescor {
 /**
  * Compara duas datas por DIA de calendário, não por instante.
  *
- * `quoteDate` vem de uma coluna `DATE`, então já é meia-noite; comparar por
- * milissegundos faria um boletim de hoje de manhã contar como "1 dia" à tarde.
+ * Duas assimetrias de propósito:
+ *
+ * - **O boletim é lido em UTC.** `quoteDate` vem de uma coluna `DATE`, que o
+ *   driver entrega como meia-noite UTC — ler os campos civis brasileiros dela
+ *   devolveria o dia ANTERIOR (21h do dia de antes).
+ * - **O "agora" é lido no fuso do app.** O usuário está no Brasil, e o servidor
+ *   roda em UTC: entre 21h e meia-noite o "hoje" em UTC já é amanhã, e o boletim
+ *   publicado hoje de manhã apareceria como sendo de ontem. Foi exatamente o
+ *   defeito que `src/lib/tz.ts` existe para evitar, e ele valia aqui também.
  */
 function diasDeDiferenca(boletim: Date, agora: Date): number {
   const a = Date.UTC(boletim.getUTCFullYear(), boletim.getUTCMonth(), boletim.getUTCDate());
-  const b = Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate());
+  const hoje = civilParts(agora);
+  const b = Date.UTC(hoje.year, hoje.month - 1, hoje.day);
   return Math.floor((b - a) / 86_400_000);
 }
 

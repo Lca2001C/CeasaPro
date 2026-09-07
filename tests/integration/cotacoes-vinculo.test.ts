@@ -199,6 +199,58 @@ describe("destaque de quem tem estoque", () => {
   });
 });
 
+describe("tela de vínculo", () => {
+  /**
+   * A tela só pode oferecer o que a central DA EMPRESA cota.
+   *
+   * Antes ela listava o catálogo global. Vincular a um produto de outra central
+   * gravava o vínculo, e `getPainel` — que filtra por central — nunca achava
+   * preço: o produto continuava como "sem cotação" para sempre, sem nada
+   * explicando. Erro silencioso, que é o pior tipo neste módulo.
+   */
+  it("não oferece produto de central que a empresa não usa", async () => {
+    const outraCentral = `OUT${uniq().slice(0, 5)}`.toUpperCase();
+    await prisma.ceasaCentral.create({
+      data: { code: outraCentral, name: "Outra", city: "Uberlandia", uf: "MG", sourceKey: "manual" },
+    });
+    const soDeLa = await criarProdutoDoBoletim("MANDIOCA SO DE UBERLANDIA");
+    await prisma.ceasaQuote.create({
+      data: {
+        centralCode: outraCentral,
+        ceasaProductId: soDeLa,
+        quoteDate: HOJE,
+        unit: "SC",
+        refPrice: "60.00",
+      },
+    });
+
+    const tela = await CotacoesService.getTelaDeVinculo(tenantA);
+    const ofertados = tela.doBoletim.map((p) => p.id);
+    expect(ofertados).toContain(tomateSalada); // da central dele
+    expect(ofertados).not.toContain(soDeLa); // de outra central
+
+    await prisma.ceasaQuote.deleteMany({ where: { centralCode: outraCentral } });
+    await prisma.ceasaCentral.delete({ where: { code: outraCentral } });
+  });
+
+  it("sem central escolhida, não oferece nada em vez do catálogo inteiro", async () => {
+    const semCentral = await createTestTenant(`Sem Central Vinculo ${uniq()}`);
+    tenants.push(semCentral);
+    const tela = await CotacoesService.getTelaDeVinculo(semCentral);
+    expect(tela.doBoletim).toEqual([]);
+  });
+
+  it("sugere candidatos para produto sem vínculo, e nenhum para os já vinculados", async () => {
+    const tela = await CotacoesService.getTelaDeVinculo(tenantA);
+    const vinculado = tela.produtos.find((p) => p.id === produtoA)!;
+    expect(vinculado.vinculo).not.toBeNull();
+    expect(vinculado.sugestoes).toEqual([]);
+
+    const chuchu = tela.produtos.find((p) => p.name === "Chuchu");
+    if (chuchu) expect(chuchu.vinculo).toBeNull();
+  });
+});
+
 describe("central da empresa", () => {
   it("sem central escolhida, a tela não mostra cotação de ninguém", async () => {
     const semCentral = await createTestTenant(`Empresa Sem Central ${uniq()}`);

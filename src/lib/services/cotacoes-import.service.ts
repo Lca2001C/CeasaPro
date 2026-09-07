@@ -1,7 +1,10 @@
+import { randomUUID } from "node:crypto";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { slugProduto } from "@/lib/cotacoes/nome";
 import { frescorDoBoletim } from "@/lib/cotacoes/frescor";
+import { civilParts } from "@/lib/tz";
 import { fontePara, type FonteDeCotacao } from "@/lib/cotacoes/fontes";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { NotFoundError } from "@/lib/http/app-error";
@@ -11,6 +14,15 @@ import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 const MAX_DIAS_DE_RECUO = 3;
 /** Respiro entre centrais: rajada de um IP só contra PHP legado vira bloqueio. */
 const PAUSA_ENTRE_CENTRAIS_MS = 2_000;
+/**
+ * Teto de tempo da rodada inteira.
+ *
+ * A função serverless da Vercel tem duração máxima (60 s no plano Hobby, com
+ * `maxDuration`). Parar sozinho antes disso é o que transforma "não deu tempo
+ * hoje" em algo visível e recuperável, em vez de a plataforma matar a função no
+ * meio de uma gravação.
+ */
+const ORCAMENTO_PADRAO_MS = 40_000;
 
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -69,82 +81,112 @@ export const CotacoesImportService = {
       Date.UTC(quoteDate.getUTCFullYear(), quoteDate.getUTCMonth(), quoteDate.getUTCDate()),
     );
 
-    let produtosNovos = 0;
-    let cotacoesGravadas = 0;
+    /*
+      Gravação em LOTE, e não linha a linha.
 
+      A primeira versão fazia três idas ao banco por linha (procurar o produto,
+      criar/atualizar, gravar a cotação). Medido contra um boletim real de 215
+      linhas: 1,6 s por central com o Postgres em localhost. Em produção o banco
+      é o Neon (rede + pgbouncer) e são sete centrais, o que põe o cron muito
+      além do teto de 10 s da função serverless — e a importação morreria pela
+      metade, todo dia, sem erro nenhum aparecendo.
+
+      Isto reduz as ~645 idas a meia dúzia. `createMany` com `skipDuplicates`
+      também resolve, de quebra, uma corrida real: a versão anterior fazia
+      "procura, não achou, cria", e duas execuções simultâneas do cron (retry da
+      Vercel) estourariam violação de chave única no meio do laço.
+
+      SEM transação interativa, de propósito. Em produção o banco fica atrás do
+      pgbouncer em modo transaction, onde `$transaction` interativa é justamente
+      o que dá problema. E não faz falta: se o processo morrer entre a criação
+      dos produtos e a gravação das cotações, sobram produtos de catálogo sem
+      cotação — inertes, e a próxima execução os reaproveita e completa o
+      serviço. O estado intermediário não mente para ninguém.
+    */
+    const porChave = new Map<string, { slug: string; linha: LinhaDeCotacao }>();
     for (const linha of linhas) {
       const slug = slugProduto(linha.produto);
       if (!slug) continue;
-
-      const existente = await prisma.ceasaProduct.findUnique({
-        where: { slug },
-        select: { id: true },
-      });
-      const produto = existente
-        ? await prisma.ceasaProduct.update({
-            where: { id: existente.id },
-            data: { lastSeenAt: new Date(), active: true },
-            select: { id: true },
-          })
-        : await prisma.ceasaProduct.create({
-            data: { name: linha.produto, slug },
-            select: { id: true },
-          });
-      if (!existente) produtosNovos++;
-
-      await prisma.ceasaQuote.upsert({
-        where: {
-          centralCode_quoteDate_ceasaProductId_unit: {
-            centralCode,
-            quoteDate: data,
-            ceasaProductId: produto.id,
-            unit: linha.unidade,
-          },
-        },
-        create: {
-          centralCode,
-          quoteDate: data,
-          ceasaProductId: produto.id,
-          unit: linha.unidade,
-          minPrice: linha.minimo,
-          avgPrice: linha.comum,
-          maxPrice: linha.maximo,
-          refPrice: linha.referencia,
-        },
-        update: {
-          minPrice: linha.minimo,
-          avgPrice: linha.comum,
-          maxPrice: linha.maximo,
-          refPrice: linha.referencia,
-          importedAt: new Date(),
-        },
-      });
-      cotacoesGravadas++;
+      // O próprio boletim pode repetir a mesma dupla produto+unidade. Sem esta
+      // deduplicação, o INSERT em lote falharia com "ON CONFLICT DO UPDATE
+      // command cannot affect row a second time".
+      porChave.set(`${slug}|${linha.unidade}`, { slug, linha });
+    }
+    const itens = [...porChave.values()];
+    if (itens.length === 0) {
+      return { runId: await registrarRun(centralCode, sourceKey, data, 0, 0, inicio, params.fingerprint), quoteDate: data, produtosNovos: 0, cotacoesGravadas: 0 };
     }
 
-    const run = await prisma.ceasaImportRun.create({
-      data: {
-        centralCode,
-        sourceKey,
-        quoteDate: data,
-        // Boletim sem linha nenhuma é VAZIO, não FALHA: domingo e feriado caem
-        // aqui, e chamá-los de falha ensinaria o operador a ignorar o alarme.
-        status: linhas.length > 0 ? "OK" : "VAZIO",
-        rowsParsed: linhas.length,
-        rowsUpserted: cotacoesGravadas,
-        durationMs: Date.now() - inicio,
-        fingerprint: params.fingerprint ?? null,
-        finishedAt: new Date(),
-      },
-      select: { id: true },
+    const slugsUnicos = [...new Set(itens.map((i) => i.slug))];
+    const jaExistiam = await prisma.ceasaProduct.findMany({
+      where: { slug: { in: slugsUnicos } },
+      select: { slug: true },
+    });
+    const conhecidos = new Set(jaExistiam.map((p) => p.slug));
+
+    const novos = itens
+      .filter((i) => !conhecidos.has(i.slug))
+      .map((i) => ({ name: i.linha.produto, slug: i.slug }));
+    // Deduplica por slug: dois nomes diferentes podem normalizar para o mesmo.
+    const novosUnicos = [...new Map(novos.map((n) => [n.slug, n])).values()];
+    if (novosUnicos.length > 0) {
+      await prisma.ceasaProduct.createMany({ data: novosUnicos, skipDuplicates: true });
+    }
+    const produtosNovos = novosUnicos.length;
+
+    await prisma.ceasaProduct.updateMany({
+      where: { slug: { in: slugsUnicos } },
+      data: { lastSeenAt: new Date(), active: true },
     });
 
+    const todos = await prisma.ceasaProduct.findMany({
+      where: { slug: { in: slugsUnicos } },
+      select: { id: true, slug: true },
+    });
+    const idPorSlug = new Map(todos.map((p) => [p.slug, p.id]));
+
+    const agora = new Date();
+    const valores = itens
+      .map(({ slug, linha }) => {
+        const id = idPorSlug.get(slug);
+        if (!id) return null;
+        return Prisma.sql`(${randomUUID()}, ${centralCode}, ${id}, ${data}, ${linha.unidade},
+          ${linha.minimo}, ${linha.comum}, ${linha.maximo}, ${linha.referencia}, ${agora})`;
+      })
+      .filter((v): v is Prisma.Sql => v !== null);
+
+    // Um único INSERT para o boletim inteiro. `ON CONFLICT` mantém a
+    // idempotência: reimportar o mesmo dia corrige em vez de duplicar.
+    const cotacoesGravadas = await prisma.$executeRaw`
+      INSERT INTO ceasa_quotes
+        ("id", "centralCode", "ceasaProductId", "quoteDate", "unit",
+         "minPrice", "avgPrice", "maxPrice", "refPrice", "importedAt")
+      VALUES ${Prisma.join(valores)}
+      ON CONFLICT ("centralCode", "quoteDate", "ceasaProductId", "unit")
+      DO UPDATE SET
+        "minPrice"   = EXCLUDED."minPrice",
+        "avgPrice"   = EXCLUDED."avgPrice",
+        "maxPrice"   = EXCLUDED."maxPrice",
+        "refPrice"   = EXCLUDED."refPrice",
+        "importedAt" = EXCLUDED."importedAt"
+    `;
+
+    const runId = await registrarRun(
+      centralCode,
+      sourceKey,
+      data,
+      linhas.length,
+      cotacoesGravadas,
+      inicio,
+      params.fingerprint,
+    );
+
     logger.info(
-      { centralCode, sourceKey, cotacoesGravadas, produtosNovos },
+      { centralCode, sourceKey, cotacoesGravadas, produtosNovos, ms: Date.now() - inicio },
       "Boletim de cotações gravado",
     );
 
-    return { runId: run.id, quoteDate: data, produtosNovos, cotacoesGravadas };
+    return { runId, quoteDate: data, produtosNovos, cotacoesGravadas };
   },
 
   /**
@@ -179,9 +221,12 @@ export const CotacoesImportService = {
 
     let ultimoErro: string | undefined;
     for (let recuo = 0; recuo < MAX_DIAS_DE_RECUO; recuo++) {
-      const dia = new Date(
-        Date.UTC(agora.getUTCFullYear(), agora.getUTCMonth(), agora.getUTCDate() - recuo),
-      );
+      // O dia é o BRASILEIRO, não o do servidor. O cron roda em UTC; entre 21h e
+      // meia-noite no Brasil o "hoje" em UTC já é amanhã, e a primeira tentativa
+      // pediria à fonte um boletim do futuro — gastando uma requisição e
+      // recuando um dia a menos do que devia.
+      const hoje = civilParts(agora);
+      const dia = new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - recuo));
       const r = await fonte.buscar({ sourceParams: central.sourceParams, data: dia });
 
       if (!r.ok) {
@@ -233,23 +278,69 @@ export const CotacoesImportService = {
    * Sequencial, com pausa entre centrais: sete requisições simultâneas de um IP
    * de datacenter contra um PHP legado é como se consegue um bloqueio.
    */
-  async importarTodasAsCentrais(opts: { agora?: Date; fonteInjetada?: FonteDeCotacao } = {}) {
+  async importarTodasAsCentrais(
+    opts: { agora?: Date; fonteInjetada?: FonteDeCotacao; orcamentoMs?: number } = {},
+  ) {
+    const inicio = Date.now();
+    const orcamento = opts.orcamentoMs ?? ORCAMENTO_PADRAO_MS;
+
     const emUso = await prisma.tenant.findMany({
       where: { deletedAt: null, ceasaCentralCode: { not: null } },
       distinct: ["ceasaCentralCode"],
       select: { ceasaCentralCode: true },
     });
     const codigos = emUso.map((t) => t.ceasaCentralCode!).filter(Boolean);
-    if (codigos.length === 0) return { centrais: 0, resultados: [] as ResultadoDaImportacao[] };
+    if (codigos.length === 0) {
+      return { centrais: 0, puladasPorTempo: 0, resultados: [] as ResultadoDaImportacao[] };
+    }
 
     const ativas = await prisma.ceasaCentral.findMany({
       where: { code: { in: codigos }, active: true },
-      orderBy: { sortOrder: "asc" },
-      select: { code: true },
+      select: { code: true, sortOrder: true },
+    });
+
+    /*
+      Ordem por QUEM ESTÁ MAIS ATRASADO, não por `sortOrder`.
+
+      Com ordem fixa e orçamento de tempo, as últimas centrais da lista nunca
+      seriam importadas — passariam fome todo dia e acabariam disparando o alarme
+      de defasagem para sempre, sem que nada estivesse quebrado. Atender primeiro
+      quem está sem boletim há mais tempo distribui o orçamento sozinho.
+    */
+    const ultimos = await prisma.ceasaQuote.groupBy({
+      by: ["centralCode"],
+      where: { centralCode: { in: ativas.map((c) => c.code) } },
+      _max: { quoteDate: true },
+    });
+    const ultimoPorCentral = new Map(ultimos.map((u) => [u.centralCode, u._max.quoteDate]));
+    const fila = [...ativas].sort((a, b) => {
+      const da = ultimoPorCentral.get(a.code)?.getTime() ?? 0; // nunca importada vem primeiro
+      const db = ultimoPorCentral.get(b.code)?.getTime() ?? 0;
+      return da === db ? a.sortOrder - b.sortOrder : da - db;
     });
 
     const resultados: ResultadoDaImportacao[] = [];
-    for (const [i, c] of ativas.entries()) {
+    let puladasPorTempo = 0;
+
+    for (const [i, c] of fila.entries()) {
+      /*
+        Orçamento de tempo.
+
+        A função serverless é morta pela plataforma ao estourar o limite, no meio
+        do que estiver fazendo — e aí a última central fica pela metade, sem
+        registro de execução, sem alarme. Parar por conta própria antes disso é a
+        diferença entre "não deu tempo hoje, amanhã pega" e "morreu calado".
+
+        O boletim é diário: adiar uma central em algumas horas não custa nada.
+      */
+      if (Date.now() - inicio > orcamento) {
+        puladasPorTempo = fila.length - i;
+        logger.warn(
+          { restantes: puladasPorTempo, decorridoMs: Date.now() - inicio },
+          "Orçamento de tempo da importação esgotado — centrais restantes ficam para a próxima execução",
+        );
+        break;
+      }
       if (i > 0) await dormir(PAUSA_ENTRE_CENTRAIS_MS);
       try {
         resultados.push(await this.importarCentral(c.code, opts));
@@ -260,7 +351,7 @@ export const CotacoesImportService = {
         resultados.push({ status: "FALHA", centralCode: c.code, cotacoesGravadas: 0, erro });
       }
     }
-    return { centrais: ativas.length, resultados };
+    return { centrais: fila.length, puladasPorTempo, resultados };
   },
 
   /**
@@ -350,6 +441,35 @@ export const CotacoesImportService = {
     }));
   },
 };
+
+/** Registra a execução bem-sucedida (ou vazia) e devolve o id. */
+async function registrarRun(
+  centralCode: string,
+  sourceKey: string,
+  quoteDate: Date,
+  rowsParsed: number,
+  rowsUpserted: number,
+  inicio: number,
+  fingerprint?: string | null,
+): Promise<string> {
+  const run = await prisma.ceasaImportRun.create({
+    data: {
+      centralCode,
+      sourceKey,
+      quoteDate,
+      // Boletim sem linha nenhuma é VAZIO, não FALHA: domingo e feriado caem
+      // aqui, e chamá-los de falha ensinaria o operador a ignorar o alarme.
+      status: rowsParsed > 0 ? "OK" : "VAZIO",
+      rowsParsed,
+      rowsUpserted,
+      durationMs: Date.now() - inicio,
+      fingerprint: fingerprint ?? null,
+      finishedAt: new Date(),
+    },
+    select: { id: true },
+  });
+  return run.id;
+}
 
 /** Registra a tentativa que falhou — é o histórico que a tela do admin mostra. */
 async function registrarFalha(

@@ -183,5 +183,31 @@ export function parseFormDateTz(value: string): Date {
 export function parseIsoDateTz(value: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!m) return null;
-  return zonedTimeToUtc(Number(m[1]), Number(m[2]), Number(m[3]), 0, 0, 0, 0);
+
+  const ano = Number(m[1]);
+  const mes = Number(m[2]);
+  const dia = Number(m[3]);
+  const d = zonedTimeToUtc(ano, mes, dia, 0, 0, 0, 0);
+
+  /*
+    O formato bater NÃO significa que a data existe.
+
+    `zonedTimeToUtc` monta a data por aritmética de calendário, e a aritmética
+    transborda em silêncio: "2026-13-45" virava 14/02/2027, "2026-02-31" vira
+    03/03. Como só o formato era conferido, uma data impossível atravessava a
+    validação e era GRAVADA como outra data — sem erro, sem aviso, e com a tela
+    depois exibindo um dia que ninguém digitou.
+
+    Isso alcançava tudo que guarda data escolhida pelo usuário: vencimento de
+    fiado e de despesa, data de compra, de venda, de caixas, de embalagens e de
+    higienização. O `<input type="date">` do navegador não produz esses valores,
+    mas a API aceita JSON de qualquer origem — e um seletor de data quebrado num
+    aparelho antigo produz.
+
+    A conferência é a volta: se os campos civis do que foi montado não são os
+    que entraram, a data não existe.
+  */
+  const c = civilParts(d);
+  if (c.year !== ano || c.month !== mes || c.day !== dia) return null;
+  return d;
 }

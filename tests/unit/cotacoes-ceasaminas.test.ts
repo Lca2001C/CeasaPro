@@ -148,6 +148,31 @@ describe("fingerprint — a checagem que pega corrupção silenciosa", () => {
   });
 });
 
+describe("a fonte sobrevive a ser desestruturada", () => {
+  /**
+   * `buscar` chamava `this.parse(...)`. Bastava alguém escrever
+   * `const { buscar } = ceasaminas` — ou passar o método como callback — para
+   * `this` virar `undefined`, e o erro só apareceria em produção, na primeira
+   * execução do cron. Métodos que dependem de `this` num objeto exportado como
+   * dado são uma armadilha silenciosa.
+   */
+  it("parse funciona solto, sem o objeto", () => {
+    const { parse } = ceasaminas;
+    const r = parse(fixture("ceasaminas-ok"));
+    expect(r.ok).toBe(true);
+    expect(r.linhas.length).toBe(215);
+  });
+
+  it("buscar não depende de `this` para chamar o parser", () => {
+    // Não faz requisição: `sourceParams` inválido devolve erro antes de qualquer
+    // rede — e é justamente esse caminho que prova que o método é chamável solto.
+    const { buscar } = ceasaminas;
+    return expect(buscar({ sourceParams: {}, data: new Date() })).resolves.toMatchObject({
+      ok: false,
+    });
+  });
+});
+
 describe("registro de fontes", () => {
   it("a chave da fonte é a que o banco guarda em sourceKey", () => {
     expect(fontePara("ceasaminas")).toBe(ceasaminas);
