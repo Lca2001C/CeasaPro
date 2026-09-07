@@ -2,6 +2,7 @@ import { describe, it, expect, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
 import { cleanupTenants } from "../helpers/factory";
+import { ADMIN_PLAN_SLUG } from "@/lib/services/plano.service";
 import type { AdminCtx } from "@/lib/http/with-action";
 
 /**
@@ -37,7 +38,19 @@ async function superAdminCtx(): Promise<AdminCtx> {
 afterAll(async () => {
   await cleanupTenants(criados);
   await prisma.user.deleteMany({ where: { id: { in: usuarios } } });
-  await prisma.plan.deleteMany({ where: { slug: "ambiente-administrador" } });
+  /*
+    O plano do ambiente do super-admin é COMPARTILHADO e criado sob demanda pelo
+    `AdminService` — não por este teste. Todo ambiente de administrador aponta
+    para ele, inclusive o que o seed cria.
+
+    Apagá-lo sem olhar tinha dois problemas: quebrava a limpeza com violação de
+    chave estrangeira sempre que existisse outro ambiente (o que derrubava o
+    arquivo inteiro, mesmo com os quatro testes passando), e, quando funcionava,
+    destruía dado que não era do teste. Só sai se ninguém mais estiver usando.
+  */
+  await prisma.plan.deleteMany({
+    where: { slug: ADMIN_PLAN_SLUG, subscriptions: { none: {} } },
+  });
 });
 
 describe("Ambiente próprio do super-admin", () => {

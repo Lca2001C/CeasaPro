@@ -12,6 +12,7 @@ export default defineConfig({
       "dotenv/config",
       "./tests/setup/guard-database.ts",
       "./tests/setup/no-outbound-email.ts",
+      "./tests/setup/no-outbound-http.ts",
     ],
     testTimeout: 30000,
     hookTimeout: 30000,

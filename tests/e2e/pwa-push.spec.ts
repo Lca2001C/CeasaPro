@@ -67,11 +67,16 @@ test.describe("Rota de inscrição de push", () => {
     expect(r.status()).toBe(422);
   });
 
-  test("exige sessão", async ({ playwright }) => {
+  test("exige sessão", async ({ playwright, baseURL }) => {
     // `storageState` explícito: sem isto o contexto novo herda os cookies do
     // projeto `authed` e o teste passaria a medir o caminho autenticado.
+    //
+    // A baseURL vem da configuração (que respeita `E2E_PORT`). Fixar a porta
+    // aqui fazia o teste bater no servidor errado — ou em nenhum — quando a
+    // suíte roda em outra porta para não colidir com o `next dev` de quem
+    // estiver desenvolvendo.
     const anonimo = await playwright.request.newContext({
-      baseURL: "http://localhost:3000",
+      baseURL,
       storageState: { cookies: [], origins: [] },
     });
     expect((await anonimo.post("/api/pwa/push", { data: inscricao })).status()).toBe(401);

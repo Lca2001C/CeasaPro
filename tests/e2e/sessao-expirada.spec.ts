@@ -149,7 +149,7 @@ test.describe("A rota de renovação não abre brecha", () => {
     expect(await cookiesDeSessao(context)).toEqual([]);
   });
 
-  test("não redireciona para fora do domínio", async ({ page, context }) => {
+  test("não redireciona para fora do domínio", async ({ page, context, baseURL }) => {
     await context.addCookies([
       { name: REFRESH, value: "invalido", domain: "localhost", path: "/" },
     ]);
@@ -159,7 +159,13 @@ test.describe("A rota de renovação não abre brecha", () => {
     // clicado, é material de phishing.
     await page.goto("/api/auth/renovar?next=%2F%2Fgolpe.com");
 
-    await expect(page).toHaveURL(/localhost:3000/);
+    // O que importa é ter ficado na NOSSA origem, qualquer que seja a porta.
+    // Antes isto era `toHaveURL(/localhost:3000/)`: a asserção passava por
+    // coincidência (a porta padrão) e quebrava ao rodar a suíte em outra, com
+    // `E2E_PORT` — que é justamente como se evita colidir com o `next dev` do
+    // desenvolvedor. Um teste de segurança que falha por causa da porta acaba
+    // sendo lido como flaky e ignorado.
+    expect(new URL(page.url()).origin).toBe(new URL(baseURL!).origin);
     await expect(page).not.toHaveURL(/golpe\.com/);
   });
 
