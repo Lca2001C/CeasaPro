@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -26,6 +26,14 @@ import { apiPost } from "@/lib/api-client";
 import { formatBRL, formatQty } from "@/lib/format";
 import { RECIPIENT_TYPE_LABELS, SALE_UNIT_LABELS, toOptions } from "@/lib/labels";
 import { nivelEstoque, passaDoEstoque, saldoApos } from "@/lib/estoque/nivel";
+import {
+  calcularTotaisVenda,
+  centsParaNumero,
+  paraCentavos,
+  parteEmDinheiroCents,
+  somaParcelasCents,
+  TOLERANCIA_CENTAVOS_BIG,
+} from "@/lib/venda/total";
 import { useOnline } from "@/lib/pwa/use-online";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
@@ -92,9 +100,14 @@ const PAYMENTS = [
   { value: "FIADO", label: "Fiado" },
 ] as const;
 
-/** Centavo de tolerância ao conferir a soma das formas de pagamento. */
-const TOLERANCIA = 0.005;
-
+/**
+ * Arredondamento de QUANTIDADE (±1 nos botões, resumo pós-venda).
+ *
+ * Dinheiro não passa mais por aqui: os totais vêm de `lib/venda/total`, o mesmo
+ * contrato que a validação e o serviço executam. Somar reais em ponto flutuante
+ * nesta tela era o que fazia o PDV mostrar R$ 2,23 numa venda gravada como
+ * R$ 2,24.
+ */
 const arredonda = (v: number) => Math.round(v * 100) / 100;
 
 export function Pdv({
@@ -155,6 +168,8 @@ export function Pdv({
   const [saving, setSaving] = useState(false);
   const [confirmarPrecoZero, setConfirmarPrecoZero] = useState(false);
   const [resumo, setResumo] = useState<ResumoVenda | null>(null);
+  /** Chave de idempotência do carrinho atual — ver o uso em `finalizar`. */
+  const chaveDoCarrinho = useRef<string | null>(null);
 
   // Atalho "Vender" do Estoque: começa com o produto já no carrinho.
   const [carrinhoIniciado, setCarrinhoIniciado] = useState(false);
@@ -215,28 +230,69 @@ export function Pdv({
   const mostrandoFavoritos = search.trim() === "" && maisVendidos.length > 0;
 
   // ── Totais ────────────────────────────────────────────────────────────
-  const subtotal = arredonda(cart.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0));
-  const descontoItens = arredonda(cart.reduce((a, i) => a + (i.discountAmount || 0), 0));
-  const aposItens = arredonda(subtotal - descontoItens);
-  const descontoVenda = arredonda(
-    descontoTipo === "percentual"
-      ? (aposItens * (descontoPercentual ?? 0)) / 100
-      : (descontoValor ?? 0),
+  // Os totais vêm do contrato compartilhado — a MESMA função que o refine do
+  // Zod e o serviço executam. Somar em ponto flutuante aqui era o que fazia a
+  // tela mostrar R$ 2,23 numa venda gravada como R$ 2,24.
+  const itensParaTotal = cart.map((i) => ({
+    quantity: i.quantity,
+    unitPrice: i.unitPrice || 0,
+    discountAmount: i.discountAmount || 0,
+  }));
+  const semDescontoDaVenda = calcularTotaisVenda({ items: itensParaTotal });
+  const subtotal = centsParaNumero(semDescontoDaVenda.subtotalCents);
+  const descontoItens = centsParaNumero(
+    cart.reduce((a, i) => a + paraCentavos(i.discountAmount || 0), 0n),
   );
-  const total = Math.max(0, arredonda(aposItens - descontoVenda));
-  const descontoTotal = arredonda(descontoItens + descontoVenda);
+  // Percentual em centavos inteiros, com meio-para-cima: truncar deixaria o
+  // desconto um centavo menor do que o anunciado na tela.
+  const descontoVenda =
+    descontoTipo === "percentual"
+      ? centsParaNumero(
+          (semDescontoDaVenda.totalCents * BigInt(Math.round((descontoPercentual ?? 0) * 100)) +
+            5_000n) /
+            10_000n,
+        )
+      : (descontoValor ?? 0);
+  const totais = calcularTotaisVenda({ items: itensParaTotal, discountAmount: descontoVenda });
+  const total = centsParaNumero(totais.totalCents);
+  const descontoTotal = centsParaNumero(
+    descontoItens === 0 && descontoVenda === 0
+      ? 0n
+      : paraCentavos(descontoItens) + paraCentavos(descontoVenda),
+  );
 
-  const somaParcelas = arredonda(parcelas.reduce((a, p) => a + (p.amount || 0), 0));
-  const faltaParcelar = arredonda(total - somaParcelas);
-  const parcelasValidas = !dividido || Math.abs(faltaParcelar) <= TOLERANCIA;
+  const parcelasDaVenda = dividido
+    ? parcelas.map((p) => ({ method: p.method, amount: p.amount || 0 }))
+    : undefined;
+  const somaParcelasEmCents = somaParcelasCents(parcelasDaVenda);
+  const somaParcelas = centsParaNumero(somaParcelasEmCents);
+  const faltaParcelar = centsParaNumero(totais.totalCents - somaParcelasEmCents);
+  const diferencaParcelas = totais.totalCents - somaParcelasEmCents;
+  const parcelasValidas =
+    !dividido ||
+    (diferencaParcelas < 0n ? -diferencaParcelas : diferencaParcelas) <= TOLERANCIA_CENTAVOS_BIG;
 
   const parteFiada = dividido
-    ? arredonda(parcelas.filter((p) => p.method === "FIADO").reduce((a, p) => a + p.amount, 0))
+    ? centsParaNumero(
+        parcelas.filter((p) => p.method === "FIADO").reduce((a, p) => a + paraCentavos(p.amount), 0n),
+      )
     : payment === "FIADO"
       ? total
       : 0;
-  const temDinheiro = dividido ? parcelas.some((p) => p.method === "DINHEIRO") : payment === "DINHEIRO";
-  const troco = recebido != null && recebido > total ? arredonda(recebido - total) : 0;
+
+  // Troco é sobre a parte paga EM ESPÉCIE, não sobre o total. Numa venda de
+  // R$ 100 com R$ 60 em PIX e R$ 40 em dinheiro, quem entrega R$ 50 recebe
+  // R$ 10 — e a tela recusava a venda, porque comparava os R$ 50 com o total.
+  const emEspecieCents = parteEmDinheiroCents({
+    paymentMethod: payment,
+    payments: parcelasDaVenda,
+    items: itensParaTotal,
+    discountAmount: descontoVenda,
+  });
+  const parteEmDinheiro = centsParaNumero(emEspecieCents);
+  const temDinheiro = emEspecieCents > 0n;
+  const trocoCents = recebido != null ? paraCentavos(recebido) - emEspecieCents : 0n;
+  const troco = trocoCents > 0n ? centsParaNumero(trocoCents) : 0;
   const exigeCliente = parteFiada > 0 || (caixasHabilitado && usaCaixaPlastica);
 
   // ── Carrinho ──────────────────────────────────────────────────────────
@@ -311,7 +367,7 @@ export function Pdv({
     if (cart.some((i) => i.quantity <= 0)) return "Quantidade inválida.";
     if (cart.some((i) => i.discountAmount > i.quantity * i.unitPrice))
       return "O desconto de um item passou do valor dele.";
-    if (descontoVenda > aposItens + TOLERANCIA)
+    if (paraCentavos(descontoVenda) > semDescontoDaVenda.totalCents + TOLERANCIA_CENTAVOS_BIG)
       return "O desconto não pode passar do total da venda.";
     if (dividido && parcelas.length === 0) return "Informe as formas de pagamento.";
     if (!parcelasValidas)
@@ -323,8 +379,10 @@ export function Pdv({
       if (caixas <= 0) return "Informe a quantidade de caixas plásticas.";
       if (!customer.trim()) return "Informe o cliente para controlar as caixas plásticas.";
     }
-    if (temDinheiro && recebido != null && recebido > 0 && recebido < total)
-      return "O valor recebido é menor que o total da venda.";
+    if (temDinheiro && recebido != null && recebido > 0 && paraCentavos(recebido) < emEspecieCents)
+      return dividido
+        ? `O valor recebido é menor que a parte em dinheiro (${formatBRL(parteEmDinheiro)}).`
+        : "O valor recebido é menor que o total da venda.";
     return null;
   }
 
@@ -342,13 +400,24 @@ export function Pdv({
     const caixas = caixasHabilitado && usaCaixaPlastica ? parseInt(crateQty, 10) || 0 : 0;
 
     setSaving(true);
-    const res = await apiPost<{ id: string }>("/api/vendas", {
+    // Uma chave por CARRINHO, criada no primeiro envio e mantida enquanto este
+    // carrinho existir. É ela que faz a retentativa devolver a venda original
+    // em vez de registrar outra — e ela não pode ser derivada do conteúdo do
+    // carrinho, porque no balcão duas vendas idênticas em sequência (mesmo
+    // cliente, mesmos 10 kg de tomate) são corriqueiras e recusá-las seria
+    // recusar dinheiro real.
+    chaveDoCarrinho.current ??= crypto.randomUUID();
+    const res = await apiPost<{ id: string; jaRegistrada: boolean }>("/api/vendas", {
+      idempotencyKey: chaveDoCarrinho.current,
       customerName: customer.trim() || null,
       customerPhone: phone.trim() || null,
       paymentMethod: dividido ? (parcelas[0]?.method ?? payment) : payment,
       payments: dividido ? parcelas.map((p) => ({ method: p.method, amount: p.amount })) : undefined,
       dueDate: parteFiada > 0 && dueDate ? dueDate : null,
-      plasticCrateQty: caixas,
+      // Zero é "não informado", não "nenhuma caixa". Mandando 0 explícito, o
+      // servidor apagava as caixas que o operador declarou linha a linha, no
+      // seletor de vasilhame — elas saíam do box sem movimento nenhum.
+      plasticCrateQty: caixas > 0 ? caixas : undefined,
       discountAmount: descontoVenda || undefined,
       discountReason: descontoMotivo.trim() || null,
       amountReceived: temDinheiro && recebido ? recebido : null,
@@ -365,7 +434,24 @@ export function Pdv({
     setSaving(false);
     setConfirmarPrecoZero(false);
     if (!res.ok) {
+      // A chave de idempotência é MANTIDA no erro: nada foi gravado, e o
+      // operador vai corrigir o mesmo carrinho e tentar de novo. Se por acaso a
+      // venda tiver sido gravada e só a resposta ter se perdido, a repetição
+      // com a mesma chave devolve a venda original em vez de criar outra.
       toast.error(res.error.message);
+      return;
+    }
+
+    // Deu certo: a partir daqui o próximo carrinho é uma venda NOVA.
+    chaveDoCarrinho.current = null;
+
+    if (res.data.jaRegistrada) {
+      // Retentativa de uma venda que já estava gravada. Não dá para mostrar o
+      // resumo daqui: os números viriam do carrinho atual, e a venda gravada
+      // pode ser outra. Melhor levar o operador para a venda de verdade.
+      toast.success("Esta venda já havia sido registrada — nada foi duplicado.");
+      setCart([]);
+      router.push(`/vendas/${res.data.id}`);
       return;
     }
 
@@ -685,11 +771,16 @@ export function Pdv({
                           size="icon"
                           className="size-11 shrink-0"
                           aria-label="Diminuir quantidade"
-                          onClick={() =>
-                            updateItem(i.productId, {
-                              quantity: Math.max(0.001, arredonda(i.quantity - 1)),
-                            })
-                          }
+                          // Chegando a zero, o item SAI do carrinho. O clamp em
+                          // 0,001 deixava um item fantasma de R$ 0,00 na venda:
+                          // no visor de 16px do celular, "0,001" e "1" são
+                          // indistinguíveis, e "−" no último item é o gesto
+                          // natural de quem quer tirar o produto.
+                          onClick={() => {
+                            const nova = arredonda(i.quantity - 1);
+                            if (nova <= 0) removeItem(i.productId);
+                            else updateItem(i.productId, { quantity: nova });
+                          }}
                         >
                           <Minus className="size-4" />
                         </Button>

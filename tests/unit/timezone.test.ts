@@ -174,10 +174,10 @@ describe("data de formulário nos serviços", () => {
    * Pendências conhecidas, com motivo. Acrescentar um nome aqui é decisão
    * explícita de deixar o defeito de pé — não é jeito de calar o teste.
    */
-  const PENDENTE: Record<string, string> = {
-    "vendas.service.ts":
-      "PDV congelado neste ciclo por combinação com o usuário (saleDate e dueDate seguem crus, mesmo defeito). Corrigir junto do próximo trabalho no PDV.",
-  };
+  // Vazia: `vendas.service.ts` era a última pendência, e o `saleDate`/`dueDate`
+  // do PDV passaram a usar `parseFormDateTz` na auditoria de 2026-09-05. Não
+  // apagar este bloco — ele é o lugar de declarar a próxima exceção, com motivo.
+  const PENDENTE: Record<string, string> = {};
 
   const dir = "src/lib/services";
   const crua = /new Date[(](?:input|i|dados)[.][A-Za-z]*[Dd]ate[^A-Za-z]/;

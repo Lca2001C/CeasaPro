@@ -728,7 +728,7 @@ export const AdminService = {
         resetTokenExpiresAt: null,
       },
     });
-    await revokeAllForUser(user.id);
+    await revokeAllForUser(user.id, "PASSWORD");
 
     await audit({
       tenantId: user.tenantId,

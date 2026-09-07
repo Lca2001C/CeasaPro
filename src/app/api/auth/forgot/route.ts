@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { forgotSchema } from "@/lib/validations/auth";
 import { sendEmail, passwordResetEmail, isEmailConfigured } from "@/lib/email";
-import { rateLimitDb } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { audit } from "@/lib/audit";
@@ -40,6 +40,12 @@ export async function POST(req: Request) {
   // formulário para inundar a caixa de uma pessoa específica, de vários IPs).
   const byIp = await rateLimitDb(`forgot:ip:${ip}`, { limit: 5, windowMs: 15 * 60 * 1000 });
   const byEmail = await rateLimitDb(`forgot:email:${email}`, { limit: 3, windowMs: 15 * 60 * 1000 });
+  // Banco fora: o genérico afirmaria "se existir conta, enviamos o link" — e
+  // nada foi enviado. 503 é honesto e não distingue e-mail nenhum, então não
+  // reabre a enumeração que o genérico existe para fechar.
+  if (byIp.indisponivel || byEmail.indisponivel) {
+    return respostaDeLimite(byIp.indisponivel ? byIp : byEmail);
+  }
   if (!byIp.ok || !byEmail.ok) {
     logger.warn({ ip, scope: byIp.ok ? "email" : "ip" }, "Rate limit em /api/auth/forgot");
     return generic;

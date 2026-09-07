@@ -82,13 +82,29 @@ export function moduleForPath(pathname: string): OptionalModuleKey | null {
 
 /**
  * Um módulo está habilitado?
- * `modules === undefined` (token legado, sem o claim) ⇒ tudo liberado (rollout suave).
+ *
+ * Fail-CLOSED: sem a lista, nada é liberado.
+ *
+ * Era o contrário — `undefined` liberava tudo, para o rollout do claim ser
+ * suave. O problema é que `undefined` tinha DOIS donos: "token legado, de antes
+ * do claim" e "super-admin, que não deve ser barrado". Essa colisão obrigava o
+ * guard a ser permissivo para todo mundo, e qualquer sessão sem o claim —
+ * inclusive uma forjada — passava por todos os gates de módulo.
+ *
+ * `build-session` agora emite a lista SEMPRE, e o super-admin recebe a lista
+ * completa explícita, então `undefined` deixou de significar algo legítimo.
+ *
+ * Sobre a janela de transição: esta virada vai no MESMO deploy que troca a
+ * chave de assinatura do access token (`keys.ts`). Como todo token anterior
+ * deixa de valer nesse instante, não existe token em circulação sem o claim —
+ * a janela de 15 minutos que exigiria dois deploys separados não chega a
+ * existir.
  */
 export function isModuleEnabled(
   modules: string[] | undefined,
   key: OptionalModuleKey,
 ): boolean {
-  if (modules === undefined) return true;
+  if (!modules) return false;
   return modules.includes(key);
 }
 

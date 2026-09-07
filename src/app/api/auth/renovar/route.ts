@@ -6,9 +6,9 @@ import {
   clearAuthCookies,
   marcarTentativaDeRenovacao,
 } from "@/lib/auth/cookies";
-import { rotateRefreshToken } from "@/lib/auth/refresh";
+import { auditarReusoDeSessao, rotateRefreshToken } from "@/lib/auth/refresh";
 import { clientIp, userAgent } from "@/lib/http/request";
-import { destinoSeguro } from "@/lib/auth/renovacao";
+import { destinoSeguro, ehNavegacaoDeTopo } from "@/lib/auth/renovacao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -49,29 +49,26 @@ export async function GET(req: Request): Promise<Response> {
   const destino = destinoSeguro(url.searchParams.get("next"));
   const paraLogin = () => irPara(`/login?next=${encodeURIComponent(destino)}`);
 
-  /**
-   * Só navegação de topo.
-   *
-   * Esta rota ROTACIONA o refresh token, e um GET que muda estado pode ser
-   * disparado de qualquer site por uma `<img>`. `Sec-Fetch-Mode: navigate` só
-   * aparece quando o próprio navegador está trocando de página — uma imagem
-   * embutida manda `no-cors`. O dano possível seria pequeno (rotacionar a
-   * sessão de quem já está logado), mas não há razão para aceitá-lo.
-   */
-  const modo = req.headers.get("sec-fetch-mode");
-  if (modo && modo !== "navigate") {
+  // Só navegação de topo — a regra mora em `renovacao.ts`, junto do resto do
+  // contrato desta rota, e é EXIGENTE: antes, cabeçalho ausente passava, e a
+  // proteção descrita aqui não existia para quem não enviasse Fetch Metadata.
+  if (!ehNavegacaoDeTopo(req.headers)) {
     return new Response("forbidden", { status: 403 });
   }
 
   const atual = await readRefreshCookie();
   if (!atual) return paraLogin();
 
-  const rotated = await rotateRefreshToken(atual, {
-    ip: (await clientIp()) ?? undefined,
-    userAgent: (await userAgent()) ?? undefined,
-  });
-  if (!rotated) {
-    // Refresh token inválido de verdade (expirado, revogado, ou já usado).
+  const ip = (await clientIp()) ?? undefined;
+  const ua = (await userAgent()) ?? undefined;
+  const rotated = await rotateRefreshToken(atual, { ip, userAgent: ua });
+
+  if (rotated.tipo === "reuso") {
+    await auditarReusoDeSessao(rotated.userId, rotated.familyId, { ip, userAgent: ua });
+  }
+  // Reuso e inválido levam ao MESMO lugar, de propósito: o atacante não recebe
+  // sinal de que foi detectado.
+  if (rotated.tipo === "reuso" || rotated.tipo === "invalido") {
     await clearAuthCookies();
     return paraLogin();
   }

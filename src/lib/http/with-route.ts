@@ -6,6 +6,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { errorResponse } from "./error-response";
 import { clientIp } from "./request";
+import { assertSessaoValida } from "@/lib/auth/revogacao";
 
 export interface RouteTenantCtx {
   session: Session;
@@ -47,6 +48,7 @@ export function withTenantRoute<I, O>(opts: {
   return async (req: Request): Promise<Response> => {
     try {
       const { session, tenantId } = await requireTenant();
+      await assertSessaoValida(session);
       assertPasswordReady(session);
       // Proteção contra abuso de requisições (por empresa).
       const rl = rateLimit(`route:${tenantId}`, { limit: 120, windowMs: 60_000 });
@@ -87,6 +89,7 @@ export function withAdminRoute<I, O>(opts: {
   return async (req: Request): Promise<Response> => {
     try {
       const session = await requireSuperAdmin();
+      await assertSessaoValida(session);
       assertPasswordReady(session);
       const input = await parseInput(req, opts.schema, opts.source ?? "json");
       const ip = await clientIp();

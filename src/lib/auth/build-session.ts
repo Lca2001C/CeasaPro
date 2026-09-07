@@ -23,11 +23,21 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
   const sub = user.tenant?.subscription;
   // O super-admin não passa pelo gate de cobrança nem pelo de plano, mesmo
   // tendo ambiente próprio: a assinatura desse ambiente existe só porque o
-  // modelo de dados exige uma. Deixando `subStatus` nulo e `modules`
-  // indefinido, `accessDecision` devolve "ok" e nenhum módulo é bloqueado —
-  // quem administra a plataforma não pode ser expulso dela por mensalidade.
-  let modules: string[] | undefined;
-  if (sub && user.role !== "SUPER_ADMIN") {
+  // modelo de dados exige uma. Deixando `subStatus` nulo, `accessDecision`
+  // devolve "ok" — quem administra a plataforma não pode ser expulso dela por
+  // mensalidade.
+  //
+  // Para os módulos, o mecanismo mudou sem mudar a intenção. Antes o
+  // super-admin ficava com `modules` INDEFINIDO, e `isModuleEnabled(undefined)`
+  // liberava tudo. Só que `undefined` já significava outra coisa — "token
+  // legado, de antes do claim existir" — e essa colisão obrigava o guard a ser
+  // fail-open para todo mundo. Agora o super-admin recebe a lista completa
+  // EXPLÍCITA: mesma liberação, dita em voz alta, e `undefined` deixa de ter
+  // dois donos.
+  let modules: string[];
+  if (user.role === "SUPER_ADMIN") {
+    modules = [...ALL_OPTIONAL_KEYS];
+  } else if (sub) {
     const effective = computeStatus(sub);
     if (effective !== sub.status) {
       await prisma.tenantSubscription.update({
@@ -36,7 +46,13 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
       });
     }
     subStatus = effective;
+    // `plan` é obrigatório por FK; o fallback cobre só leitura incompleta.
     modules = sub.plan ? planModules(sub.plan.features) : [...ALL_OPTIONAL_KEYS];
+  } else {
+    // Empresa sem assinatura não deveria existir — `provisionTenant` sempre
+    // cria uma. Se aparecer, é anomalia de dados: nenhum módulo pago, e o log
+    // torna o caso visível em vez de virar liberação silenciosa.
+    modules = [];
   }
 
   return {
@@ -49,5 +65,9 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     tenantStatus,
     subStatus,
     modules,
+    // Carimbo de revogação no momento da emissão. `assertSessaoValida` compara
+    // com o banco e derruba a sessão se qualquer um dos dois tiver avançado.
+    sev: user.sessionEpoch,
+    tev: user.tenant?.sessionEpoch ?? 0,
   };
 }

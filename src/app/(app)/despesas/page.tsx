@@ -1,3 +1,4 @@
+import { paginaDaUrl } from "@/lib/paginacao";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowDown, ArrowUp, Minus, Plus, Tags } from "lucide-react";
@@ -102,7 +103,7 @@ export default async function DespesasPage({
       : FILTROS.some((f) => f.value === sp.status)
         ? (sp.status as Aba)
         : "PENDENTE";
-  const pagina = Math.max(1, Number(sp.pagina) || 1);
+  const pagina = paginaDaUrl(sp.pagina);
 
   const { tenantId } = await requireTenant();
   const agora = new Date();

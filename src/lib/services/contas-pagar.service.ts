@@ -103,9 +103,20 @@ export const ContasPagarService = {
       });
     }
 
-    if (higienizacao.length > 0) {
+    // Só os lotes que realmente têm dinheiro a pagar.
+    //
+    // O filtro é `status != PAGO`, mas `computeCleaningStatus` só marca `PAGO`
+    // quando caixas E dinheiro fecham: um lote pago integralmente cujas caixas
+    // ainda estão no higienizador continua `ENVIADO` e entrava aqui. O `total`
+    // descontava o já pago e ficava certo, mas `count` e `detalhe` contavam o
+    // lote — a tela dizia "3 envios a pagar — R$ 120,00" quando só um devia.
+    const comSaldo = higienizacao.filter((c) =>
+      c.totalAmount.minus(c.paidAmount).greaterThan(0),
+    );
+
+    if (comSaldo.length > 0) {
       const totalHig = money(
-        higienizacao.reduce(
+        comSaldo.reduce(
           (a, c) => a.plus(c.totalAmount).minus(c.paidAmount),
           new Prisma.Decimal(0),
         ),
@@ -114,8 +125,8 @@ export const ContasPagarService = {
         origens.push({
           chave: "higienizacao",
           label: "Higienização de caixas",
-          detalhe: `${higienizacao.length} envio(s) a pagar`,
-          count: higienizacao.length,
+          detalhe: `${comSaldo.length} envio(s) a pagar`,
+          count: comSaldo.length,
           total: totalHig,
           href: "/higienizacao?status=DEVOLVIDO",
           urgente: false,

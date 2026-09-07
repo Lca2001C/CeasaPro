@@ -23,22 +23,32 @@ function hopsConfiaveis(): number {
  * 5/15min nunca disparava. Também envenenava a trilha de auditoria, que é
  * exatamente a fonte usada para investigar um incidente.
  *
- * Por isso: `x-real-ip` primeiro (escrito pelo proxy, nunca pelo cliente) e, na
- * falta dele, o hop confiável contado a partir da DIREITA.
+ * `x-real-ip` NÃO tem precedência, e essa ordem é a correção de um furo: ele era
+ * lido primeiro e sem condição nenhuma, com a justificativa de que "é escrito
+ * pelo proxy, nunca pelo cliente". Isso é uma suposição de implantação, não uma
+ * verificação. Fora da Vercel — o `docker-compose.yml` deste repositório, um
+ * `npm start` atrás de um Nginx sem `proxy_set_header X-Real-IP`, ou a porta
+ * exposta direto — o atacante manda `X-Real-IP: <aleatório>` a cada tentativa e
+ * anula justamente o que este arquivo existe para proteger: a janela de 5
+ * logins/15min, o limite de recuperação de senha, o de cadastro, e o `ip` da
+ * trilha de auditoria.
+ *
+ * A inversão é segura porque todo proxy que escreve `x-real-ip` também
+ * acrescenta ao `x-forwarded-for` — Vercel manda os dois, Nginx com
+ * `X-Real-IP` também põe `X-Forwarded-For`. Então `x-real-ip` só é alcançado
+ * quando NÃO há cadeia nenhuma, ou seja, quando não há proxy à frente: aí
+ * forjá-lo não dá nada que forjar o `x-forwarded-for` já não desse.
  */
 export function resolveClientIp(
   xRealIp: string | null,
   xForwardedFor: string | null,
   trustedHops: number = hopsConfiaveis(),
 ): string | null {
-  const real = xRealIp?.trim();
-  if (real) return real;
-
   const cadeia = (xForwardedFor ?? "")
     .split(",")
     .map((s) => s.trim())
     .filter(Boolean);
-  if (cadeia.length === 0) return null;
+  if (cadeia.length === 0) return xRealIp?.trim() || null;
 
   // Ex.: ["forjado", "cliente-real", "proxy-interno"] com trustedHops=1 → "proxy-interno".
   // Nunca cai abaixo de 0, então uma cadeia mais curta que trustedHops devolve o

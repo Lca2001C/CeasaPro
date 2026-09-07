@@ -4,7 +4,7 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { toDecimal, money } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
-import { startOfDay, startOfMonth, addDays } from "@/lib/dates";
+import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz } from "@/lib/tz";
 
 export interface DashboardProductRow {
@@ -52,6 +52,19 @@ export const DashboardService = {
     const chartStart = startOfDay(addDays(now, -29));
     const idleCutoff = startOfDay(addDays(now, -30));
 
+    // TETO das janelas — faltava, e a ausência não era inofensiva.
+    //
+    // As parcelas recorrentes do mês SEGUINTE são geradas ao quitar a atual
+    // (`gerarProximaParcela`), com `dueDate` em outubro. Sem teto,
+    // `COALESCE("dueDate","createdAt") >= monthStart` as somava no mês de
+    // setembro: com dez contas fixas de R$ 500, o lucro do mês aparecia
+    // R$ 5.000 abaixo do real — e não fechava com `DespesasService.resumoMes`,
+    // que sempre usou `{gte, lte}`. O mesmo valia para venda e compra com data
+    // futura, que entravam em "hoje vendi".
+    //
+    // O limite é "até agora", o mesmo que `resolvePeriod({preset:"mes"})` usa.
+    const ateAgora = endOfDay(now);
+
     const [
       hoje,
       semana,
@@ -71,11 +84,11 @@ export const DashboardService = {
       db.sale.aggregate({
         _sum: { totalAmount: true },
         // Canceladas fora: a venda desfeita não é faturamento.
-        where: { saleDate: { gte: todayStart }, cancelledAt: null },
+        where: { saleDate: { gte: todayStart, lte: ateAgora }, cancelledAt: null },
       }),
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: { gte: weekStart }, cancelledAt: null },
+        where: { saleDate: { gte: weekStart, lte: ateAgora }, cancelledAt: null },
       }),
       db.creditAccount.aggregate({
         _sum: { totalAmount: true, paidAmount: true },
@@ -87,23 +100,24 @@ export const DashboardService = {
       }),
       db.purchase.aggregate({
         _sum: { totalAmount: true },
-        where: { purchaseDate: { gte: monthStart } },
+        where: { purchaseDate: { gte: monthStart, lte: ateAgora } },
       }),
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: { gte: monthStart }, cancelledAt: null },
+        where: { saleDate: { gte: monthStart, lte: ateAgora }, cancelledAt: null },
       }),
       prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS cmv
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
-        WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
+        WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."saleDate" <= ${ateAgora} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
       `,
       prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
+          AND COALESCE("dueDate", "createdAt") <= ${ateAgora}
         GROUP BY type
       `,
       // A coluna é `timestamp` sem fuso, guardando UTC. Truncar direto agrupava

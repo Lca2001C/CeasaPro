@@ -93,7 +93,7 @@ export async function resolverLoginGoogle(
     });
     if (pendente) {
       // Sessão que ele já tenha aberto (refresh de 30 dias) cai junto.
-      await revokeAllForUser(porEmail.id);
+      await revokeAllForUser(porEmail.id, "PASSWORD");
       // O teste grátis é do cadastro público, e é este login que faz o papel do
       // clique no e-mail de confirmação. Empresa cadastrada pelo admin nasce
       // SUSPENSA de propósito (admin.service.ts:134) e não passa por aqui.

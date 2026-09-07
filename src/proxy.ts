@@ -288,9 +288,40 @@ export async function proxy(req: NextRequest) {
 }
 
 export const config = {
-  // Roda em tudo, menos TODOS os internos do Next (_next/*, incluindo o WebSocket do
-  // HMR em dev — _next/webpack-hmr), assets estaticos e PWA (sw.js/manifest/icones).
-  // Excluir só _next/static|_next/image deixava o proxy responder um redirect 307 ao
-  // handshake do WebSocket do HMR → "WebSocket handshake: ERR_INVALID_HTTP_RESPONSE".
-  matcher: ["/((?!_next/|favicon.ico|icons|manifest.webmanifest|sw.js|.*\\.(?:png|jpg|jpeg|svg|ico|webp)).*)"],
+  /**
+   * Roda em tudo, menos os internos do Next e os assets estáticos REAIS.
+   *
+   * A versão anterior era
+   *   `(?!_next/|favicon.ico|icons|manifest.webmanifest|sw.js|.*\.(?:png|jpg|…))`
+   * e tinha dois furos, ambos por falta de âncora:
+   *
+   * 1. `.*\.(?:png|…)` sem `$`, e `.` casando `/`: QUALQUER caminho que contivesse
+   *    `.png` em qualquer posição saía do middleware. `/higienizacao/x.png`,
+   *    `/api/vendas.png/criar`, `/fiado/abc.png` — todos passavam sem CSP, sem
+   *    gate de sessão, de papel, de assinatura ou de módulo.
+   * 2. `favicon.ico`, `icons` e `sw.js` eram testados como PREFIXO, então
+   *    `/icons-secretos/lista` e `/sw.js/qualquer-coisa` também escapavam. E os
+   *    pontos não escapados casavam qualquer caractere.
+   *
+   * A correção não é ancorar a regra genérica de extensão — é ELIMINÁ-LA. Não
+   * existe extensão que sirva de prova de que um caminho é estático: quem
+   * decide isso é o que está em `public/`, e ali a lista é curta e conhecida
+   * (`icons/`, `splash/`, `sw.js`; `favicon.ico` e `manifest.webmanifest` são
+   * servidos pelo próprio Next). Os cinco SVG que sobravam na raiz eram
+   * resquício do `create-next-app`, sem nenhuma referência no código, e foram
+   * removidos junto — eram o único motivo para a regra de extensão existir.
+   *
+   * `_next/` com a barra cobre `_next/static`, `_next/image` e o
+   * `_next/webpack-hmr` do HMR em dev — excluir só os dois primeiros fazia o
+   * proxy responder 307 ao handshake do WebSocket
+   * ("ERR_INVALID_HTTP_RESPONSE"). Com a barra, `/_nextfoo`, que não é interno
+   * do Next, volta a ser interceptado.
+   *
+   * Custo assumido: um asset novo em subdiretório novo de `public/` passa a
+   * invocar o middleware. O remédio é acrescentar o diretório a esta lista —
+   * uma decisão explícita, que é exatamente o que faltava antes.
+   */
+  matcher: [
+    "/((?!_next/|icons/|splash/|favicon\\.ico$|manifest\\.webmanifest$|sw\\.js$).*)",
+  ],
 };

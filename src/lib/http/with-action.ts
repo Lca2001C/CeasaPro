@@ -5,6 +5,7 @@ import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
 import { ForbiddenError, PaymentRequiredError } from "./app-error";
 import { ok, toActionResult, type ActionResult } from "./action-result";
 import { clientIp } from "./request";
+import { assertSessaoValida } from "@/lib/auth/revogacao";
 
 export interface TenantCtx {
   session: Session;
@@ -48,6 +49,7 @@ export function withTenantAction<I, O>(opts: {
   return async (raw?: unknown): Promise<ActionResult<O>> => {
     try {
       const { session, tenantId } = await requireTenant();
+      await assertSessaoValida(session);
       assertActive(session);
       if (opts.module) requireModule(session.modules, opts.module);
       const input = (opts.schema ? opts.schema.parse(raw) : (raw as I)) as I;
@@ -73,6 +75,7 @@ export function withAdminAction<I, O>(opts: {
   return async (raw?: unknown): Promise<ActionResult<O>> => {
     try {
       const session = await requireSuperAdmin();
+      await assertSessaoValida(session);
       assertPasswordReady(session);
       const input = (opts.schema ? opts.schema.parse(raw) : (raw as I)) as I;
       const ip = await clientIp();

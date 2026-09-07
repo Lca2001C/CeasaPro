@@ -9,6 +9,8 @@
  * lido dos dois lados e testado sozinho.
  */
 
+import { safeRedirectPath } from "@/lib/safe-redirect";
+
 /**
  * Marca de "acabei de tentar renovar" (trava anti-laço).
  *
@@ -30,11 +32,51 @@ export const TENTATIVA_MAX_AGE_SEGUNDOS = 30;
  * navegador a trataria como domínio externo: deixar passar transformaria a rota
  * de renovação em redirecionamento aberto — útil para phishing exibindo o nosso
  * domínio na barra de endereços.
+ *
+ * Delega a `safeRedirectPath` porque havia DOIS contratos para o mesmo
+ * problema, e este era o fraco: olhava só os dois primeiros caracteres. O
+ * valor que ele recebe vem de `searchParams.get("next")` — ou seja, já
+ * percent-decodificado — e ia cru para o cabeçalho `Location`. Não achei
+ * exploração com o código anterior, mas ter a versão frouxa justamente no
+ * caminho de um header não escapado é a condição para o próximo `next=`
+ * quebrar.
+ *
+ * O que se ganha de brinde: `/\golpe.com` passa a ser rejeitado em qualquer
+ * posição (não só no começo), `/login` deixa de ser destino válido (fecha um
+ * laço possível) e o retorno é `${pathname}${search}${hash}` de uma `URL` já
+ * parseada, então CR/LF não sobrevivem.
+ *
+ * `safe-redirect` é puro (só `URL`), então continua importável pelo proxy no
+ * Edge — que é a razão de este módulo existir.
  */
 export function destinoSeguro(bruto: string | null | undefined): string {
-  if (!bruto) return "/";
-  if (!bruto.startsWith("/")) return "/";
-  // `//host` e `/\host`: alguns navegadores normalizam a segunda para a primeira.
-  if (bruto.startsWith("//") || bruto.startsWith("/\\")) return "/";
-  return bruto;
+  return safeRedirectPath(bruto, "/");
+}
+
+/**
+ * A requisição é uma navegação de topo do próprio navegador?
+ *
+ * `/api/auth/renovar` é um GET que ROTACIONA o refresh token, e um GET que muda
+ * estado pode ser disparado de qualquer site por uma `<img>` ou um `fetch`. Os
+ * cabeçalhos de Fetch Metadata separam os casos: só a barra de endereços trocando
+ * de página produz `mode: navigate`; uma imagem embutida manda `no-cors`, e um
+ * `fetch` manda `cors`.
+ *
+ * Exige o cabeçalho, em vez de aceitar a ausência. A versão anterior era
+ * `if (modo && modo !== "navigate") return 403` — ou seja, cabeçalho AUSENTE
+ * passava, e a proteção descrita no comentário simplesmente não existia para
+ * quem não o enviasse. Todo navegador que roda este app manda Fetch Metadata
+ * desde 2020; quem não manda não tem como usar o sistema mesmo.
+ *
+ * Só o `mode`, e não o `dest`. Exigir `dest: document` parecia mais estrito e
+ * QUEBROU o fluxo real — medindo o que de fato chega aqui quando o proxy desvia
+ * uma navegação, o Chromium manda `{mode: "navigate", dest: "empty"}`: o `dest`
+ * de documento não sobrevive ao salto do redirecionamento. O `mode` sozinho já
+ * separa o que importa, e as chamadas do `api-client` chegam como
+ * `{mode: "cors"}` — recusadas, como devem ser.
+ */
+export function ehNavegacaoDeTopo(cabecalhos: {
+  get(nome: string): string | null;
+}): boolean {
+  return cabecalhos.get("sec-fetch-mode") === "navigate";
 }
