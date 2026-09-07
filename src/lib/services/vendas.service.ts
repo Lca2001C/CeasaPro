@@ -9,6 +9,7 @@ import { isModuleEnabled } from "@/lib/plan/modules";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
+import { custoMedioPonderado } from "./estoque.service";
 import { addDaysTz, endOfDayTz, parseFormDateTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
 import { resolvePlasticCrateQty } from "@/lib/validations/venda";
 import {
@@ -587,18 +588,20 @@ export const VendasService = {
         throw new NotFoundError("Um ou mais produtos nao foram encontrados");
       }
 
-      // 1. Saldo atual por produto + custo médio (custo dos produtos que entraram)
-      const [grouped, costs] = await Promise.all([
+      // 1. Saldo atual por produto + custo médio PONDERADO das entradas.
+      //
+      // Era `_avg: { unitCost: true }` — média aritmética. Com 100 caixas a
+      // R$ 1,00 e 1 caixa a R$ 100,00, o custo real é R$ 1,98 e a média simples
+      // dá R$ 50,50. Esse valor era gravado em `unitCostAtSale` e virava a base
+      // do CMV, do lucro e da margem — vender 1 caixa a R$ 30,00 aparecia como
+      // prejuízo de R$ 20,50 quando deu lucro de R$ 28,02.
+      const [grouped, costMap] = await Promise.all([
         tx.stockMovement.groupBy({
           by: ["productId", "type"],
           where: { productId: { in: productIds } },
           _sum: { quantity: true },
         }),
-        tx.stockMovement.groupBy({
-          by: ["productId"],
-          where: { productId: { in: productIds }, type: "ENTRADA" },
-          _avg: { unitCost: true },
-        }),
+        custoMedioPonderado(tx, ctx.tenantId, productIds),
       ]);
 
       const available = new Map<string, Prisma.Decimal>();
@@ -611,8 +614,6 @@ export const VendasService = {
           (available.get(g.productId) ?? new Prisma.Decimal(0)).plus(signed),
         );
       }
-      const costMap = new Map<string, Prisma.Decimal>();
-      for (const c of costs) costMap.set(c.productId, toDecimal(c._avg.unitCost ?? 0));
 
       // 2. Valida disponibilidade (quantidade pedida por produto)
       const requested = new Map<string, Prisma.Decimal>();

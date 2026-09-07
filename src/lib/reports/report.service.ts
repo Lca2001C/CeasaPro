@@ -3,10 +3,11 @@ import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { CaixasService } from "@/lib/services/caixas.service";
+import { perdasPorLote } from "@/lib/services/higienizacao.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { add, sub, toDecimal, money } from "@/lib/money";
 import { formatQty } from "@/lib/format";
-import { APP_TIME_ZONE } from "@/lib/tz";
+import { addDaysTz, APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
 import {
   PAYMENT_METHOD_LABELS,
   EXPENSE_TYPE_LABELS,
@@ -18,6 +19,12 @@ import {
 } from "@/lib/labels";
 import type { ReportKind, ReportResult } from "./report.types";
 import { REPORT_LABELS } from "./report.types";
+
+/**
+ * Quantos dias sem pagamento tornam "cobrável" uma conta SEM data de
+ * vencimento. Sem uma régua, "antigo" não é verificável.
+ */
+const DIAS_PARA_COBRAR_SEM_VENCIMENTO = 30;
 
 interface Params {
   tenantId: string;
@@ -645,14 +652,44 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "INADIMPLENTES": {
-      // Fiado em aberto com vencimento passado (ou sem vencimento e antigo).
+      /**
+       * Fiado em aberto e vencido. Três defeitos corrigidos aqui.
+       *
+       * 1. `dueDate: { lt: ... }` EXCLUI `NULL` no Prisma — e a maioria das
+       *    contas nasce sem vencimento (o PDV só o envia quando há parte fiada
+       *    E o operador digita a data). Ou seja, o relatório de inadimplentes
+       *    não mostrava a maior parte dos inadimplentes, apesar de o comentário
+       *    prometer "(ou sem vencimento e antigo)".
+       *
+       * 2. `p.from`/`p.to` eram ignorados: o cabeçalho dizia "Período: 01/09 a
+       *    30/09" e o conteúdo era o histórico inteiro.
+       *
+       * 3. `new Date()` em vez do início do dia no fuso do app fazia uma conta
+       *    que vence HOJE aparecer como atrasada durante todo o dia. A tela do
+       *    fiado usa `startOfDayTz` — as duas discordavam.
+       *
+       * "Sem vencimento e antigo" ganhou régua explícita: mais de 30 dias desde
+       * a abertura. Sem uma régua, "antigo" não é verificável.
+       */
+      const hoje = startOfDayTz(new Date());
+      const limiteSemVencimento = addDaysTz(hoje, -DIAS_PARA_COBRAR_SEM_VENCIMENTO);
       const contas = await db.creditAccount.findMany({
-        where: { status: "EM_ABERTO", dueDate: { lt: new Date() } },
-        orderBy: { dueDate: "asc" },
+        where: {
+          status: "EM_ABERTO",
+          // O período filtra pela ABERTURA da conta: `dueDate` pode ser nulo, e
+          // filtrar por ele deixaria de fora justamente quem não tem data.
+          createdAt: { gte: p.from, lte: p.to },
+          OR: [
+            { dueDate: { lt: hoje } },
+            { dueDate: null, createdAt: { lt: limiteSemVencimento } },
+          ],
+        },
+        orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
       });
       const rows = contas.map((c) => ({
         customerName: c.customerName,
         dueDate: c.dueDate,
+        abertaEm: c.createdAt,
         totalAmount: c.totalAmount,
         paidAmount: c.paidAmount,
         saldo: FinancialCalc.saldoFiado(c.totalAmount, c.paidAmount),
@@ -662,6 +699,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         columns: [
           { key: "customerName", label: "Cliente" },
           { key: "dueDate", label: "Vencimento", format: "date" },
+          { key: "abertaEm", label: "Aberta em", format: "date" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
           { key: "paidAmount", label: "Pago", align: "right", format: "money" },
           { key: "saldo", label: "Em atraso", align: "right", format: "money" },
@@ -839,13 +877,29 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         }),
         CaixasService.getSaldo(p.tenantId),
       ]);
+      // As caixas PERDIDAS no higienizador entram na conta.
+      //
+      // O relatório fazia `sentQty − returnedQty` e o serviço faz
+      // `sentQty − returnedQty − perdidas` (`higienizacao.service.ts`). Com 50
+      // enviadas, 47 devolvidas e 3 registradas como perdidas, a tela dizia
+      // "0 a receber, lote resolvido" e o PDF exportado para o mesmo período
+      // dizia "3 a receber". Duas respostas para a mesma pergunta — e a do PDF
+      // é a que vai para o higienizador cobrar caixa que ele já pagou.
+      //
+      // A perda não é coluna: é um movimento `QUEBRA` ligado ao lote. Usar a
+      // MESMA função do serviço mantém uma fonte só.
+      const perdas = await perdasPorLote(
+        db,
+        registros.map((c) => c.id),
+      );
       const rows = registros.map((c) => ({
         sentDate: c.sentDate,
         cleanerName: c.cleanerName,
         status: CRATE_CLEANING_STATUS_LABELS[c.status],
         sentQty: c.sentQty,
         returnedQty: c.returnedQty,
-        aReceber: Math.max(0, c.sentQty - c.returnedQty),
+        perdidas: perdas.get(c.id) ?? 0,
+        aReceber: Math.max(0, c.sentQty - c.returnedQty - (perdas.get(c.id) ?? 0)),
         totalAmount: c.totalAmount,
         paidAmount: c.paidAmount,
         aPagar: money(sub(c.totalAmount, c.paidAmount)),
@@ -858,6 +912,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "status", label: "Situacao" },
           { key: "sentQty", label: "Enviadas", align: "right", format: "int" },
           { key: "returnedQty", label: "Devolvidas", align: "right", format: "int" },
+          { key: "perdidas", label: "Perdidas", align: "right", format: "int" },
           { key: "aReceber", label: "A receber", align: "right", format: "int" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
           { key: "paidAmount", label: "Pago", align: "right", format: "money" },
@@ -869,6 +924,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           status: `Estoque: ${saldo.sujas} sujas · ${saldo.emHigienizacao} em higienização · ${saldo.limpas} limpas`,
           sentQty: rows.reduce((a, r) => a + r.sentQty, 0),
           returnedQty: rows.reduce((a, r) => a + r.returnedQty, 0),
+          perdidas: rows.reduce((a, r) => a + r.perdidas, 0),
           aReceber: rows.reduce((a, r) => a + r.aReceber, 0),
           totalAmount: add(...rows.map((r) => r.totalAmount)),
           paidAmount: add(...rows.map((r) => r.paidAmount)),
