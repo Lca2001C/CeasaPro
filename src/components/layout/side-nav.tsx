@@ -18,6 +18,7 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
+  TrendingUp,
   LogOut,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
@@ -33,6 +34,7 @@ const items = [
   { href: "/vendas", label: "Vendas", icon: Receipt },
   { href: "/fiado", label: "Fiado", icon: HandCoins },
   { href: "/estoque", label: "Estoque", icon: Package },
+  { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
   { href: "/despesas", label: "Despesas", icon: Wallet },
   { href: "/caixas-plasticas", label: "Caixas plásticas", icon: Container },
   { href: "/higienizacao", label: "Higienização", icon: Droplets },

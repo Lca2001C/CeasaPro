@@ -53,6 +53,8 @@ export async function cleanupTenants(ids: string[]) {
   await prisma.purchase.deleteMany({ where });
   await prisma.expense.deleteMany({ where });
   await prisma.expenseCategory.deleteMany({ where });
+  // Antes dos produtos: o vínculo aponta para `products`.
+  await prisma.tenantCeasaLink.deleteMany({ where });
   await prisma.product.deleteMany({ where });
   await prisma.tenant.deleteMany({ where: { id: { in: ids } } });
 }

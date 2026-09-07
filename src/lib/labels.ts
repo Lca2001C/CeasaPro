@@ -116,10 +116,25 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   CrateCleaning: "higienização",
   PackagingType: "tipo de embalagem",
   PackagingSale: "venda de embalagem",
+  TenantCeasaLink: "vínculo de cotação",
   Tenant: "empresa",
   User: "usuário",
   TenantSubscription: "assinatura",
   SubscriptionPayment: "pagamento de mensalidade",
+};
+
+/**
+ * Desfecho de uma importação de boletim, na tela do super-admin.
+ *
+ * "Sem boletim" e "Falhou" são coisas diferentes e precisam LER como coisas
+ * diferentes: domingo e feriado caem no primeiro, e chamar isso de falha
+ * ensinaria o operador a ignorar o aviso — que é justamente o que não pode
+ * acontecer com o alarme de uma raspagem.
+ */
+export const CEASA_IMPORT_STATUS_LABELS: Record<string, string> = {
+  OK: "Importado",
+  VAZIO: "Sem boletim no dia",
+  FALHA: "Falhou",
 };
 
 export function toOptions(map: Record<string, string>) {

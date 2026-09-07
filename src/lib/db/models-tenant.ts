@@ -28,6 +28,11 @@ export const TENANT_MODELS = new Set<string>([
   // passam o tenantId à mão, então nada vazava — mas a primeira que esquecesse
   // cruzaria empresas em silêncio.
   "PackagingMovement",
+  // Cotações. É o ÚNICO modelo do módulo com `tenantId`: as tabelas de central,
+  // produto do boletim e cotação são globais de propósito (o preço da central é
+  // o mesmo para todo mundo), e por não terem a coluna nem chegam a este teste.
+  // O vínculo, não: ele é a decisão de UMA empresa sobre o produto DELA.
+  "TenantCeasaLink",
 ]);
 
 export const SOFT_DELETE_MODELS = new Set<string>([

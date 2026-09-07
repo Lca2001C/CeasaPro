@@ -9,6 +9,7 @@ export const OPTIONAL_MODULE_KEYS = [
   "caixas",
   "higienizacao",
   "embalagens",
+  "cotacoes",
   "relatorios_avancados",
 ] as const;
 
@@ -40,6 +41,16 @@ export const OPTIONAL_MODULES: Record<OptionalModuleKey, OptionalModule> = {
     label: "Venda de embalagens",
     description: "Venda de caixas, sacaria e outras embalagens à parte.",
     pathPrefixes: ["/embalagens"],
+  },
+  cotacoes: {
+    key: "cotacoes",
+    label: "Cotações do CEASA",
+    // A palavra "diário" está aqui de propósito, e é o ajuste de expectativa
+    // mais barato que existe: esta descrição aparece em /plano e na Ajuda, antes
+    // de o cliente abrir a tela e concluir sozinho que os preços são do momento.
+    description:
+      "Preços do boletim diário da sua central do CEASA, com destaque para os produtos que você tem em estoque.",
+    pathPrefixes: ["/cotacoes"],
   },
   relatorios_avancados: {
     key: "relatorios_avancados",

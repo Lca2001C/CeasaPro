@@ -13,6 +13,9 @@ import { EmpresaConfigForm } from "./_components/empresa-form";
 import { PerfilConfigForm } from "./_components/perfil-form";
 import { CancelarAssinatura } from "@/components/billing/cancelar-assinatura";
 import { empresaSemNome } from "@/lib/tenant-defaults";
+import { isModuleEnabled } from "@/lib/plan/modules";
+import { CotacoesService } from "@/lib/services/cotacoes.service";
+import { EscolherCentral } from "../cotacoes/_components/escolher-central";
 
 export const dynamic = "force-dynamic";
 
@@ -20,6 +23,8 @@ export default async function ConfiguracoesPage() {
   const { tenantId, session } = await requireTenant();
   const t = await ConfigService.getCompany(tenantId);
   const sub = t?.subscription;
+  const temCotacoes = isModuleEnabled(session.modules, "cotacoes");
+  const centrais = temCotacoes ? await CotacoesService.listarCentrais() : [];
 
   return (
     <div>
@@ -52,6 +57,22 @@ export default async function ConfiguracoesPage() {
         </TabsContent>
         <TabsContent value="perfil">
           <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
+          {/*
+            A central do CEASA mora aqui porque é dado da empresa que se troca
+            uma vez e não se mexe mais — não faz sentido só existir dentro do
+            módulo. Some para quem não tem Cotações no plano: um campo que
+            configura algo inacessível é ruído.
+          */}
+          {temCotacoes && (
+            <Card className="mt-4">
+              <CardHeader>
+                <CardTitle className="text-base">Cotações do CEASA</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <EscolherCentral centrais={centrais} atual={t?.ceasaCentralCode ?? null} />
+              </CardContent>
+            </Card>
+          )}
         </TabsContent>
         <TabsContent value="assinatura">
           <div className="flex flex-col gap-4">

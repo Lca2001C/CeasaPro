@@ -216,6 +216,22 @@ export const AREAS: AreaGuia[] = [
       "e não volta.",
     modulo: "embalagens",
   },
+  {
+    titulo: "Cotações",
+    href: "/cotacoes",
+    resumo: "Os preços do boletim da sua central, com o que você tem em estoque destacado.",
+    comoUsar: [
+      "Escolha sua central do CEASA — os preços passam a ser os do boletim dela.",
+      "Vincule cada produto seu ao produto correspondente do boletim. É uma vez só.",
+      "Os produtos que você tem em estoque aparecem destacados na lista.",
+    ],
+    atencao:
+      "A central publica UM BOLETIM POR DIA — não é o preço do momento, que é negociado " +
+      "no balcão e não é divulgado. A data do boletim fica sempre visível no topo da " +
+      "tela, e quando o dado envelhece a tela avisa. Use como referência, não como o " +
+      "preço de agora.",
+    modulo: "cotacoes",
+  },
 ];
 
 export interface Duvida {

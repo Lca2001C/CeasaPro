@@ -22,6 +22,7 @@ const ARQUIVOS_POR_MODULO: Record<string, OptionalModuleKey> = {
   "src/actions/caixas.actions.ts": "caixas",
   "src/actions/higienizacao.actions.ts": "higienizacao",
   "src/actions/embalagens.actions.ts": "embalagens",
+  "src/actions/cotacoes.actions.ts": "cotacoes",
 };
 
 /** Quebra o arquivo nos blocos `withTenantAction({ ... })`, com o nome de cada um. */

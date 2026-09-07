@@ -19,6 +19,7 @@ import {
   Droplets,
   PackageOpen,
   BadgeCheck,
+  TrendingUp,
   LogOut,
 } from "lucide-react";
 import { useState } from "react";
@@ -47,6 +48,7 @@ const more = [
   { href: "/compras", label: "Compras", icon: ShoppingBag },
   { href: "/vendas", label: "Vendas (histórico)", icon: Receipt },
   { href: "/despesas", label: "Despesas", icon: Wallet },
+  { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
   { href: "/caixas-plasticas", label: "Caixas plásticas", icon: Container },
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
   { href: "/embalagens", label: "Embalagens", icon: PackageOpen },

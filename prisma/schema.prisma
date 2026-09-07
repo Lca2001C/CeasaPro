@@ -27,6 +27,11 @@ model Tenant {
   /// público. Livre e opcional: no Ceasa a mesma pessoa opera box, banca ou
   /// galpão, e travar em enum obrigaria migration a cada arranjo novo.
   establishmentType     String?
+  /// Central do CEASA em que esta empresa compra — governa quais cotações ela vê.
+  /// Anulável: quem não escolheu ainda cai no estado vazio do módulo, e quem não
+  /// tem o módulo no plano nunca preenche. `SetNull` para desativar uma central
+  /// não derrubar a empresa junto.
+  ceasaCentralCode      String?
   onboardingCompletedAt DateTime?
   /// Prova de aceite dos Termos de Uso / Política de Privacidade (LGPD, art. 8º).
   /// Registrado no primeiro checkout; guardamos data, IP e versão do documento.
@@ -36,6 +41,8 @@ model Tenant {
   createdAt             DateTime               @default(now())
   updatedAt             DateTime               @updatedAt
   deletedAt             DateTime?
+  ceasaCentral          CeasaCentral?          @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
+  ceasaLinks            TenantCeasaLink[]
   crateCleanings        CrateCleaning[]
   creditAccounts        CreditAccount[]
   expenseCategories     ExpenseCategory[]
@@ -130,21 +137,21 @@ model RefreshToken {
   /// vazado.
   /// O default é a hipótese conservadora: um token criado sem linhagem
   /// explícita é a própria linhagem, e revogá-la atinge só ele.
-  familyId       String    @default(cuid())
+  familyId      String  @default(cuid())
   /// Quem sucedeu este token. Prova que a revogação foi por ROTAÇÃO.
-  replacedById   String?
+  replacedById  String?
   /// Por que foi revogado. Sem isto, `revokedAt != null` significava quatro
   /// coisas diferentes (rotação, logout, ação do admin, troca de senha) e não
   /// havia como detectar reuso sem transformar todo logout em falso alarme.
-  revokedReason  String?
+  revokedReason String?
   /// Quantas vezes este token já foi aceito dentro da janela de graça.
   ///
   /// Duas abas renovam concorrentemente (`SessaoViva` e `api-client` têm travas
   /// que não se enxergam), e uma resposta perdida faz o cliente reenviar com o
   /// cookie antigo. Sem a janela, esses casos legítimos viravam "ataque".
-  graceUses      Int       @default(0)
+  graceUses     Int     @default(0)
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([familyId])
@@ -192,6 +199,153 @@ model RateLimit {
 
   @@index([expiresAt])
   @@map("rate_limits")
+}
+
+/// ─────────────────────────────────────────────────────────────────────────────
+/// Cotações do CEASA
+///
+/// As quatro primeiras tabelas NÃO têm `tenantId`, e isso é decisão, não
+/// esquecimento: o preço publicado pela central é o mesmo para todo mundo que
+/// compra ali. Copiá-lo por empresa multiplicaria a importação por número de
+/// clientes e faria a tabela crescer sem nenhum ganho. Elas seguem o molde de
+/// `RateLimit` — sem relação com Tenant, acesso pelo `prisma` cru — e por
+/// construção ficam fora de `TENANT_MODELS`.
+///
+/// Só `TenantCeasaLink` tem `tenantId`: é a única coisa privada aqui, porque é a
+/// decisão de UMA empresa sobre o produto DELA.
+/// ─────────────────────────────────────────────────────────────────────────────
+
+/// Entreposto do CEASA (Grande BH, Juiz de Fora, Uberlândia...).
+model CeasaCentral {
+  /// Código estável do entreposto na fonte (ex.: "CEAMG"). É PK textual porque o
+  /// importador referencia a central por código, não por id gerado — mesmo
+  /// raciocínio de `RateLimit.keyHash`.
+  code         String           @id
+  name         String
+  city         String
+  uf           String
+  /// Qual implementação de `FonteDeCotacao` atende esta central.
+  sourceKey    String
+  /// Parâmetros que a fonte precisa (ex.: `{"mercado":"CEAMG"}`). Fica em Json
+  /// para uma central nova não exigir migration.
+  sourceParams Json?
+  /// Permite desligar uma fonte quebrada SEM deploy.
+  active       Boolean          @default(true)
+  sortOrder    Int              @default(0)
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  quotes       CeasaQuote[]
+  importRuns   CeasaImportRun[]
+  tenants      Tenant[]
+
+  @@index([active, sortOrder])
+  @@map("ceasa_centrals")
+}
+
+/// Produto como o boletim escreve ("TOMATE SALADA LONGA VIDA").
+///
+/// Catálogo GLOBAL, não por central: assim o vínculo que a empresa fez sobrevive
+/// à troca de central quando o nome coincide.
+model CeasaProduct {
+  id          String            @id @default(cuid())
+  /// Nome de exibição, como veio da fonte.
+  name        String
+  /// `normalizarNome(name)` — minúsculas, sem acento, espaços colapsados.
+  /// Único: é o que impede o catálogo de ganhar uma linha nova todo dia só
+  /// porque o boletim imprimiu dois espaços.
+  slug        String            @unique
+  firstSeenAt DateTime          @default(now())
+  lastSeenAt  DateTime          @default(now())
+  active      Boolean           @default(true)
+  quotes      CeasaQuote[]
+  links       TenantCeasaLink[]
+
+  @@index([active, name])
+  @@map("ceasa_products")
+}
+
+/// Preço de um produto, numa central, num dia.
+model CeasaQuote {
+  id             String       @id @default(cuid())
+  centralCode    String
+  ceasaProductId String
+  /// Data do BOLETIM, não do fetch. `@db.Date` porque é data de calendário e não
+  /// instante — evita de saída todo o problema de fuso que `src/lib/tz.ts` existe
+  /// para resolver.
+  quoteDate      DateTime     @db.Date
+  /// Embalagem cotada ("CX 20KG", "KG"). NOT NULL com default "" de propósito:
+  /// no Postgres vários NULL não colidem em índice único, então com `unit` nulo
+  /// o upsert duplicaria a linha a cada reimportação do mesmo dia.
+  unit           String       @default("")
+  minPrice       Decimal?     @db.Decimal(14, 2)
+  avgPrice       Decimal?     @db.Decimal(14, 2)
+  maxPrice       Decimal?     @db.Decimal(14, 2)
+  /// O preço que a TELA mostra, escolhido pelo adaptador — que é quem conhece a
+  /// semântica da fonte (moda? média? preço único?). Sem ele cada tela
+  /// reimplementaria o fallback e elas divergiriam, que foi exatamente o defeito
+  /// que `custoMedioPonderado` corrigiu no estoque.
+  refPrice       Decimal      @db.Decimal(14, 2)
+  importedAt     DateTime     @default(now())
+  central        CeasaCentral @relation(fields: [centralCode], references: [code], onDelete: Cascade)
+  product        CeasaProduct @relation(fields: [ceasaProductId], references: [id], onDelete: Cascade)
+
+  /// A UNIDADE entra na chave porque o boletim cota o mesmo produto em
+  /// embalagens diferentes com preços diferentes; colapsar seria perder dado ou
+  /// escolher um no escuro. Reimportar o mesmo dia atualiza, não duplica.
+  @@unique([centralCode, quoteDate, ceasaProductId, unit])
+  @@index([centralCode, quoteDate])
+  @@map("ceasa_quotes")
+}
+
+/// Log de toda tentativa de importação — é o que torna a falha visível.
+model CeasaImportRun {
+  id           String            @id @default(cuid())
+  centralCode  String
+  sourceKey    String
+  quoteDate    DateTime?         @db.Date
+  status       CeasaImportStatus
+  rowsParsed   Int               @default(0)
+  rowsUpserted Int               @default(0)
+  durationMs   Int               @default(0)
+  httpStatus   Int?
+  error        String?
+  /// Assinatura ESTRUTURAL da resposta (hash dos cabeçalhos da tabela de dados).
+  /// Quando muda em relação à última execução OK, dispara aviso mesmo com o
+  /// parsing tendo dado certo — é a única camada que pega corrupção silenciosa,
+  /// do tipo "colunas trocadas, mínimo virou máximo".
+  fingerprint  String?
+  startedAt    DateTime          @default(now())
+  finishedAt   DateTime?
+  central      CeasaCentral      @relation(fields: [centralCode], references: [code], onDelete: Cascade)
+
+  @@index([centralCode, startedAt])
+  @@map("ceasa_import_runs")
+}
+
+/// O produto do cliente ↔ o produto do boletim.
+///
+/// Vínculo MANUAL, e é a decisão central do módulo. Casamento exato por nome
+/// normalizado quase nunca acerta ("Tomate" não é "TOMATE SALADA LONGA VIDA"), e
+/// similaridade por trigrama acerta — mas casa "TOMATE CEREJA" com "TOMATE
+/// SALADA", que são preços diferentes, em silêncio. Num módulo cujo propósito é
+/// orientar preço, mostrar o preço errado com cara de certo é pior que não
+/// mostrar preço nenhum.
+model TenantCeasaLink {
+  id             String       @id @default(cuid())
+  tenantId       String
+  productId      String
+  ceasaProductId String
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product        Product      @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ceasaProduct   CeasaProduct @relation(fields: [ceasaProductId], references: [id], onDelete: Cascade)
+
+  /// Um produto do boletim por produto seu. NÃO o inverso: "Tomate caixa" e
+  /// "Tomate kg" podem apontar para o mesmo item do boletim.
+  @@unique([tenantId, productId])
+  @@index([tenantId, ceasaProductId])
+  @@map("tenant_ceasa_links")
 }
 
 model TenantSubscription {
@@ -256,18 +410,19 @@ model SubscriptionPayment {
 }
 
 model Product {
-  id              String          @id @default(cuid())
+  id              String            @id @default(cuid())
   tenantId        String
   name            String
   saleUnit        SaleUnit
-  qtyPerRecipient Decimal?        @db.Decimal(14, 3)
+  qtyPerRecipient Decimal?          @db.Decimal(14, 3)
   recipientType   RecipientType?
-  sackCapacity    Decimal?        @db.Decimal(14, 3)
-  active          Boolean         @default(true)
-  createdAt       DateTime        @default(now())
-  updatedAt       DateTime        @updatedAt
+  sackCapacity    Decimal?          @db.Decimal(14, 3)
+  active          Boolean           @default(true)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
   deletedAt       DateTime?
-  tenant          Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ceasaLinks      TenantCeasaLink[]
   purchaseItems   PurchaseItem[]
   saleItems       SaleItem[]
   stockMovements  StockMovement[]
@@ -739,6 +894,31 @@ model AdminNotification {
 enum AdminNotificationKind {
   /// Conta criada: cadastro público (autoatendimento) ou cadastro pelo admin.
   USER_CREATED
+  /// A importação do boletim de uma central falhou, ou o formato da fonte mudou.
+  ///
+  /// Raspagem quebra quando o site de origem muda, e o desfecho normal é o
+  /// módulo morrer sem ninguém perceber. Este aviso é o que torna a quebra
+  /// visível para quem pode consertar.
+  COTACOES_FALHA
+  /// Uma central com clientes está sem boletim novo há dias.
+  ///
+  /// Independe do motivo — rede, formato, feriado emendado, central desligada
+  /// por engano, ou bug na própria detecção de falha. É o único alarme que um
+  /// defeito nos outros não desarma.
+  COTACOES_DESATUALIZADAS
+}
+
+/// Desfecho de uma tentativa de importar boletim.
+///
+/// Três estados, e não dois, de propósito: `VAZIO` é a fonte respondendo
+/// corretamente que não há boletim naquele dia (domingo, feriado, publicação
+/// atrasada) e NÃO é falha. Sem essa distinção o alarme dispararia todo fim de
+/// semana, seria ignorado em um mês, e aí o módulo morreria em silêncio do
+/// mesmo jeito — só que com um alarme instalado dando a impressão contrária.
+enum CeasaImportStatus {
+  OK
+  VAZIO
+  FALHA
 }
 
 enum UserRole {
