@@ -49,10 +49,7 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
     // Anotar como `SignupInput` faz o TypeScript apontar aqui se um campo novo
     // entrar no schema, em vez de deixá-lo silenciosamente de fora do envio.
     const payload: SignupInput = {
-      tradeName: values.tradeName,
       email: values.email,
-      phone: values.phone,
-      establishmentType: values.establishmentType,
       password: values.password,
     };
 
@@ -106,60 +103,21 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
         </div>
         <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
-            {trialDays} dias grátis para testar tudo. Não pedimos cartão de crédito.
+            {trialDays} dias grátis para testar tudo. Não pedimos cartão de crédito. Os
+            dados da sua empresa você preenche depois, quando quiser.
           </p>
 
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="tradeName">Nome do seu negócio</Label>
-            <Input
-              id="tradeName"
-              autoComplete="organization"
-              placeholder="Hortifrúti Silva"
-              autoFocus
-              {...register("tradeName")}
-            />
-            {errors.tradeName && (
-              <span className="text-xs text-destructive">{errors.tradeName.message}</span>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
             <Label htmlFor="email">E-mail</Label>
-            <Input id="email" type="email" autoComplete="email" {...register("email")} />
+            <Input
+              id="email"
+              type="email"
+              autoComplete="email"
+              autoFocus
+              {...register("email")}
+            />
             {errors.email && (
               <span className="text-xs text-destructive">{errors.email.message}</span>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="phone">Telefone / WhatsApp</Label>
-            <Input
-              id="phone"
-              type="tel"
-              inputMode="tel"
-              autoComplete="tel"
-              placeholder="(31) 99999-9999"
-              {...register("phone")}
-            />
-            {errors.phone && (
-              <span className="text-xs text-destructive">{errors.phone.message}</span>
-            )}
-          </div>
-
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="establishmentType">
-              Tipo de estabelecimento / box{" "}
-              <span className="font-normal text-muted-foreground">(opcional)</span>
-            </Label>
-            <Input
-              id="establishmentType"
-              placeholder="Box 42 — Pavilhão de Hortigranjeiros"
-              {...register("establishmentType")}
-            />
-            {errors.establishmentType && (
-              <span className="text-xs text-destructive">
-                {errors.establishmentType.message}
-              </span>
             )}
           </div>
 

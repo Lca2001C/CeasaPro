@@ -36,13 +36,14 @@ export function OnboardingWizard({ initialName }: { initialName: string }) {
   async function saveCompany() {
     if (!tradeName.trim()) return toast.error("Informe o nome da empresa.");
     setBusy(true);
+    // Só as três chaves que este passo conhece. Mandar `legalName`, `cnpj` e
+    // `businessHours` como `null` fixo APAGAVA o que já estivesse preenchido em
+    // Configurações — o wizard virou opcional e reabrível, então isso deixou de
+    // ser hipotético. `updateCompany` trata chave ausente como "não mexer".
     const res = await salvarEmpresa({
       tradeName: tradeName.trim(),
       phone: phone || null,
       address: address || null,
-      legalName: null,
-      cnpj: null,
-      businessHours: null,
     });
     setBusy(false);
     if (res.ok) setStep(2);

@@ -10,34 +10,48 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { PushOptIn } from "@/components/pwa/push-opt-in";
 import { EmpresaConfigForm } from "./_components/empresa-form";
+import { PerfilConfigForm } from "./_components/perfil-form";
 import { CancelarAssinatura } from "@/components/billing/cancelar-assinatura";
+import { empresaSemNome } from "@/lib/tenant-defaults";
 
 export const dynamic = "force-dynamic";
 
 export default async function ConfiguracoesPage() {
-  const { tenantId } = await requireTenant();
+  const { tenantId, session } = await requireTenant();
   const t = await ConfigService.getCompany(tenantId);
   const sub = t?.subscription;
 
   return (
     <div>
-      <PageHeader title="Configurações" description="Dados da empresa e assinatura." />
+      <PageHeader
+        title="Configurações"
+        description="Seus dados, os da empresa e a assinatura."
+      />
       <Tabs defaultValue="empresa">
         <TabsList>
           <TabsTrigger value="empresa">Empresa</TabsTrigger>
+          <TabsTrigger value="perfil">Meu perfil</TabsTrigger>
           <TabsTrigger value="assinatura">Assinatura</TabsTrigger>
         </TabsList>
         <TabsContent value="empresa">
           <EmpresaConfigForm
             initial={{
-              tradeName: t?.tradeName ?? "",
+              // O nome de partida não é pré-preenchido: deixá-lo no campo faria a
+              // pessoa clicar "Salvar" e carimbá-lo como se fosse escolha dela —
+              // e aí o aviso de cadastro incompleto sumiria sem nada ter sido
+              // preenchido.
+              tradeName: empresaSemNome(t?.tradeName) ? "" : (t?.tradeName ?? ""),
               legalName: t?.legalName ?? "",
               cnpj: t?.cnpj ?? "",
               phone: t?.phone ?? "",
               address: t?.address ?? "",
               businessHours: t?.businessHours ?? "",
+              establishmentType: t?.establishmentType ?? "",
             }}
           />
+        </TabsContent>
+        <TabsContent value="perfil">
+          <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
         </TabsContent>
         <TabsContent value="assinatura">
           <div className="flex flex-col gap-4">

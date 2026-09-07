@@ -12,13 +12,24 @@ import { MessageCircle } from "lucide-react";
  * É só um link: sem estado, sem handler e sem hooks — nada de JavaScript extra
  * no celular do comerciante além da própria marcação.
  */
-export function SupportButton({ companyName }: { companyName: string }) {
+export function SupportButton({
+  companyName,
+  userEmail,
+}: {
+  companyName: string;
+  userEmail?: string;
+}) {
   const raw = process.env.NEXT_PUBLIC_SUPPORT_WHATSAPP;
   // `wa.me` só aceita dígitos; máscaras (+55 (31) 9...) quebram o link.
   const phone = raw?.replace(/\D/g, "") ?? "";
   if (!phone) return null;
 
-  const message = `Olá! Preciso de ajuda no CeasaPro.\nEmpresa: ${companyName}`;
+  // O e-mail entra porque o nome da empresa deixou de identificar sozinho: com o
+  // cadastro mínimo, quem ainda não preencheu chega ao suporte como "Minha
+  // empresa", e o atendente não teria como achar a conta.
+  const message =
+    `Olá! Preciso de ajuda no CeasaPro.\nEmpresa: ${companyName}` +
+    (userEmail ? `\nE-mail: ${userEmail}` : "");
   const href = `https://wa.me/${phone}?text=${encodeURIComponent(message)}`;
 
   return (

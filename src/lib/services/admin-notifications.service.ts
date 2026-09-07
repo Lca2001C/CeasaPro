@@ -192,7 +192,12 @@ export const AdminNotificationsService = {
       body: google
         ? `${input.tradeName} (${input.email}) entrou com o Google e o teste já está liberado.`
         : publico
-          ? `${input.tradeName} (${input.email}) se cadastrou e vai começar o teste ao confirmar o e-mail.`
+          ? // Sem o nome da empresa, de propósito: o cadastro pelo site passou a
+            // pedir só e-mail e senha, então `tradeName` aqui é sempre o valor de
+            // partida — e a caixa do super-admin viraria uma lista de "Minha
+            // empresa", sem nada que distinguisse uma lead da outra. O e-mail é o
+            // que identifica de verdade neste caminho.
+            `${input.email} se cadastrou pelo site e vai começar o teste ao confirmar o e-mail.`
           : `${input.tradeName} (${input.email}) foi cadastrada pelo painel administrativo.`,
       href: `/admin/clientes/${input.tenantId}`,
       tenantId: input.tenantId,

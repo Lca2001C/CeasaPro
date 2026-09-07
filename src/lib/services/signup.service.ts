@@ -23,6 +23,7 @@ import {
 } from "./tenant-provisioning";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { ADMIN_PLAN_SLUG } from "./plano.service";
+import { NOME_EMPRESA_PADRAO, nomeInicialPeloEmail } from "@/lib/tenant-defaults";
 import type { SignupInput } from "@/lib/validations/auth";
 
 /**
@@ -84,11 +85,18 @@ export const SignupService = {
     const token = createVerifyToken();
     const now = new Date();
 
+    // O cadastro pede só e-mail e senha, mas `Tenant.tradeName` e `User.name`
+    // são NOT NULL. Os valores de partida vêm de um lugar só, porque o nome da
+    // empresa é TAMBÉM o sinal lido depois para saber que falta preencher.
+    // `onboardingCompletedAt` fica nulo de propósito: é o que faz o cartão de
+    // "complete o cadastro" aparecer no Início.
+    const nomeDaPessoa = nomeInicialPeloEmail(input.email);
+
     const { tenantId, userId } = await prisma.$transaction(async (tx) => {
       const criado = await provisionTenant(tx, {
-        tradeName: input.tradeName,
-        phone: input.phone,
-        establishmentType: input.establishmentType ?? null,
+        tradeName: NOME_EMPRESA_PADRAO,
+        phone: null,
+        establishmentType: null,
         planId: plan.id,
         // O valor mensal vem SEMPRE do plano, nunca do cliente — mesma regra de
         // `PlanoService.trocarPlano`.
@@ -98,7 +106,7 @@ export const SignupService = {
         // houver `activatedAt`, então ela não abre acesso.
         currentPeriodEnd: now,
         owner: {
-          name: input.tradeName,
+          name: nomeDaPessoa,
           email: input.email,
           passwordHash,
           // Senha escolhida pela própria pessoa: não há o que trocar no 1º acesso.
@@ -116,7 +124,7 @@ export const SignupService = {
           action: "CREATE",
           entity: "Tenant",
           entityId: criado.tenantId,
-          newData: { tradeName: input.tradeName, origem: "cadastro-publico" },
+          newData: { tradeName: NOME_EMPRESA_PADRAO, origem: "cadastro-publico" },
           ip: ctx.ip,
         },
         tx,
@@ -132,7 +140,7 @@ export const SignupService = {
     await AdminNotificationsService.notificarUsuarioCriado({
       tenantId,
       userId,
-      tradeName: input.tradeName,
+      tradeName: NOME_EMPRESA_PADRAO,
       email: input.email,
       origem: "cadastro-publico",
     });

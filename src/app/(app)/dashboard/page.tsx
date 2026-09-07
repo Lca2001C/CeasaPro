@@ -20,6 +20,8 @@ import { AvisosService } from "@/lib/services/avisos.service";
 import { ContasPagarService } from "@/lib/services/contas-pagar.service";
 import { DespesasService } from "@/lib/services/despesas.service";
 import { ContasAPagarCard } from "@/components/data/contas-a-pagar-card";
+import { CompletarCadastroCard } from "@/components/data/completar-cadastro-card";
+import { ConfigService } from "@/lib/services/config.service";
 import { startOfDayTz } from "@/lib/tz";
 import { formatBRL, formatDate, formatQty, valorExibivel } from "@/lib/format";
 import { StatCard } from "@/components/data/stat-card";
@@ -34,13 +36,14 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const { tenantId, session } = await requireTenant();
-  const [s, avisos, contas, proximas] = await Promise.all([
+  const [s, avisos, contas, proximas, cadastro] = await Promise.all([
     DashboardService.getSummary(tenantId),
     AvisosService.get(tenantId),
     // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
     // em "quanto tenho que pagar", não em módulos.
     ContasPagarService.get(tenantId, session.modules),
     DespesasService.proximasContas(tenantId),
+    ConfigService.pendenciasDoCadastro(tenantId),
   ]);
   const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
@@ -55,6 +58,13 @@ export default async function DashboardPage() {
         Não renderiza nada; tem debounce de 5 min por dentro.
       */}
       <OfflineSync />
+
+      {/*
+        Cadastro incompleto vem ANTES do convite ao tour: sem nome de empresa o
+        sistema mostra "Minha empresa" no topo e no comprovante da mensalidade,
+        e isso é mais urgente que aprender a usar as telas.
+      */}
+      {cadastro.mostrar && <CompletarCadastroCard faltando={cadastro.faltando} />}
 
       {/* Convite ao tour guiado. Some depois de aceito ou dispensado — a
           discussão de por que é um cartão, e não um painel, está no componente. */}

@@ -64,6 +64,22 @@ export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
         <Label htmlFor="businessHours">Horário de funcionamento</Label>
         <Input id="businessHours" placeholder="Ex.: Seg a Sáb, 4h às 12h" {...register("businessHours")} />
       </div>
+      {/*
+        Saiu do cadastro público, que passou a pedir só e-mail e senha. Mesma
+        redação de lá, para quem já conhecia o formulário não achar que é outra
+        coisa.
+      */}
+      <div className="flex flex-col gap-1.5">
+        <Label htmlFor="establishmentType">Tipo de estabelecimento / box</Label>
+        <Input
+          id="establishmentType"
+          placeholder="Ex.: Box 42 — Pavilhão de Hortigranjeiros"
+          {...register("establishmentType")}
+        />
+        {errors.establishmentType && (
+          <span className="text-xs text-destructive">{errors.establishmentType.message}</span>
+        )}
+      </div>
       <Button type="submit" disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
         Salvar

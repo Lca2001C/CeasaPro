@@ -48,30 +48,23 @@ export const changePasswordSchema = z.object({
 export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 
 /**
- * Cadastro público (7 dias de teste). Coleta só o essencial: quanto mais campo,
- * menos gente termina — o resto é pedido no onboarding, já dentro do sistema.
+ * Cadastro público (7 dias de teste): E-MAIL E SENHA, e nada mais.
  *
- * Todos os tetos de tamanho são explícitos porque esta é entrada de quem não está
+ * Antes daqui saíam também nome do negócio, telefone e tipo de estabelecimento.
+ * Todo campo a mais é gente que não termina — e nenhum dos três é necessário
+ * para criar a conta, mandar o e-mail de confirmação ou liberar o teste. Eles
+ * passaram para Configurações, onde a pessoa preenche quando quiser; o cartão do
+ * Início lembra, e o aviso de `/assinatura` avisa antes de o nome sair no
+ * comprovante do pagamento.
+ *
+ * O que preenche as colunas NOT NULL enquanto isso está em
+ * `src/lib/tenant-defaults.ts`, num lugar só.
+ *
+ * Os tetos de tamanho continuam explícitos: esta é entrada de quem não está
  * autenticado, na rota mais exposta do sistema.
  */
 export const signupSchema = z.object({
-  tradeName: z
-    .string()
-    .trim()
-    .min(2, "Informe o nome do seu negocio")
-    .max(120, "Nome muito longo"),
   email: emailSchema,
-  /**
-   * Só dígitos, normalizado antes de validar: o usuário digita "(31) 99999-9999"
-   * e a máscara não pode ser motivo de recusa. 10 dígitos = fixo com DDD,
-   * 11 = celular com DDD.
-   */
-  phone: z
-    .string()
-    .trim()
-    .transform((v) => v.replace(/\D/g, ""))
-    .refine((v) => v.length >= 10 && v.length <= 11, "Informe DDD + numero"),
-  establishmentType: z.string().trim().max(60, "Descricao muito longa").optional(),
   password: passwordPolicy,
 });
 export type SignupInput = z.infer<typeof signupSchema>;

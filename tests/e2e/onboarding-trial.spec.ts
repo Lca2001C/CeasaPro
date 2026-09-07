@@ -76,11 +76,12 @@ test.describe("Onboarding com teste grátis de 7 dias", () => {
     await page.getByRole("link", { name: /Testar 7 dias grátis/i }).first().click();
     await expect(page).toHaveURL(/\/cadastro/);
 
-    // ─── 2. Cadastro ───
-    await page.getByLabel("Nome do seu negócio").fill(NEGOCIO);
+    // ─── 2. Cadastro: e-mail e senha, e nada mais ───
     await page.getByLabel("E-mail").fill(EMAIL);
-    await page.getByLabel("Telefone / WhatsApp").fill("(31) 99999-9999");
-    await page.getByLabel(/Tipo de estabelecimento/).fill("Box 42");
+    // Os campos de negócio, telefone e tipo de estabelecimento saíram daqui e
+    // foram para Configurações. Se algum voltar, o passo 6 abaixo reprova.
+    await expect(page.getByLabel("Nome do seu negócio")).toHaveCount(0);
+    await expect(page.getByLabel("Telefone / WhatsApp")).toHaveCount(0);
     // `exact` é obrigatório: "Confirmar senha" também contém "Senha", e sem isso
     // o seletor casa com dois campos e o teste quebra por ambiguidade.
     await page.getByLabel("Senha", { exact: true }).fill(SENHA);
@@ -130,17 +131,32 @@ test.describe("Onboarding com teste grátis de 7 dias", () => {
     await page.getByLabel("Senha").fill(SENHA);
     await page.getByRole("button", { name: "Entrar" }).click();
 
-    // Empresa nova cai no onboarding guiado antes do dashboard.
-    await page.waitForURL(/\/(onboarding|dashboard)/, { timeout: 15_000 });
-    await prisma.tenant.update({
-      where: { id: tenantId },
-      data: { onboardingCompletedAt: new Date() },
-    });
+    // Entra DIRETO no sistema. Este é o coração da mudança: antes o layout
+    // redirecionava para `/onboarding` enquanto `onboardingCompletedAt` fosse
+    // nulo, e o teste tinha de marcar a coluna à mão para seguir. O wizard virou
+    // convite, então o `UPDATE` saiu junto — se o redirecionamento voltar, isto
+    // reprova.
+    await page.waitForURL(/\/dashboard/, { timeout: 15_000 });
+    await expect(page).not.toHaveURL(/\/onboarding/);
 
-    await page.goto("/dashboard");
     await expect(page.locator("aside")).toBeVisible();
     // Com 7 dias inteiros pela frente o banner fica calado.
     await expect(page.getByText(/teste grátis termina/i)).toHaveCount(0);
+
+    // ─── 4b. O cadastro está incompleto, e o sistema diz isso ───
+    await expect(page.getByText(/Complete o cadastro da sua empresa/i)).toBeVisible();
+    // Sem nome, o topo mostra o valor de partida.
+    await expect(page.locator("header")).toContainText("Minha empresa");
+
+    // ─── 4c. Completar em Configurações é o caminho prometido ───
+    await page.goto("/configuracoes");
+    await page.getByLabel("Nome fantasia").fill(NEGOCIO);
+    await page.getByLabel(/Tipo de estabelecimento/).fill("Box 42");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await expect(page.getByText("Dados atualizados")).toBeVisible();
+
+    await page.goto("/dashboard");
+    await expect(page.locator("header")).toContainText(NEGOCIO);
 
     // ─── 5. Banner na reta final ───
     await prisma.tenantSubscription.update({

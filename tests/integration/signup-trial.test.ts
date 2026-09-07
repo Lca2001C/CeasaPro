@@ -5,6 +5,7 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { hashVerifyToken, createVerifyToken } from "@/lib/auth/verify-token";
 import { accessDecision, TRIAL_DAYS, trialEndFrom } from "@/lib/billing/status";
 import { cleanupTenants } from "../helpers/factory";
+import { NOME_EMPRESA_PADRAO, nomeInicialPeloEmail } from "@/lib/tenant-defaults";
 import type { SignupInput } from "@/lib/validations/auth";
 
 /**
@@ -25,9 +26,6 @@ function entrada(over: Partial<SignupInput> = {}): SignupInput {
   const email = over.email ?? `cadastro-${uniq()}@teste-ceasapro.com.br`;
   emails.push(email);
   return {
-    tradeName: "Hortifrúti do Teste",
-    phone: "31999999999",
-    establishmentType: "Box 42",
     password: "senha1234",
     ...over,
     // Sempre por último: o e-mail é o que foi registrado para limpeza.
@@ -116,12 +114,28 @@ describe("POST /api/auth/signup (via SignupService)", () => {
     expect(Number(sub?.monthlyAmount)).toBe(99.9);
   });
 
-  it("grava os dados do formulário na empresa", async () => {
-    const res = await registrar(entrada({ establishmentType: "Banca 7" }));
-    const tenant = await prisma.tenant.findUnique({ where: { id: res.tenantId! } });
-    expect(tenant?.tradeName).toBe("Hortifrúti do Teste");
-    expect(tenant?.phone).toBe("31999999999");
-    expect(tenant?.establishmentType).toBe("Banca 7");
+  /**
+   * Este caso afirmava o oposto — que o formulário gravava nome, telefone e tipo
+   * de estabelecimento na empresa. O cadastro passou a pedir só e-mail e senha,
+   * então o que ele guarda agora é o que precisa ser verdade para as colunas NOT
+   * NULL não quebrarem e para o cartão de "complete o cadastro" aparecer.
+   */
+  it("empresa nasce com o nome de partida e sem dados de contato", async () => {
+    const input = entrada();
+    const res = await registrar(input);
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: res.tenantId! },
+      include: { users: { select: { name: true } } },
+    });
+    expect(tenant?.tradeName).toBe(NOME_EMPRESA_PADRAO);
+    expect(tenant?.phone).toBeNull();
+    expect(tenant?.establishmentType).toBeNull();
+    // A PESSOA recebe um nome derivado do e-mail, não "Minha empresa": este é o
+    // valor que vai para o `payerName` do Mercado Pago.
+    expect(tenant?.users[0]?.name).toBe(nomeInicialPeloEmail(input.email));
+    expect(tenant?.users[0]?.name).not.toBe(NOME_EMPRESA_PADRAO);
+    // Nulo é o que faz o cartão de completar cadastro aparecer no Início.
+    expect(tenant?.onboardingCompletedAt).toBeNull();
   });
 
   it("provisiona os padrões da empresa (categorias e embalagens)", async () => {
@@ -179,6 +193,31 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
 
     const payload = await buildAccessPayload(res.userId!);
     expect(payload?.subStatus).toBe("TRIAL");
+    expect(accessDecision(payload!.tenantStatus, payload!.subStatus)).toBe("ok");
+  });
+
+  /**
+   * A regra de produto do cadastro simplificado, afirmada de ponta a ponta:
+   * acesso NÃO depende mais de ter passado pelo wizard.
+   *
+   * Antes, `(app)/layout.tsx` redirecionava para `/onboarding` enquanto
+   * `onboardingCompletedAt` fosse nulo — então cadastrar-se com e-mail e senha
+   * apenas trocaria um formulário longo por outro. Este caso trava a decisão: a
+   * empresa continua com a coluna nula (é o que faz o cartão do Início
+   * aparecer) e mesmo assim o acesso está liberado.
+   */
+  it("cadastro mínimo dá acesso sem passar pelo wizard", async () => {
+    const res = await registrar(entrada());
+    await SignupService.confirmEmail(res.devToken!);
+
+    const tenant = await prisma.tenant.findUnique({
+      where: { id: res.tenantId! },
+      select: { onboardingCompletedAt: true, tradeName: true },
+    });
+    expect(tenant?.onboardingCompletedAt).toBeNull();
+    expect(tenant?.tradeName).toBe(NOME_EMPRESA_PADRAO);
+
+    const payload = await buildAccessPayload(res.userId!);
     expect(accessDecision(payload!.tenantStatus, payload!.subStatus)).toBe("ok");
   });
 

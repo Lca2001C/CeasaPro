@@ -7,6 +7,7 @@ import { formatDate } from "@/lib/format";
 import { AppShell } from "@/components/layout/app-shell";
 import { SessaoViva } from "@/components/auth/sessao-viva";
 import { accessTokenMaxAgeSeconds } from "@/lib/auth/jwt";
+import { NOME_EMPRESA_PADRAO } from "@/lib/tenant-defaults";
 
 export default async function AppLayout({
   children,
@@ -44,10 +45,17 @@ export default async function AppLayout({
     },
   });
 
-  // Primeiro acesso → onboarding guiado.
-  if (tenant && !tenant.onboardingCompletedAt) {
-    redirect("/onboarding");
-  }
+  // O onboarding deixou de ser obrigatório.
+  //
+  // Antes daqui saía um `redirect("/onboarding")` para quem tinha
+  // `onboardingCompletedAt` nulo. Com o cadastro pedindo só e-mail e senha, isso
+  // significaria trocar um formulário longo por outro — a pessoa entraria no
+  // sistema e daria de cara com três passos antes de ver qualquer coisa.
+  //
+  // O wizard continua existindo e continua valendo a pena (ele cria o primeiro
+  // fornecedor e o primeiro produto), mas agora é CONVITE: o cartão no Início,
+  // que a pessoa aceita ou dispensa. `onboardingCompletedAt` mudou de sentido
+  // junto — passou de "passou pelo wizard" para "o convite já foi resolvido".
 
   // Três situações, três mensagens: teste acabando, mensalidade vencida, e
   // cancelamento com período pago ainda valendo.
@@ -76,8 +84,9 @@ export default async function AppLayout({
 
   return (
     <AppShell
-      companyName={tenant?.tradeName ?? "Minha empresa"}
+      companyName={tenant?.tradeName ?? NOME_EMPRESA_PADRAO}
       userName={session.name}
+      userEmail={session.email}
       billingWarning={billingWarning}
       billingCta={billingCta}
       trialLabel={
@@ -89,12 +98,16 @@ export default async function AppLayout({
       }
       modules={session.modules}
       isSuperAdmin={session.role === "SUPER_ADMIN"}
-      // Sempre true aqui, e isso NAO ignora as regras do convite: este layout so
-      // chega a renderizar depois dos redirects acima, ou seja, com a senha ja
-      // trocada e o onboarding concluido. Quem termina o wizard e mandado para
-      // /dashboard, que passa por aqui — e o convite aparece nesse momento.
+      // Um convite de cada vez.
+      //
+      // Isto era `true` fixo, e o comentário justificava dizendo que o layout só
+      // renderizava depois do onboarding concluído. Deixou de ser verdade quando
+      // o onboarding virou opcional: o convite de instalar o app é MODAL, e
+      // abriria por cima do cartão de completar cadastro e do convite ao tour —
+      // três pedidos na primeira tela, e os dois de baixo dispensados sem
+      // leitura. Enquanto o cartão do Início estiver de pé, o modal espera.
       // O proprio InstallPrompt cuida do resto (app instalado, "Agora nao").
-      showInstallPrompt
+      showInstallPrompt={Boolean(tenant?.onboardingCompletedAt)}
     >
       {/*
         Renova a sessao enquanto o app esta em uso. O TTL vem do servidor para

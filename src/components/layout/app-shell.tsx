@@ -14,6 +14,7 @@ import { TourGuiado } from "@/components/tour/tour-guiado";
 
 interface Props {
   companyName: string;
+  userEmail?: string;
   userName: string;
   billingWarning?: string | null;
   trialLabel?: string | null;
@@ -31,6 +32,7 @@ interface Props {
 
 export function AppShell({
   companyName,
+  userEmail,
   userName,
   billingWarning,
   trialLabel,
@@ -121,7 +123,7 @@ export function AppShell({
         </main>
 
         <InstallPrompt autoOpen={showInstallPrompt} />
-        {mostrarSuporte && <SupportButton companyName={companyName} />}
+        {mostrarSuporte && <SupportButton companyName={companyName} userEmail={userEmail} />}
         <BottomNav modules={modules} userName={userName} />
 
         {/*

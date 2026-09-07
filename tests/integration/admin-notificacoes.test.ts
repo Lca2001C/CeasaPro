@@ -4,6 +4,7 @@ import { AdminNotificationsService } from "@/lib/services/admin-notifications.se
 import { AdminService } from "@/lib/services/admin.service";
 import { SignupService } from "@/lib/services/signup.service";
 import { cleanupTenants } from "../helpers/factory";
+import { NOME_EMPRESA_PADRAO } from "@/lib/tenant-defaults";
 import type { AdminCtx } from "@/lib/http/with-action";
 
 /**
@@ -102,24 +103,26 @@ describe("aviso de conta criada", () => {
     expect(avisos[0]!.title).toMatch(/painel/i);
   });
 
-  it("cadastro público gera aviso que diz que o teste começa na confirmação", async () => {
+  /**
+   * O aviso de lead identifica pelo E-MAIL, não pelo nome da empresa.
+   *
+   * Este caso pedia `toContain("Box do Zé")` e passava um `tradeName` no
+   * cadastro. Com o cadastro pedindo só e-mail e senha, `tradeName` aqui é
+   * sempre o valor de partida — a caixa do super-admin viraria uma lista de
+   * "Minha empresa" em que nenhuma lead se distingue da outra.
+   */
+  it("cadastro público gera aviso que identifica pelo e-mail e diz que o teste começa na confirmação", async () => {
     const email = `publico-${uniq()}@teste.com`;
-    const res = await SignupService.register(
-      {
-        tradeName: "Box do Zé",
-        email,
-        password: "senha1234",
-        phone: "31999990000",
-      } as Parameters<typeof SignupService.register>[0],
-      { ip: null },
-    );
+    const res = await SignupService.register({ email, password: "senha1234" }, { ip: null });
     expect(res.outcome).toBe("created");
     if (res.tenantId) tenants.push(res.tenantId);
 
     const avisos = await AdminNotificationsService.listar();
     expect(avisos).toHaveLength(1);
     expect(avisos[0]!.title).toMatch(/site/i);
-    expect(avisos[0]!.body).toContain("Box do Zé");
+    expect(avisos[0]!.body).toContain(email);
+    // O nome de partida não pode aparecer: ele não identifica ninguém.
+    expect(avisos[0]!.body).not.toContain(NOME_EMPRESA_PADRAO);
     // O trial só começa na confirmação do e-mail — o texto não pode prometer
     // que a empresa já está testando.
     expect(avisos[0]!.body).toMatch(/confirmar o e-mail/i);
@@ -128,24 +131,14 @@ describe("aviso de conta criada", () => {
   it("cadastro recusado por e-mail já em uso NÃO gera aviso", async () => {
     const email = `dup-${uniq()}@teste.com`;
     const primeiro = await SignupService.register(
-      {
-        tradeName: "Primeiro",
-        email,
-        password: "senha1234",
-        phone: "31999990000",
-      } as Parameters<typeof SignupService.register>[0],
+      { email, password: "senha1234" },
       { ip: null },
     );
     if (primeiro.tenantId) tenants.push(primeiro.tenantId);
     await limparCaixa();
 
     const segundo = await SignupService.register(
-      {
-        tradeName: "Segundo",
-        email,
-        password: "senha1234",
-        phone: "31999990000",
-      } as Parameters<typeof SignupService.register>[0],
+      { email, password: "senha1234" },
       { ip: null },
     );
     expect(segundo.outcome).toBe("email_already_in_use");
@@ -162,12 +155,7 @@ describe("aviso de conta criada", () => {
 
     const email = `resiliente-${uniq()}@teste.com`;
     const res = await SignupService.register(
-      {
-        tradeName: "Sobrevivente",
-        email,
-        password: "senha1234",
-        phone: "31999990000",
-      } as Parameters<typeof SignupService.register>[0],
+      { email, password: "senha1234" },
       { ip: null },
     );
 

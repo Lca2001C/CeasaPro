@@ -9,37 +9,48 @@ import {
 } from "@/lib/auth/verify-token";
 
 const valido = {
-  tradeName: "Hortifrúti Silva",
   email: "Joao@Exemplo.COM ",
-  phone: "(31) 99999-9999",
-  establishmentType: "Box 42",
   password: "senha1234",
 };
 
 describe("signupSchema", () => {
+  /**
+   * O contrato do cadastro é afirmado, não subentendido.
+   *
+   * Antes este arquivo tinha cinco casos validando nome do negócio, telefone e
+   * tipo de estabelecimento. Apagá-los sem pôr nada no lugar deixaria um vazio:
+   * nada impediria alguém de reacrescentar um campo obrigatório e desfazer a
+   * decisão do cadastro mínimo sem nenhum teste reclamar. Este caso é o que
+   * segura isso.
+   */
+  it("pede E-MAIL E SENHA, e mais nada", () => {
+    expect(Object.keys(signupSchema.shape).sort()).toEqual(["email", "password"]);
+  });
+
   it("normaliza e-mail (trim + minúsculas)", () => {
     const out = signupSchema.parse(valido);
     expect(out.email).toBe("joao@exemplo.com");
   });
 
-  it("aceita telefone com máscara e guarda só dígitos", () => {
-    // A máscara que o usuário digita não pode ser motivo de recusa.
-    expect(signupSchema.parse(valido).phone).toBe("31999999999");
-    expect(signupSchema.parse({ ...valido, phone: "31 3333-3333" }).phone).toBe("3133333333");
-  });
-
-  it("recusa telefone sem DDD", () => {
-    expect(signupSchema.safeParse({ ...valido, phone: "99999999" }).success).toBe(false);
-  });
-
-  it("recusa telefone longo demais", () => {
-    expect(signupSchema.safeParse({ ...valido, phone: "319999999999" }).success).toBe(false);
-  });
-
-  it("tipo de estabelecimento é opcional", () => {
-    const semTipo: Partial<typeof valido> = { ...valido };
-    delete semTipo.establishmentType;
-    expect(signupSchema.safeParse(semTipo).success).toBe(true);
+  /**
+   * PWA em cache é o caso real: o app instalado guarda a versão anterior da tela
+   * e continua mandando `tradeName`/`phone` depois do deploy. O Zod descarta os
+   * campos desconhecidos, e o cadastro tem de SEGUIR — recusar deixaria quem não
+   * atualizou sem conseguir criar conta, sem entender por quê.
+   *
+   * Hoje isso é consequência acidental do `strip` padrão do Zod. Aqui vira
+   * comportamento declarado.
+   */
+  it("cliente antigo mandando campos a mais ainda consegue se cadastrar", () => {
+    const out = signupSchema.safeParse({
+      ...valido,
+      tradeName: "Hortifrúti Silva",
+      phone: "(31) 99999-9999",
+      establishmentType: "Box 42",
+    });
+    expect(out.success).toBe(true);
+    // E os campos extras não atravessam: nada deles chega ao serviço.
+    expect(out.success && Object.keys(out.data).sort()).toEqual(["email", "password"]);
   });
 
   it("aplica a política de senha do projeto", () => {
@@ -52,13 +63,13 @@ describe("signupSchema", () => {
     expect(signupSchema.safeParse({ ...valido, password: "a1".repeat(200) }).success).toBe(false);
   });
 
-  it("recusa nome de negócio vazio ou curto", () => {
-    expect(signupSchema.safeParse({ ...valido, tradeName: " " }).success).toBe(false);
-    expect(signupSchema.safeParse({ ...valido, tradeName: "A" }).success).toBe(false);
-  });
-
   it("recusa e-mail inválido", () => {
     expect(signupSchema.safeParse({ ...valido, email: "nao-e-email" }).success).toBe(false);
+  });
+
+  it("exige os dois campos — nenhum deles é opcional", () => {
+    expect(signupSchema.safeParse({ email: "joao@exemplo.com" }).success).toBe(false);
+    expect(signupSchema.safeParse({ password: "senha1234" }).success).toBe(false);
   });
 });
 

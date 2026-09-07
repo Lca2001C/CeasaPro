@@ -8,6 +8,7 @@ import { TERMS_VERSION } from "@/lib/legal";
 import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { AssinaturaClient } from "./_components/assinatura-client";
+import { NOME_EMPRESA_PADRAO, empresaSemNome } from "@/lib/tenant-defaults";
 
 export const dynamic = "force-dynamic";
 
@@ -58,6 +59,26 @@ export default async function AssinaturaPage() {
           </p>
         )}
       </div>
+
+      {/*
+        Único ponto em que o nome de partida deixa de ser cosmético: ele vai na
+        `description` da cobrança (`billing.service.ts:251`) e sai do sistema como
+        registro financeiro. O aviso aparece aqui, e não numa faixa global, porque
+        é aqui que tem consequência — e NÃO bloqueia o pagamento, que é o que a
+        decisão de "completar depois, sem obrigar" exige.
+      */}
+      {empresaSemNome(sub?.tenant.tradeName) && (
+        <div className="rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
+          <p>
+            Sua empresa ainda está cadastrada como{" "}
+            <strong>{NOME_EMPRESA_PADRAO}</strong> — é esse nome que vai aparecer no
+            comprovante do pagamento.
+          </p>
+          <Button asChild variant="outline" size="sm" className="mt-2">
+            <Link href="/configuracoes">Ajustar em Configurações</Link>
+          </Button>
+        </div>
+      )}
 
       <AssinaturaClient
         mpConfigured={BillingService.mpConfigured()}

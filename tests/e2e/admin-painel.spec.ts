@@ -155,8 +155,20 @@ test.afterAll(async () => {
     // Pelo PREFIXO, não pela lista do `beforeAll`: os próprios testes criam
     // empresas (o cadastro público e o formulário do painel), e essas não estão
     // em `criados`. Deixá-las no banco somaria a cada execução da suíte.
+    //
+    // O prefixo sozinho deixou de bastar: o cadastro público passou a pedir só
+    // e-mail e senha, então a empresa que ele cria nasce com o nome de partida e
+    // NÃO casa com `MARCA`. Sem o segundo braço, cada execução da suíte deixava
+    // um tenant e um usuário órfãos no banco de teste — silenciosamente, porque
+    // nada reprovava. O e-mail carrega o sufixo desta execução e é o que
+    // identifica essa empresa.
     const doTeste = await prisma.tenant.findMany({
-      where: { tradeName: { startsWith: MARCA } },
+      where: {
+        OR: [
+          { tradeName: { startsWith: MARCA } },
+          { users: { some: { email: { contains: sufixo } } } },
+        ],
+      },
       select: { id: true },
     });
     const ids = [...new Set([...criados.tenants, ...doTeste.map((t) => t.id)])];
@@ -188,12 +200,7 @@ test.describe("Notificações do painel", () => {
     // Cadastro público de verdade, pela API. A resposta é genérica por design
     // (anti-enumeração), então o que se observa é o efeito no painel.
     const res = await page.request.post("/api/auth/signup", {
-      data: {
-        tradeName: `${MARCA} Lead`,
-        email,
-        password: "senha1234",
-        phone: "31999990000",
-      },
+      data: { email, password: "senha1234" },
     });
     expect(res.status()).toBe(200);
 
