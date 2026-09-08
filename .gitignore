@@ -47,3 +47,9 @@ next-env.d.ts
 /blob-report/
 /playwright/.cache/
 /tests/e2e/.auth/
+
+# Rascunhos de sessão de auditoria/depuração (logs de execução, screenshots,
+# scripts de uma vez só). Ficavam na raiz sem regra e entrariam no commit —
+# e os logs de `npm run dev` chegam a conter o link de redefinição de senha em
+# claro, porque em desenvolvimento ele é impresso de propósito.
+tmp-*

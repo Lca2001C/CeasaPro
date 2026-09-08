@@ -1,3 +1,4 @@
+import { paginaDaUrl } from "@/lib/paginacao";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ChevronRight, Plus, Search } from "lucide-react";
@@ -42,7 +43,7 @@ export default async function VendasPage({
   const preset: VendaFiltroPreset = PRESETS.some((p) => p.value === sp.periodo)
     ? (sp.periodo as VendaFiltroPreset)
     : "hoje";
-  const pagina = Math.max(1, Number(sp.pagina) || 1);
+  const pagina = paginaDaUrl(sp.pagina);
 
   const { tenantId } = await requireTenant();
   const agora = new Date();

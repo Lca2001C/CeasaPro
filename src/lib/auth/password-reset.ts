@@ -96,6 +96,6 @@ export async function consumeResetToken(args: {
   });
   if (result.count === 0) return false;
   // Senha trocada => todo refresh token antigo morre (sessão roubada perde acesso).
-  await revokeAllForUser(args.userId);
+  await revokeAllForUser(args.userId, "PASSWORD");
   return true;
 }

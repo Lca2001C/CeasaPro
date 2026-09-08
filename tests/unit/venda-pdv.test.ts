@@ -213,3 +213,118 @@ describe("resolvePlasticCrateQty", () => {
     expect(resolvePlasticCrateQty(input)).toBe(6);
   });
 });
+
+describe("caixas plasticas informadas por item (regressao)", () => {
+  const itensComCaixa = [
+    { productId: "a", quantity: 1, unitPrice: 10, recipientType: "PLASTICA", crateQty: 8 },
+  ];
+
+  // O PDV manda `plasticCrateQty: 0` SEMPRE que o checkbox esta desmarcado.
+  // Com o teste antigo (`!== undefined`) o zero vencia a soma por item, e as 8
+  // caixas saiam do box sem nenhum PlasticCrateMovement — apesar de ficarem
+  // gravadas em sale_items.crateQty e aparecerem na tela de detalhe.
+  it("zero nao apaga as caixas declaradas nos itens", () => {
+    expect(
+      resolvePlasticCrateQty({ plasticCrateQty: 0, items: itensComCaixa } as unknown as VendaInput),
+    ).toBe(8);
+  });
+
+  it("um valor informado de verdade continua vencendo", () => {
+    expect(
+      resolvePlasticCrateQty({ plasticCrateQty: 3, items: itensComCaixa } as unknown as VendaInput),
+    ).toBe(3);
+  });
+
+  // Sem cliente, nenhum RETORNO consegue devolver as caixas: a devolucao exige
+  // o nome de quem levou. Ficariam presas para sempre.
+  it("caixa por item sem cliente e recusada", () => {
+    const r = vendaSchema.safeParse(
+      venda({ paymentMethod: "DINHEIRO", items: itensComCaixa as never, customerName: null }),
+    );
+    expect(r.success).toBe(false);
+  });
+
+  it("caixa por item com cliente passa", () => {
+    const r = vendaSchema.safeParse(
+      venda({ paymentMethod: "DINHEIRO", items: itensComCaixa as never, customerName: "Joao" }),
+    );
+    expect(r.success).toBe(true);
+  });
+});
+
+describe("troco: conferido contra a parte em especie, nao contra o total", () => {
+  // Venda de R$ 100: R$ 60 em PIX + R$ 40 em dinheiro.
+  const mista = (amountReceived: number | null) =>
+    venda({
+      paymentMethod: "PIX",
+      items: [{ productId: "p1", quantity: 1, unitPrice: 100 }],
+      payments: [
+        { method: "PIX", amount: 60 },
+        { method: "DINHEIRO", amount: 40 },
+      ],
+      amountReceived,
+    });
+
+  // Este era o bloqueio: o cliente entrega R$ 50 pela parte de R$ 40 em especie
+  // e o sistema recusava, porque comparava com o total de R$ 100.
+  it("aceita nota de 50 para a parte de 40 em especie", () => {
+    expect(vendaSchema.safeParse(mista(50)).success).toBe(true);
+  });
+
+  it("recusa recebido menor que a parte em especie", () => {
+    expect(vendaSchema.safeParse(mista(30)).success).toBe(false);
+  });
+
+  it("recusa troco absurdo (dedo escorregado no teclado)", () => {
+    // 999999999 numa venda de R$ 100 gravava troco de R$ 999.999.899.
+    expect(vendaSchema.safeParse(mista(999999999)).success).toBe(false);
+  });
+
+  it("recusa recebido quando nada foi pago em especie", () => {
+    const r = vendaSchema.safeParse(
+      venda({
+        paymentMethod: "PIX",
+        items: [{ productId: "p1", quantity: 1, unitPrice: 100 }],
+        payments: [{ method: "PIX", amount: 100 }],
+        amountReceived: 200,
+      }),
+    );
+    expect(r.success).toBe(false);
+  });
+
+  it("forma unica em dinheiro continua valendo como antes", () => {
+    // A parte em especie e o total inteiro, entao pagar 100 numa venda de 20 passa.
+    expect(vendaSchema.safeParse(venda({ amountReceived: 100 })).success).toBe(true);
+    expect(vendaSchema.safeParse(venda({ amountReceived: 10 })).success).toBe(false);
+  });
+});
+
+describe("tolerancia das parcelas medida em centavos", () => {
+  const dez = { productId: "p1", quantity: 1, unitPrice: 10 };
+
+  it("aceita a divisao que nao fecha exata em centavos", () => {
+    const r = vendaSchema.safeParse(
+      venda({
+        paymentMethod: "PIX",
+        items: [dez],
+        payments: [
+          { method: "PIX", amount: 3.33 },
+          { method: "DINHEIRO", amount: 3.33 },
+          { method: "CARTAO", amount: 3.33 },
+        ],
+      }),
+    );
+    expect(r.success).toBe(true);
+  });
+
+  it("recusa quando a diferenca passa de um centavo", () => {
+    const r = vendaSchema.safeParse(
+      venda({
+        paymentMethod: "PIX",
+        items: [dez],
+        payments: [{ method: "PIX", amount: 9.5 }],
+      }),
+    );
+    expect(r.success).toBe(false);
+  });
+});

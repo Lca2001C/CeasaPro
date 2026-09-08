@@ -61,7 +61,7 @@ type PerdasClient = {
  * como todo o resto do controle de caixas. Derivar mantém uma única fonte da
  * verdade — o mesmo princípio do estoque de produtos.
  */
-async function perdasPorLote(
+export async function perdasPorLote(
   db: PerdasClient,
   ids: string[],
 ): Promise<Map<string, number>> {
@@ -164,7 +164,6 @@ export const HigienizacaoService = {
   /** Envia caixas sujas ao higienizador — baixa do estoque de sujas (atômico). */
   async create(input: HigienizacaoInput, ctx: TenantCtx) {
     const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -191,7 +190,7 @@ export const HigienizacaoService = {
           notes: "Envio para higienização",
         },
         ctx,
-        saldo,
+
       );
 
       await audit(
@@ -217,7 +216,6 @@ export const HigienizacaoService = {
 
   /** Ajusta o lote antes de qualquer devolução/pagamento. */
   async update(input: HigienizacaoUpdateInput, ctx: TenantCtx) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -245,22 +243,52 @@ export const HigienizacaoService = {
             notes: "Ajuste do envio para higienização",
           },
           ctx,
-          saldo,
+
         );
       } else if (delta < 0) {
-        await CaixasService.registrarInTx(
-          tx,
-          {
-            type: "RETORNO_HIGIENIZACAO",
-            quantity: -delta,
-            cleanerName: input.cleanerName,
-            movementDate: input.sentDate,
+        // Diminuir a quantidade enviada DESFAZ parte da saída — não é retorno.
+        //
+        // Compensar com `RETORNO_HIGIENIZACAO` era o que estava aqui, e
+        // `resolveDirty` mapeia esse tipo para `dirty: false`: enviar 50 sujas,
+        // perceber que eram 40 e corrigir fazia 10 caixas migrarem de
+        // "em higienização" para LIMPAS sem terem sido lavadas.
+        //
+        // O próprio `remove` documenta que compensar seria errado por esse
+        // exato motivo e por isso APAGA os movimentos. Aqui a correção é a
+        // mesma, restrita ao excedente: as caixas voltam para o pote de onde
+        // saíram (sujas), porque de fato nunca saíram.
+        //
+        // Só é alcançável quando não houve devolução, pagamento nem perda — a
+        // guarda no topo do método garante isso.
+        let restante = -delta;
+        const saidas = await tx.plasticCrateMovement.findMany({
+          where: {
+            tenantId: ctx.tenantId,
             crateCleaningId: before.id,
-            notes: "Ajuste do envio para higienização",
+            type: "SAIDA_HIGIENIZACAO",
           },
-          ctx,
-          saldo,
-        );
+          orderBy: { createdAt: "desc" },
+          select: { id: true, quantity: true },
+        });
+        for (const mov of saidas) {
+          if (restante <= 0) break;
+          if (mov.quantity <= restante) {
+            await tx.plasticCrateMovement.delete({ where: { id: mov.id } });
+            restante -= mov.quantity;
+          } else {
+            await tx.plasticCrateMovement.update({
+              where: { id: mov.id },
+              data: { quantity: mov.quantity - restante },
+            });
+            restante = 0;
+          }
+        }
+        if (restante > 0) {
+          throw new BusinessRuleError(
+            "Não foi possível reduzir o envio: o livro-razão não tem saída suficiente " +
+              "para este lote. Exclua o envio e lance de novo.",
+          );
+        }
       }
 
       const updated = await tx.crateCleaning.update({
@@ -295,7 +323,6 @@ export const HigienizacaoService = {
 
   /** Higienizador devolveu caixas limpas — voltam ao estoque de limpas. */
   async registrarDevolucao(input: HigienizacaoDevolucaoInput, ctx: TenantCtx) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -335,7 +362,7 @@ export const HigienizacaoService = {
           notes: "Devolução da higienização",
         },
         ctx,
-        saldo,
+
       );
 
       await audit(
@@ -372,7 +399,6 @@ export const HigienizacaoService = {
     input: { id: string; quantity: number; movementDate: string; notes?: string | null },
     ctx: TenantCtx,
   ) {
-    const saldo = await CaixasService.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -401,7 +427,7 @@ export const HigienizacaoService = {
           notes: input.notes ?? "Caixa perdida no higienizador",
         },
         ctx,
-        saldo,
+
       );
 
       const status = computeCleaningStatus({

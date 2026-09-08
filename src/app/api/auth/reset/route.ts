@@ -2,7 +2,7 @@ import { after } from "next/server";
 import { hashPassword } from "@/lib/auth/password";
 import { resetSchema } from "@/lib/validations/auth";
 import { audit } from "@/lib/audit";
-import { rateLimitDb } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { absoluteUrl } from "@/lib/app-url";
@@ -36,16 +36,7 @@ export async function POST(req: Request) {
   const ip = (await clientIp()) ?? "unknown";
   const rl = await rateLimitDb(`reset:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });
   if (!rl.ok) {
-    return Response.json(
-      {
-        ok: false,
-        error: {
-          code: "RATE_LIMIT",
-          message: "Muitas tentativas. Tente novamente em alguns minutos.",
-        },
-      },
-      { status: 429 },
-    );
+    return respostaDeLimite(rl);
   }
 
   const body = await req.json().catch(() => ({}));

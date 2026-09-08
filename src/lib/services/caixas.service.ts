@@ -35,6 +35,10 @@ export interface CrateMovementLink {
 
 /** Cliente mínimo aceito por `registrarInTx` (prisma base ou `tx` de transação). */
 type CrateTxClient = {
+  /** Necessário para ler o saldo DENTRO da transação. */
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+  /** Para o advisory lock, que devolve `void` e o `$queryRaw` não desserializa. */
+  $executeRaw(query: TemplateStringsArray, ...values: unknown[]): Promise<number>;
   plasticCrateMovement: {
     create(args: {
       data: Prisma.PlasticCrateMovementUncheckedCreateInput;
@@ -201,27 +205,67 @@ export function assertCrateMovement(
  * Para dados anteriores à higienização integrada (dirty=false, cleanerName=null),
  * `limpas + sujas` reproduz exatamente a fórmula antiga de `vazias`.
  */
+/**
+ * Serializa as escritas de caixa desta empresa, pela duração da transação.
+ *
+ * `limpas / sujas / emHigienizacao / comClientes` são um POOL ÚNICO por
+ * empresa, derivado do livro-razão inteiro — não existe linha de saldo para
+ * travar com `FOR UPDATE`, e travar a linha de `tenants` serializaria escritas
+ * que nada têm a ver com caixa. A granularidade da invariante É a empresa,
+ * então o lock tem de ser exatamente essa.
+ *
+ * Advisory lock de TRANSAÇÃO (e não de sessão): é liberado no commit, dentro da
+ * mesma conexão, e por isso sobrevive ao pgbouncer em modo transaction do Neon
+ * — `pg_advisory_lock`, de sessão, não sobreviveria. É reentrante, então
+ * chamá-lo várias vezes na mesma transação (o cancelamento estorna item a item)
+ * é inofensivo.
+ *
+ * O `1` é o domínio "caixas plásticas" dentro do namespace da empresa.
+ */
+async function travarCaixasDaEmpresa(tx: CrateTxClient, tenantId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), 1)`;
+}
+
+/** O SQL do saldo, executável tanto no cliente base quanto num `tx`. */
+async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSaldo> {
+  const rows = await tx.$queryRaw<SaldoRow[]>`
+    SELECT
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS entrada_limpa,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::int AS entrada_suja,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada,
+      COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::int AS saida,
+      COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::int AS retorno,
+      COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS saida_hig,
+      COALESCE(SUM(CASE WHEN type::text = 'RETORNO_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS retorno_hig,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_cliente,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_higienizador,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS quebra_limpa,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja,
+      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::int AS estorno_saida
+    FROM plastic_crate_movements
+    WHERE "tenantId" = ${tenantId}
+  `;
+  return computeCrateSaldo(rows[0] ?? ZERO_ROW);
+}
+
 export const CaixasService = {
   async getSaldo(tenantId: string): Promise<CrateSaldo> {
-    const rows = await prisma.$queryRaw<SaldoRow[]>`
-      SELECT
-        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS entrada_limpa,
-        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::int AS entrada_suja,
-        COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada,
-        COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::int AS saida,
-        COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::int AS retorno,
-        COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS saida_hig,
-        COALESCE(SUM(CASE WHEN type::text = 'RETORNO_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS retorno_hig,
-        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_cliente,
-        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_higienizador,
-        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS quebra_limpa,
-        COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja,
-        COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::int AS estorno_saida
-      FROM plastic_crate_movements
-      WHERE "tenantId" = ${tenantId}
-    `;
-    return computeCrateSaldo(rows[0] ?? ZERO_ROW);
+    return lerSaldoCom(prisma, tenantId);
   },
+
+  /**
+   * Saldo lido DENTRO de uma transação já aberta, depois de travar a empresa.
+   *
+   * Para quem precisa DECIDIR com base no saldo, e não só gravar — o
+   * cancelamento de venda usa `comClientes` para saber quantas caixas ainda
+   * estão na rua e só estornar essas. Lida fora da transação, a decisão saía de
+   * um retrato que outra operação já podia ter invalidado.
+   */
+  async getSaldoInTx(tx: CrateTxClient, tenantId: string): Promise<CrateSaldo> {
+    await travarCaixasDaEmpresa(tx, tenantId);
+    return lerSaldoCom(tx, tenantId);
+  },
+
 
   /**
    * Saldo de caixas em poder de cada cliente.
@@ -273,14 +317,27 @@ export const CaixasService = {
 
   /**
    * Grava o movimento dentro de uma transação já aberta (venda, higienização).
-   * O `saldo` deve ser lido antes de abrir a transação e repassado aqui.
+   *
+   * O saldo é lido AQUI DENTRO, depois do lock — e não recebido pronto.
+   *
+   * Antes, cada chamador lia `getSaldo` antes de abrir a transação e passava o
+   * retrato adiante; sete lugares faziam isso, e os comentários admitiam
+   * ("Saldo lido FORA da transação"). Era um TOCTOU clássico: com 5 caixas
+   * limpas, duas vendas simultâneas de 5 liam as duas o mesmo 5, as duas
+   * passavam em `assertCrateMovement` e o pote terminava em −5. E
+   * `computeCrateSaldo` não tem piso, então a tela passava a exibir estoque
+   * negativo.
+   *
+   * Tirar o parâmetro (em vez de deixá-lo opcional) é deliberado: parâmetro
+   * opcional convida o próximo a continuar passando um saldo velho.
    */
   async registrarInTx(
     tx: CrateTxClient,
     input: MovimentoCaixaInterno & CrateMovementLink,
     ctx: TenantCtx,
-    saldo: CrateSaldo,
   ) {
+    await travarCaixasDaEmpresa(tx, ctx.tenantId);
+    const saldo = await lerSaldoCom(tx, ctx.tenantId);
     // Lido dentro da transação: vê os movimentos que ela mesma acabou de
     // gravar (uma venda cancelada estorna item por item).
     const saldoDoCliente = input.customerName
@@ -327,9 +384,8 @@ export const CaixasService = {
   },
 
   async registrar(input: MovimentoCaixaInterno & CrateMovementLink, ctx: TenantCtx) {
-    const saldo = await this.getSaldo(ctx.tenantId);
     const db = getTenantPrisma(ctx.tenantId);
-    return db.$transaction((tx) => this.registrarInTx(tx, input, ctx, saldo));
+    return db.$transaction((tx) => this.registrarInTx(tx, input, ctx));
   },
 };
 
@@ -338,8 +394,16 @@ export const CaixasService = {
  * Quantas caixas estão com este cliente, contadas dentro da transação.
  *
  * Mesma fórmula de `comClientes`: SAIDA − RETORNO − QUEBRA − ESTORNO_SAIDA,
- * restrita ao nome. O `where` leva `tenantId` explícito porque o `tx` aqui é
- * o cliente cru da transação, sem a extensão que injeta o tenant.
+ * restrita ao nome.
+ *
+ * O `tenantId` vai explícito no `where` por DEFESA, não por necessidade: os
+ * chamadores abrem a transação a partir do cliente estendido, e no Prisma 6 as
+ * extensões de `query` continuam valendo dentro de transações interativas — ou
+ * seja, o filtro seria injetado de qualquer forma. (O comentário anterior
+ * afirmava o contrário: que o `tx` era o cliente cru, sem extensão. Estava
+ * errado, e era sobre ele que a próxima pessoa decidiria se podia omitir o
+ * filtro — `perdasPorLote`, em `higienizacao.service.ts`, já depende justamente
+ * da extensão que ele dizia não existir.)
  */
 async function saldoDoClienteInTx(
   tx: CrateTxClient,

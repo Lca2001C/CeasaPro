@@ -172,10 +172,49 @@ export const DespesasService = {
     return categorias.map((c) => ({ ...c, despesas: contagem.get(c.id) ?? 0 }));
   },
 
+  /**
+   * Cria a categoria — ou RESSUSCITA a que foi excluída com o mesmo nome.
+   *
+   * `ExpenseCategory` tem `@@unique([tenantId, name])`, e o índice único não
+   * sabe o que é `deletedAt`: a linha excluída continuava ocupando o nome. Como
+   * a busca aqui passa pelo client escopado (que injeta `deletedAt: null`), ela
+   * não enxergava a linha, o `create` batia no índice e o P2002 chegava à tela
+   * como "Ocorreu um erro inesperado (ref: …)". Excluir "Frete" e tentar criar
+   * "Frete" de novo era o caminho mais curto para esse erro.
+   *
+   * Ressuscitar, em vez de carimbar o nome como o projeto faz com `users.email`:
+   * nome de categoria é rótulo que o usuário lê, e um "excluido-cmxyz-Frete"
+   * apareceria em qualquer listagem que esquecesse o filtro. E a exclusão só é
+   * permitida quando a categoria não está em uso, então trazer a linha de volta
+   * não recupera classificação nenhuma que estivesse errada.
+   */
   async createCategory(input: CategoriaInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const exists = await db.expenseCategory.findFirst({ where: { name: input.name } });
     if (exists) throw new BusinessRuleError("Já existe uma categoria com esse nome");
+
+    // O client cru: precisamos VER a linha excluída, que a extensão esconde.
+    const excluida = await prisma.expenseCategory.findFirst({
+      where: { tenantId: ctx.tenantId, name: input.name, deletedAt: { not: null } },
+    });
+    if (excluida) {
+      const revivida = await prisma.expenseCategory.update({
+        where: { id: excluida.id },
+        data: { deletedAt: null },
+      });
+      await audit({
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        actorEmail: ctx.session.email,
+        action: "UPDATE",
+        entity: "ExpenseCategory",
+        entityId: revivida.id,
+        newData: { name: revivida.name, revivida: true },
+        ip: ctx.ip,
+      });
+      return revivida;
+    }
+
     const c = await db.expenseCategory.create({
       data: { tenantId: ctx.tenantId, name: input.name },
     });
@@ -204,6 +243,25 @@ export const DespesasService = {
       where: { name: input.name, id: { not: input.id } },
     });
     if (conflito) throw new BusinessRuleError("Já existe uma categoria com esse nome");
+    // Mesma armadilha do `create`: uma categoria EXCLUÍDA com o nome de destino
+    // é invisível para o client escopado e derrubaria o update com P2002.
+    // Aqui o certo é recusar com mensagem, não ressuscitar — quem renomeia não
+    // pediu para trazer outra categoria de volta.
+    const excluidaComOMesmoNome = await prisma.expenseCategory.findFirst({
+      where: {
+        tenantId: ctx.tenantId,
+        name: input.name,
+        deletedAt: { not: null },
+        id: { not: input.id },
+      },
+      select: { id: true },
+    });
+    if (excluidaComOMesmoNome) {
+      throw new BusinessRuleError(
+        "Já houve uma categoria com esse nome. Crie-a de novo (ela volta com o histórico) " +
+          "ou escolha outro nome.",
+      );
+    }
 
     const c = await db.expenseCategory.update({
       where: { id: input.id },
@@ -832,7 +890,19 @@ export const DespesasService = {
 export async function gerarRecorrentesDeTodosOsTenants(agora = new Date()) {
   const limite = endOfDayTz(agora);
   const comRecorrencia = await prisma.expense.findMany({
-    where: { recurring: true, deletedAt: null, dueDate: { not: null, lte: limite } },
+    where: {
+      recurring: true,
+      deletedAt: null,
+      dueDate: { not: null, lte: limite },
+      // Empresa excluída ou bloqueada não recebe parcela nova.
+      //
+      // Faltava: o super-admin excluía a empresa (soft delete + BLOCKED) e o
+      // cron diário continuava criando a conta do mês para ela, indefinidamente
+      // — engordando a tabela e sujando qualquer relatório de plataforma. O
+      // `push-avisos.service` e o `billing.service` já filtravam assim; só este
+      // não.
+      tenant: { deletedAt: null, status: "ACTIVE" },
+    },
     distinct: ["tenantId"],
     select: { tenantId: true },
   });

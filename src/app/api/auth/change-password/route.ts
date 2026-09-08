@@ -6,7 +6,7 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshToken, revokeAllForUser } from "@/lib/auth/refresh";
 import { changePasswordSchema } from "@/lib/validations/auth";
-import { rateLimitDb } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 
@@ -27,13 +27,7 @@ export async function POST(req: Request) {
     windowMs: 15 * 60 * 1000,
   });
   if (!rl.ok) {
-    return Response.json(
-      {
-        ok: false,
-        error: { code: "RATE_LIMIT", message: "Muitas tentativas. Tente novamente em alguns minutos." },
-      },
-      { status: 429 },
-    );
+    return respostaDeLimite(rl);
   }
 
   const body = await req.json().catch(() => ({}));
@@ -74,7 +68,7 @@ export async function POST(req: Request) {
     },
   });
 
-  await revokeAllForUser(user.id);
+  await revokeAllForUser(user.id, "PASSWORD");
   const refreshToken = await createRefreshToken(user.id, {
     ip,
     userAgent: (await userAgent()) ?? undefined,

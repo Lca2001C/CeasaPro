@@ -145,10 +145,29 @@ export const EmbalagensService = {
     return mov;
   },
 
+  /**
+   * Cria o tipo — ou RESSUSCITA o que foi excluído com o mesmo nome.
+   *
+   * `PackagingType` tem a mesma combinação que derrubava a categoria de despesa:
+   * `@@unique([tenantId, name])` mais `deletedAt`. A linha excluída continua
+   * ocupando o nome, o client escopado não a enxerga (injeta `deletedAt: null`)
+   * e o `create` estoura P2002 — que chega à tela como "erro inesperado".
+   */
   async createType(input: TipoEmbalagemInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const exists = await db.packagingType.findFirst({ where: { name: input.name } });
     if (exists) throw new BusinessRuleError("Já existe um tipo com esse nome");
+
+    const excluido = await prisma.packagingType.findFirst({
+      where: { tenantId: ctx.tenantId, name: input.name, deletedAt: { not: null } },
+    });
+    if (excluido) {
+      return prisma.packagingType.update({
+        where: { id: excluido.id },
+        data: { deletedAt: null },
+      });
+    }
+
     return db.packagingType.create({
       data: { tenantId: ctx.tenantId, name: input.name },
     });

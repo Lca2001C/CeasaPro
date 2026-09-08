@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/db/prisma";
+import { ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 export function makeCtx(tenantId: string, userId = "test-user"): TenantCtx {
@@ -15,6 +16,11 @@ export function makeCtx(tenantId: string, userId = "test-user"): TenantCtx {
       mustChangePassword: false,
       tenantStatus: "ACTIVE",
       subStatus: "ATIVO",
+      // Explícito desde que `isModuleEnabled` passou a ser fail-closed: antes,
+      // omitir o claim liberava tudo, e o teste passava por causa do fail-open —
+      // não por representar um OWNER de verdade. Um OWNER com plano completo é o
+      // que estes testes querem simular.
+      modules: [...ALL_OPTIONAL_KEYS],
     },
   };
 }

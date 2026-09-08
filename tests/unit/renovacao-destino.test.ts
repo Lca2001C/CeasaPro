@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   COOKIE_TENTATIVA_RENOVACAO,
+  ehNavegacaoDeTopo,
   TENTATIVA_MAX_AGE_SEGUNDOS,
   destinoSeguro,
 } from "@/lib/auth/renovacao";
@@ -74,5 +75,73 @@ describe("trava anti-laço", () => {
     // o usuário voltaria a cair no login.
     expect(TENTATIVA_MAX_AGE_SEGUNDOS).toBeGreaterThan(0);
     expect(TENTATIVA_MAX_AGE_SEGUNDOS).toBeLessThanOrEqual(60);
+  });
+});
+
+describe("destinoSeguro herdou o contrato robusto (regressao)", () => {
+  // O contrato fraco olhava so os DOIS primeiros caracteres. Estes casos
+  // passavam por ele e iam crus para o cabecalho Location.
+  it("recusa barra invertida em qualquer posicao, nao so no comeco", () => {
+    expect(destinoSeguro("/x/\\golpe.com")).toBe("/");
+    expect(destinoSeguro("/despesas\\@golpe.com")).toBe("/");
+  });
+
+  it("recusa /login como destino (fecha um laco possivel)", () => {
+    expect(destinoSeguro("/login")).toBe("/");
+    expect(destinoSeguro("/login/entrar")).toBe("/");
+  });
+
+  it("devolve caminho normalizado por URL, entao CR/LF nao sobrevivem", () => {
+    const destino = destinoSeguro("/despesas\r\nX-Injetado: 1");
+    expect(destino).not.toMatch(/[\r\n]/);
+  });
+
+  it("preserva query e fragmento de um destino legitimo", () => {
+    expect(destinoSeguro("/despesas?filtro=PENDENTE#topo")).toBe(
+      "/despesas?filtro=PENDENTE#topo",
+    );
+  });
+});
+
+describe("ehNavegacaoDeTopo exige Fetch Metadata (regressao)", () => {
+  const cabecalhos = (m: Record<string, string>) => ({
+    get: (n: string) => m[n] ?? null,
+  });
+
+  // A versao anterior era `if (modo && modo !== "navigate") return 403`: o
+  // cabecalho AUSENTE passava, e a protecao descrita no comentario da rota
+  // simplesmente nao existia para quem nao enviasse Fetch Metadata.
+  it("cabecalho ausente NAO passa mais", () => {
+    expect(ehNavegacaoDeTopo(cabecalhos({}))).toBe(false);
+  });
+
+  it("navegacao de topo passa", () => {
+    expect(
+      ehNavegacaoDeTopo(
+        cabecalhos({ "sec-fetch-mode": "navigate", "sec-fetch-dest": "document" }),
+      ),
+    ).toBe(true);
+  });
+
+  // Medido no fluxo real: quando o proxy desvia uma navegacao para esta rota, o
+  // Chromium manda dest "empty", nao "document" — o dest de documento nao
+  // sobrevive ao salto do redirecionamento. Exigi-lo quebrava a renovacao por
+  // navegacao, que e a razao de a rota existir.
+  it("navegacao seguindo redirecionamento passa, mesmo com dest empty", () => {
+    expect(
+      ehNavegacaoDeTopo(cabecalhos({ "sec-fetch-mode": "navigate", "sec-fetch-dest": "empty" })),
+    ).toBe(true);
+  });
+
+  it("imagem embutida (no-cors) nao passa", () => {
+    expect(
+      ehNavegacaoDeTopo(cabecalhos({ "sec-fetch-mode": "no-cors", "sec-fetch-dest": "image" })),
+    ).toBe(false);
+  });
+
+  it("chamada do api-client (cors) nao passa", () => {
+    expect(
+      ehNavegacaoDeTopo(cabecalhos({ "sec-fetch-mode": "cors", "sec-fetch-dest": "empty" })),
+    ).toBe(false);
   });
 });

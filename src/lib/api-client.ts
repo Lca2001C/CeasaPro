@@ -59,6 +59,29 @@ function podeRenovarPara(url: string): boolean {
   return !url.startsWith("/api/auth/");
 }
 
+/**
+ * Falha antes de haver resposta — e a mensagem precisa ser honesta.
+ *
+ * "Falha de conexão. Tente novamente." era a mensagem única, e ela MANDA
+ * repetir. Só que a requisição pode ter chegado, commitado e só a resposta ter
+ * se perdido: repetir registrava a operação de novo. A venda passou a ter chave
+ * de idempotência, mas as outras gravações ainda não — então quem não sabe se
+ * gravou tem de ser avisado para conferir, não convidado a repetir.
+ */
+function erroDeRede(e: unknown): { code: string; message: string } {
+  const estourouOTempo = e instanceof DOMException && e.name === "TimeoutError";
+  return estourouOTempo
+    ? {
+        code: "TIMEOUT",
+        message:
+          "O servidor demorou demais para responder. Confira se o lançamento foi registrado antes de tentar de novo.",
+      }
+    : {
+        code: "NETWORK",
+        message: "Falha de conexão. Confira se o lançamento foi registrado antes de tentar de novo.",
+      };
+}
+
 const SESSAO_EXPIRADA = {
   ok: false as const,
   error: {
@@ -73,12 +96,25 @@ const SESSAO_EXPIRADA = {
  * `jaRenovou` limita a uma repetição: sem isso, um 401 que persiste (conta
  * desativada, por exemplo) viraria laço infinito de renovação.
  */
+/**
+ * Quanto esperar por uma resposta antes de desistir.
+ *
+ * Sem teto, um pedido pendurado deixava o operador olhando o botão girar até
+ * ele recarregar a página — e recarregar no meio de uma gravação é exatamente
+ * como nascia a venda duplicada. Vinte segundos é folgado para a rede do CEASA
+ * e curto o bastante para o balcão não parar.
+ */
+const TEMPO_LIMITE_MS = 20_000;
+
 async function comRenovacao<T>(
   url: string,
   init: RequestInit,
   jaRenovou = false,
 ): Promise<ActionResult<T>> {
-  const res = await fetch(url, init);
+  // O sinal é criado POR TENTATIVA, e não em `init`: herdando o mesmo sinal, a
+  // repetição depois do 401 abortaria na hora se o primeiro já tivesse
+  // estourado o tempo.
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(TEMPO_LIMITE_MS) });
 
   if (res.status === 401 && !jaRenovou && podeRenovarPara(url)) {
     if (await renovarSessao()) return comRenovacao<T>(url, init, true);
@@ -126,11 +162,8 @@ export async function apiPost<T>(url: string, body: unknown): Promise<ActionResu
       // `ReadableStream` só poderia ser consumido uma vez).
       body: JSON.stringify(body),
     });
-  } catch {
-    return {
-      ok: false,
-      error: { code: "NETWORK", message: "Falha de conexão. Tente novamente." },
-    };
+  } catch (e) {
+    return { ok: false, error: erroDeRede(e) };
   }
 }
 

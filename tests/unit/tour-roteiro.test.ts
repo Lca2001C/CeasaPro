@@ -126,8 +126,15 @@ describe("roteiro do tour — forma", () => {
 });
 
 describe("capitulosDoPlano", () => {
-  it("sem o claim de módulos (token legado) libera tudo", () => {
-    expect(capitulosDoPlano(undefined)).toHaveLength(CAPITULOS.length);
+  // `isModuleEnabled` passou a ser fail-closed: sem a lista, nada de opcional.
+  // Antes o `undefined` liberava tudo, e o tour de uma sessão sem o claim
+  // oferecia capítulos de módulo que a empresa não contratou.
+  it("sem a lista de módulos, sobra só o núcleo", () => {
+    expect(capitulosDoPlano(undefined)).toEqual(capitulosDoPlano([]));
+  });
+
+  it("com a lista completa, todos os capítulos entram", () => {
+    expect(capitulosDoPlano([...ALL_OPTIONAL_KEYS])).toHaveLength(CAPITULOS.length);
   });
 
   it("plano sem módulo opcional nenhum deixa só o núcleo", () => {
@@ -159,7 +166,7 @@ describe("capitulosDoPlano", () => {
 
 describe("localizar", () => {
   it("o primeiro capítulo abre em 1 e não tem tela anterior", () => {
-    const capitulos = capitulosDoPlano(undefined);
+    const capitulos = capitulosDoPlano([...ALL_OPTIONAL_KEYS]);
     const local = localizar(capitulos, "/dashboard")!;
 
     expect(local.deslocamento).toBe(1);
@@ -168,7 +175,7 @@ describe("localizar", () => {
   });
 
   it("o deslocamento continua a contagem da tela anterior", () => {
-    const capitulos = capitulosDoPlano(undefined);
+    const capitulos = capitulosDoPlano([...ALL_OPTIONAL_KEYS]);
     let esperado = 1;
     for (const capitulo of capitulos) {
       expect(localizar(capitulos, capitulo.rota)!.deslocamento).toBe(esperado);
@@ -179,7 +186,7 @@ describe("localizar", () => {
   });
 
   it("o último capítulo não tem próxima tela", () => {
-    const capitulos = capitulosDoPlano(undefined);
+    const capitulos = capitulosDoPlano([...ALL_OPTIONAL_KEYS]);
     const ultimo = capitulos[capitulos.length - 1];
     const local = localizar(capitulos, ultimo.rota)!;
 
@@ -189,13 +196,13 @@ describe("localizar", () => {
   });
 
   it("o total acompanha o plano", () => {
-    const completo = localizar(capitulosDoPlano(undefined), "/dashboard")!;
+    const completo = localizar(capitulosDoPlano([...ALL_OPTIONAL_KEYS]), "/dashboard")!;
     const basico = localizar(capitulosDoPlano([]), "/dashboard")!;
     expect(basico.total).toBeLessThan(completo.total);
   });
 
   it("tela fora do roteiro devolve null", () => {
-    const capitulos = capitulosDoPlano(undefined);
+    const capitulos = capitulosDoPlano([...ALL_OPTIONAL_KEYS]);
     expect(localizar(capitulos, "/vendas/nova")).toBeNull();
     expect(localizar(capitulos, "/configuracoes")).toBeNull();
   });

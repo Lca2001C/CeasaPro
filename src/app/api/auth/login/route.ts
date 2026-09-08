@@ -5,7 +5,7 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshToken } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
-import { rateLimitDb, resetRateLimit } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 
@@ -36,13 +36,7 @@ export async function POST(req: Request) {
     rateLimitDb(rateKeyEmail, { limit: 20, windowMs: janela }),
   ]);
   if (!rlIp.ok || !rlEmail.ok) {
-    return Response.json(
-      {
-        ok: false,
-        error: { code: "RATE_LIMIT", message: "Muitas tentativas. Tente novamente em alguns minutos." },
-      },
-      { status: 429 },
-    );
+    return respostaDeLimite(rlIp.ok ? rlEmail : rlIp);
   }
 
   const user = await prisma.user.findFirst({
