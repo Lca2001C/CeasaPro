@@ -1,4 +1,24 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+
+/**
+ * Captura os e-mails para ler o LINK que eles carregam.
+ *
+ * O envio já é no-op na suíte (`tests/setup/no-outbound-email.ts`), então o
+ * token reemitido não saía do serviço por lugar nenhum — e sem ele não há
+ * como provar que o link novo funciona de verdade.
+ */
+const correio = vi.hoisted(() => ({ enviados: [] as { para: string; html: string }[] }));
+
+vi.mock("@/lib/email", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/email")>();
+  return {
+    ...actual,
+    sendEmail: vi.fn(async (para: string, _assunto: string, html: string) => {
+      correio.enviados.push({ para, html });
+      return { ok: true as const };
+    }),
+  };
+});
 import { prisma } from "@/lib/db/prisma";
 import { SignupService } from "@/lib/services/signup.service";
 import { buildAccessPayload } from "@/lib/auth/build-session";
@@ -226,6 +246,71 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
     });
     expect(sub?.status).toBe("SUSPENSO");
     expect(sub?.trialEndsAt).toBeNull();
+  });
+
+  /**
+   * Link expirado não pode ser beco sem saída.
+   *
+   * A mensagem antiga mandava "fazer o cadastro de novo", o que é
+   * comprovadamente inócuo: `register` vê o e-mail em uso, não cria nada e não
+   * reemite token — e não existe rota de reenvio no app. Quem abrisse o e-mail
+   * no dia seguinte perdia os 7 dias, e pelo login (que não exige e-mail
+   * confirmado) era empurrado a pagar a primeira mensalidade.
+   */
+  describe("link expirado reemite", () => {
+    /** Extrai o token do link que foi para o e-mail. */
+    const tokenDoUltimoEmail = () => {
+      const html = correio.enviados.at(-1)!.html;
+      return new RegExp("/cadastro/confirmar/([A-Za-z0-9_-]+)").exec(html)?.[1] ?? "";
+    };
+
+    async function comLinkExpirado() {
+      const res = await registrar(entrada());
+      await prisma.user.updateMany({
+        where: { tenantId: res.tenantId! },
+        data: { verifyTokenExpiresAt: new Date(Date.now() - 60_000) },
+      });
+      return res;
+    }
+
+    it("manda um link NOVO e diz isso, em vez de mandar refazer o cadastro", async () => {
+      const res = await comLinkExpirado();
+      const antes = correio.enviados.length;
+
+      await expect(SignupService.confirmEmail(res.devToken!)).rejects.toThrow(
+        /Enviamos um novo/i,
+      );
+
+      expect(correio.enviados.length).toBe(antes + 1);
+      expect(correio.enviados.at(-1)!.html).toContain("/cadastro/confirmar/");
+    });
+
+    it("e o link novo confirma o e-mail e libera o teste", async () => {
+      const res = await comLinkExpirado();
+      await expect(SignupService.confirmEmail(res.devToken!)).rejects.toThrow();
+
+      const novo = tokenDoUltimoEmail();
+      expect(novo).not.toBe(res.devToken);
+      const ok = await SignupService.confirmEmail(novo);
+      expect(ok.trialEndsAt.getTime()).toBeGreaterThan(Date.now());
+
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+        where: { tenantId: res.tenantId! },
+      });
+      expect(sub.status).toBe("TRIAL");
+    });
+
+    it("o link velho morre: um reenvio por link, não um por clique", async () => {
+      const res = await comLinkExpirado();
+      await expect(SignupService.confirmEmail(res.devToken!)).rejects.toThrow(
+        /Enviamos um novo/i,
+      );
+      const depoisDoPrimeiro = correio.enviados.length;
+
+      // Clicar de novo no MESMO link não dispara outro e-mail.
+      await expect(SignupService.confirmEmail(res.devToken!)).rejects.toThrow(/inválido/i);
+      expect(correio.enviados.length).toBe(depoisDoPrimeiro);
+    });
   });
 });
 

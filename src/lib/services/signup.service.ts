@@ -207,9 +207,57 @@ export const SignupService = {
       throw new BusinessRuleError("Link inválido ou expirado.", "TOKEN_INVALIDO");
     }
     if (!user.verifyTokenExpiresAt || user.verifyTokenExpiresAt < new Date()) {
+      // Link expirado era BECO SEM SAÍDA, e a mensagem mandava fazer algo
+      // comprovadamente inócuo: "faça o cadastro de novo" cai em `register`,
+      // que vê o e-mail em uso, não cria nada e NÃO reemite token — e não
+      // existe rota de reenvio em todo o app (`verifyTokenHash` só era escrito
+      // no cadastro). Quem abrisse o e-mail no dia seguinte perdia os 7 dias
+      // de teste de forma definitiva; entrando pelo login, que não exige
+      // e-mail confirmado, lia "falta o pagamento da primeira mensalidade" e
+      // era empurrado a pagar um mês que devia ser de teste. Só quem usava
+      // e-mail do Google escapava, pelo botão "Entrar com Google".
+      //
+      // Reemitir aqui atende exatamente quem está com o link velho na mão, sem
+      // rota nem formulário novos. O token novo SUBSTITUI o antigo, então o
+      // mesmo link não dispara um segundo e-mail: é um reenvio por link
+      // expirado, não um por tentativa.
+      const novo = createVerifyToken();
+      const { subject, html } = verifyEmailEmail({
+        link: absoluteUrl(`/cadastro/confirmar/${novo.raw}`),
+        trialDays: TRIAL_DAYS,
+        expiresInHours: VERIFY_TOKEN_TTL_HOURS,
+      });
+      const sent = await sendEmail(user.email, subject, html, {
+        tags: [{ name: "tipo", value: "confirmar-email" }],
+      });
+
+      // Envia ANTES de gravar, de propósito. Se gravasse primeiro e o envio
+      // falhasse, o link antigo morreria e o novo nunca chegaria — dead end
+      // sem volta, pior que o original. Nesta ordem, a falha de SMTP deixa o
+      // token antigo intacto e clicar no mesmo link tenta de novo.
+      if (!sent.ok) {
+        logger.error(
+          { err: sent.error, tenantId: user.tenantId },
+          "Falha ao reenviar e-mail de confirmação",
+        );
+        throw new BusinessRuleError(
+          "Esse link expirou e não conseguimos enviar outro agora. " +
+            "Abra este mesmo link de novo em alguns minutos.",
+          "TOKEN_EXPIRADO",
+        );
+      }
+
+      await prisma.user.update({
+        where: { id: user.id },
+        data: {
+          verifyTokenHash: novo.tokenHash,
+          verifyTokenExpiresAt: novo.expiresAt,
+        },
+      });
+      logger.info({ tenantId: user.tenantId }, "Link de confirmação expirado — novo enviado");
       throw new BusinessRuleError(
-        "Este link expirou. Faça o cadastro de novo para receber outro.",
-        "TOKEN_EXPIRADO",
+        "Esse link expirou. Enviamos um novo para o seu e-mail.",
+        "TOKEN_REENVIADO",
       );
     }
 
