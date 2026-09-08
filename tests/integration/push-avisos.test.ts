@@ -241,6 +241,32 @@ describe("PushAvisosService.enviarAvisosDiarios", () => {
     expect(enviosPara(userId)).toHaveLength(0);
   });
 
+  /**
+   * O bloqueio do USUÁRIO também tem de valer, não só o da empresa.
+   *
+   * Nem `desativarUsuario` nem as exclusões apagam a inscrição (o admin nunca
+   * toca em `pushSubscription`), e o logout não cancela a inscrição do
+   * navegador. Quem perdeu o acesso seguia recebendo o aviso diário — com o
+   * movimento no corpo da notificação — e o toque só levava ao login.
+   */
+  it("usuário desativado não recebe mais o aviso diário", async () => {
+    const { userId } = await empresa({ comAviso: true });
+    await prisma.user.update({ where: { id: userId }, data: { active: false } });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(0);
+  });
+
+  it("usuário excluído não recebe mais o aviso diário", async () => {
+    const { userId } = await empresa({ comAviso: true });
+    await prisma.user.update({ where: { id: userId }, data: { deletedAt: new Date() } });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(0);
+  });
+
   it("falha no serviço de push NÃO grava a marca: amanhã tenta de novo", async () => {
     const { tenantId, userId } = await empresa({ comAviso: true });
     push.enviar.mockResolvedValue({ enviados: 0, removidos: 0, falhas: 1 });

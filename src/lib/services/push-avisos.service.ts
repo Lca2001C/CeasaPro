@@ -80,7 +80,20 @@ export const PushAvisosService = {
     }
 
     // Um usuário por inscrição; agrupa por tenant para calcular os avisos uma vez.
+    //
+    // O filtro de usuário VIVO não é detalhe: nem `desativarUsuario` nem
+    // `deleteUser`/`deleteTenant` apagam a inscrição (o admin nunca toca em
+    // `pushSubscription`), e a inscrição do navegador não é cancelada no
+    // logout. Sem isto, quem perdeu o acesso continuava recebendo o aviso
+    // diário da empresa todos os dias — com o movimento no corpo da
+    // notificação ("3 cliente(s) com fiado vencido") — e o toque só levava à
+    // tela de login. O bloqueio da EMPRESA já era checado dentro do laço; o do
+    // usuário, não.
+    //
+    // Filtrar aqui também cura as linhas que a base já tem órfãs, o que uma
+    // limpeza no momento da exclusão não alcançaria.
     const inscricoes = await prisma.pushSubscription.findMany({
+      where: { user: { active: true, deletedAt: null } },
       distinct: ["userId"],
       select: { userId: true, tenantId: true },
     });
