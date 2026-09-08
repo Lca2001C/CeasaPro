@@ -51,7 +51,10 @@ test.describe("Despesas — lista no celular", () => {
     await expect(titulo).toBeVisible();
     await expect(titulo).not.toHaveText(/^F\.\.\./);
 
-    const card = page.locator("main .bg-card").filter({ hasText: desc });
+    // `[data-slot="card"]` e não `.bg-card`: a despesa vencida recebe
+    // `bg-destructive/5`, e o tailwind-merge apaga o `bg-card` — o seletor
+    // antigo não achava justamente o cartão que este teste cria.
+    const card = page.locator('main [data-slot="card"]').filter({ hasText: desc });
     const pagar = card.getByRole("button", { name: "Pagar" });
     await expect(pagar).toBeVisible();
 

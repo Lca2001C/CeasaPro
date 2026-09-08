@@ -90,9 +90,18 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     // Abre a seção recolhível, que é onde estão os cartões da captura original.
     await page.getByText("Ver financeiro completo").click();
 
-    // O valor tem de estar no documento por completo — o defeito original não
-    // removia texto, só o escondia, então esta asserção sozinha não bastaria.
-    await expect(page.getByText("9.999.999,99").first()).toBeVisible();
+    // Um número na casa dos MILHÕES tem de estar visível por completo — o
+    // defeito original não removia texto, só o escondia, então esta asserção
+    // sozinha não bastaria.
+    //
+    // Procura o padrão, não o valor exato: os cartões somam a despesa extrema
+    // com as outras do mês, então o texto renderizado é a soma e não
+    // "9.999.999,99". Cobrar a soma amarraria um teste de LAYOUT à aritmética
+    // do painel — foi o que aconteceu quando a janela das despesas do mês
+    // deixou de terminar em "até agora" e passou a incluir o que ainda vai
+    // vencer: o teste reprovou sem nada de layout ter mudado.
+    const milhoes = page.getByText(/R\$\s*\d{1,3}(\.\d{3}){2,},\d{2}/).first();
+    await expect(milhoes).toBeVisible();
 
     const problemas = await vazamentos(page);
     expect(problemas, JSON.stringify(problemas, null, 2)).toEqual([]);
@@ -117,7 +126,7 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     // significa que o sinal se separou.
     const sinaisSeparados = await page.evaluate(() => {
       const quebrados: string[] = [];
-      for (const el of Array.from(document.querySelectorAll("main .bg-card *"))) {
+      for (const el of Array.from(document.querySelectorAll('main [data-slot="card"] *'))) {
         if (el.children.length > 0) continue;
         const no = el.firstChild;
         if (!no || no.nodeType !== Node.TEXT_NODE) continue;
@@ -140,10 +149,15 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     test(`${pagina.nome}: nada vaza dos cartões`, async ({ page }) => {
       await entrar(page);
       await page.goto(pagina.url);
-      // Cartões do conteúdo, não o aside: a barra lateral também usa `bg-card`
-      // de fundo e, em 320px, fica `hidden` — o primeiro `.bg-card` da página
-      // seria o menu, invisível, e o teste esperaria 10s à toa.
-      await expect(page.locator("main .bg-card").first()).toBeVisible();
+      // Cartões do conteúdo, não o aside: a barra lateral também tem fundo de
+      // cartão e, em 320px, fica `hidden` — o primeiro da página seria o menu,
+      // invisível, e o teste esperaria 10s à toa.
+      //
+      // O gancho é `[data-slot="card"]`, não a classe `bg-card`: o
+      // tailwind-merge apaga essa classe quando quem chama passa outro fundo
+      // (despesa vencida, caixa perdida, aviso na ajuda), e a varredura
+      // ignorava em silêncio justamente os cartões de destaque.
+      await expect(page.locator('main [data-slot="card"]').first()).toBeVisible();
 
       const problemas = await vazamentos(page);
       expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
@@ -204,7 +218,7 @@ test.describe("Telas em tela estreita (320px)", () => {
 
       expect(await estouroHorizontalDaPagina(page), `${pagina.nome} rola de lado`).toBe(0);
 
-      if ((await page.locator("main .bg-card").count()) > 0) {
+      if ((await page.locator('main [data-slot="card"]').count()) > 0) {
         const problemas = await vazamentos(page);
         expect(problemas, `${pagina.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
       }
@@ -392,7 +406,7 @@ test.describe("Telas de detalhe em tela estreita (320px)", () => {
 
       expect(await estouroHorizontalDaPagina(page), `${detalhe.nome} rola de lado`).toBe(0);
 
-      if ((await page.locator("main .bg-card").count()) > 0) {
+      if ((await page.locator('main [data-slot="card"]').count()) > 0) {
         const problemas = await vazamentos(page);
         expect(problemas, `${detalhe.nome}: ${JSON.stringify(problemas, null, 2)}`).toEqual([]);
       }
