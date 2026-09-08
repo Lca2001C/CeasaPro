@@ -38,12 +38,53 @@ export function irComSessaoNova(destino: string): void {
  * `AdminShell`) — três cópias da mesma decisão de segurança é uma a mais do que
  * o necessário para uma delas divergir sem ninguém notar.
  */
-export async function encerrarSessao(): Promise<void> {
-  await fetch("/api/auth/logout", { method: "POST" });
-  // Apaga o snapshot de consulta offline ANTES de sair. Ele contem estoque, nomes
-  // de clientes e quanto cada um deve, e a tela de consulta le do IndexedDB sem
-  // pedir sessao — num celular compartilhado, deixa-lo entregaria o movimento da
-  // empresa para o proximo que abrisse o app.
-  await limparSnapshotNoLogout();
+/** O que aconteceu na saída — a mensagem existe só quando algo falhou. */
+export interface ResultadoSaida {
+  ok: boolean;
+  mensagem?: string;
+}
+
+export async function encerrarSessao(): Promise<ResultadoSaida> {
+  // Sem rede, isto REJEITAVA e derrubava o resto da função.
+  //
+  // O `fetch` falha no box com sinal ruim — que é o cenário para o qual o PWA
+  // existe — e o service worker não intercepta POST. Todos os chamadores usam
+  // `void encerrarSessao()`, e não há handler de `unhandledrejection` no
+  // projeto: a rejeição morria em silêncio. O usuário tocava em "Sair", a tela
+  // não mudava, nenhuma mensagem aparecia — e ele ia embora achando que saiu,
+  // com o snapshot de consulta (estoque, nomes de clientes e quanto cada um
+  // deve) ainda gravado no aparelho, legível em /consulta-offline sem sessão.
+  let servidorOk = true;
+  try {
+    await fetch("/api/auth/logout", { method: "POST" });
+  } catch {
+    servidorOk = false;
+  }
+
+  // Apaga o snapshot de consulta offline SEMPRE, com ou sem rede: é o dado que
+  // fica no aparelho, e num celular compartilhado entre dois boxes é o que
+  // entregaria o movimento da empresa para o próximo que abrisse o app.
+  let localOk = true;
+  try {
+    await limparSnapshotNoLogout();
+  } catch {
+    localOk = false;
+  }
+
+  if (!servidorOk) {
+    // Não navega: o cookie é httpOnly e continua válido, então ir para /login
+    // faria o proxy devolver a pessoa ao sistema — com cara de botão quebrado.
+    // Melhor dizer a verdade do que fingir que saiu.
+    return {
+      ok: false,
+      mensagem: localOk
+        ? "Sem internet: apagamos os dados de consulta deste aparelho, mas a " +
+          "sessão só será encerrada quando a internet voltar. Tente de novo lá."
+        : "Sem internet, e não foi possível apagar os dados de consulta deste " +
+          "aparelho. Tente sair de novo quando a internet voltar.",
+    };
+  }
+
   irComSessaoNova("/login");
+  return { ok: true };
 }

@@ -22,7 +22,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
-import { encerrarSessao } from "@/lib/session-nav";
+import { toast } from "sonner";
+import { sair } from "@/lib/sair";
 
 const items = [
   { href: "/dashboard", label: "Início", icon: Home },
@@ -113,7 +114,7 @@ export function SideNav({
           )}
           <button
             type="button"
-            onClick={() => void encerrarSessao()}
+            onClick={() => void sair(toast.error)}
             className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-2.5 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
           >
             <LogOut className="size-5" />
