@@ -226,6 +226,26 @@ export const HigienizacaoService = {
           "Este envio já teve devolução ou pagamento — não pode mais ser alterado.",
         );
       }
+      // Perda registrada também tranca a edição, como já acontece no `remove`.
+      //
+      // `registrarPerda` grava a QUEBRA e atualiza só o `status` — nunca
+      // `returnedQty` nem `paidAmount` —, então o lápis "Editar envio"
+      // continuava visível depois de o higienizador quebrar caixas. Reduzir a
+      // quantidade enviada nesse estado encurtava a SAIDA_HIGIENIZACAO abaixo do
+      // que já saiu: o painel passava a mostrar "Em higienização: -10"
+      // (`computeCrateSaldo` não tem piso) e o estoque de sujas ganhava caixas
+      // fantasma — que o próprio painel manda higienizar no atalho "<n> caixa(s)
+      // suja(s)". O dono levava ao higienizador caixas que foram quebradas e não
+      // existem mais, e a contagem física nunca voltava a fechar.
+      //
+      // Não precisa de concorrência: um usuário só, dois cliques.
+      const perdidas = (await perdasPorLote(tx, [before.id])).get(before.id) ?? 0;
+      if (perdidas > 0) {
+        throw new BusinessRuleError(
+          `Este envio já tem ${perdidas} caixa(s) registrada(s) como perdida(s) — ` +
+            "não pode mais ser alterado.",
+        );
+      }
 
       const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
       const delta = input.sentQty - before.sentQty;

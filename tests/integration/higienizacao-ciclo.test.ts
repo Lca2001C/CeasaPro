@@ -364,3 +364,49 @@ describe("Aviso de higienização e o plano", () => {
     expect(semModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(false);
   });
 });
+
+/**
+ * Perda registrada tranca a edição do envio.
+ *
+ * `registrarPerda` grava a QUEBRA e atualiza só o `status` — nunca
+ * `returnedQty` nem `paidAmount` —, então o lápis "Editar envio" continuava
+ * visível depois de o higienizador quebrar caixas. Reduzir a quantidade
+ * enviada nesse estado encurtava a SAIDA_HIGIENIZACAO abaixo do que já saiu: o
+ * painel mostrava "Em higienização" NEGATIVO e o estoque de sujas ganhava
+ * caixas fantasma — que o próprio painel manda higienizar. Um usuário só,
+ * dois cliques.
+ */
+describe("Editar envio com perda registrada", () => {
+  it("é recusado, e o saldo de caixas não fica negativo", async () => {
+    await entrarSujas(50);
+    const lote = await enviar(50);
+    await HigienizacaoService.registrarPerda(
+      { id: lote.id, quantity: 20, movementDate: hoje() },
+      ctx,
+    );
+
+    // O tenant é compartilhado pelo arquivo, então o que importa é o DELTA.
+    const antes = await CaixasService.getSaldo(tenantId);
+
+    await expect(
+      HigienizacaoService.update(
+        {
+          id: lote.id,
+          cleanerName: lote.cleanerName,
+          sentDate: hoje(),
+          sentQty: 10,
+          unitPrice: 1,
+          notes: null,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/perdida/i);
+
+    // Recusa não mexe em nada: sem a guarda, o `delta = -40` encurtava a
+    // SAIDA_HIGIENIZACAO e derrubava este saldo em 40.
+    const depois = await CaixasService.getSaldo(tenantId);
+    expect(depois.emHigienizacao).toBe(antes.emHigienizacao);
+    expect(depois.sujas).toBe(antes.sujas);
+    expect(depois.emHigienizacao).toBeGreaterThanOrEqual(0);
+  });
+});
