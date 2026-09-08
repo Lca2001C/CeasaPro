@@ -8,16 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import {
+  urlDeDespesas,
+  urlDeDespesasSemFiltros,
+  type FiltrosDespesa,
+} from "@/lib/despesas-filtros-url";
 
-export interface FiltrosAtuais {
-  status: string;
-  q: string;
-  type: string;
-  categoryId: string;
-  dateField: string;
-  from: string;
-  to: string;
-}
+/** Mesma forma de `FiltrosDespesa`; o alias mantém o nome usado pela página. */
+export type FiltrosAtuais = FiltrosDespesa;
 
 /**
  * Busca e filtros da lista de despesas.
@@ -44,25 +42,13 @@ export function DespesasFiltros({
   const [f, setF] = useState<FiltrosAtuais>(atuais);
 
   function aplicar(patch: Partial<FiltrosAtuais> = {}) {
-    const alvo = { ...f, ...patch };
-    const params = new URLSearchParams();
-    // `status` sempre presente para a aba continuar marcada; o resto só quando vale algo.
-    params.set("status", alvo.status || "PENDENTE");
-    if (alvo.q) params.set("q", alvo.q);
-    if (alvo.type) params.set("type", alvo.type);
-    if (alvo.categoryId) params.set("categoria", alvo.categoryId);
-    if (alvo.from || alvo.to) {
-      params.set("campo", alvo.dateField || "dueDate");
-      if (alvo.from) params.set("de", alvo.from);
-      if (alvo.to) params.set("ate", alvo.to);
-    }
-    params.set("pagina", "1");
-    router.push(`/despesas?${params.toString()}`);
+    router.push(urlDeDespesas({ ...f, ...patch }));
   }
 
   function limpar() {
     setF({ ...f, q: "", type: "", categoryId: "", from: "", to: "", dateField: "dueDate" });
-    router.push(`/despesas?status=${f.status || "PENDENTE"}&pagina=1`);
+    // Limpar os filtros não é sair da aba.
+    router.push(urlDeDespesasSemFiltros(f));
   }
 
   const temFiltro = Boolean(f.q || f.type || f.categoryId || f.from || f.to);

@@ -299,6 +299,7 @@ export default async function DespesasPage({
       <DespesasFiltros
         atuais={{
           status: aba === "VENCIDAS" ? "PENDENTE" : aba,
+          vencidas: aba === "VENCIDAS",
           q: sp.q ?? "",
           type: sp.type ?? "",
           categoryId: sp.categoria ?? "",
