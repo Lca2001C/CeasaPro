@@ -18,8 +18,12 @@ export default async function RelatoriosPage() {
 
       <div className="flex flex-col gap-5">
         {REPORT_GROUPS.map((grupo) => {
-          // Um grupo só aparece se tiver algo que o plano libera — senão o
-          // usuário abriria uma seção vazia sem entender por quê.
+          // Grupo sem NADA (nem liberado nem bloqueado) não aparece. Para os
+          // grupos de hoje isso não acontece — há teste garantindo que nenhum
+          // é vazio —, e o caso que importa é o outro: grupo inteiramente
+          // pago, que aparece com o cartão tracejado de upsell em vez de
+          // seção vazia. É o que sustenta a decisão registrada em
+          // `relatorios-grupos.test.ts` de permitir grupo 100% pago.
           const disponiveis = grupo.relatorios.filter(
             (t) => !isAdvancedReport(t) || avancadosOn,
           );
