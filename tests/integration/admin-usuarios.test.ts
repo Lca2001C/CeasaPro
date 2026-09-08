@@ -68,7 +68,7 @@ describe("Listagem de usuários", () => {
     tenants.push(tenantId);
     const dono = await criarUsuario({ tenantId, nome: "Dono da Empresa" });
 
-    const lista = await AdminService.listUsers();
+    const { usuarios: lista } = await AdminService.listUsers();
     const encontrado = lista.find((u) => u.id === dono.id);
     expect(encontrado?.tenant?.tradeName).toBe("USUARIOS");
     // Quem administra a plataforma tem o acesso mais poderoso — omitir seria
@@ -78,17 +78,19 @@ describe("Listagem de usuários", () => {
 
   it("busca por nome e por e-mail", async () => {
     const alvo = await criarUsuario({ nome: `Zezinho ${uniq()}` });
-    const porNome = await AdminService.listUsers({ busca: "Zezinho" });
+    const { usuarios: porNome } = await AdminService.listUsers({ busca: "Zezinho" });
     expect(porNome.some((u) => u.id === alvo.id)).toBe(true);
 
-    const porEmail = await AdminService.listUsers({ busca: alvo.email.slice(0, 8) });
+    const { usuarios: porEmail } = await AdminService.listUsers({
+      busca: alvo.email.slice(0, 8),
+    });
     expect(porEmail.some((u) => u.id === alvo.id)).toBe(true);
   });
 
   it("filtra somente os sem acesso", async () => {
     const inativo = await criarUsuario({ active: false });
     const ativo = await criarUsuario({ active: true });
-    const lista = await AdminService.listUsers({ somenteInativos: true });
+    const { usuarios: lista } = await AdminService.listUsers({ somenteInativos: true });
     expect(lista.some((u) => u.id === inativo.id)).toBe(true);
     expect(lista.some((u) => u.id === ativo.id)).toBe(false);
   });
@@ -96,7 +98,7 @@ describe("Listagem de usuários", () => {
   it("não lista usuário excluído", async () => {
     const u = await criarUsuario({});
     await prisma.user.update({ where: { id: u.id }, data: { deletedAt: new Date() } });
-    const lista = await AdminService.listUsers();
+    const { usuarios: lista } = await AdminService.listUsers();
     expect(lista.some((x) => x.id === u.id)).toBe(false);
   });
 });
@@ -200,7 +202,8 @@ describe("Exclusão de usuário", () => {
 
     await AdminService.deleteUser(u.id, ctx);
 
-    expect((await AdminService.listUsers()).some((x) => x.id === u.id)).toBe(false);
+    const { usuarios: depois } = await AdminService.listUsers();
+    expect(depois.some((x) => x.id === u.id)).toBe(false);
     expect(
       await prisma.refreshToken.count({ where: { userId: u.id, revokedAt: null } }),
     ).toBe(0);
@@ -511,5 +514,59 @@ describe("CNPJ opcional e único", () => {
     tenants.push(b.tenantId);
     const recriada = await prisma.tenant.findUniqueOrThrow({ where: { id: b.tenantId } });
     expect(recriada.cnpj).toBe(cnpj);
+  });
+});
+
+/**
+ * Os contadores não podem sair da lista truncada.
+ *
+ * `listUsers` corta em 200 com ordem "ativo primeiro", e a tela contava os
+ * cartões sobre esse conjunto. Como os desativados ficam no fim da ordenação,
+ * eram exatamente eles os cortados: passando de 200 usuários com acesso, o
+ * cartão "Sem acesso" marcava 0 e o filtro respondia "nenhum usuário
+ * encontrado". O super-admin concluía que não havia ninguém bloqueado.
+ */
+describe("Contadores da tela de usuários", () => {
+  it("o desativado é contado mesmo fora dos 200 exibidos", async () => {
+    const marca = `lote-${uniq()}`;
+    const inativo = await criarUsuario({ nome: `${marca} sem acesso`, active: false });
+
+    // 205 ativos com o mesmo prefixo: a lista (200) enche só de ativos, porque
+    // a ordenação põe `active: true` primeiro.
+    await prisma.user.createMany({
+      data: Array.from({ length: 205 }, (_, i) => ({
+        name: `${marca} ativo ${i}`,
+        email: `${marca}-${i}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER" as const,
+        active: true,
+      })),
+    });
+    const criadosAgora = await prisma.user.findMany({
+      where: { name: { startsWith: marca } },
+      select: { id: true },
+    });
+    usuarios.push(...criadosAgora.map((u) => u.id));
+
+    const { usuarios: lista, totais } = await AdminService.listUsers({ busca: marca });
+
+    // A lista é truncada e avisa...
+    expect(lista.length).toBe(200);
+    expect(totais.truncado).toBe(true);
+    expect(lista.some((u) => u.id === inativo.id)).toBe(false);
+
+    // ...mas o total conta os 206 e enxerga o desativado.
+    expect(totais.total).toBe(206);
+    expect(totais.semAcesso).toBe(1);
+  });
+
+  it("busca sem resultado devolve zeros, não a contagem anterior", async () => {
+    const { usuarios: lista, totais } = await AdminService.listUsers({
+      busca: `nao-existe-${uniq()}`,
+    });
+    expect(lista).toEqual([]);
+    expect(totais.total).toBe(0);
+    expect(totais.semAcesso).toBe(0);
+    expect(totais.truncado).toBe(false);
   });
 });

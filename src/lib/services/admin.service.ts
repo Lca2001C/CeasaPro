@@ -621,23 +621,42 @@ export const AdminService = {
    * entre duas execuções ele mostraria "em dia" quem venceu de madrugada —
    * exatamente o caso que esta tela existe para pegar.
    */
+  /**
+   * Usuários da plataforma para a tela do super-admin.
+   *
+   * Devolve a LISTA truncada e os TOTAIS do conjunto inteiro, separados.
+   *
+   * Antes era só a lista, com `take: 200` e ordem "ativo primeiro" — e a tela
+   * contava os cartões sobre esse conjunto truncado. Como os desativados
+   * ficam no fim da ordenação, eram exatamente eles os cortados: passando de
+   * 200 usuários com acesso, o cartão "Sem acesso" marcava 0 e o filtro
+   * respondia "nenhum usuário encontrado". O super-admin concluía que não
+   * havia ninguém bloqueado olhando uma tela que só tinha visto os 200
+   * primeiros nomes, e sem nenhum aviso de truncagem.
+   *
+   * Os totais saem de uma consulta enxuta sobre TODO o conjunto, reusando o
+   * mesmo `situacaoCobranca` da lista: contador e linha nunca discordam por
+   * terem lógicas diferentes.
+   */
   async listUsers(filtro?: { busca?: string; somenteInativos?: boolean }) {
     const busca = filtro?.busca?.trim();
     const agora = new Date();
 
+    const where = {
+      deletedAt: null,
+      ...(filtro?.somenteInativos ? { active: false } : {}),
+      ...(busca
+        ? {
+            OR: [
+              { name: { contains: busca, mode: "insensitive" as const } },
+              { email: { contains: busca, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
+
     const usuarios = await prisma.user.findMany({
-      where: {
-        deletedAt: null,
-        ...(filtro?.somenteInativos ? { active: false } : {}),
-        ...(busca
-          ? {
-              OR: [
-                { name: { contains: busca, mode: "insensitive" as const } },
-                { email: { contains: busca, mode: "insensitive" as const } },
-              ],
-            }
-          : {}),
-      },
+      where,
       include: {
         tenant: {
           select: {
@@ -663,11 +682,16 @@ export const AdminService = {
       take: 200,
     });
 
-    if (usuarios.length === 0) return [];
+    // Sem `return []` aqui: os totais precisam ser calculados de qualquer
+    // forma (uma busca sem resultado tem de mostrar zeros, não a contagem
+    // anterior), e a consulta de presença abaixo não depende da lista.
 
+    // Sem `userId: { in: ... }`: a presença também alimenta o TOTAL de online,
+    // que é do conjunto inteiro e não dos 200 exibidos. A intersecção com cada
+    // conjunto é feita em memória, e uma lista de milhares de ids no `IN`
+    // seria pior que o `distinct` global.
     const online = await prisma.refreshToken.findMany({
       where: {
-        userId: { in: usuarios.map((u) => u.id) },
         // As três condições são a definição de presença, e cada uma tira um
         // falso positivo: revogado = saiu ou foi desativado; expirado = sessão
         // morta; criado fora da janela = entrou há muito e não voltou.
@@ -680,7 +704,50 @@ export const AdminService = {
     });
     const idsOnline = new Set(online.map((t) => t.userId));
 
-    return usuarios.map((u) => ({
+    // Consulta enxuta (sem include pesado) só para os contadores.
+    const paraContar = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        active: true,
+        tenant: {
+          select: {
+            deletedAt: true,
+            subscription: {
+              select: {
+                status: true,
+                statusSource: true,
+                activatedAt: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                graceDays: true,
+                cancelledAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const totais = {
+      total: paraContar.length,
+      semAcesso: paraContar.filter((u) => !u.active).length,
+      online: paraContar.filter((u) => idsOnline.has(u.id)).length,
+      emTeste: 0,
+      emDia: 0,
+      inadimplentes: 0,
+      /** A tela avisa quando não mostrou tudo, em vez de calar. */
+      truncado: paraContar.length > usuarios.length,
+    };
+    for (const u of paraContar) {
+      if (!u.tenant || u.tenant.deletedAt) continue;
+      const situacao = situacaoCobranca(u.tenant.subscription, agora).situacao;
+      if (situacao === "em_teste") totais.emTeste++;
+      else if (situacao === "em_dia") totais.emDia++;
+      else if (situacao === "inadimplente") totais.inadimplentes++;
+    }
+
+    const lista = usuarios.map((u) => ({
       ...u,
       online: idsOnline.has(u.id),
       /**
@@ -693,6 +760,8 @@ export const AdminService = {
           ? situacaoCobranca(u.tenant.subscription, agora)
           : (null as SituacaoCobrancaDetalhe | null),
     }));
+
+    return { usuarios: lista, totais };
   },
 
   /**
