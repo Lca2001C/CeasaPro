@@ -6,7 +6,7 @@ import { DespesasService } from "@/lib/services/despesas.service";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { resolvePeriod } from "@/lib/dates";
-import { isoDateTz, addDaysTz, startOfMonthTz } from "@/lib/tz";
+import { isoDateTz, addDaysTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 
 /**
@@ -174,6 +174,74 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
     // E passa a fechar com `resumoMes`, que sempre usou {gte, lte}.
     const resumo = await DespesasService.resumoMes(tenantId);
     expect(Number(painel.despesasFixasMes)).toBe(Number(resumo.fixas));
+  });
+
+  /**
+   * O teto do mês é o FIM DO MÊS, não "até agora".
+   *
+   * A conta fixa que vence dia 20 é despesa deste mês desde o dia 1º. Com o
+   * teto em "hoje", no dia 8 o painel dizia "Contas fixas R$ 0,00" e um
+   * "Sobrou no mês" inflado, enquanto /despesas mostrava o valor cheio no
+   * mesmo instante — e o lucro ia "piorando" conforme os vencimentos chegavam,
+   * sem nada ter acontecido.
+   *
+   * No último dia do mês não existe "mais adiante no mês", então nesse dia o
+   * caso é degenerado: o teste continua passando, só não exercita a borda.
+   */
+  it("conta que vence mais adiante NESTE mês já entra no mês", async () => {
+    const cat = await DespesasService.createCategory({ name: `Luz ${Date.now()}` }, ctx);
+    const fimDoMes = new Date(startOfNextMonthTz(new Date()).getTime() - 1);
+
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Luz a vencer",
+        type: "VARIAVEL",
+        amount: 300,
+        status: "PENDENTE",
+        dueDate: fimDoMes,
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    const resumo = await DespesasService.resumoMes(tenantId);
+
+    // O painel não pode discordar da tela de Despesas sobre o mesmo mês.
+    expect(Number(painel.despesasVariaveisMes)).toBe(Number(resumo.variaveis));
+    expect(Number(painel.despesasVariaveisMes)).toBeGreaterThanOrEqual(300);
+  });
+
+  it("'Contas do mês — A pagar' é do MÊS, não o pendente de toda a história", async () => {
+    const cat = await DespesasService.createCategory({ name: `Atraso ${Date.now()}` }, ctx);
+    // Conta atrasada de um mês anterior e parcela de um mês futuro: nenhuma
+    // das duas é "conta do mês", e as duas entravam no card.
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Atrasada de outro mês",
+        type: "VARIAVEL",
+        amount: 777,
+        status: "PENDENTE",
+        dueDate: addDaysTz(startOfMonthTz(new Date()), -20),
+      },
+    });
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Parcela de mês futuro",
+        type: "VARIAVEL",
+        amount: 888,
+        status: "PENDENTE",
+        dueDate: startOfMonthTz(addDaysTz(startOfMonthTz(new Date()), 40)),
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    const resumo = await DespesasService.resumoMes(tenantId);
+    expect(Number(painel.contasPagar)).toBe(Number(resumo.aPagar));
   });
 });
 

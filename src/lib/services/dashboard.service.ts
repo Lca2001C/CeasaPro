@@ -5,7 +5,7 @@ import { toDecimal, money } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
-import { APP_TIME_ZONE, isoDateTz } from "@/lib/tz";
+import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 
 export interface DashboardProductRow {
   productId: string;
@@ -65,6 +65,24 @@ export const DashboardService = {
     // O limite é "até agora", o mesmo que `resolvePeriod({preset:"mes"})` usa.
     const ateAgora = endOfDay(now);
 
+    // Despesa tem teto DIFERENTE: o fim do mês, não "até agora".
+    //
+    // Venda e compra com data futura não são faturamento realizado, então
+    // para elas o teto "até agora" está certo. Despesa não: a conta fixa que
+    // vence dia 20 é despesa DESTE mês desde o dia 1º. Com o teto em "hoje",
+    // no dia 8 o painel dizia "Contas fixas R$ 0,00" e um "Sobrou no mês"
+    // R$ 5.000 acima do real, enquanto /despesas mostrava "Fixas R$ 5.000,00"
+    // no mesmo instante — e o lucro ia "piorando" conforme os vencimentos
+    // chegavam, sem nada ter acontecido. O dono do box decide preço com esse
+    // número.
+    //
+    // O comentário acima dizia que o teto existia para fechar com
+    // `DespesasService.resumoMes`; era o contrário — `resumoMes` usa o mês
+    // INTEIRO (`limitesDoMes`). Fechar de verdade é terminar no fim do mês, o
+    // que preserva a correção original: a parcela recorrente de outubro,
+    // gerada em setembro, continua fora de setembro.
+    const fimDoMes = new Date(startOfNextMonthTz(now).getTime() - 1);
+
     const [
       hoje,
       semana,
@@ -94,9 +112,15 @@ export const DashboardService = {
         _sum: { totalAmount: true, paidAmount: true },
         where: { status: "EM_ABERTO" },
       }),
+      // Sem janela, o card "Contas do mês — A pagar" somava TODO pendente de
+      // qualquer mês: a conta atrasada de julho e a parcela de outubro já
+      // gerada. O rótulo dizia mês e a consulta dizia histórico, então
+      // "Contas fixas" + "Contas variáveis" não fechavam com o card acima
+      // deles e /despesas mostrava um terceiro número. Mesma janela de
+      // `resumoMes.aPagar`: um número por conceito.
       db.expense.aggregate({
         _sum: { amount: true },
-        where: { status: "PENDENTE" },
+        where: { status: "PENDENTE", dueDate: { gte: monthStart, lte: fimDoMes } },
       }),
       db.purchase.aggregate({
         _sum: { totalAmount: true },
@@ -117,7 +141,7 @@ export const DashboardService = {
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
-          AND COALESCE("dueDate", "createdAt") <= ${ateAgora}
+          AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
         GROUP BY type
       `,
       // A coluna é `timestamp` sem fuso, guardando UTC. Truncar direto agrupava
