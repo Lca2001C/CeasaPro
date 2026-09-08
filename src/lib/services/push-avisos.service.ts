@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { AvisosService } from "./avisos.service";
+import { planModules } from "@/lib/plan/modules";
 import { accessDecision } from "@/lib/billing/status";
 import { enviarPushParaUsuario, isPushConfigured } from "@/lib/pwa/push-server";
 import { audit } from "@/lib/audit";
@@ -119,7 +120,7 @@ export const PushAvisosService = {
           select: {
             status: true,
             deletedAt: true,
-            subscription: { select: { status: true } },
+            subscription: { select: { status: true, plan: { select: { features: true } } } },
           },
         });
         if (!tenant || tenant.deletedAt) {
@@ -131,7 +132,13 @@ export const PushAvisosService = {
           continue;
         }
 
-        const avisos = await AvisosService.get(tenantId);
+        // Sem sessão aqui: os módulos vêm do plano da assinatura. Sem eles, a
+        // notificação do dia podia ser "Higienização a pagar" para quem não
+        // tem o módulo, e o toque caía no paywall.
+        const avisos = await AvisosService.get(
+          tenantId,
+          planModules(tenant.subscription?.plan?.features),
+        );
         if (avisos.length === 0) {
           resultado.pulados += 1;
           continue;

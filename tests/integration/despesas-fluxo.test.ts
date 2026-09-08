@@ -103,7 +103,7 @@ describe("Filtro de vencidas", () => {
 
   it("o aviso do dashboard aponta para a conta quando é uma só", async () => {
     const vencida = await criar({ description: "Luz", dueDate: ontem });
-    const avisos = await AvisosService.get(tenantId, HOJE);
+    const avisos = await AvisosService.get(tenantId, undefined, HOJE);
     const aviso = avisos.find((a) => a.tipo === "despesa_vencida");
     expect(aviso?.href).toBe(`/despesas/${vencida.id}`);
   });
@@ -111,7 +111,7 @@ describe("Filtro de vencidas", () => {
   it("com mais de uma vencida, aponta para a lista já filtrada", async () => {
     await criar({ description: "Luz", dueDate: ontem });
     await criar({ description: "Água", dueDate: ontem });
-    const avisos = await AvisosService.get(tenantId, HOJE);
+    const avisos = await AvisosService.get(tenantId, undefined, HOJE);
     const aviso = avisos.find((a) => a.tipo === "despesa_vencida");
     expect(aviso?.count).toBe(2);
     expect(aviso?.href).toBe("/despesas?vencidas=1");

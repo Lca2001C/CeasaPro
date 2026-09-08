@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { CaixasService } from "@/lib/services/caixas.service";
+import { AvisosService } from "@/lib/services/avisos.service";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -339,5 +340,27 @@ describe("Lançamentos simultâneos no mesmo lote", () => {
     });
     const somaLedger = movimentos.reduce((t, m) => t + m.quantity, 0);
     expect(somaLedger).toBe(depois.returnedQty);
+  });
+});
+
+/**
+ * O aviso de higienização respeita o plano.
+ *
+ * `AvisosService.get` não recebia os módulos e consultava `crateCleaning` sem
+ * gate: a empresa que saiu do plano com Higienização continuava vendo
+ * "Higienização a pagar" no topo do painel, e o toque levava a
+ * `/plano?bloqueado=higienizacao`. Pelo push era pior — a notificação do dia
+ * podia ser exatamente essa e caía no paywall.
+ */
+describe("Aviso de higienização e o plano", () => {
+  it("aparece para quem tem o módulo e não aparece para quem não tem", async () => {
+    await entrarSujas(10);
+    await enviar(10, 3); // R$ 30 a pagar, status ENVIADO
+
+    const comModulo = await AvisosService.get(tenantId, ["higienizacao"]);
+    expect(comModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(true);
+
+    const semModulo = await AvisosService.get(tenantId, []);
+    expect(semModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(false);
   });
 });

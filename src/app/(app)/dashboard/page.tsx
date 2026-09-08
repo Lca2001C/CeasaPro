@@ -36,7 +36,7 @@ export default async function DashboardPage() {
   const { tenantId, session } = await requireTenant();
   const [s, avisos, contas, proximas] = await Promise.all([
     DashboardService.getSummary(tenantId),
-    AvisosService.get(tenantId),
+    AvisosService.get(tenantId, session.modules),
     // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
     // em "quanto tenho que pagar", não em módulos.
     ContasPagarService.get(tenantId, session.modules),

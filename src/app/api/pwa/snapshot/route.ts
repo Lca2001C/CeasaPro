@@ -61,7 +61,7 @@ export const GET = withTenantRoute({
   handler: async (_input, ctx): Promise<PwaSnapshot> => {
     const [resumo, avisos, estoque, fiado] = await Promise.all([
       DashboardService.getSummary(ctx.tenantId),
-      AvisosService.get(ctx.tenantId),
+      AvisosService.get(ctx.tenantId, ctx.session.modules),
       EstoqueService.getPositions(ctx.tenantId),
       FiadoService.listOpen(ctx.tenantId, "EM_ABERTO"),
     ]);
