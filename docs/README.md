@@ -2,6 +2,12 @@
 
 Documentação completa do **CeasaPro** — SaaS de gestão para comercializadores do CEASA (Belo Horizonte). Multi-empresa, mobile-first, com painel de super-admin e cobrança por assinatura (Mercado Pago).
 
+## Para agentes de IA
+
+Briefing único do produto, das regras inegociáveis e do mapa do código (estado atual, não a especificação antiga):
+
+**[CONTEXTO-AGENTE.md](CONTEXTO-AGENTE.md)**
+
 ## Índice
 
 1. [Visão geral](01-visao-geral.md) — o que é, para quem, principais conceitos.

@@ -69,8 +69,9 @@ export function DespesasFiltros({
             aria-label="Buscar despesa por descrição"
           />
         </div>
-        <Button variant="outline" onClick={() => aplicar()} aria-label="Buscar">
-          Buscar
+        <Button variant="outline" onClick={() => aplicar()} aria-label="Buscar" className="px-3 sm:px-5">
+          <Search className="size-4 sm:hidden" />
+          <span className="hidden sm:inline">Buscar</span>
         </Button>
         <Button
           variant={aberto ? "default" : "outline"}

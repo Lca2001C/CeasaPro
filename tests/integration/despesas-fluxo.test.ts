@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { DespesasService } from "@/lib/services/despesas.service";
 import { ContasPagarService } from "@/lib/services/contas-pagar.service";
 import { AvisosService } from "@/lib/services/avisos.service";
+import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { createDefaultExpenseCategories } from "@/lib/services/expense-categories";
 import { isoDateTz, startOfDayTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
@@ -34,6 +35,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.expense.deleteMany({ where: { tenantId } });
+  await prisma.crateCleaning.deleteMany({ where: { tenantId } });
 });
 
 async function criar(patch: Partial<Parameters<typeof DespesasService.create>[0]> = {}) {
@@ -513,5 +515,79 @@ describe("Frete da compra como despesa", () => {
       ctx,
     );
     expect(r).toBeNull();
+  });
+});
+
+describe("Lista unificada com higienização", () => {
+  it("mostra o saldo da higienização nas pendentes quando o plano inclui o módulo", async () => {
+    await criar({ description: "Aluguel", amount: 1000, dueDate: amanha });
+    await prisma.crateCleaning.create({
+      data: {
+        tenantId,
+        cleanerName: "Lava Tudo",
+        sentDate: startOfDayTz(HOJE),
+        sentQty: 10,
+        unitPrice: 5,
+        totalAmount: 50,
+        status: "DEVOLVIDO",
+      },
+    });
+
+    const linhas = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(linhas.some((l) => l.origem === "higienizacao" && l.amount === "50.00")).toBe(true);
+    expect(linhas.some((l) => l.description === "Aluguel")).toBe(true);
+
+    const semModulo = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["caixas"],
+      HOJE,
+    );
+    expect(semModulo.some((l) => l.origem === "higienizacao")).toBe(false);
+
+    const resumo = await DespesasService.resumoMes(tenantId, "2026-09", HOJE, ["higienizacao"]);
+    expect(Number(resumo.aPagar)).toBe(1050);
+    expect(Number(resumo.variaveis)).toBe(50);
+  });
+
+  it("pagamento da higienização some das pendentes e entra nas pagas", async () => {
+    const lote = await prisma.crateCleaning.create({
+      data: {
+        tenantId,
+        cleanerName: "Lava Tudo",
+        sentDate: startOfDayTz(HOJE),
+        sentQty: 10,
+        unitPrice: 5,
+        totalAmount: 50,
+        paidAmount: 0,
+        status: "DEVOLVIDO",
+      },
+    });
+
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 50, paidDate: hoje },
+      ctx,
+    );
+
+    const pendentes = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(pendentes.some((l) => l.id === lote.id)).toBe(false);
+
+    const pagas = await DespesasService.listContas(
+      tenantId,
+      { status: "PAGO" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(pagas.some((l) => l.id === lote.id && l.status === "PAGO")).toBe(true);
   });
 });

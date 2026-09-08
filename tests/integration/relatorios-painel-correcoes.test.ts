@@ -243,6 +243,48 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
     const resumo = await DespesasService.resumoMes(tenantId);
     expect(Number(painel.contasPagar)).toBe(Number(resumo.aPagar));
   });
+
+  it("frete com purchaseId não entra no lucro — já está no CMV", async () => {
+    const purchase = await prisma.purchase.create({
+      data: {
+        tenantId,
+        purchaseDate: new Date(),
+        freight: 180,
+        totalAmount: 1180,
+      },
+    });
+    const cat = await DespesasService.createCategory({ name: `Op ${Date.now()}` }, ctx);
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Internet",
+        type: "VARIAVEL",
+        amount: 100,
+        status: "PENDENTE",
+        dueDate: new Date(),
+      },
+    });
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Frete da compra",
+        type: "VARIAVEL",
+        amount: 180,
+        status: "PENDENTE",
+        dueDate: new Date(),
+        purchaseId: purchase.id,
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    // Sem vendas/CMV, lucro = 0 - despesas operacionais. O frete (180) fica de fora.
+    expect(Number(painel.lucroMes)).toBe(-100);
+
+    await prisma.expense.deleteMany({ where: { tenantId } });
+    await prisma.purchase.deleteMany({ where: { tenantId } });
+  });
 });
 
 describe("reduzir o envio de higienizacao NAO lava caixa (regressao)", () => {

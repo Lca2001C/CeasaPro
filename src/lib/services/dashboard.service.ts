@@ -1,11 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
-import { toDecimal, money } from "@/lib/money";
+import { toDecimal, money, sub } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 export interface DashboardProductRow {
   productId: string;
@@ -43,7 +44,7 @@ export interface DashboardSummary {
 }
 
 export const DashboardService = {
-  async getSummary(tenantId: string): Promise<DashboardSummary> {
+  async getSummary(tenantId: string, modules?: string[]): Promise<DashboardSummary> {
     const db = getTenantPrisma(tenantId);
     const now = new Date();
     const todayStart = startOfDay(now);
@@ -98,6 +99,8 @@ export const DashboardService = {
       topLucrativosRows,
       prejuizoRows,
       estoqueParadoRows,
+      despOperacional,
+      higLotes,
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
@@ -229,15 +232,48 @@ export const DashboardService = {
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
         LIMIT 5
       `,
+      prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM expenses
+        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+          AND "purchaseId" IS NULL
+          AND COALESCE("dueDate", "createdAt") >= ${monthStart}
+          AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
+      `,
+      isModuleEnabled(modules, "higienizacao")
+        ? db.crateCleaning.findMany({
+            select: { totalAmount: true, paidAmount: true, sentDate: true, paidDate: true },
+          })
+        : Promise.resolve([]),
     ]);
 
     const vendasMesTotal = toDecimal(vendasMes._sum.totalAmount ?? 0);
     const cmvMes = toDecimal((cmvRows[0]?.cmv ?? 0) as Prisma.Decimal.Value);
     const despesasFixasMes = sumExpenseByType(despRows, "FIXA");
-    const despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
-    const despesasMes = money(despesasFixasMes.plus(despesasVariaveisMes));
+    let despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
+
+    let higSaldoAberto = toDecimal(0);
+    let higPagaMes = toDecimal(0);
+    let higEnviadaMes = toDecimal(0);
+    for (const lote of higLotes) {
+      const saldo = sub(lote.totalAmount, lote.paidAmount);
+      if (saldo.greaterThan(0)) higSaldoAberto = higSaldoAberto.plus(saldo);
+      if (lote.paidDate && lote.paidDate >= monthStart && lote.paidDate <= fimDoMes) {
+        higPagaMes = higPagaMes.plus(lote.paidAmount);
+      }
+      if (lote.sentDate >= monthStart && lote.sentDate <= fimDoMes) {
+        higEnviadaMes = higEnviadaMes.plus(lote.totalAmount);
+      }
+    }
+    despesasVariaveisMes = money(despesasVariaveisMes.plus(higEnviadaMes));
+
+    // Frete lançado como despesa já está no CMV (unitCost). Higienização paga
+    // no mês é opex de verdade e entra no lucro líquido.
+    const despesasLucro = money(
+      toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higPagaMes),
+    );
     const lucroBrutoMes = FinancialCalc.lucroBruto(vendasMesTotal, cmvMes);
-    const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasMes);
+    const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasLucro);
 
     const aReceber = FinancialCalc.saldoFiado(
       cred._sum.totalAmount ?? 0,
@@ -265,7 +301,7 @@ export const DashboardService = {
       mesVendi: money(vendasMesTotal),
       totalCompradoMes: money(toDecimal(comprasMes._sum.totalAmount ?? 0)),
       aReceber,
-      contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0)),
+      contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0).plus(higSaldoAberto)),
       estoqueValor,
       lucroBrutoMes,
       lucroMes,

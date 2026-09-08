@@ -24,3 +24,42 @@ test.describe("Despesas — valor e seleção de data (calendário)", () => {
     await expect(page.getByText(desc)).toBeVisible();
   });
 });
+
+test.describe("Despesas — lista no celular", () => {
+  test.use({ viewport: { width: 375, height: 812 } });
+
+  test("o card empilha: descrição inteira e Pagar não se sobrepõem", async ({ page }) => {
+    const desc = `Frete da compra Transportes Silva ${Date.now()}`;
+
+    await page.goto("/despesas/nova");
+    await page.getByLabel("Descrição").fill(desc);
+    const valor = page.locator('input[inputmode="decimal"]');
+    await valor.click();
+    await valor.pressSequentially("100");
+    await page.getByLabel("Tipo").selectOption("VARIAVEL");
+    await page.getByLabel("Vencimento", { exact: true }).fill("2026-09-02");
+    await page.getByRole("button", { name: "Salvar" }).click();
+    await page.waitForURL("**/despesas");
+
+    // Pendentes é o padrão; a conta de setembro de 2026 pode estar vencida
+    // (hoje é depois disso) — a aba Vencidas também lista.
+    if (!(await page.getByText(desc).isVisible().catch(() => false))) {
+      await page.getByRole("link", { name: "Vencidas" }).click();
+    }
+
+    const titulo = page.getByText(desc);
+    await expect(titulo).toBeVisible();
+    await expect(titulo).not.toHaveText(/^F\.\.\./);
+
+    const card = page.locator("main .bg-card").filter({ hasText: desc });
+    const pagar = card.getByRole("button", { name: "Pagar" });
+    await expect(pagar).toBeVisible();
+
+    const boxTitulo = await titulo.boundingBox();
+    const boxPagar = await pagar.boundingBox();
+    expect(boxTitulo).toBeTruthy();
+    expect(boxPagar).toBeTruthy();
+    // Empilhados: o botão fica ABAIXO do título, sem cobrir o valor/texto.
+    expect(boxPagar!.y).toBeGreaterThan(boxTitulo!.y + boxTitulo!.height - 4);
+  });
+});

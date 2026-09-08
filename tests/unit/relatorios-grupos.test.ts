@@ -4,6 +4,8 @@ import {
   REPORT_TYPES,
   REPORT_LABELS,
   isAdvancedReport,
+  BASIC_REPORTS,
+  ADVANCED_REPORTS,
   type ReportKind,
 } from "@/lib/reports/report.types";
 
@@ -63,5 +65,53 @@ describe("rótulos dos relatórios", () => {
     expect(REPORT_LABELS.PRODUTOS_PREJUIZO).toBe("Produtos com prejuízo");
     expect(REPORT_LABELS.HIGIENIZACAO).toBe("Higienização");
     expect(REPORT_LABELS.CAIXAS_PAPELAO).toBe("Total de caixas de papelão");
+  });
+});
+
+/**
+ * Todo relatório é básico OU avançado, e a dúvida bloqueia.
+ *
+ * `isAdvancedReport` era fail-OPEN (`ADVANCED_REPORTS.includes`), e quatro
+ * relatórios nunca foram classificados: "Lucro por fornecedor", "Produtos com
+ * prejuízo", "Estoque parado" e "Total de caixas de papelão". Os dois gates
+ * — a lista de /relatorios e a rota de exportação — dependem só dessa função,
+ * então eles ficavam liberados em qualquer plano, e CAIXAS_PAPELAO ainda
+ * entregava dados de `packaging_sales`, que é de outro módulo.
+ */
+describe("classificação por plano", () => {
+  it("nenhum relatório fica sem classificação", () => {
+    const semClasse = REPORT_TYPES.filter(
+      (t) => !BASIC_REPORTS.includes(t) && !ADVANCED_REPORTS.includes(t),
+    );
+    expect(semClasse).toEqual([]);
+  });
+
+  it("nenhum relatório está nas duas listas", () => {
+    const nasDuas = REPORT_TYPES.filter(
+      (t) => BASIC_REPORTS.includes(t) && ADVANCED_REPORTS.includes(t),
+    );
+    expect(nasDuas).toEqual([]);
+  });
+
+  it("os quatro que vazavam agora são pagos", () => {
+    for (const t of [
+      "LUCRO_FORNECEDOR",
+      "PRODUTOS_PREJUIZO",
+      "ESTOQUE_PARADO",
+      "CAIXAS_PAPELAO",
+    ] as ReportKind[]) {
+      expect(isAdvancedReport(t), `${t} deveria exigir o módulo pago`).toBe(true);
+    }
+  });
+
+  it("os do núcleo continuam livres", () => {
+    for (const t of BASIC_REPORTS) {
+      expect(isAdvancedReport(t), `${t} é do núcleo e não pode ser bloqueado`).toBe(false);
+    }
+  });
+
+  it("a decisão é pela AUSÊNCIA no núcleo — esquecer de classificar bloqueia", () => {
+    // Um relatório novo que ninguém classificou não pode nascer liberado.
+    expect(isAdvancedReport("RELATORIO_QUE_NAO_EXISTE" as ReportKind)).toBe(true);
   });
 });
