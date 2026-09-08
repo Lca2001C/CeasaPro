@@ -4,12 +4,21 @@ import type { FonteDeCotacao, ParametrosDeBusca, ResultadoDaFonte } from "./tipo
 import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 
 /**
- * Boletim Diário de Preços da CEASAMINAS.
+ * Boletim Diário de Preços do DetecWeb.
  *
- * O sistema (DetecWeb, feito em ScriptCase) atende os sete entrepostos com a
- * MESMA tela, mudando só o código do mercado — então um adaptador cobre Minas
- * inteira. O que se sabe dele foi medido contra o sistema real, e cada coisa
- * abaixo existe porque a medição mostrou que era assim:
+ * O sistema (feito em ScriptCase) atende várias praças pela MESMA tela, mudando
+ * só o código do mercado — então um adaptador cobre todas. Medindo o endpoint,
+ * ele serve não só Minas mas também o ESPÍRITO SANTO: `mercod=211` devolve
+ * "CEASA-ES UNID GRANDE VITORIA". Os dois estados compartilham o mesmo banco,
+ * então cobrir o ES foi acrescentar uma linha no catálogo, sem adaptador novo.
+ *
+ * Mercados confirmados com dado real: 211 (Grande Vitória/ES), 214 (Grande
+ * BH), 217 (Juiz de Fora), 218 (Uberlândia), 237 (Caratinga), 260 (Gov.
+ * Valadares), 353 (Barbacena), 361 (Poços de Caldas). Uberaba (215) responde
+ * sem nenhum boletim em 18 datas testadas.
+ *
+ * O que se sabe daqui foi medido contra o sistema real, e cada coisa abaixo
+ * existe porque a medição mostrou que era assim:
  *
  * **A data vai em MM/DD/AAAA, não em DD/MM/AAAA.** A tela é brasileira e ecoa a
  * data em DD/MM, mas o parâmetro entra cru numa `stored procedure` de SQL Server
@@ -31,7 +40,6 @@ import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
  */
 
 const BASE = "https://minas1.ceasa.mg.gov.br/detec";
-const URL_FILTRO = `${BASE}/filtro_boletim/`;
 const URL_BOLETIM = `${BASE}/boletim_completo/boletim_completo.php`;
 
 /** Campos da grade, na ordem em que o parser depende deles. */
@@ -91,22 +99,10 @@ function dataDaPagina(html: string): string | null {
   return `${m[3]}-${m[2]}-${m[1]}`;
 }
 
-/** Token de sessão do ScriptCase, lido da página do filtro. */
-function scriptCaseInit(htmlDaSessao: string): string {
-  const m = /name="script_case_init"\s+value="(\d+)"/.exec(htmlDaSessao);
-  // Sem o valor, manda um conhecido em vez de desistir: a fonte aparentemente
-  // não o valida, e falhar aqui seria trocar um risco hipotético por uma falha
-  // certa.
-  return m?.[1] ?? "3279";
-}
-
 export const ceasaminas: FonteDeCotacao = {
   chave: "ceasaminas",
 
-  /**
-   * Duas requisições: a primeira abre a sessão PHP (a aplicação recusa um POST
-   * sem sessão), a segunda pede o boletim.
-   */
+  /** Uma requisição só: POST direto no boletim. Ver comentário abaixo. */
   async buscar({ sourceParams, data }: ParametrosDeBusca): Promise<ResultadoDaFonte> {
     const mercado = mercadoDe(sourceParams);
     if (!mercado) {
@@ -117,21 +113,24 @@ export const ceasaminas: FonteDeCotacao = {
       };
     }
 
-    const sessao = await buscarHtml(URL_FILTRO, {}, { fonte: "ceasaminas" });
-    if (!sessao.ok) {
-      return { ok: false, linhas: [], httpStatus: sessao.status, erro: sessao.erro };
-    }
+    /*
+      UMA requisição, não duas.
 
+      A versão anterior baixava a página do filtro antes, para abrir sessão PHP e
+      ler o token `script_case_init`. Medindo, nada disso é necessário: o POST
+      direto — sem cookie de sessão e sem o campo `script_case_init` — devolve o
+      mesmo boletim, com o mesmo número de produtos.
+
+      Isso corta metade das requisições ao servidor de terceiro (o que importa
+      quando são sete centrais dentro de um orçamento de tempo) e remove uma
+      dependência frágil: o token variava a cada sessão, e o adaptador quebraria
+      se a página do filtro mudasse de forma, mesmo com o endpoint de dados
+      intacto.
+    */
     const corpo = new URLSearchParams({
       // O separador `?#?` / `?@?` é do ScriptCase, e o nome do campo é `mercod`
       // (com a abreviação deles), não `mercado`.
       nmgp_parms: `mercod?#?${mercado}?@?data?#?${dataParaFonte(data)}?@?numero?#?1?@?`,
-      // Lido da página da sessão, não fixo. O valor muda a cada sessão do
-      // ScriptCase (foram observados 5708 e 3279 em sessões diferentes) e a
-      // fonte parece ignorá-lo hoje — mas depender disso é apostar num
-      // comportamento não documentado de um sistema legado. Extrair custa nada,
-      // porque a página já foi baixada para abrir a sessão.
-      script_case_init: scriptCaseInit(sessao.corpo),
     });
 
     const resposta = await buscarHtml(

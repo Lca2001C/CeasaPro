@@ -45,11 +45,20 @@ export const OPTIONAL_MODULES: Record<OptionalModuleKey, OptionalModule> = {
   cotacoes: {
     key: "cotacoes",
     label: "Cotações do CEASA",
-    // A palavra "diário" está aqui de propósito, e é o ajuste de expectativa
-    // mais barato que existe: esta descrição aparece em /plano e na Ajuda, antes
-    // de o cliente abrir a tela e concluir sozinho que os preços são do momento.
+    /*
+      Esta descrição aparece em `/plano`, ANTES da compra, e na Ajuda. É o ajuste
+      de expectativa mais barato que existe — e por isso ela diz as duas coisas
+      que o cliente descobriria sozinho, tarde:
+
+      1. É BOLETIM, não preço do momento. O preço de agora é negociado no balcão
+         e nenhuma central divulga.
+      2. A busca automática ainda não cobre o país. Das 65 centrais do catálogo,
+         8 são buscadas sozinhas; nas outras o boletim depende de envio manual.
+         Vender "preços do CEASA" para quem compra em Recife, sem essa ressalva,
+         seria vender o que não se entrega.
+    */
     description:
-      "Preços do boletim diário da sua central do CEASA, com destaque para os produtos que você tem em estoque.",
+      "Preços do boletim da sua central do CEASA, com destaque para os produtos que você tem em estoque. A busca automática cobre hoje as centrais de MG e ES; nas demais praças, o boletim depende de envio manual.",
     pathPrefixes: ["/cotacoes"],
   },
   relatorios_avancados: {

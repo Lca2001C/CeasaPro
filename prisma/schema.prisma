@@ -27,6 +27,13 @@ model Tenant {
   /// público. Livre e opcional: no Ceasa a mesma pessoa opera box, banca ou
   /// galpão, e travar em enum obrigaria migration a cada arranjo novo.
   establishmentType     String?
+  /// Estado em que a empresa opera (sigla de 2 letras).
+  ///
+  /// Não é derivado da central: existe empresa de cidade de divisa que compra no
+  /// estado vizinho, e o módulo de cotações é opcional e pago — quem não o
+  /// contrata continua tendo UF. Serve ao cadastro, aos relatórios e a filtrar a
+  /// lista de centrais na hora de escolher.
+  uf                    String?                @db.Char(2)
   /// Central do CEASA em que esta empresa compra — governa quais cotações ela vê.
   /// Anulável: quem não escolheu ainda cai no estado vazio do módulo, e quem não
   /// tem o módulo no plano nunca preenche. `SetNull` para desativar uma central
@@ -220,23 +227,34 @@ model CeasaCentral {
   /// Código estável do entreposto na fonte (ex.: "CEAMG"). É PK textual porque o
   /// importador referencia a central por código, não por id gerado — mesmo
   /// raciocínio de `RateLimit.keyHash`.
-  code         String           @id
-  name         String
-  city         String
-  uf           String
+  code              String           @id
+  name              String
+  city              String
+  uf                String
   /// Qual implementação de `FonteDeCotacao` atende esta central.
-  sourceKey    String
+  sourceKey         String
   /// Parâmetros que a fonte precisa (ex.: `{"mercado":"CEAMG"}`). Fica em Json
   /// para uma central nova não exigir migration.
-  sourceParams Json?
+  sourceParams      Json?
   /// Permite desligar uma fonte quebrada SEM deploy.
-  active       Boolean          @default(true)
-  sortOrder    Int              @default(0)
-  createdAt    DateTime         @default(now())
-  updatedAt    DateTime         @updatedAt
-  quotes       CeasaQuote[]
-  importRuns   CeasaImportRun[]
-  tenants      Tenant[]
+  active            Boolean          @default(true)
+  /// Quantos dias sem boletim ainda são NORMAIS para esta central.
+  ///
+  /// Medido contra a fonte real: Grande BH e Grande Vitória publicam quase todo
+  /// dia útil, mas Juiz de Fora, Barbacena, Caratinga e Poços de Caldas publicam
+  /// 2 a 3 vezes por semana. Um limiar único faria essas quatro dispararem
+  /// alarme de defasagem para sempre — e alarme que grita toda semana é ignorado
+  /// em um mês, levando junto o alarme da quebra de verdade.
+  ///
+  /// É o mesmo número que a tela do cliente usa para o selo de "boletim antigo",
+  /// para tela e alarme nunca discordarem.
+  maxDiasSemBoletim Int              @default(7)
+  sortOrder         Int              @default(0)
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  quotes            CeasaQuote[]
+  importRuns        CeasaImportRun[]
+  tenants           Tenant[]
 
   @@index([active, sortOrder])
   @@map("ceasa_centrals")

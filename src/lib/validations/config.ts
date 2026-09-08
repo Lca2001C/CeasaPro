@@ -1,3 +1,4 @@
+import { ehUfValida } from "@/lib/constants";
 import { z } from "zod";
 
 /**
@@ -21,6 +22,14 @@ export const empresaSchema = z.object({
    * inválido o que já foi gravado.
    */
   establishmentType: z.string().trim().max(60, "Descricao muito longa").nullable().optional(),
+  /** Sigla do estado. Lista fechada: o `<select>` oferece exatamente estas. */
+  uf: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((v) => v === "" || ehUfValida(v), "Estado inválido")
+    .nullable()
+    .optional(),
 });
 export type EmpresaInput = z.infer<typeof empresaSchema>;
 

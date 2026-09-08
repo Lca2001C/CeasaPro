@@ -11,6 +11,8 @@ import { salvarEmpresa } from "@/actions/config.actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select } from "@/components/ui/select";
+import { UFS } from "@/lib/constants";
 
 export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
   const router = useRouter();
@@ -56,9 +58,23 @@ export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
           <Input id="phone" {...register("phone")} />
         </div>
       </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="address">Endereço</Label>
-        <Input id="address" {...register("address")} />
+      <div className="grid grid-cols-[1fr_7rem] gap-3">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="address">Endereço</Label>
+          <Input id="address" {...register("address")} />
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="uf">Estado</Label>
+          <Select id="uf" {...register("uf")}>
+            <option value="">—</option>
+            {UFS.map((u) => (
+              <option key={u.sigla} value={u.sigla}>
+                {u.sigla}
+              </option>
+            ))}
+          </Select>
+          {errors.uf && <span className="text-xs text-destructive">{errors.uf.message}</span>}
+        </div>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="businessHours">Horário de funcionamento</Label>

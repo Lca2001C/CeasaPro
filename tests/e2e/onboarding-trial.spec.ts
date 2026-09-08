@@ -76,12 +76,28 @@ test.describe("Onboarding com teste grátis de 7 dias", () => {
     await page.getByRole("link", { name: /Testar 7 dias grátis/i }).first().click();
     await expect(page).toHaveURL(/\/cadastro/);
 
-    // ─── 2. Cadastro: e-mail e senha, e nada mais ───
+    // ─── 2. Cadastro: e-mail, senha e dois seletores ───
     await page.getByLabel("E-mail").fill(EMAIL);
-    // Os campos de negócio, telefone e tipo de estabelecimento saíram daqui e
-    // foram para Configurações. Se algum voltar, o passo 6 abaixo reprova.
+    // Os campos de DIGITAÇÃO (negócio, telefone, tipo de estabelecimento) saíram
+    // daqui e foram para Configurações. Estado e central ficam, mas como
+    // `<select>` — um toque cada, não uma linha para preencher.
     await expect(page.getByLabel("Nome do seu negócio")).toHaveCount(0);
     await expect(page.getByLabel("Telefone / WhatsApp")).toHaveCount(0);
+
+    // A lista de centrais só abre depois do estado: são ~65 no país, e uma lista
+    // única seria impossível de percorrer no celular.
+    await expect(page.getByLabel(/Onde você compra/)).toBeDisabled();
+    await page.getByLabel("Estado").selectOption("MG");
+    await expect(page.getByLabel(/Onde você compra/)).toBeEnabled();
+    await page.getByLabel(/Onde você compra/).selectOption("CEAMG");
+
+    // Trocar de estado precisa LIMPAR a central: sem isso o cadastro enviaria
+    // uma central de outro estado, que o servidor aceitaria (ela existe) e o
+    // cliente veria os preços da praça errada.
+    await page.getByLabel("Estado").selectOption("SP");
+    await expect(page.getByLabel(/Onde você compra/)).toHaveValue("");
+    await page.getByLabel("Estado").selectOption("MG");
+    await page.getByLabel(/Onde você compra/).selectOption("CEAMG");
     // `exact` é obrigatório: "Confirmar senha" também contém "Senha", e sem isso
     // o seletor casa com dois campos e o teste quebra por ambiguidade.
     await page.getByLabel("Senha", { exact: true }).fill(SENHA);
@@ -148,8 +164,30 @@ test.describe("Onboarding com teste grátis de 7 dias", () => {
     // Sem nome, o topo mostra o valor de partida.
     await expect(page.locator("header")).toContainText("Minha empresa");
 
-    // ─── 4c. Completar em Configurações é o caminho prometido ───
+    /*
+      ─── 4c. O que foi escolhido no cadastro FICOU GRAVADO ───
+
+      Conferido no banco, e não na tela de Cotações, por um motivo que vale
+      registrar: o cadastro público entra no plano ATIVO MAIS BARATO, e esse
+      plano não inclui módulos opcionais. Ou seja, quem acaba de se cadastrar
+      escolhe a central mas ainda não tem acesso ao módulo — ele passa a
+      funcionar no instante em que a pessoa contrata um plano que o inclua.
+
+      O dado chegar ao seu lugar é o que este passo prova. Que a TELA abre com a
+      praça certa está provado em `tests/integration/cadastro-uf-central.test.ts`,
+      onde o plano é controlado.
+    */
+    const empresa = await prisma.tenant.findUniqueOrThrow({
+      where: { id: tenantId },
+      select: { uf: true, ceasaCentralCode: true },
+    });
+    expect(empresa.uf).toBe("MG");
+    expect(empresa.ceasaCentralCode).toBe("CEAMG");
+
+    // ─── 4d. Completar em Configurações é o caminho prometido ───
     await page.goto("/configuracoes");
+    // A UF veio do cadastro e aparece preenchida.
+    await expect(page.getByLabel("Estado")).toHaveValue("MG");
     await page.getByLabel("Nome fantasia").fill(NEGOCIO);
     await page.getByLabel(/Tipo de estabelecimento/).fill("Box 42");
     await page.getByRole("button", { name: "Salvar" }).click();

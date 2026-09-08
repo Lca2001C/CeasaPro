@@ -28,10 +28,10 @@ describe("frescorDoBoletim", () => {
     expect(frescorDoBoletim(dia("2026-09-09"), AGORA).nivel).toBe("atual");
   });
 
-  it("dois e três dias são atraso, quatro é defasagem", () => {
+  it("dentro do limiar é atraso; passando dele, defasagem", () => {
     expect(frescorDoBoletim(dia("2026-09-08"), AGORA).nivel).toBe("atrasado");
-    expect(frescorDoBoletim(dia("2026-09-07"), AGORA).nivel).toBe("atrasado");
-    expect(frescorDoBoletim(dia("2026-09-06"), AGORA).nivel).toBe("defasado");
+    expect(frescorDoBoletim(dia("2026-09-03"), AGORA).nivel).toBe("atrasado"); // 7 dias
+    expect(frescorDoBoletim(dia("2026-09-02"), AGORA).nivel).toBe("defasado"); // 8
   });
 
   it("o limiar da tela É a constante do alarme", () => {
@@ -45,6 +45,33 @@ describe("frescorDoBoletim", () => {
     const passandoDoLimite = dia("2026-09-10");
     passandoDoLimite.setUTCDate(passandoDoLimite.getUTCDate() - DIAS_ATE_DEFASAGEM - 1);
     expect(frescorDoBoletim(passandoDoLimite, AGORA).nivel).toBe("defasado");
+  });
+
+  /**
+   * O limiar é POR CENTRAL, e isso veio de medir a fonte.
+   *
+   * Em 8 dias úteis seguidos, a Grande BH publicou quase todo dia, mas Juiz de
+   * Fora, Barbacena, Caratinga e Poços de Caldas publicaram 2 a 3 vezes por
+   * semana. Sob um número único de 3 dias, essas quatro ficariam marcadas como
+   * defasadas quase sempre — e o alarme correspondente gritaria toda semana, até
+   * alguém parar de ler. Aí a quebra de verdade passaria junto.
+   */
+  it("aceita limiar próprio da central", () => {
+    const cincoDias = dia("2026-09-05"); // 5 dias antes de AGORA
+
+    // Central que publica todo dia (limiar 3): 5 dias já é defasagem.
+    expect(frescorDoBoletim(cincoDias, AGORA, 3).nivel).toBe("defasado");
+    // Central que publica 2x por semana (limiar 7): 5 dias é normal.
+    expect(frescorDoBoletim(cincoDias, AGORA, 7).nivel).toBe("atrasado");
+  });
+
+  it("limiar inválido cai no padrão em vez de marcar tudo como defasado", () => {
+    // Um `0` vindo do banco por engano transformaria toda central em defasada e
+    // encheria a caixa do super-admin de alarme falso.
+    const doisDias = dia("2026-09-08");
+    expect(frescorDoBoletim(doisDias, AGORA, 0).nivel).toBe("atrasado");
+    expect(frescorDoBoletim(doisDias, AGORA, -5).nivel).toBe("atrasado");
+    expect(frescorDoBoletim(doisDias, AGORA, NaN).nivel).toBe("atrasado");
   });
 
   it("sem boletim é 'ausente', não zero dias", () => {

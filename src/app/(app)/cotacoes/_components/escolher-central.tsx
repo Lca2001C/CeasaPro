@@ -14,6 +14,8 @@ interface Central {
   name: string;
   city: string;
   uf: string;
+  /** Tem busca automática de boletim? Ver `CotacoesService.listarCentrais`. */
+  automatica: boolean;
 }
 
 /**
@@ -36,6 +38,10 @@ export function EscolherCentral({
   const router = useRouter();
   const [valor, setValor] = useState(atual ?? "");
   const [saving, setSaving] = useState(false);
+
+  const automaticas = centrais.filter((c) => c.automatica);
+  const manuais = centrais.filter((c) => !c.automatica);
+  const escolhida = centrais.find((c) => c.code === valor) ?? null;
 
   async function salvar() {
     setSaving(true);
@@ -60,15 +66,41 @@ export function EscolherCentral({
           onChange={(e) => setValor(e.target.value)}
         >
           <option value="">Não informada</option>
-          {centrais.map((c) => (
-            <option key={c.code} value={c.code}>
-              {c.name} — {c.city}/{c.uf}
-            </option>
-          ))}
+          {/*
+            Separadas por grupo, e não numa lista só: das 65 centrais, 8 têm
+            busca automática e 57 dependem de alguém enviar o boletim. Numa lista
+            única, quem é de Recife escolheria a sua e ficaria esperando um preço
+            que ninguém vai buscar — e só descobriria isso depois.
+          */}
+          {automaticas.length > 0 && (
+            <optgroup label="Com preços automáticos">
+              {automaticas.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} — {c.city}/{c.uf}
+                </option>
+              ))}
+            </optgroup>
+          )}
+          {manuais.length > 0 && (
+            <optgroup label="Sem busca automática ainda">
+              {manuais.map((c) => (
+                <option key={c.code} value={c.code}>
+                  {c.name} — {c.city}/{c.uf}
+                </option>
+              ))}
+            </optgroup>
+          )}
         </Select>
-        <span className="text-xs text-muted-foreground">
-          É a central de onde vêm os preços que você vê em Cotações.
-        </span>
+        {escolhida && !escolhida.automatica ? (
+          <span className="text-xs text-warning">
+            Ainda não buscamos o boletim desta central automaticamente. Os preços só
+            aparecem se forem enviados manualmente — estamos trabalhando para incluí-la.
+          </span>
+        ) : (
+          <span className="text-xs text-muted-foreground">
+            É a central de onde vêm os preços que você vê em Cotações.
+          </span>
+        )}
       </div>
       <Button type="button" onClick={salvar} disabled={saving || valor === (atual ?? "")}>
         {saving && <Loader2 className="animate-spin" />}

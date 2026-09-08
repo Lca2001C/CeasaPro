@@ -92,11 +92,39 @@ export const SignupService = {
     // "complete o cadastro" aparecer no Início.
     const nomeDaPessoa = nomeInicialPeloEmail(input.email);
 
+    /*
+      A central é conferida contra o banco, e um código desconhecido é IGNORADO
+      em vez de derrubar o cadastro.
+
+      Este código roda dentro de `after()`, depois de a pessoa já ter recebido
+      200 — não há mais como devolver erro. E mesmo que houvesse: a central é
+      campo opcional no caminho de AQUISIÇÃO. Perder a conta porque a central
+      escolhida foi desativada entre carregar a página e enviar o formulário
+      seria trocar um cliente por um detalhe que ele conserta em Configurações
+      com dois toques.
+
+      A UF fica como veio: o schema já a validou contra a lista fechada.
+    */
+    const centralValida = input.ceasaCentralCode
+      ? await prisma.ceasaCentral.findFirst({
+          where: { code: input.ceasaCentralCode, active: true },
+          select: { code: true },
+        })
+      : null;
+    if (input.ceasaCentralCode && !centralValida) {
+      logger.warn(
+        { central: input.ceasaCentralCode },
+        "Cadastro com central do CEASA desconhecida — ignorada",
+      );
+    }
+
     const { tenantId, userId } = await prisma.$transaction(async (tx) => {
       const criado = await provisionTenant(tx, {
         tradeName: NOME_EMPRESA_PADRAO,
         phone: null,
         establishmentType: null,
+        uf: input.uf || null,
+        ceasaCentralCode: centralValida?.code ?? null,
         planId: plan.id,
         // O valor mensal vem SEMPRE do plano, nunca do cliente — mesma regra de
         // `PlanoService.trocarPlano`.

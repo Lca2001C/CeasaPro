@@ -52,6 +52,7 @@ export default async function ConfiguracoesPage() {
               address: t?.address ?? "",
               businessHours: t?.businessHours ?? "",
               establishmentType: t?.establishmentType ?? "",
+              uf: t?.uf ?? "",
             }}
           />
           {/*

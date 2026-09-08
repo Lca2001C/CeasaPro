@@ -74,7 +74,11 @@ export default async function CotacoesPage({
         (l.meuProdutoNome?.toLowerCase().includes(busca) ?? false),
     );
 
-  const frescor = frescorDoBoletim(painel.quoteDate, new Date());
+  const frescor = frescorDoBoletim(
+    painel.quoteDate,
+    new Date(),
+    painel.central.maxDiasSemBoletim,
+  );
   const rotulo = rotuloDeFrescor(frescor);
 
   return (
@@ -105,15 +109,25 @@ export default async function CotacoesPage({
               </Badge>
             )}
           </div>
+          {/*
+            Antes esta linha dizia "a central publica um boletim por dia". Medindo
+            a fonte, isso é verdade só para as maiores: Juiz de Fora, Barbacena,
+            Caratinga e Poços de Caldas publicam 2 a 3 vezes por semana. Dizer
+            "por dia" para quem compra nessas praças faria a pessoa achar que o
+            sistema está atrasado quando é a central que publica assim.
+          */}
           <p className="mt-1 text-xs text-muted-foreground">
-            A central publica um boletim por dia. Este é o mais recente que recebemos.
+            Este é o boletim mais recente que recebemos. A central publica em dias
+            próprios — não é o preço do momento, que é negociado no balcão.
           </p>
         </Card>
       ) : (
         <Card className="border-warning/50 bg-warning/5 p-3">
           <p className="text-sm font-medium">Ainda não recebemos boletim desta central.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Assim que o primeiro boletim chegar, os preços aparecem aqui.
+            {painel.central.automatica
+              ? "Buscamos o boletim todos os dias. Assim que o primeiro chegar, os preços aparecem aqui."
+              : "Esta central ainda não tem busca automática de boletim — estamos trabalhando nisso. Enquanto isso, os preços só aparecem se forem informados manualmente."}
           </p>
         </Card>
       )}

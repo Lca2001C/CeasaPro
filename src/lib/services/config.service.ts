@@ -53,6 +53,7 @@ export const ConfigService = {
         ...(input.businessHours !== undefined && {
           businessHours: nuloSeVazio(input.businessHours),
         }),
+        ...(input.uf !== undefined && { uf: nuloSeVazio(input.uf) }),
         ...(input.establishmentType !== undefined && {
           establishmentType: nuloSeVazio(input.establishmentType),
         }),

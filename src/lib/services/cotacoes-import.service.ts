@@ -10,8 +10,19 @@ import { AdminNotificationsService } from "./admin-notifications.service";
 import { NotFoundError } from "@/lib/http/app-error";
 import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 
-/** Quantos dias para trás tentar quando o dia de hoje não tem boletim. */
-const MAX_DIAS_DE_RECUO = 3;
+/**
+ * Quantos dias para trás tentar quando o dia de hoje não tem boletim.
+ *
+ * Sete, não três. Medido contra a fonte: Juiz de Fora, Barbacena, Caratinga e
+ * Poços de Caldas publicam 2 a 3 vezes por semana, com intervalos de até 4 dias
+ * (sexta a terça, por exemplo). Com recuo de 3, a importação dessas unidades
+ * voltaria VAZIA em boa parte dos dias mesmo havendo boletim recente — e a tela
+ * do cliente ficaria sem preço nenhum sem que nada estivesse quebrado.
+ *
+ * O custo de recuar mais é só requisição a mais nos dias sem boletim, e o laço
+ * para na primeira data que retorna dado.
+ */
+const MAX_DIAS_DE_RECUO = 7;
 /** Respiro entre centrais: rajada de um IP só contra PHP legado vira bloqueio. */
 const PAUSA_ENTRE_CENTRAIS_MS = 2_000;
 /**
@@ -369,17 +380,30 @@ export const CotacoesImportService = {
    */
   async verificarDefasagem(agora = new Date()) {
     const centrais = await prisma.ceasaCentral.findMany({
-      where: { active: true, tenants: { some: { deletedAt: null } } },
-      select: { code: true, name: true },
+      where: {
+        active: true,
+        tenants: { some: { deletedAt: null } },
+        // Central alimentada à mão não tem de quem cobrar boletim: alarmar por
+        // ela seria ruído permanente sobre algo que ninguém prometeu automatizar.
+        sourceKey: { not: "manual" },
+      },
+      select: { code: true, name: true, maxDiasSemBoletim: true },
     });
+    if (centrais.length === 0) return [];
+
+    // Um `groupBy` em vez de uma consulta por central.
+    const ultimos = await prisma.ceasaQuote.groupBy({
+      by: ["centralCode"],
+      where: { centralCode: { in: centrais.map((c) => c.code) } },
+      _max: { quoteDate: true },
+    });
+    const porCentral = new Map(ultimos.map((u) => [u.centralCode, u._max.quoteDate]));
 
     const defasadas: { code: string; name: string; dias: number | null }[] = [];
     for (const c of centrais) {
-      const ultimo = await prisma.ceasaQuote.aggregate({
-        where: { centralCode: c.code },
-        _max: { quoteDate: true },
-      });
-      const f = frescorDoBoletim(ultimo._max.quoteDate, agora);
+      // O limiar é o DA CENTRAL: as unidades que publicam 2 a 3 vezes por semana
+      // ficariam permanentemente defasadas sob um número único.
+      const f = frescorDoBoletim(porCentral.get(c.code) ?? null, agora, c.maxDiasSemBoletim);
       if (f.nivel === "defasado" || f.nivel === "ausente") {
         defasadas.push({ code: c.code, name: c.name, dias: f.dias });
       }
@@ -403,7 +427,15 @@ export const CotacoesImportService = {
   async situacaoDasCentrais() {
     const centrais = await prisma.ceasaCentral.findMany({
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: { code: true, name: true, city: true, uf: true, active: true, sourceKey: true },
+      select: {
+        code: true,
+        name: true,
+        city: true,
+        uf: true,
+        active: true,
+        sourceKey: true,
+        maxDiasSemBoletim: true,
+      },
     });
 
     const [ultimasExecucoes, ultimosBoletins, empresas] = await Promise.all([

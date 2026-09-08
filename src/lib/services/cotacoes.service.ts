@@ -31,7 +31,22 @@ export interface LinhaDeCotacao {
 }
 
 export interface PainelDeCotacoes {
-  central: { code: string; name: string; city: string; uf: string } | null;
+  central: {
+    code: string;
+    name: string;
+    city: string;
+    uf: string;
+    maxDiasSemBoletim: number;
+    /**
+     * Esta central tem busca automática de boletim?
+     *
+     * Das 65 centrais do catálogo, 8 têm raspador; as outras dependem de alguém
+     * colar o boletim. A tela PRECISA dizer qual é o caso: prometer "assim que o
+     * primeiro boletim chegar" para uma central que ninguém busca é prometer o
+     * que não vem.
+     */
+    automatica: boolean;
+  } | null;
   /** Data do BOLETIM mostrado. Null quando ainda não há cotação nenhuma. */
   quoteDate: Date | null;
   linhas: LinhaDeCotacao[];
@@ -40,13 +55,32 @@ export interface PainelDeCotacoes {
 }
 
 export const CotacoesService = {
-  /** Centrais que a empresa pode escolher. */
+  /**
+   * Centrais que a empresa pode escolher.
+   *
+   * Devolve `automatica` porque a tela de escolha PRECISA separar as duas
+   * situações: das 65 centrais do catálogo, 8 têm busca automática de boletim e
+   * 57 dependem de envio manual. Oferecer todas na mesma lista, sem distinção,
+   * faria alguém de Recife escolher a sua e ficar esperando um preço que ninguém
+   * vai buscar — descobrindo isso só depois de contratar o módulo.
+   */
   async listarCentrais() {
-    return prisma.ceasaCentral.findMany({
+    const centrais = await prisma.ceasaCentral.findMany({
       where: { active: true },
       orderBy: [{ sortOrder: "asc" }, { name: "asc" }],
-      select: { code: true, name: true, city: true, uf: true },
+      select: {
+        code: true,
+        name: true,
+        city: true,
+        uf: true,
+        maxDiasSemBoletim: true,
+        sourceKey: true,
+      },
     });
+    return centrais.map(({ sourceKey, ...c }) => ({
+      ...c,
+      automatica: sourceKey !== "manual",
+    }));
   },
 
   /**
@@ -62,11 +96,22 @@ export const CotacoesService = {
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
       select: {
-        ceasaCentral: { select: { code: true, name: true, city: true, uf: true } },
+        ceasaCentral: {
+          select: {
+            code: true,
+            name: true,
+            city: true,
+            uf: true,
+            maxDiasSemBoletim: true,
+            sourceKey: true,
+          },
+        },
       },
     });
-    const central = tenant?.ceasaCentral ?? null;
-    if (!central) return { central: null, quoteDate: null, linhas: [], semVinculo: [] };
+    const bruta = tenant?.ceasaCentral ?? null;
+    if (!bruta) return { central: null, quoteDate: null, linhas: [], semVinculo: [] };
+    const { sourceKey, ...dadosDaCentral } = bruta;
+    const central = { ...dadosDaCentral, automatica: sourceKey !== "manual" };
 
     // A data do boletim MAIS RECENTE desta central. Sem isso a tela misturaria
     // dias diferentes na mesma lista, e o preço de um produto seria de ontem

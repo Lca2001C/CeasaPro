@@ -226,10 +226,13 @@ export const AREAS: AreaGuia[] = [
       "Os produtos que você tem em estoque aparecem destacados na lista.",
     ],
     atencao:
-      "A central publica UM BOLETIM POR DIA — não é o preço do momento, que é negociado " +
-      "no balcão e não é divulgado. A data do boletim fica sempre visível no topo da " +
-      "tela, e quando o dado envelhece a tela avisa. Use como referência, não como o " +
-      "preço de agora.",
+      "É BOLETIM, não preço do momento: o preço de agora é negociado no balcão e nenhuma " +
+      "central divulga. Cada praça publica em dias próprios — algumas todo dia útil, " +
+      "outras duas ou três vezes por semana —, então a data do boletim fica sempre " +
+      "visível no topo da tela, e quando o dado envelhece a tela avisa. A busca " +
+      "automática cobre hoje as centrais de Minas e do Espírito Santo; nas demais, os " +
+      "preços só aparecem se forem enviados manualmente. Use como referência, não como " +
+      "o preço de agora.",
     modulo: "cotacoes",
   },
 ];

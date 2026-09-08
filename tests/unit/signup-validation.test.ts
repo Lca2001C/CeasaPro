@@ -17,14 +17,65 @@ describe("signupSchema", () => {
   /**
    * O contrato do cadastro é afirmado, não subentendido.
    *
-   * Antes este arquivo tinha cinco casos validando nome do negócio, telefone e
-   * tipo de estabelecimento. Apagá-los sem pôr nada no lugar deixaria um vazio:
-   * nada impediria alguém de reacrescentar um campo obrigatório e desfazer a
+   * Nada impediria alguém de reacrescentar um campo OBRIGATÓRIO e desfazer a
    * decisão do cadastro mínimo sem nenhum teste reclamar. Este caso é o que
-   * segura isso.
+   * segura isso: o formulário pode ganhar campos, desde que sejam opcionais.
    */
-  it("pede E-MAIL E SENHA, e mais nada", () => {
-    expect(Object.keys(signupSchema.shape).sort()).toEqual(["email", "password"]);
+  it("o contrato é e-mail, senha, e dois opcionais", () => {
+    expect(Object.keys(signupSchema.shape).sort()).toEqual([
+      "ceasaCentralCode",
+      "email",
+      "password",
+      "uf",
+    ]);
+  });
+
+  it("SÓ e-mail e senha são obrigatórios", () => {
+    // Estado e central são dois `<select>` que ajudam o módulo de Cotações a já
+    // ter o que mostrar no primeiro acesso — mas travar a AQUISIÇÃO por causa
+    // deles seria perder cliente por um detalhe que ele conserta em dois toques.
+    expect(signupSchema.safeParse({ email: "joao@x.com", password: "senha1234" }).success).toBe(
+      true,
+    );
+  });
+
+  it("aceita estado e central quando informados", () => {
+    const out = signupSchema.safeParse({
+      ...valido,
+      uf: "mg",
+      ceasaCentralCode: "CEAMG",
+    });
+    expect(out.success).toBe(true);
+    // A sigla é normalizada: o banco guarda CHAR(2) maiúsculo.
+    expect(out.success && out.data.uf).toBe("MG");
+  });
+
+  it("recusa estado que não existe", () => {
+    // Lista fechada: sem isso, "XX" entraria na coluna e nenhuma tela saberia
+    // filtrar central por ele.
+    expect(signupSchema.safeParse({ ...valido, uf: "XX" }).success).toBe(false);
+    expect(signupSchema.safeParse({ ...valido, uf: "Minas" }).success).toBe(false);
+  });
+
+  it("estado em branco é 'não informou', não erro", () => {
+    // O `<select>` começa com a opção vazia; quem não escolhe manda "".
+    expect(signupSchema.safeParse({ ...valido, uf: "" }).success).toBe(true);
+  });
+
+  /**
+   * Campo opcional NUNCA pode custar a conta.
+   *
+   * `.optional()` sozinho aceita a chave ausente mas RECUSA a chave presente
+   * com `null` — que é o que várias bibliotecas de formulário produzem para
+   * campo vazio. O cadastro voltava 422 e a pessoa ia embora por causa de um
+   * seletor que ela nem precisava usar.
+   */
+  it("null nos campos opcionais não derruba o cadastro", () => {
+    expect(signupSchema.safeParse({ ...valido, uf: null }).success).toBe(true);
+    expect(signupSchema.safeParse({ ...valido, ceasaCentralCode: null }).success).toBe(true);
+    expect(
+      signupSchema.safeParse({ ...valido, uf: null, ceasaCentralCode: null }).success,
+    ).toBe(true);
   });
 
   it("normaliza e-mail (trim + minúsculas)", () => {

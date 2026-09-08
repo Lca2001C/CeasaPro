@@ -71,6 +71,8 @@ export interface ProvisionTenantInput {
   cnpj?: string | null;
   phone?: string | null;
   establishmentType?: string | null;
+  uf?: string | null;
+  ceasaCentralCode?: string | null;
   planId: string;
   monthlyAmount: Prisma.Decimal | number | string;
   graceDays: number;
@@ -107,6 +109,8 @@ export async function provisionTenant(
       cnpj: input.cnpj ?? null,
       phone: input.phone ?? null,
       establishmentType: input.establishmentType ?? null,
+      uf: input.uf ?? null,
+      ceasaCentralCode: input.ceasaCentralCode ?? null,
       status: "ACTIVE",
       subscription: {
         create: {

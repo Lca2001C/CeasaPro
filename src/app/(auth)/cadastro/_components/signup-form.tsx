@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
@@ -13,6 +13,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { Select } from "@/components/ui/select";
+import { UFS } from "@/lib/constants";
 import { BotaoGoogle } from "@/components/auth/botao-google";
 
 /**
@@ -34,15 +36,54 @@ const formSchema = signupSchema
   });
 type FormValues = z.infer<typeof formSchema>;
 
-export function SignupForm({ trialDays }: { trialDays: number }) {
+export interface CentralParaEscolha {
+  code: string;
+  name: string;
+  city: string;
+  uf: string;
+  /** Tem busca automática de boletim? Ver `CotacoesService.listarCentrais`. */
+  automatica: boolean;
+}
+
+export function SignupForm({
+  trialDays,
+  centrais,
+}: {
+  trialDays: number;
+  centrais: CentralParaEscolha[];
+}) {
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const {
     register,
     handleSubmit,
+    control,
+    setValue,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(formSchema) });
+
+  // A lista de centrais segue a UF escolhida. Sem isso seriam ~65 opções numa
+  // lista só — no celular, rolar até achar a sua é pior que dois toques.
+  // `useWatch` e não `watch()`: o segundo devolve uma função que o compilador do
+  // React não consegue memoizar, e o lint reprova com razão.
+  const uf = useWatch({ control, name: "uf" });
+  const daUf = centrais.filter((c) => c.uf === uf);
+  const automaticasDaUf = daUf.filter((c) => c.automatica);
+  const manuaisDaUf = daUf.filter((c) => !c.automatica);
+
+  /*
+    Trocar de estado limpa a central escolhida.
+
+    Sem isso o formulário enviaria uma central de OUTRO estado — que o servidor
+    aceitaria, porque ela existe de verdade — e o cliente passaria a ver os
+    preços da praça errada, sem nada indicando o engano.
+
+    Feito no `onChange` e não durante o render: mexer no estado da biblioteca de
+    formulário enquanto ele renderiza é efeito colateral no meio do render, e o
+    lint aponta com razão.
+  */
+  const campoUf = register("uf");
 
   async function onSubmit(values: FormValues) {
     // Só os campos do contrato da API — `confirm` não atravessa a rede.
@@ -51,6 +92,10 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
     const payload: SignupInput = {
       email: values.email,
       password: values.password,
+      // Vazio vira `undefined`: o schema trata ausência como "não informou", e
+      // mandar string vazia faria a UF cair na validação da lista fechada.
+      uf: values.uf || undefined,
+      ceasaCentralCode: values.ceasaCentralCode || undefined,
     };
 
     setLoading(true);
@@ -119,6 +164,76 @@ export function SignupForm({ trialDays }: { trialDays: number }) {
             {errors.email && (
               <span className="text-xs text-destructive">{errors.email.message}</span>
             )}
+          </div>
+
+          {/*
+            Estado e central: dois toques, não dois campos de digitação.
+
+            É o que faz o módulo de Cotações já ter o que mostrar no primeiro
+            acesso. Ficam opcionais de propósito — quem não sabe segue em frente
+            e resolve em Configurações; travar o cadastro por causa deles seria
+            perder o cliente por um detalhe.
+          */}
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[7rem_1fr]">
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="uf">Estado</Label>
+              <Select
+                id="uf"
+                {...campoUf}
+                onChange={(e) => {
+                  void campoUf.onChange(e);
+                  setValue("ceasaCentralCode", "");
+                }}
+              >
+                <option value="">—</option>
+                {UFS.map((u) => (
+                  <option key={u.sigla} value={u.sigla}>
+                    {u.sigla}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="ceasaCentralCode">
+                Onde você compra{" "}
+                <span className="font-normal text-muted-foreground">(opcional)</span>
+              </Label>
+              <Select id="ceasaCentralCode" disabled={!uf} {...register("ceasaCentralCode")}>
+                <option value="">
+                  {uf ? "Selecione a central…" : "Escolha o estado primeiro"}
+                </option>
+                {/*
+                  Agrupadas por ter ou não busca automática de boletim. Sem essa
+                  separação, quem escolhesse uma das 57 centrais manuais só
+                  descobriria que não recebe preço depois de contratar o módulo.
+                */}
+                {automaticasDaUf.length > 0 && (
+                  <optgroup label="Com preços automáticos">
+                    {automaticasDaUf.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name} — {c.city}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+                {manuaisDaUf.length > 0 && (
+                  <optgroup label="Sem busca automática ainda">
+                    {manuaisDaUf.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name} — {c.city}
+                      </option>
+                    ))}
+                  </optgroup>
+                )}
+              </Select>
+              {uf && daUf.length === 0 && (
+                <span className="text-xs text-muted-foreground">
+                  Ainda não temos central cadastrada neste estado. Fale com o suporte que
+                  incluímos a sua.
+                </span>
+              )}
+            </div>
           </div>
 
           <div className="flex flex-col gap-1.5">

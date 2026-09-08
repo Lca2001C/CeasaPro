@@ -1,3 +1,4 @@
+import { ehUfValida } from "@/lib/constants";
 import { z } from "zod";
 
 export const emailSchema = z
@@ -66,5 +67,37 @@ export type ChangePasswordInput = z.infer<typeof changePasswordSchema>;
 export const signupSchema = z.object({
   email: emailSchema,
   password: passwordPolicy,
+  /**
+   * Estado e central do CEASA — os dois OPCIONAIS.
+   *
+   * São dois `<select>`, não campos de digitação: o custo para quem se cadastra é
+   * um toque cada, não uma linha a mais para preencher. Por isso cabem aqui sem
+   * desfazer a decisão do cadastro mínimo — e o que se ganha é grande, porque a
+   * central é o que faz o módulo de Cotações funcionar já no primeiro acesso, em
+   * vez de mostrar tela vazia até alguém achar a configuração.
+   *
+   * Opcionais porque o cadastro não pode travar por causa deles: quem não sabe,
+   * não escolhe, e completa depois em Configurações. `ceasaCentralCode` é
+   * conferido contra o banco no serviço, não aqui — validação assíncrona no
+   * caminho de aquisição é risco sem retorno.
+   */
+  /*
+    `.nullable()` além de `.optional()`, e isto NÃO é redundância.
+
+    `optional` aceita a chave ausente; `nullable` aceita a chave presente com
+    `null`. Sem o segundo, um cliente que mandasse `{"uf": null}` — payload
+    perfeitamente comum, e o que várias bibliotecas de formulário produzem para
+    campo vazio — receberia 422 e PERDERIA A CONTA por causa de um campo
+    opcional. Numa rota de aquisição, isso é caro demais para se pagar por uma
+    diferença de sintaxe.
+  */
+  uf: z
+    .string()
+    .trim()
+    .toUpperCase()
+    .refine((v) => v === "" || ehUfValida(v), "Estado inválido")
+    .nullable()
+    .optional(),
+  ceasaCentralCode: z.string().trim().max(20).nullable().optional(),
 });
 export type SignupInput = z.infer<typeof signupSchema>;

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
+import { civilParts } from "@/lib/tz";
 import type { FonteDeCotacao, ResultadoDaFonte } from "@/lib/cotacoes/fontes";
 
 /**
@@ -141,23 +142,35 @@ describe("importarCentral", () => {
 
     expect(r.status).toBe("OK");
     expect(fonte.chamadas).toBe(3);
-    // A cotação ficou gravada com a data do dia que realmente tinha boletim.
+
+    // A cotação ficou gravada com a data do dia que realmente tinha boletim —
+    // contada no dia BRASILEIRO, não no do servidor. Este cálculo precisa usar
+    // `civilParts` pelo mesmo motivo que o serviço usa: entre 21h e meia-noite
+    // no Brasil, o "hoje" em UTC já é amanhã, e a conta daria um dia a mais.
     const q = await prisma.ceasaQuote.findFirstOrThrow({ where: { centralCode: CENTRAL } });
-    const hoje = new Date();
-    const doisDiasAtras = new Date(
-      Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 2),
-    );
+    const hoje = civilParts(new Date());
+    const doisDiasAtras = new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - 2));
     expect(q.quoteDate.toISOString().slice(0, 10)).toBe(
       doisDiasAtras.toISOString().slice(0, 10),
     );
   });
 
-  it("desiste depois de 3 dias sem boletim, sem alarmar", async () => {
+  /**
+   * Sete dias, não três.
+   *
+   * Medido contra a fonte real: Juiz de Fora, Barbacena, Caratinga e Poços de
+   * Caldas publicam 2 a 3 vezes por semana, com intervalos de até 4 dias. Com
+   * recuo de 3, a importação dessas unidades voltaria vazia na maior parte dos
+   * dias mesmo havendo boletim recente, e a tela do cliente ficaria sem preço
+   * sem que nada estivesse quebrado.
+   */
+  it("recua até uma semana, e então desiste sem alarmar", async () => {
     const fonte = fonteQueDevolve(SEM_BOLETIM);
     const r = await CotacoesImportService.importarCentral(CENTRAL, { fonteInjetada: fonte });
     expect(r.status).toBe("VAZIO");
-    // Não fica tentando o ano inteiro.
-    expect(fonte.chamadas).toBe(3);
+    // Uma semana cobre qualquer cadência semanal — e não fica tentando o ano
+    // inteiro contra um servidor de terceiro.
+    expect(fonte.chamadas).toBe(7);
     expect(await AdminNotificationsService.listar()).toHaveLength(0);
   });
 

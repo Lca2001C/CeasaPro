@@ -17,6 +17,8 @@ import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 
 const uniq = () => Math.random().toString(36).slice(2, 10);
 const CENTRAL = `TESTE${uniq().slice(0, 5)}`.toUpperCase();
+/** Toda central criada por qualquer teste deste arquivo — limpa no afterAll. */
+const centraisCriadas: string[] = [CENTRAL];
 
 const tenants: string[] = [];
 const ceasaProdutos: string[] = [];
@@ -95,10 +97,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupTenants(tenants);
-  await prisma.ceasaQuote.deleteMany({ where: { centralCode: CENTRAL } });
-  await prisma.ceasaImportRun.deleteMany({ where: { centralCode: CENTRAL } });
+  await prisma.ceasaQuote.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
+  await prisma.ceasaImportRun.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
   await prisma.ceasaProduct.deleteMany({ where: { id: { in: ceasaProdutos } } });
-  await prisma.ceasaCentral.deleteMany({ where: { code: CENTRAL } });
+  await prisma.ceasaCentral.deleteMany({ where: { code: { in: centraisCriadas } } });
 });
 
 describe("isolamento do vínculo", () => {
@@ -210,6 +212,11 @@ describe("tela de vínculo", () => {
    */
   it("não oferece produto de central que a empresa não usa", async () => {
     const outraCentral = `OUT${uniq().slice(0, 5)}`.toUpperCase();
+    // Registrado ANTES de criar: a limpeza mora no `afterAll` porque limpeza
+    // dentro do corpo do teste não roda quando a asserção falha — e aí um teste
+    // vermelho deixa lixo no banco que faz o PRÓXIMO teste falhar por outro
+    // motivo. Foi o que aconteceu aqui de verdade.
+    centraisCriadas.push(outraCentral);
     await prisma.ceasaCentral.create({
       data: { code: outraCentral, name: "Outra", city: "Uberlandia", uf: "MG", sourceKey: "manual" },
     });
@@ -228,9 +235,6 @@ describe("tela de vínculo", () => {
     const ofertados = tela.doBoletim.map((p) => p.id);
     expect(ofertados).toContain(tomateSalada); // da central dele
     expect(ofertados).not.toContain(soDeLa); // de outra central
-
-    await prisma.ceasaQuote.deleteMany({ where: { centralCode: outraCentral } });
-    await prisma.ceasaCentral.delete({ where: { code: outraCentral } });
   });
 
   it("sem central escolhida, não oferece nada em vez do catálogo inteiro", async () => {

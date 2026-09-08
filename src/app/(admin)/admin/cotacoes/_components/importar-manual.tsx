@@ -14,6 +14,7 @@ import { isoDateTz } from "@/lib/tz";
 interface Central {
   code: string;
   name: string;
+  uf: string;
 }
 
 const EXEMPLO = `TOMATE SALADA;CX 20KG;80,00;85,00;92,00
@@ -34,6 +35,13 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
   const [quoteDate, setQuoteDate] = useState(isoDateTz(new Date()));
   const [texto, setTexto] = useState("");
   const [busy, setBusy] = useState(false);
+
+  const porUf = Object.entries(
+    centrais.reduce<Record<string, Central[]>>((acc, c) => {
+      (acc[c.uf] ??= []).push(c);
+      return acc;
+    }, {}),
+  ).sort(([a], [b]) => a.localeCompare(b));
 
   async function enviar() {
     setBusy(true);
@@ -58,15 +66,25 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
       <div className="grid gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="centralCode">Central</Label>
+          {/*
+            Agrupado por UF: o catálogo tem 65 centrais, e uma lista corrida
+            obriga a procurar de olho item por item para achar a praça certa —
+            justamente quando alguém está apagando incêndio porque a busca
+            automática caiu.
+          */}
           <Select
             id="centralCode"
             value={centralCode}
             onChange={(e) => setCentralCode(e.target.value)}
           >
-            {centrais.map((c) => (
-              <option key={c.code} value={c.code}>
-                {c.name}
-              </option>
+            {porUf.map(([uf, doEstado]) => (
+              <optgroup key={uf} label={uf}>
+                {doEstado.map((c) => (
+                  <option key={c.code} value={c.code}>
+                    {c.name}
+                  </option>
+                ))}
+              </optgroup>
             ))}
           </Select>
         </div>
