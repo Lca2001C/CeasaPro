@@ -12,7 +12,7 @@ arquivo revertido.
 
 Fora de escopo por combinação: o **PDV** (`src/app/(app)/vendas/nova/**`,
 `vendas.service.ts`, `validations/venda.ts`). Nada ali foi editado; o defeito de
-fuso que o alcança está registrado como pendência declarada no teste (§10).
+fuso que o alcança está registrado como pendência declarada no teste (§4 e "Pendências declaradas").
 
 ---
 
@@ -54,7 +54,7 @@ fuso que o alcança está registrado como pendência declarada no teste (§10).
 | 32 | Configurações dizia "vencimento" com a data do cadastro no teste | Média | Corrigido |
 | 33 | O tour prometia que o guia abre sem internet | Baixa | Corrigido |
 | 34 | Varredura de layout ignorava em silêncio os cartões de destaque | — lacuna | Corrigido |
-| — | Canonicalização de e-mail do Gmail (teste grátis repetível) | — | **Decisão de produto** (§11) |
+| — | Canonicalização de e-mail do Gmail (teste grátis repetível) | — | **Decisão de produto** (ver "Decisão de produto, não defeito") |
 
 Regressão final: `prisma validate`, `lint --max-warnings=0`, `typecheck`,
 **85 arquivos de teste / 986 testes** verdes (eram 765 no início do ciclo),
@@ -153,7 +153,7 @@ conversão certa numa função privada, que virou `parseFormDateTz` em `tz.ts`.
 **Por que passava batido.** `new Date(input.dueDate)` parece correto em revisão e
 erra por 3 horas. Por isso a correção não se sustenta em lembrar do padrão: o
 teste cobra `parseFormDateTz` em **todo** `src/lib/services`, com lista de
-pendências declaradas — hoje só `vendas.service.ts` (§10).
+pendências declaradas — hoje só `vendas.service.ts` (ver "Pendências declaradas").
 
 Commit `9aa6421`.
 
