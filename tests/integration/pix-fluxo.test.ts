@@ -343,3 +343,75 @@ describe("Pagamento confirmado pelo webhook", () => {
     expect(sub.status).toBe("ATIVO");
   });
 });
+
+/**
+ * Cobrança vencida não pode trancar a tela de pagamento.
+ *
+ * A tela esconde o seletor de plano, o formulário de cartão e o botão de gerar
+ * código enquanto existe cobrança pendente. Como `getStatus` devolvia a linha
+ * vencida como pendente, quem gerava o PIX e não pagava em 48h voltava e
+ * encontrava o QR morto com "Aguardando o pagamento" — e empresa SUSPENSA só
+ * alcança /assinatura, então ficava sem nenhuma forma de pagar.
+ */
+describe("Cobrança PIX vencida", () => {
+  it("sai de `pendingCharge` e devolve a tela de pagamento ao cliente", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    const cobranca = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+
+    // Enquanto vale, a tela mostra o QR — comportamento preservado.
+    const antes = await BillingService.getStatus(tenantId);
+    expect(antes?.pendingCharge?.id).toBe(cobranca.id);
+
+    // Passaram-se as 48h sem pagamento.
+    await prisma.subscriptionPayment.update({
+      where: { id: cobranca.id },
+      data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+    });
+
+    const depois = await BillingService.getStatus(tenantId);
+    expect(depois?.pendingCharge).toBeNull();
+    // A linha continua no banco (o cron ainda vai conciliá-la); o que muda é
+    // que ela não é mais oferecida como cobrança em aberto.
+    expect(
+      await prisma.subscriptionPayment.findUnique({ where: { id: cobranca.id } }),
+    ).not.toBeNull();
+  });
+
+  it("e a tela volta a oferecer cobrança utilizável depois de gerar de novo", async () => {
+    // Fecha o ciclo do ponto de vista da tela: o QR morto sai de `pendingCharge`
+    // (teste acima), o cliente clica em gerar e o status volta a apontar uma
+    // cobrança válida. A regeneração em si já tem teste próprio; o que faltava
+    // era garantir que `getStatus` a reconhece.
+    const { tenantId, ctx } = await novoCliente();
+    const velha = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    await prisma.subscriptionPayment.update({
+      where: { id: velha.id },
+      data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+    });
+
+    // Com só a linha vencida, a tela não recebe cobrança nenhuma...
+    expect((await BillingService.getStatus(tenantId))?.pendingCharge).toBeNull();
+
+    const nova = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+
+    // ...e depois de gerar, recebe de novo — com validade no futuro.
+    expect(temPagamentoPix({ ...nova, amount: nova.amount.toString() })).toBe(true);
+    const status = await BillingService.getStatus(tenantId);
+    expect(status?.pendingCharge?.id).toBe(nova.id);
+    expect(status?.pendingCharge?.expiresAt?.getTime()).toBeGreaterThan(
+      new Date("2020-01-02T00:00:00Z").getTime(),
+    );
+  });
+});

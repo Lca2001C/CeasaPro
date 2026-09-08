@@ -276,7 +276,24 @@ export const BillingService = {
         orderBy: { paidAt: "desc" },
       }),
     ]);
-    return { sub, pendingCharge, paidCharge, refMonth };
+    // Cobrança vencida NÃO é cobrança pendente para quem está olhando a tela.
+    //
+    // Sem este `isUsable`, quem gerava o PIX e não pagava em 48h voltava para
+    // `/assinatura` e encontrava o QR MORTO com "Aguardando o pagamento": sem
+    // botão de gerar outro código, sem o formulário de cartão e sem o seletor
+    // de plano, porque a tela esconde tudo isso quando já existe cobrança
+    // (`assinatura-client.tsx`, `payment-brick.tsx`). Como empresa SUSPENSA só
+    // alcança `/assinatura`, ela ficava sem NENHUMA forma de pagar até o cron
+    // do dia seguinte derrubar a linha — e só se o MP devolvesse `cancelled`.
+    //
+    // É o mesmo critério que `prepareCharge` já usa para decidir se reaproveita
+    // a cobrança; faltava valer também para quem lê o status.
+    return {
+      sub,
+      pendingCharge: isUsable(pendingCharge) ? pendingCharge : null,
+      paidCharge,
+      refMonth,
+    };
   },
 
   /**
