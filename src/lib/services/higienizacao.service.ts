@@ -346,10 +346,25 @@ export const HigienizacaoService = {
         returnedQty: novoDevolvido,
         lostQty: perdidas,
       });
-      const updated = await tx.crateCleaning.update({
-        where: { id: c.id },
+      // Compare-and-set no `returnedQty` lido acima. Era ler-decidir-escrever:
+      // em READ COMMITTED (padrão do Postgres) duas devoluções parciais
+      // simultâneas leem o mesmo `returnedQty` e a segunda grava o total dela
+      // por cima da primeira. O lote ficava com menos caixas devolvidas do que
+      // os movimentos de ledger registram — travado num pendente que ninguém
+      // mais consegue quitar, porque a guarda de `pendentes` passa a recusar o
+      // resto. O Postgres reavalia o WHERE depois de esperar o lock da linha,
+      // então o segundo não casa e é recusado com mensagem.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: c.id, returnedQty: c.returnedQty },
         data: { returnedQty: novoDevolvido, returnedDate: parseFormDateTz(input.returnedDate), status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outra devolução deste envio foi registrada agora mesmo. " +
+            "Confira quantas caixas faltam e lance de novo.",
+        );
+      }
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
 
       await CaixasService.registrarInTx(
         tx,
@@ -475,10 +490,21 @@ export const HigienizacaoService = {
         paidAmount: novoPago,
         lostQty: perdidas,
       });
-      const updated = await tx.crateCleaning.update({
-        where: { id: c.id },
+      // Compare-and-set no `paidAmount` lido acima — mesma razão da devolução
+      // e do pagamento de fiado: dois lançamentos simultâneos liam o mesmo
+      // saldo e o segundo gravava o total dele por cima do primeiro, deixando
+      // dinheiro pago fora da conta do higienizador.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: c.id, paidAmount: c.paidAmount },
         data: { paidAmount: novoPago, paidDate: parseFormDateTz(input.paidDate), status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outro pagamento deste envio foi registrado agora mesmo. " +
+            "Confira o saldo e lance de novo.",
+        );
+      }
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
       await audit(
         {
           tenantId: ctx.tenantId,
