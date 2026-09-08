@@ -929,7 +929,12 @@ export const BillingService = {
 
   /** Recalcula o status de todas as assinaturas (cron diário). */
   async recomputeStatuses() {
-    const subs = await prisma.tenantSubscription.findMany();
+    // Empresa excluída não tem status a recalcular: o trabalho era inútil e
+    // era ele que transformava a assinatura órfã em VENCIDO/SUSPENSO,
+    // alimentando o cartão "Inadimplentes" do painel do super-admin.
+    const subs = await prisma.tenantSubscription.findMany({
+      where: { tenant: { deletedAt: null } },
+    });
     let updated = 0;
     for (const sub of subs) {
       const effective = computeStatus(sub);

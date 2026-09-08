@@ -60,16 +60,27 @@ export const AdminService = {
 
     const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes, aguardandoAtivacao] =
       await Promise.all([
+        // `deletedAt: null` aqui e no MRR abaixo: sem isso, a empresa excluída
+        // continuava contada em "Ativas"/"Inadimplentes" e somada na receita,
+        // enquanto o cartão "Empresas" (que filtra) já não a contava — a tela
+        // se contradizia (Empresas 8, Ativas 11) e o MRR, que é o número pelo
+        // qual se decide preço e caixa, ficava inflado. `deleteTenant` não
+        // encerra a assinatura, então o resíduo é permanente: passado o
+        // vencimento, o cron a move para VENCIDO/SUSPENSO e ela engorda
+        // "Inadimplentes" para sempre, mandando cobrar quem não existe mais.
         prisma.tenantSubscription.groupBy({
           by: ["status"],
           _count: true,
-          where: { tenant: NAO_E_AMBIENTE_ADMIN },
+          where: { tenant: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN } },
         }),
         prisma.tenant.count({ where: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN } }),
         prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
         prisma.tenantSubscription.aggregate({
           _sum: { monthlyAmount: true },
-          where: { status: { in: ["ATIVO"] }, tenant: NAO_E_AMBIENTE_ADMIN },
+          where: {
+            status: { in: ["ATIVO"] },
+            tenant: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN },
+          },
         }),
         prisma.tenant.count({
           where: { deletedAt: null, createdAt: { gte: monthStart }, ...NAO_E_AMBIENTE_ADMIN },
