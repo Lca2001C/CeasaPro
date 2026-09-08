@@ -87,6 +87,36 @@ export function frescorDoBoletim(
   return { nivel: "defasado", dias };
 }
 
+/**
+ * A frase que explica a idade do dado, abaixo da data do boletim.
+ *
+ * Ela precisa depender de a central ter busca automática, e isso não é detalhe
+ * de redação. Das 65 centrais do catálogo, 57 não são buscadas por ninguém.
+ * A frase única dizia que "a central publica em dias próprios" — o que atribui a
+ * idade do dado à CADÊNCIA DA FONTE. Para uma praça manual a causa é outra:
+ * ninguém vai buscar o próximo boletim. O cliente lia "Boletim de 10/03" ao lado
+ * de "sem boletim novo há 60 dias" e uma explicação que culpava a central,
+ * enquanto o motivo real era que a fila nunca ia andar sozinha.
+ *
+ * Antes isso só era dito no estado vazio — bastava UM boletim colado à mão para
+ * o aviso honesto desaparecer para sempre.
+ *
+ * É função pura, ao lado de `rotuloDeFrescor`, pelo mesmo motivo: a regra é o
+ * que se testa, não o JSX.
+ */
+export function explicacaoDaCadencia(automatica: boolean): string {
+  return automatica
+    ? "Este é o boletim mais recente que recebemos. A central publica em dias próprios — não é o preço do momento, que é negociado no balcão."
+    : "Este é o boletim mais recente que recebemos. Esta central ainda não tem busca automática: o próximo só aparece quando o boletim for enviado manualmente. E não é o preço do momento, que é negociado no balcão.";
+}
+
+/** A frase de quando ainda não há boletim nenhum desta central. */
+export function explicacaoSemBoletim(automatica: boolean): string {
+  return automatica
+    ? "Buscamos o boletim todos os dias. Assim que o primeiro chegar, os preços aparecem aqui."
+    : "Esta central ainda não tem busca automática de boletim — estamos trabalhando nisso. Enquanto isso, os preços só aparecem se forem enviados manualmente.";
+}
+
 /** Texto curto da idade, para o selo ao lado da data. */
 export function rotuloDeFrescor(f: Frescor): string | null {
   switch (f.nivel) {

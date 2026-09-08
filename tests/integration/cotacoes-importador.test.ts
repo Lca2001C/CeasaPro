@@ -227,6 +227,49 @@ describe("importarCentral", () => {
 });
 
 describe("importarTodasAsCentrais", () => {
+  /**
+   * Central MANUAL não entra na fila — e isto é sobre o orçamento de tempo.
+   *
+   * A fila é ordenada por quem está mais atrasado, para nenhuma central passar
+   * fome. Só que central manual NUNCA recebe boletim automático: ela é
+   * eternamente a mais atrasada e vai sempre para a frente da fila. Com a pausa
+   * de 2 s entre centrais, bastam ~20 clientes em praças manuais para o
+   * orçamento acabar antes de a primeira central AUTOMÁTICA ser tocada — e o
+   * cliente que paga e tem fonte de verdade fica sem boletim, todo dia, sem
+   * nenhum erro aparecer.
+   */
+  it("central MANUAL não entra na fila e não gasta o orçamento", async () => {
+    const manual = `FIL${uniq().slice(0, 5)}`.toUpperCase();
+    await prisma.ceasaCentral.create({
+      data: {
+        code: manual,
+        name: "Central Manual Na Fila",
+        city: "X",
+        uf: "MG",
+        sourceKey: "manual",
+        // Sem boletim nenhum: sob a ordenação por atraso, iria para a frente.
+        sortOrder: 0,
+      },
+    });
+    const cliente = await createTestTenant(`Empresa Manual ${uniq()}`);
+    tenants.push(cliente);
+    await prisma.tenant.update({
+      where: { id: cliente },
+      data: { ceasaCentralCode: manual },
+    });
+
+    const r = await CotacoesImportService.importarTodasAsCentrais({
+      fonteInjetada: fonteQueDevolve(COM_DADOS),
+    });
+
+    const tocadas = r.resultados.map((x) => x.centralCode);
+    expect(tocadas).not.toContain(manual);
+    // A automática continua sendo importada.
+    expect(tocadas).toContain(CENTRAL);
+
+    await prisma.ceasaCentral.delete({ where: { code: manual } });
+  });
+
   it("importa só as centrais que algum cliente usa", async () => {
     const semCliente = `ORF${uniq().slice(0, 5)}`.toUpperCase();
     await prisma.ceasaCentral.create({

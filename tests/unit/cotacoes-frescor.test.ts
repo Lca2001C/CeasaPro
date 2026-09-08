@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
 import {
   DIAS_ATE_DEFASAGEM,
+  explicacaoDaCadencia,
+  explicacaoSemBoletim,
   frescorDoBoletim,
   rotuloDeFrescor,
 } from "@/lib/cotacoes/frescor";
@@ -118,6 +120,49 @@ describe("frescorDoBoletim", () => {
     // 11/09 00:30 em São Paulo = 11/09 03:30 UTC. Agora sim o dia virou.
     const depoisDaMeiaNoite = new Date("2026-09-11T03:30:00.000Z");
     expect(frescorDoBoletim(dia("2026-09-10"), depoisDaMeiaNoite).dias).toBe(1);
+  });
+});
+
+/**
+ * A frase que explica a idade do dado.
+ *
+ * Ela dizia sempre a mesma coisa — "a central publica em dias próprios" —, o que
+ * atribui a idade do dado à cadência da FONTE. Para as 57 centrais do catálogo
+ * que ninguém busca, a causa é outra: não existe quem traga o próximo boletim.
+ * O cliente lia "Boletim de 10/03", ao lado de "sem boletim novo há 60 dias", e
+ * uma explicação que culpava a central.
+ *
+ * Pior: o aviso honesto existia SÓ no estado vazio. Um único boletim colado à
+ * mão tirava a tela daquele ramo e apagava o aviso para sempre.
+ */
+describe("explicação da idade do dado", () => {
+  it("central automática: a cadência é da fonte", () => {
+    const t = explicacaoDaCadencia(true);
+    expect(t).toMatch(/dias próprios/i);
+    expect(t).not.toMatch(/manualmente/i);
+  });
+
+  it("central manual: diz que o próximo depende de envio manual", () => {
+    const t = explicacaoDaCadencia(false);
+    expect(t).toMatch(/manualmente/i);
+    expect(t).toMatch(/não tem busca automática/i);
+    // E NÃO culpa a cadência da central por algo que é ausência de fonte.
+    expect(t).not.toMatch(/dias próprios/i);
+  });
+
+  it("as duas versões sempre lembram que não é o preço do momento", () => {
+    // É a única frase que impede o cliente de repassar boletim como preço de
+    // agora — o único caminho de prejuízo que este módulo tem.
+    for (const t of [explicacaoDaCadencia(true), explicacaoDaCadencia(false)]) {
+      expect(t).toMatch(/preço do momento/i);
+    }
+  });
+
+  it("sem boletim nenhum, o texto também distingue os dois casos", () => {
+    expect(explicacaoSemBoletim(true)).toMatch(/todos os dias/i);
+    expect(explicacaoSemBoletim(false)).toMatch(/não tem busca automática/i);
+    // Não promete "assim que o primeiro chegar" para praça que ninguém busca.
+    expect(explicacaoSemBoletim(false)).not.toMatch(/assim que o primeiro chegar/i);
   });
 });
 

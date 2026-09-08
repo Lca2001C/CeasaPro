@@ -305,8 +305,20 @@ export const CotacoesImportService = {
       return { centrais: 0, puladasPorTempo: 0, resultados: [] as ResultadoDaImportacao[] };
     }
 
+    /*
+      Central MANUAL fica FORA da fila.
+
+      Não é economia de uma chamada: é o que impede a fila de travar. A ordem
+      abaixo é "quem está mais atrasado primeiro", para nenhuma central passar
+      fome. Só que central manual nunca recebe boletim automático — ela é
+      eternamente a mais atrasada e vai eternamente para a frente. Com a pausa
+      entre centrais, bastam ~20 clientes em praças manuais para o orçamento de
+      tempo acabar antes de a primeira central AUTOMÁTICA ser tocada. O cliente
+      que paga e tem fonte de verdade ficaria sem boletim todo dia, e nada
+      apareceria como erro: o cron termina "com sucesso", só não chegou lá.
+    */
     const ativas = await prisma.ceasaCentral.findMany({
-      where: { code: { in: codigos }, active: true },
+      where: { code: { in: codigos }, active: true, sourceKey: { not: "manual" } },
       select: { code: true, sortOrder: true },
     });
 

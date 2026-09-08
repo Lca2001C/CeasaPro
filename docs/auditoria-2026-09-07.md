@@ -209,6 +209,74 @@ Duas observações sobre como rodar, aprendidas nesta rodada:
   reinicializa. Foi como o banco local desta máquina foi zerado durante esta
   auditoria; recuperado com `SEED_DEMO=true npm run db:seed`.
 
+---
+
+## Adendo — 2026-09-08: revisão da coleta de UF/central
+
+Segunda rodada, depois de o cadastro passar a coletar estado e central e de o
+catálogo ir para 66 unidades. Seis defeitos a mais, com destaque para um que
+mataria o módulo em produção sem aparecer em teste nenhum.
+
+| # | Onde | Defeito |
+|---|---|---|
+| 12 | `cotacoes-import.service.ts` | **Central manual entupia a fila do cron** e as automáticas nunca eram importadas |
+| 13 | `frescor.ts` + `cotacoes/page.tsx` | A explicação da idade do dado culpava a cadência da central mesmo quando a causa era ausência de fonte |
+| 14 | `admin/cotacoes/page.tsx` | Central manual pintada de amarelo para sempre, enquanto o alarme foi ensinado a ignorá-la |
+| 15 | `configuracoes/page.tsx` | Quem escolheu central no cadastro e não tem o módulo não conseguia trocá-la nem limpá-la |
+| 16 | `signup.service.ts` | A partida a frio da importação rodava em Configurações mas não no cadastro |
+| 17 | `20260907220000` | Quatro erros de FATO no catálogo nacional |
+
+### 12. A fila do cron travada pelas centrais manuais
+
+A fila é ordenada por "quem está mais atrasado primeiro", para nenhuma central
+passar fome. Só que central manual **nunca** recebe boletim automático: ela é
+eternamente a mais atrasada e vai eternamente para a frente da fila. Com a pausa
+de 2 s entre centrais e o orçamento de 40 s, bastam ~20 clientes em praças
+manuais para as centrais AUTOMÁTICAS nunca serem tocadas.
+
+O desfecho não seria erro: o cron termina "com sucesso", só não chegou lá. O
+cliente que paga e tem fonte de verdade ficaria sem boletim, todo dia.
+
+O teste que prova reprova em **4059 ms** sem a correção — as pausas de 2 s, que
+são o mecanismo exato do defeito.
+
+### 17. O catálogo nacional tinha erros de fato
+
+A lista nacional foi montada de conhecimento geral, sem conferir unidade por
+unidade. Quatro erros confirmados depois, nos sites das próprias companhias:
+
+- **Santa Catarina tem TRÊS unidades** (São José, Blumenau, Tubarão). Eu havia
+  cadastrado seis: Joinville, Chapecó, Criciúma e Rio do Sul não existem, e
+  Tubarão, que existe, faltava.
+- **Ceará tem TRÊS entrepostos** (Maracanaú, Tianguá, Barbalha). Sobral não.
+- **Rio de Janeiro tem SEIS unidades** e nenhuma em Campos dos Goytacazes; as
+  outras cinco (São Gonçalo, Nova Friburgo, Itaocara, São José de Ubá, Paty do
+  Alferes) faltavam.
+- **Curitiba**: a unidade fica em Curitiba (Tatuquara), não em São José dos
+  Pinhais.
+
+Central inventada foi DELETADA, não desativada: ela não existe no mundo, e a FK
+`ON DELETE SET NULL` devolve a empresa para "sem central" — o desfecho correto
+quando a opção anterior era falsa.
+
+### Sobre o método desta rodada
+
+A revisão rodou como quatro lentes independentes (correção, produto, dados,
+segurança) com uma fase adversarial de refutação. **A fase de refutação falhou
+por limite de sessão em 14 dos 15 achados**, e o script tratou veredito ausente
+como "refutado" — o que é enganoso. Só 1 achado foi de fato confrontado por um
+verificador; os demais foram verificados por mim, lendo o código e, no caso do
+catálogo, consultando as fontes oficiais. Dois achados não se sustentaram:
+
+- "O cadastro pelo Google descarta em silêncio o estado e a central" — o botão
+  do Google é um `<a>` que navega. Abandonar o formulário perde TODOS os campos,
+  inclusive o e-mail digitado. É inerente a ter dois caminhos de cadastro na
+  mesma página, e é comportamento anterior a esta mudança.
+- "Nem cliente nem operador têm sinal" (sobre central manual parada) — o
+  operador tem: `/admin/cotacoes` já mostrava a central com selo de idade. O que
+  faltava era a tela não confundir "sem fonte" com "fonte quebrada", que é o
+  defeito 14.
+
 ## Riscos residuais
 
 1. **A importação depende de raspagem**, e raspagem quebra quando o site de
@@ -221,6 +289,15 @@ Duas observações sobre como rodar, aprendidas nesta rodada:
 3. **O horário do cron é 06:30 BRT**, cedo para o boletim do próprio dia — o
    recuo de datas pega o do dia anterior. Um cron às 15:00 BRT pegaria o do dia,
    mas exigiria o plano Pro da Vercel (o Hobby está no teto de 2 agendamentos).
-4. **`verificarDefasagem` faz uma consulta por central** (no máximo sete, só as
-   que têm cliente). Aceito.
-5. Os riscos residuais de `docs/auditoria-2026-09-05.md` seguem como estavam.
+4. **O catálogo além de MG, ES, SC, CE, RJ e PR segue SEM verificação em fonte
+   oficial.** As unidades de BA, PE, SP/CEAGESP, GO, MT, MS, PA, PB, PI, RN, RS e
+   as capitais do Norte são plausíveis, mas devem ser tratadas como rascunho até
+   alguém conferir — quatro dos primeiros seis estados que eu conferi estavam
+   errados, então a taxa de erro do resto provavelmente não é zero. Corrigir é um
+   `UPDATE`, não um deploy.
+5. **57 das 66 centrais não têm busca automática.** A tela, o seletor e a
+   descrição do plano dizem isso, mas é limitação real: só MG e ES têm raspador.
+6. **O cadastro público entra no plano mais barato**, que não inclui módulos
+   opcionais. Quem se cadastra escolhe a central mas só vê Cotações ao contratar
+   um plano que a inclua. É decisão de produto, não defeito.
+7. Os riscos residuais de `docs/auditoria-2026-09-05.md` seguem como estavam.

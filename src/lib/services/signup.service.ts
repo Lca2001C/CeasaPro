@@ -173,6 +173,30 @@ export const SignupService = {
       origem: "cadastro-publico",
     });
 
+    /*
+      Partida a frio da central escolhida no cadastro.
+
+      A mesma escolha feita em Configurações já dispara a importação
+      (`CotacoesService.escolherCentral`); sem isto, quem escolhe no CADASTRO
+      esperaria o cron da madrugada seguinte — e a diferença entre os dois
+      caminhos não teria explicação nenhuma para quem usa.
+
+      Já estamos dentro de `after()` (a resposta HTTP saiu antes de `register`
+      ser chamado), então não há ninguém esperando. Falha aqui não pode derrubar
+      o cadastro: o serviço registra e avisa o super-admin por conta própria, e o
+      cron tenta de novo amanhã.
+    */
+    if (centralValida) {
+      const jaTem = await prisma.ceasaQuote.findFirst({
+        where: { centralCode: centralValida.code },
+        select: { id: true },
+      });
+      if (!jaTem) {
+        const { CotacoesImportService } = await import("./cotacoes-import.service");
+        await CotacoesImportService.importarCentral(centralValida.code).catch(() => {});
+      }
+    }
+
     const link = absoluteUrl(`/cadastro/confirmar/${token.raw}`);
     const { subject, html } = verifyEmailEmail({
       link,

@@ -24,7 +24,18 @@ export default async function ConfiguracoesPage() {
   const t = await ConfigService.getCompany(tenantId);
   const sub = t?.subscription;
   const temCotacoes = isModuleEnabled(session.modules, "cotacoes");
-  const centrais = temCotacoes ? await CotacoesService.listarCentrais() : [];
+  /*
+    O seletor de central aparece para quem TEM o módulo — e também para quem já
+    tem uma central escolhida, mesmo sem o módulo.
+
+    O cadastro público pergunta a central, mas entra no plano mais barato, que
+    não inclui Cotações. Sem o segundo caso, quem escolheu a praça errada no
+    cadastro não teria como corrigir nem limpar até contratar o módulo: o campo
+    ficaria gravado, invisível e intocável. É dado da empresa, e o dono tem de
+    poder mexer no que ele mesmo informou.
+  */
+  const mostrarCentral = temCotacoes || Boolean(t?.ceasaCentralCode);
+  const centrais = mostrarCentral ? await CotacoesService.listarCentrais() : [];
 
   return (
     <div>
@@ -57,11 +68,10 @@ export default async function ConfiguracoesPage() {
           />
           {/*
             A central do CEASA é dado da EMPRESA — onde ela compra —, então mora
-            nesta aba e não em "Meu perfil", que é sobre a pessoa. Some para quem
-            não tem Cotações no plano: um campo que configura algo inacessível é
-            só ruído.
+            nesta aba e não em "Meu perfil", que é sobre a pessoa. Ver
+            `mostrarCentral` acima para quando ela aparece.
           */}
-          {temCotacoes && (
+          {mostrarCentral && (
             <Card className="mt-4">
               <CardHeader>
                 <CardTitle className="text-base">Cotações do CEASA</CardTitle>

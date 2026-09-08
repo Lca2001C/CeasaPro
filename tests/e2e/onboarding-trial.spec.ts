@@ -190,8 +190,17 @@ test.describe("Onboarding com teste grátis de 7 dias", () => {
     await expect(page.getByLabel("Estado")).toHaveValue("MG");
     await page.getByLabel("Nome fantasia").fill(NEGOCIO);
     await page.getByLabel(/Tipo de estabelecimento/).fill("Box 42");
-    await page.getByRole("button", { name: "Salvar" }).click();
+    // `exact` é obrigatório: a aba tem também "Salvar central", o seletor de
+    // central do CEASA — que aparece justamente porque esta empresa escolheu uma
+    // no cadastro, mesmo sem ter o módulo no plano. Sem `exact`, o clique fica
+    // ambíguo entre os dois botões.
+    await page.getByRole("button", { name: "Salvar", exact: true }).click();
     await expect(page.getByText("Dados atualizados")).toBeVisible();
+
+    // E o dono CONSEGUE mexer na central que ele mesmo informou, ainda sem o
+    // módulo: sem isso, quem escolhesse a praça errada no cadastro ficaria preso
+    // com ela até contratar Cotações.
+    await expect(page.getByLabel("Sua central do CEASA")).toHaveValue("CEAMG");
 
     await page.goto("/dashboard");
     await expect(page.locator("header")).toContainText(NEGOCIO);

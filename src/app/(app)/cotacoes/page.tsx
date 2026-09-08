@@ -2,7 +2,12 @@ import Link from "next/link";
 import { AlertTriangle, Link2, Package } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
-import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
+import {
+  explicacaoDaCadencia,
+  explicacaoSemBoletim,
+  frescorDoBoletim,
+  rotuloDeFrescor,
+} from "@/lib/cotacoes/frescor";
 import { formatBRL, formatDate, formatQty } from "@/lib/format";
 import { nivelEstoque } from "@/lib/estoque/nivel";
 import { PageHeader } from "@/components/data/page-header";
@@ -89,12 +94,11 @@ export default async function CotacoesPage({
       />
 
       {/*
-        A data do BOLETIM, não a do fetch, e em destaque.
-        A frase abaixo dela enuncia a cadência como propriedade da FONTE: a
-        central publica um boletim por dia, e o preço do momento é negociado no
-        balcão. Sem isso o cliente conclui que está olhando o preço de agora e
-        repassa preço velho achando que é novo — o único jeito de este módulo
-        causar prejuízo.
+        A data do BOLETIM, não a do fetch, e em destaque. Sem isso o cliente
+        conclui que está olhando o preço de agora e repassa preço velho achando
+        que é novo — o único jeito de este módulo causar prejuízo. A frase abaixo
+        dela diz POR QUE o dado tem a idade que tem, e isso depende de a central
+        ter busca automática (ver `explicacaoDaCadencia`).
       */}
       {painel.quoteDate ? (
         <Card className={cn("p-3", frescor.nivel === "defasado" && "border-warning/50 bg-warning/5")}>
@@ -110,24 +114,21 @@ export default async function CotacoesPage({
             )}
           </div>
           {/*
-            Antes esta linha dizia "a central publica um boletim por dia". Medindo
-            a fonte, isso é verdade só para as maiores: Juiz de Fora, Barbacena,
-            Caratinga e Poços de Caldas publicam 2 a 3 vezes por semana. Dizer
-            "por dia" para quem compra nessas praças faria a pessoa achar que o
-            sistema está atrasado quando é a central que publica assim.
+            A explicação depende de a central ter busca automática, e a regra
+            mora em `frescor.ts` para ser testável sozinha. O texto único de
+            antes atribuía a idade do dado à cadência da central — falso para as
+            57 praças que ninguém busca, e dito justamente ao lado do selo "sem
+            boletim novo há N dias".
           */}
           <p className="mt-1 text-xs text-muted-foreground">
-            Este é o boletim mais recente que recebemos. A central publica em dias
-            próprios — não é o preço do momento, que é negociado no balcão.
+            {explicacaoDaCadencia(painel.central.automatica)}
           </p>
         </Card>
       ) : (
         <Card className="border-warning/50 bg-warning/5 p-3">
           <p className="text-sm font-medium">Ainda não recebemos boletim desta central.</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            {painel.central.automatica
-              ? "Buscamos o boletim todos os dias. Assim que o primeiro chegar, os preços aparecem aqui."
-              : "Esta central ainda não tem busca automática de boletim — estamos trabalhando nisso. Enquanto isso, os preços só aparecem se forem informados manualmente."}
+            {explicacaoSemBoletim(painel.central.automatica)}
           </p>
         </Card>
       )}

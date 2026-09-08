@@ -38,9 +38,23 @@ export default async function AdminCotacoesPage() {
   */
   const comCliente = centrais.filter((c) => c.clientes > 0);
   const semCliente = centrais.filter((c) => c.clientes === 0);
-  const problemas = comCliente.filter(
-    (c) => frescorDoBoletim(c.ultimoBoletim, agora, c.maxDiasSemBoletim).nivel !== "atual",
-  );
+
+  /*
+    "Precisa de atenção" só vale para central com FONTE AUTOMÁTICA.
+
+    Central manual nunca terá boletim recente por conta própria — pintá-la de
+    amarelo é ruído permanente, não alerta. Pior: `verificarDefasagem` já
+    exclui as manuais do aviso, então a tela dizia "atenção" para algo que o
+    alarme foi ensinado a ignorar. Tela e alarme discordando é a forma mais
+    rápida de os dois deixarem de ser lidos.
+
+    A manual com cliente não é ignorada: ela ganha um estado PRÓPRIO
+    ("depende de envio manual"), que é informação e não alarme falso.
+  */
+  const precisaAtencao = (c: (typeof centrais)[number]) =>
+    c.sourceKey !== "manual" &&
+    frescorDoBoletim(c.ultimoBoletim, agora, c.maxDiasSemBoletim).nivel !== "atual";
+  const problemas = comCliente.filter(precisaAtencao);
 
   return (
     <div className="flex flex-col gap-4">
@@ -69,9 +83,8 @@ export default async function AdminCotacoesPage() {
         {comCliente.map((c) => {
           const frescor = frescorDoBoletim(c.ultimoBoletim, agora, c.maxDiasSemBoletim);
           const rotulo = rotuloDeFrescor(frescor);
-          // Só alarma central que tem cliente: uma central que ninguém usa estar
-          // sem boletim é o esperado, não um problema.
-          const preocupante = c.clientes > 0 && frescor.nivel !== "atual";
+          const preocupante = precisaAtencao(c);
+          const dependeDeEnvio = c.sourceKey === "manual";
           return (
             <Card
               key={c.code}
@@ -105,6 +118,14 @@ export default async function AdminCotacoesPage() {
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-1">
                   {!c.active && <Badge variant="secondary">Desativada</Badge>}
+                  {/*
+                    Estado próprio para a manual: é informação ("cabe a nós
+                    enviar"), não alarme de quebra. Assim a tela concorda com o
+                    alarme, que já a ignora.
+                  */}
+                  {dependeDeEnvio && (
+                    <Badge variant="secondary">Depende de envio manual</Badge>
+                  )}
                   {preocupante && rotulo && (
                     <Badge variant="warning" className="gap-1">
                       <AlertTriangle className="size-3" />
