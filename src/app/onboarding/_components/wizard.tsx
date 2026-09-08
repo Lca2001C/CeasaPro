@@ -18,15 +18,31 @@ import { cn } from "@/lib/cn";
 /** Empresa → fornecedor → produto. */
 const TOTAL_PASSOS = 3;
 
-export function OnboardingWizard({ initialName }: { initialName: string }) {
+export function OnboardingWizard({
+  initialName,
+  initialPhone,
+  initialAddress,
+  preservar,
+}: {
+  initialName: string;
+  initialPhone: string;
+  initialAddress: string;
+  /**
+   * Campos que o onboarding NÃO edita e precisa devolver intactos.
+   *
+   * `updateCompany` grava os seis campos de uma vez, então mandar `null` aqui
+   * apagava CNPJ, razão social e horário que já estavam cadastrados.
+   */
+  preservar: { legalName: string | null; cnpj: string | null; businessHours: string | null };
+}) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
 
   // Passo 1 — empresa
   const [tradeName, setTradeName] = useState(initialName);
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState(initialPhone);
+  const [address, setAddress] = useState(initialAddress);
   // Passo 2 — fornecedor
   const [supplierName, setSupplierName] = useState("");
   // Passo 3 — produto
@@ -40,9 +56,7 @@ export function OnboardingWizard({ initialName }: { initialName: string }) {
       tradeName: tradeName.trim(),
       phone: phone || null,
       address: address || null,
-      legalName: null,
-      cnpj: null,
-      businessHours: null,
+      ...preservar,
     });
     setBusy(false);
     if (res.ok) setStep(2);
