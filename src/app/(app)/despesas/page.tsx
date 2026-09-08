@@ -3,7 +3,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowDown, ArrowUp, Minus, Plus, Tags } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
-import { DespesasService, DESPESAS_POR_PAGINA } from "@/lib/services/despesas.service";
+import {
+  DespesasService,
+  DESPESAS_POR_PAGINA,
+  mesAnterior,
+} from "@/lib/services/despesas.service";
 import { formatBRL, formatQty } from "@/lib/format";
 import { addDaysTz, isoDateTz, startOfDayTz } from "@/lib/tz";
 import { toDecimal } from "@/lib/money";
@@ -263,7 +267,18 @@ export default async function DespesasPage({
             você vendeu ({formatBRL(resumo.faturamento)}).
           </p>
           <div className="mt-3">
-            <ReplicarMesButton mesOrigem={resumo.referencia} />
+            {/*
+              O mês de ORIGEM é o ANTERIOR ao de referência.
+
+              Passando `resumo.referencia` (o mês corrente), o botão fazia o
+              oposto do que promete: no dia 1º, com a lista vazia, respondia
+              "não há despesas com vencimento em <mês corrente> para replicar"
+              — sem nenhum caminho na tela para pedir o mês passado; e com o
+              mês já preenchido, criava as contas do mês SEGUINTE, um mês
+              adiantadas e invisíveis nos cartões, com o toast dizendo que
+              copiou.
+            */}
+            <ReplicarMesButton mesOrigem={mesAnterior(resumo.referencia)} />
           </div>
         </CardContent>
       </Card>

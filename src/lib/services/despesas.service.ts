@@ -758,7 +758,17 @@ export const DespesasService = {
       select: { parentId: true },
     });
     const copiados = new Set(jaCopiadas.map((c) => c.parentId));
-    const pendentesDeCopia = origem.filter((o) => !copiados.has(o.id) && o.dueDate);
+
+    // Conta marcada "Repetir todo mês" NÃO entra: ela gera a própria parcela
+    // seguinte ao ser quitada. Copiá-la fazia duas coisas ruins de uma vez —
+    // duas contas iguais no mês seguinte (a cópia e a parcela), e a morte
+    // silenciosa da recorrência: `gerarProximaParcela` usa a presença de um
+    // filho com `parentId` como marca de "já gerei", encontrava a CÓPIA,
+    // concluía que o trabalho estava feito e apagava o `recurring` da origem.
+    // O aluguel do box parava de aparecer para sempre, sem erro e sem aviso.
+    const pendentesDeCopia = origem.filter(
+      (o) => !copiados.has(o.id) && o.dueDate && !o.recurring,
+    );
 
     let criadas = 0;
     for (const o of pendentesDeCopia) {

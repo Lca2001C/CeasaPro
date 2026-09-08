@@ -253,6 +253,46 @@ describe("Replicar mês anterior", () => {
       /não há despesas/i,
     );
   });
+
+  /**
+   * Conta que já se repete sozinha não entra na replicação.
+   *
+   * Copiá-la fazia duas coisas ruins de uma vez: duas contas iguais no mês
+   * seguinte (a cópia e a parcela da recorrência) e, pior, a morte silenciosa
+   * da recorrência — `gerarProximaParcela` usa a existência de um filho com
+   * `parentId` como marca de "já gerei", encontrava a CÓPIA e apagava o
+   * `recurring` da origem. O aluguel parava de aparecer para sempre.
+   */
+  it("não copia a conta recorrente, e a recorrência dela continua viva", async () => {
+    const aluguel = await criar({
+      description: "Aluguel recorrente",
+      dueDate: "2026-08-05",
+      recurring: true,
+    });
+    await criar({ description: "Luz avulsa", dueDate: "2026-08-10" });
+
+    const r = await DespesasService.replicarMes("2026-08", ctx, HOJE);
+    expect(r.criadas).toBe(1); // só a avulsa
+
+    const setembro = await DespesasService.list(tenantId, {
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(setembro.map((d) => d.description)).toEqual(["Luz avulsa"]);
+
+    // A marca de recorrência sobrevive...
+    const depois = await prisma.expense.findUniqueOrThrow({ where: { id: aluguel.id } });
+    expect(depois.recurring).toBe(true);
+
+    // ...e quitar gera a parcela do mês seguinte, uma só.
+    await DespesasService.marcarComoPago({ id: aluguel.id }, ctx);
+    const parcelas = await prisma.expense.findMany({
+      where: { tenantId, description: "Aluguel recorrente" },
+      orderBy: { dueDate: "asc" },
+    });
+    expect(parcelas.length).toBe(2);
+    expect(parcelas[1]!.recurring).toBe(true);
+  });
 });
 
 describe("Duplicar despesa", () => {
