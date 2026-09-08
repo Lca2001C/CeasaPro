@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { Prisma } from "@prisma/client";
+
+import { Prisma, type CeasaSerie } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { slugProduto } from "@/lib/cotacoes/nome";
@@ -36,6 +36,21 @@ const PAUSA_ENTRE_CENTRAIS_MS = 2_000;
 const ORCAMENTO_PADRAO_MS = 40_000;
 
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * A que taxonomia o dado de uma fonte pertence.
+ *
+ * `sourceKey` responde "quem busca"; `serie` responde "que tipo de número é
+ * este". As duas divergem de propósito: um raspador novo do boletim de outra
+ * praça seria um `sourceKey` novo na MESMA série CENTRAL, e comparar os dois
+ * seria legítimo.
+ *
+ * Boletim colado à mão é CENTRAL: quem cola está transcrevendo o boletim de uma
+ * praça, com os nomes específicos e a unidade que aquela praça usa.
+ */
+export function serieDaFonte(sourceKey: string): CeasaSerie {
+  return sourceKey === "conab" ? "NACIONAL" : "CENTRAL";
+}
 
 export interface ResultadoDaImportacao {
   status: "OK" | "VAZIO" | "FALHA" | "SEM_FONTE";
@@ -78,6 +93,7 @@ export const CotacoesImportService = {
   }): Promise<ResultadoDaGravacao> {
     const { centralCode, quoteDate, linhas, sourceKey } = params;
     const inicio = Date.now();
+    const serie = serieDaFonte(sourceKey);
 
     const central = await prisma.ceasaCentral.findUnique({
       where: { code: centralCode },
@@ -128,16 +144,25 @@ export const CotacoesImportService = {
       return { runId: await registrarRun(centralCode, sourceKey, data, 0, 0, inicio, params.fingerprint), quoteDate: data, produtosNovos: 0, cotacoesGravadas: 0 };
     }
 
+    /*
+      Toda leitura e escrita de produto é FILTRADA POR SÉRIE.
+
+      Sem isso o `serie` no schema seria decoração: "UVA ITALIA" da praça e da
+      série nacional têm nome e unidade idênticos, e sem o filtro a busca por
+      slug traria o produto da OUTRA taxonomia — as cotações do boletim iriam
+      parar no produto genérico, e a chave única de `ceasa_quotes` voltaria a
+      colidir exatamente como antes.
+    */
     const slugsUnicos = [...new Set(itens.map((i) => i.slug))];
     const jaExistiam = await prisma.ceasaProduct.findMany({
-      where: { slug: { in: slugsUnicos } },
+      where: { serie, slug: { in: slugsUnicos } },
       select: { slug: true },
     });
     const conhecidos = new Set(jaExistiam.map((p) => p.slug));
 
     const novos = itens
       .filter((i) => !conhecidos.has(i.slug))
-      .map((i) => ({ name: i.linha.produto, slug: i.slug }));
+      .map((i) => ({ name: i.linha.produto, slug: i.slug, serie }));
     // Deduplica por slug: dois nomes diferentes podem normalizar para o mesmo.
     const novosUnicos = [...new Map(novos.map((n) => [n.slug, n])).values()];
     if (novosUnicos.length > 0) {
@@ -146,12 +171,12 @@ export const CotacoesImportService = {
     const produtosNovos = novosUnicos.length;
 
     await prisma.ceasaProduct.updateMany({
-      where: { slug: { in: slugsUnicos } },
+      where: { serie, slug: { in: slugsUnicos } },
       data: { lastSeenAt: new Date(), active: true },
     });
 
     const todos = await prisma.ceasaProduct.findMany({
-      where: { slug: { in: slugsUnicos } },
+      where: { serie, slug: { in: slugsUnicos } },
       select: { id: true, slug: true },
     });
     const idPorSlug = new Map(todos.map((p) => [p.slug, p.id]));
@@ -161,7 +186,7 @@ export const CotacoesImportService = {
       .map(({ slug, linha }) => {
         const id = idPorSlug.get(slug);
         if (!id) return null;
-        return Prisma.sql`(${randomUUID()}, ${centralCode}, ${id}, ${data}, ${linha.unidade},
+        return Prisma.sql`(${centralCode}, ${id}, ${data}, ${linha.unidade},
           ${linha.minimo}, ${linha.comum}, ${linha.maximo}, ${linha.referencia}, ${agora})`;
       })
       .filter((v): v is Prisma.Sql => v !== null);
@@ -170,7 +195,7 @@ export const CotacoesImportService = {
     // idempotência: reimportar o mesmo dia corrige em vez de duplicar.
     const cotacoesGravadas = await prisma.$executeRaw`
       INSERT INTO ceasa_quotes
-        ("id", "centralCode", "ceasaProductId", "quoteDate", "unit",
+        ("centralCode", "ceasaProductId", "quoteDate", "unit",
          "minPrice", "avgPrice", "maxPrice", "refPrice", "importedAt")
       VALUES ${Prisma.join(valores)}
       ON CONFLICT ("centralCode", "quoteDate", "ceasaProductId", "unit")

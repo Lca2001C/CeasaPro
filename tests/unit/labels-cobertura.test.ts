@@ -48,6 +48,7 @@ const PARES: Record<string, string> = {
   PAYMENT_STATUS_LABELS: "PaymentStatus",
   TENANT_STATUS_LABELS: "TenantStatus",
   CEASA_IMPORT_STATUS_LABELS: "CeasaImportStatus",
+  CEASA_SERIE_LABELS: "CeasaSerie",
 };
 
 /**

@@ -268,30 +268,73 @@ model CeasaProduct {
   id          String            @id @default(cuid())
   /// Nome de exibição, como veio da fonte.
   name        String
+  /// A que TAXONOMIA este produto pertence.
+  ///
+  /// Não é o mesmo que `sourceKey` da central, e a diferença importa: `sourceKey`
+  /// responde "quem busca", `serie` responde "que tipo de número é este". Um
+  /// raspador novo de outra central seria um `sourceKey` novo na MESMA série
+  /// CENTRAL, e comparar as duas seria legítimo.
+  ///
+  /// Existe porque as duas taxonomias COLIDEM de verdade, não em teoria. Medido
+  /// contra o boletim real e o catálogo nacional: `UVA ITALIA` e `UVA NIAGARA`
+  /// aparecem com nome idêntico E unidade idêntica ("KG") nas duas fontes. Com
+  /// `slug` único global, isso dá o MESMO `CeasaProduct`, e aí a chave inteira de
+  /// `CeasaQuote` (central, data, produto, unidade) coincide — o `ON CONFLICT DO
+  /// UPDATE` da gravação faz a última importação do dia sobrescrever a outra em
+  /// silêncio, apagando o mínimo e o máximo reais quando a série nacional (que só
+  /// tem um preço) chega por último.
+  ///
+  /// Pôr o discriminador AQUI, e não em `CeasaQuote`, é o que faz o banco
+  /// PROIBIR o casamento entre taxonomias em vez de apenas documentá-lo: um
+  /// produto de catálogo pertence a exatamente uma série, e não há como gravar um
+  /// produto alimentado pelas duas fontes.
+  serie       CeasaSerie        @default(CENTRAL)
   /// `normalizarNome(name)` — minúsculas, sem acento, espaços colapsados.
-  /// Único: é o que impede o catálogo de ganhar uma linha nova todo dia só
-  /// porque o boletim imprimiu dois espaços.
-  slug        String            @unique
+  /// Impede o catálogo de ganhar linha nova todo dia só porque o boletim imprimiu
+  /// dois espaços. Único DENTRO da série (ver `@@unique` abaixo).
+  slug        String
   firstSeenAt DateTime          @default(now())
   lastSeenAt  DateTime          @default(now())
   active      Boolean           @default(true)
   quotes      CeasaQuote[]
   links       TenantCeasaLink[]
 
+  /// Único DENTRO da série, não global. É esta linha que separa as taxonomias:
+  /// `uva-italia` da série CENTRAL e `uva-italia` da NACIONAL passam a ser dois
+  /// produtos, então a chave de `CeasaQuote` já difere e a sobrescrita silenciosa
+  /// deixa de ser possível — sem precisar mexer na chave de `CeasaQuote`.
+  @@unique([serie, slug])
   @@index([active, name])
+  @@index([serie, active, name])
   @@map("ceasa_products")
+}
+
+/// A que taxonomia um produto de catálogo pertence.
+///
+/// As duas NÃO são comparáveis e não podem virar um mesmo número na tela:
+///
+/// - `CENTRAL`: o boletim da própria praça. Produto ESPECÍFICO, com cultivar e
+///   classificação no nome ("TOMATE SALADA LONGA VIDA", "BANANA PRATA CLIM EXT"),
+///   com mínimo/comum/máximo. Hoje só MG e ES têm.
+/// - `NACIONAL`: a série agregada do país. Produto GENÉRICO ("TOMATE"), preço
+///   único, cobertura ampla e história longa — é o que serve a histórico,
+///   sazonalidade e comparação entre praças.
+enum CeasaSerie {
+  CENTRAL
+  NACIONAL
 }
 
 /// Preço de um produto, numa central, num dia.
 model CeasaQuote {
-  id             String       @id @default(cuid())
   centralCode    String
   ceasaProductId String
   /// Data do BOLETIM, não do fetch. `@db.Date` porque é data de calendário e não
   /// instante — evita de saída todo o problema de fuso que `src/lib/tz.ts` existe
   /// para resolver.
   quoteDate      DateTime     @db.Date
-  /// Embalagem cotada ("CX 20KG", "KG"). NOT NULL com default "" de propósito:
+  /// Embalagem cotada, como a fonte escreve. Medido no boletim real: 80% é "KG",
+  /// depois "DZ", e o resto compostas ("CX 30 DZ", "DZ 4 KG", "UN 1,5 KG").
+  /// NOT NULL com default "" de propósito:
   /// no Postgres vários NULL não colidem em índice único, então com `unit` nulo
   /// o upsert duplicaria a linha a cada reimportação do mesmo dia.
   unit           String       @default("")
@@ -307,10 +350,20 @@ model CeasaQuote {
   central        CeasaCentral @relation(fields: [centralCode], references: [code], onDelete: Cascade)
   product        CeasaProduct @relation(fields: [ceasaProductId], references: [id], onDelete: Cascade)
 
+  /// A chave NATURAL é a chave primária — não há `id` sintético.
+  ///
+  /// Medido com 205 mil cotações: a chave primária de cuid ocupava 15 MB (23% da
+  /// tabela) e tinha ZERO leituras — nada busca cotação por id, e nenhuma tabela
+  /// aponta para ela. Era um índice pago em espaço e em uma escrita a mais por
+  /// linha inserida, sem nenhuma leitura em troca.
+  ///
   /// A UNIDADE entra na chave porque o boletim cota o mesmo produto em
   /// embalagens diferentes com preços diferentes; colapsar seria perder dado ou
-  /// escolher um no escuro. Reimportar o mesmo dia atualiza, não duplica.
-  @@unique([centralCode, quoteDate, ceasaProductId, unit])
+  /// escolher um no escuro. E o produto já carrega a série, então duas taxonomias
+  /// nunca disputam a mesma linha.
+  ///
+  /// Reimportar o mesmo dia atualiza, não duplica.
+  @@id([centralCode, quoteDate, ceasaProductId, unit])
   @@index([centralCode, quoteDate])
   @@map("ceasa_quotes")
 }

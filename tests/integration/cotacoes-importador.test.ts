@@ -21,6 +21,8 @@ import type { FonteDeCotacao, ResultadoDaFonte } from "@/lib/cotacoes/fontes";
 const uniq = () => Math.random().toString(36).slice(2, 10);
 const CENTRAL = `AUT${uniq().slice(0, 5)}`.toUpperCase();
 const tenants: string[] = [];
+/** Toda central criada por qualquer teste deste arquivo — limpa no afterAll. */
+const centraisCriadas: string[] = [CENTRAL];
 const slugs = ["tomate-do-robo", "batata-do-robo"];
 
 /** Fonte falsa: devolve o que o teste mandar, sem tocar em rede. */
@@ -75,9 +77,9 @@ beforeEach(async () => {
 afterAll(async () => {
   await prisma.adminNotification.deleteMany({});
   await cleanupTenants(tenants);
-  await prisma.ceasaQuote.deleteMany({ where: { centralCode: CENTRAL } });
-  await prisma.ceasaImportRun.deleteMany({ where: { centralCode: CENTRAL } });
-  await prisma.ceasaCentral.deleteMany({ where: { code: CENTRAL } });
+  await prisma.ceasaQuote.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
+  await prisma.ceasaImportRun.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
+  await prisma.ceasaCentral.deleteMany({ where: { code: { in: centraisCriadas } } });
   await prisma.ceasaProduct.deleteMany({ where: { slug: { in: slugs } } });
 });
 
@@ -210,6 +212,7 @@ describe("importarCentral", () => {
     // Se `manual` fosse tratada como fonte quebrada, o super-admin receberia
     // alarme todo dia por uma central que funciona.
     const manual = `MAN${uniq().slice(0, 5)}`.toUpperCase();
+    centraisCriadas.push(manual);
     await prisma.ceasaCentral.create({
       data: {
         code: manual,
@@ -222,7 +225,6 @@ describe("importarCentral", () => {
     const r = await CotacoesImportService.importarCentral(manual);
     expect(r.status).toBe("SEM_FONTE");
     expect(await AdminNotificationsService.listar()).toHaveLength(0);
-    await prisma.ceasaCentral.delete({ where: { code: manual } });
   });
 });
 
@@ -240,6 +242,12 @@ describe("importarTodasAsCentrais", () => {
    */
   it("central MANUAL não entra na fila e não gasta o orçamento", async () => {
     const manual = `FIL${uniq().slice(0, 5)}`.toUpperCase();
+
+    // Registrado ANTES de criar: a limpeza mora no `afterAll`, porque limpeza no
+    // corpo do teste não roda quando a asserção falha — e um teste vermelho
+    // deixaria central órfã no banco. Aconteceu de verdade ao provar este
+    // defeito com a correção desfeita.
+    centraisCriadas.push(manual);
     await prisma.ceasaCentral.create({
       data: {
         code: manual,
@@ -267,11 +275,11 @@ describe("importarTodasAsCentrais", () => {
     // A automática continua sendo importada.
     expect(tocadas).toContain(CENTRAL);
 
-    await prisma.ceasaCentral.delete({ where: { code: manual } });
   });
 
   it("importa só as centrais que algum cliente usa", async () => {
     const semCliente = `ORF${uniq().slice(0, 5)}`.toUpperCase();
+    centraisCriadas.push(semCliente);
     await prisma.ceasaCentral.create({
       data: {
         code: semCliente,
@@ -290,7 +298,6 @@ describe("importarTodasAsCentrais", () => {
     // Não se martela um site público por dado que ninguém lê.
     expect(r.resultados.map((x) => x.centralCode)).toContain(CENTRAL);
     expect(r.resultados.map((x) => x.centralCode)).not.toContain(semCliente);
-    await prisma.ceasaCentral.delete({ where: { code: semCliente } });
   });
 });
 
@@ -330,11 +337,11 @@ describe("verificarDefasagem", () => {
     // Central no catálogo que ninguém escolheu estar vazia é o esperado, não um
     // problema. Alarmar aqui encheria a caixa de ruído permanente.
     const orfa = `VAZ${uniq().slice(0, 5)}`.toUpperCase();
+    centraisCriadas.push(orfa);
     await prisma.ceasaCentral.create({
       data: { code: orfa, name: "Central Sem Cliente", city: "X", uf: "MG", sourceKey: "ceasaminas" },
     });
     const defasadas = await CotacoesImportService.verificarDefasagem();
     expect(defasadas.map((d) => d.code)).not.toContain(orfa);
-    await prisma.ceasaCentral.delete({ where: { code: orfa } });
   });
 });

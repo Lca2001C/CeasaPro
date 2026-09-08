@@ -189,7 +189,7 @@ export const SignupService = {
     if (centralValida) {
       const jaTem = await prisma.ceasaQuote.findFirst({
         where: { centralCode: centralValida.code },
-        select: { id: true },
+        select: { quoteDate: true },
       });
       if (!jaTem) {
         const { CotacoesImportService } = await import("./cotacoes-import.service");

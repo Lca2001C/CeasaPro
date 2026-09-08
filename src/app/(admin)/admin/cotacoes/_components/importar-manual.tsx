@@ -17,9 +17,18 @@ interface Central {
   uf: string;
 }
 
-const EXEMPLO = `TOMATE SALADA;CX 20KG;80,00;85,00;92,00
-BATATA LISA;SC 50KG;110,00;118,00;125,00
-ALFACE CRESPA;CX 12UN;18,00;20,00;24,00`;
+/*
+  Exemplo com unidades REAIS de boletim.
+
+  Antes dizia "CX 20KG", "SC 50KG", "CX 12UN" — nenhuma delas existe. Medindo o
+  boletim de verdade (215 linhas): 173 são KG, 14 são DZ, e o resto são compostas
+  como "CX 30 DZ", "DZ 4 KG" e "UN 1,5 KG". Um placeholder inventado ensina o
+  operador a digitar um formato que a fonte nunca usa, e o dado colado deixa de
+  casar com o que a importação automática grava para a mesma praça.
+*/
+const EXEMPLO = `TOMATE SALADA LONGA VIDA;KG;4,00;4,25;4,50
+ALFACE CRESPA PRIMEIRA;DZ;25,00;25,00;30,00
+OVOS BRANCOS EXTRA;CX 30 DZ;180,00;190,00;200,00`;
 
 /**
  * Importação manual de boletim.

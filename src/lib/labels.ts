@@ -131,6 +131,19 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
  * ensinaria o operador a ignorar o aviso — que é justamente o que não pode
  * acontecer com o alarme de uma raspagem.
  */
+/**
+ * De onde vem o número que a tela mostra.
+ *
+ * As duas séries não são comparáveis entre si, e o rótulo é o que evita a
+ * confusão: uma é o boletim da própria praça, com o produto detalhado e a
+ * classificação que o comerciante conhece; a outra é a série agregada do país,
+ * com produto genérico, que serve para acompanhar tendência e comparar praças.
+ */
+export const CEASA_SERIE_LABELS: Record<string, string> = {
+  CENTRAL: "Boletim da praça",
+  NACIONAL: "Série nacional",
+};
+
 export const CEASA_IMPORT_STATUS_LABELS: Record<string, string> = {
   OK: "Importado",
   VAZIO: "Sem boletim no dia",

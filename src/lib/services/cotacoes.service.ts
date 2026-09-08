@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import { sugerirVinculos } from "@/lib/cotacoes/nome";
+import { serieDaFonte } from "./cotacoes-import.service";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 /**
@@ -112,12 +113,24 @@ export const CotacoesService = {
     if (!bruta) return { central: null, quoteDate: null, linhas: [], semVinculo: [] };
     const { sourceKey, ...dadosDaCentral } = bruta;
     const central = { ...dadosDaCentral, automatica: sourceKey !== "manual" };
+    // A série que ESTA central usa. Ver o comentário do `aggregate` abaixo.
+    const serie = serieDaFonte(sourceKey);
 
-    // A data do boletim MAIS RECENTE desta central. Sem isso a tela misturaria
-    // dias diferentes na mesma lista, e o preço de um produto seria de ontem
-    // enquanto o do vizinho seria de uma semana atrás — sem nada indicando isso.
+    /*
+      A data do boletim MAIS RECENTE desta central, DENTRO DA SÉRIE que ela usa.
+
+      Sem o recorte por dia, a tela misturaria dias diferentes na mesma lista: o
+      preço de um produto seria de ontem e o do vizinho de uma semana atrás, sem
+      nada indicando isso.
+
+      Sem o recorte por SÉRIE, acontece coisa pior numa central coberta por duas
+      fontes: as duas taxonomias competem pelo `MAX`, e a tela troca de vocabulário
+      sozinha conforme qual publicou por último — o cliente que vinculou seus
+      produtos aos nomes específicos do boletim abriria o app e encontraria os
+      nomes genéricos da série nacional no lugar, sem explicação.
+    */
     const ultima = await prisma.ceasaQuote.aggregate({
-      where: { centralCode: central.code },
+      where: { centralCode: central.code, product: { serie } },
       _max: { quoteDate: true },
     });
     const quoteDate = ultima._max.quoteDate ?? null;
@@ -148,7 +161,7 @@ export const CotacoesService = {
              p.name           AS "meuProdutoNome",
              saldo.quantity   AS "meuSaldo"
       FROM ceasa_quotes q
-      JOIN ceasa_products cp ON cp.id = q."ceasaProductId"
+      JOIN ceasa_products cp ON cp.id = q."ceasaProductId" AND cp.serie = ${serie}::"CeasaSerie"
       LEFT JOIN tenant_ceasa_links l
              ON l."ceasaProductId" = cp.id AND l."tenantId" = ${tenantId}
       LEFT JOIN products p
@@ -189,9 +202,12 @@ export const CotacoesService = {
   async getTelaDeVinculo(tenantId: string) {
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
-      select: { ceasaCentralCode: true },
+      select: { ceasaCentralCode: true, ceasaCentral: { select: { sourceKey: true } } },
     });
     const central = tenant?.ceasaCentralCode ?? null;
+    // Só produtos da MESMA taxonomia da central: oferecer o genérico nacional a
+    // quem lê o boletim específico da praça produziria vínculo que nunca casa.
+    const serie = serieDaFonte(tenant?.ceasaCentral?.sourceKey ?? "manual");
 
     const [meus, links, doBoletim] = await Promise.all([
       prisma.product.findMany({
@@ -214,7 +230,7 @@ export const CotacoesService = {
       */
       central
         ? prisma.ceasaProduct.findMany({
-            where: { active: true, quotes: { some: { centralCode: central } } },
+            where: { serie, active: true, quotes: { some: { centralCode: central } } },
             orderBy: { name: "asc" },
             select: { id: true, name: true },
           })
@@ -278,7 +294,7 @@ export const CotacoesService = {
     if (input.centralCode) {
       const jaTem = await prisma.ceasaQuote.findFirst({
         where: { centralCode: input.centralCode },
-        select: { id: true },
+        select: { quoteDate: true },
       });
       if (!jaTem) {
         const codigo = input.centralCode;

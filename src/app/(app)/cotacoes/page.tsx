@@ -47,7 +47,7 @@ export default async function CotacoesPage({
       <div className="flex flex-col gap-4">
         <PageHeader
           title="Cotações"
-          description="Preços do boletim diário da sua central do CEASA."
+          description="Preços do boletim da sua central do CEASA."
         />
         <Card className="p-4">
           <p className="mb-4 text-sm text-muted-foreground">
