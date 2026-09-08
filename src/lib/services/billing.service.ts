@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { addOneMonth, computeStatus } from "@/lib/billing/status";
-import { money, toNumber, type Decimal } from "@/lib/money";
+import { gte, money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
   assertMercadoPagoConfig,
@@ -541,6 +541,44 @@ export const BillingService = {
         "Cobrança aprovada com status inesperado no Mercado Pago — mantida como está",
       );
       return "ignorado";
+    }
+
+    // O valor que ENTROU tem de cobrir a mensalidade DEVIDA.
+    //
+    // Trocar de plano na tela de pagamento marca a cobrança anterior como
+    // CANCELADO só no NOSSO banco: o código PIX antigo continua pagável no
+    // Mercado Pago por 48h, porque não existe cancelamento no gateway
+    // (`mercadopago.ts` só tem `create*` e `getPayment`). Pagando o código
+    // antigo — justamente o que já estava copiado no app do banco — o mês era
+    // creditado por inteiro e a assinatura ficava ATIVA no plano NOVO, mais
+    // caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
+    // MENSALIDADE_JA_PAGA bloqueava a cobrança correta do mês.
+    //
+    // Conferir contra `payment.amount` não pegaria nada: a linha antiga foi
+    // cobrada em 49,90 e foi 49,90 que entrou. Quem decide é o valor devido.
+    //
+    // A checagem fica FORA da transação de propósito: abortá-la lá dentro não
+    // desfaria o `updateMany` já aplicado. Deixando a linha intocada, a tela
+    // continua oferecendo o pagamento — o cliente não fica com "já pago neste
+    // mês" e sem acesso, que seria outro beco sem saída — e o valor a menos
+    // fica registrado no log para um humano resolver (crédito ou devolução).
+    if (newStatus === "APROVADO") {
+      const cobrado = await prisma.tenantSubscription.findUnique({
+        where: { id: payment.subscriptionId },
+        select: { monthlyAmount: true },
+      });
+      if (cobrado && !gte(money(mp.amount), cobrado.monthlyAmount)) {
+        logger.error(
+          {
+            mpPaymentId: mp.id,
+            tenantId: payment.tenantId,
+            pago: String(mp.amount),
+            devido: cobrado.monthlyAmount.toString(),
+          },
+          "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
+        );
+        return "ignorado";
+      }
     }
 
     const now = new Date();
