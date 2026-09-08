@@ -485,3 +485,56 @@ describe("Cobrança PIX vencida", () => {
     );
   });
 });
+
+/**
+ * A reconciliação é a ÚNICA rede para webhook perdido.
+ *
+ * O webhook responde na hora e processa em `after()`, então uma queda de
+ * instância engole o evento em silêncio: a empresa pagou e fica SUSPENSA
+ * vendo "Aguardando o pagamento", porque a tela libera o acesso olhando
+ * `paidThisMonth`.
+ *
+ * O lote era um só (`OR: [PENDENTE, APROVADO]`, `take: 200`, mais antigas
+ * primeiro). As APROVADAS são reconsultadas todo dia por dois meses e são
+ * sempre mais antigas que as pendentes de hoje — a partir de ~100 empresas
+ * pagantes o lote fechava sem alcançar uma única pendente.
+ */
+describe("Reconciliação com muitas cobranças aprovadas", () => {
+  it("resgata a pendente mesmo com o lote cheio de aprovadas mais antigas", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+
+    const cobranca = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    // Pagou no banco; a notificação nunca chegou.
+    gw.status.set(cobranca.mpPaymentId!, "approved");
+    // Mais velha que a idade mínima, senão a rotina a ignora de propósito.
+    await prisma.subscriptionPayment.update({
+      where: { id: cobranca.id },
+      data: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+
+    // 200 aprovadas ANTERIORES a ela: é exatamente o teto do lote.
+    const antigas = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await prisma.subscriptionPayment.createMany({
+      data: Array.from({ length: 200 }, (_, i) => ({
+        subscriptionId: sub.id,
+        tenantId,
+        amount: 49.9,
+        status: "APROVADO" as const,
+        referenceMonth: cobranca.referenceMonth,
+        mpPaymentId: `mp-antiga-${i}-${uniq()}`,
+        createdAt: antigas,
+        paidAt: antigas,
+      })),
+    });
+
+    await BillingService.reconcilePendingPayments();
+
+    const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(depois.status).toBe("ATIVO");
+  });
+});

@@ -45,6 +45,9 @@ export const DUE_REMINDER_DAYS = 3;
 /** Só reconcilia cobranças com alguns minutos de vida, para não competir com o webhook. */
 const RECONCILE_MIN_AGE_MINUTES = 10;
 
+/** Teto de cada lote da reconciliação diária (pendentes e aprovadas separados). */
+const RECONCILE_BATCH = 200;
+
 const CARD_PAYMENT_TYPE: Record<"CREDIT_CARD" | "DEBIT_CARD", CardPaymentTypeId> = {
   CREDIT_CARD: "credit_card",
   DEBIT_CARD: "debit_card",
@@ -736,18 +739,56 @@ export const BillingService = {
     // A idade mínima vale só para as PENDENTES: recém-criada, a cobrança ainda
     // está sendo resolvida pelo webhook e consultar agora só gastaria chamada.
     const cutoff = new Date(now.getTime() - RECONCILE_MIN_AGE_MINUTES * 60 * 1000);
-    const cobrancas = await prisma.subscriptionPayment.findMany({
+    const meses = [currentRefMonth(now), previousRefMonth(now)];
+
+    // Dois lotes, e as PENDENTES primeiro.
+    //
+    // Antes era um só `findMany` com `OR: [PENDENTE, APROVADO]`, `take: 200` e
+    // `createdAt: "asc"`. As APROVADAS são reconsultadas todos os dias por dois
+    // meses e são sempre MAIS ANTIGAS que as pendentes de hoje, então a partir
+    // de ~100 empresas pagantes o lote fechava antes de alcançar uma única
+    // pendente. Quem pagou e teve o webhook perdido — o webhook processa em
+    // `after()`, então uma queda de instância engole o evento em silêncio —
+    // ficava SUSPENSO indefinidamente vendo "Aguardando o pagamento", com esta
+    // rotina sendo a única rede de segurança que existia para o caso.
+    //
+    // As pendentes são o resgate e não podem disputar vaga com a varredura de
+    // estorno; cada lote tem o seu teto.
+    const pendentes = await prisma.subscriptionPayment.findMany({
       where: {
         mpPaymentId: { not: null },
-        referenceMonth: { in: [currentRefMonth(now), previousRefMonth(now)] },
-        OR: [
-          { status: "PENDENTE", createdAt: { lt: cutoff } },
-          { status: "APROVADO" },
-        ],
+        referenceMonth: { in: meses },
+        status: "PENDENTE",
+        createdAt: { lt: cutoff },
       },
       orderBy: { createdAt: "asc" },
-      take: 200,
+      take: RECONCILE_BATCH,
     });
+    const aprovadas = await prisma.subscriptionPayment.findMany({
+      where: {
+        mpPaymentId: { not: null },
+        referenceMonth: { in: meses },
+        status: "APROVADO",
+      },
+      orderBy: { createdAt: "asc" },
+      take: RECONCILE_BATCH,
+    });
+    const cobrancas = [...pendentes, ...aprovadas];
+
+    // Truncamento tem de aparecer: o retorno `{ verificados, atualizados }` não
+    // distingue "nada a fazer" de "lote estourado", e um lote que satura todo
+    // dia significa cobrança que nunca é verificada.
+    for (const [nome, lote] of [
+      ["pendentes", pendentes],
+      ["aprovadas", aprovadas],
+    ]) {
+      if (lote.length === RECONCILE_BATCH) {
+        logger.warn(
+          { lote: nome, teto: RECONCILE_BATCH },
+          "Reconciliação atingiu o teto do lote — há cobranças não verificadas nesta rodada",
+        );
+      }
+    }
 
     let atualizados = 0;
     for (const p of cobrancas) {
