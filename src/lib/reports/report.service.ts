@@ -797,10 +797,25 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
               AND "purchaseId" IS NULL
               AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
+          // Soma os PAGAMENTOS, não o acumulado do lote.
+          //
+          // Era SUM("paidAmount") agrupado por "paidDate" em crate_cleanings,
+          // onde paidAmount é ACUMULADO e paidDate guarda só a data do ÚLTIMO
+          // pagamento. Pagamento parcelado ao higienizador jogava o valor cheio
+          // do lote no dia do último, deixava o dia do primeiro sem despesa
+          // nenhuma e, se o último caía fora do período, sumia com o lote
+          // inteiro — o mês fechava com saída menor que a real (lucro inflado),
+          // e é o número que vai para o contador.
+          //
+          // crate_cleaning_payments tem uma linha por pagamento, como
+          // credit_payments já tinha para o fiado. O lote soft-deletado sai pelo
+          // JOIN: a linha de pagamento não tem deletedAt própria.
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
-            SELECT ${dayExpr('"paidDate"')} AS d, SUM("paidAmount") AS total FROM crate_cleanings
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
-              AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
+            SELECT ${dayExpr('pg."paidAt"')} AS d, SUM(pg.amount) AS total
+            FROM crate_cleaning_payments pg
+            JOIN crate_cleanings cc ON cc.id = pg."cleaningId"
+            WHERE pg."tenantId" = ${p.tenantId} AND cc."deletedAt" IS NULL
+              AND pg."paidAt" >= ${p.from} AND pg."paidAt" <= ${p.to} GROUP BY 1`,
         ]);
 
       const days = new Map<string, { entradas: Prisma.Decimal; saidas: Prisma.Decimal }>();

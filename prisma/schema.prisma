@@ -130,21 +130,21 @@ model RefreshToken {
   /// vazado.
   /// O default é a hipótese conservadora: um token criado sem linhagem
   /// explícita é a própria linhagem, e revogá-la atinge só ele.
-  familyId       String    @default(cuid())
+  familyId      String  @default(cuid())
   /// Quem sucedeu este token. Prova que a revogação foi por ROTAÇÃO.
-  replacedById   String?
+  replacedById  String?
   /// Por que foi revogado. Sem isto, `revokedAt != null` significava quatro
   /// coisas diferentes (rotação, logout, ação do admin, troca de senha) e não
   /// havia como detectar reuso sem transformar todo logout em falso alarme.
-  revokedReason  String?
+  revokedReason String?
   /// Quantas vezes este token já foi aceito dentro da janela de graça.
   ///
   /// Duas abas renovam concorrentemente (`SessaoViva` e `api-client` têm travas
   /// que não se enxergam), e uma resposta perdida faz o cliente reenviar com o
   /// cookie antigo. Sem a janela, esses casos legítimos viravam "ataque".
-  graceUses      Int       @default(0)
+  graceUses     Int     @default(0)
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([familyId])
@@ -618,10 +618,36 @@ model CrateCleaning {
   deletedAt      DateTime?
   tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   crateMovements PlasticCrateMovement[]
+  payments       CrateCleaningPayment[]
 
   @@index([tenantId, sentDate])
   @@index([tenantId, status])
   @@map("crate_cleanings")
+}
+
+/// Cada pagamento ao higienizador, com a data em que saiu do caixa.
+///
+/// `CrateCleaning.paidAmount` é ACUMULADO e `paidDate` é sobrescrito a cada
+/// pagamento, então os dois juntos não dizem quanto saiu em que dia. O fluxo de
+/// caixa somava `paidAmount` agrupando por `paidDate`: o pagamento parcelado
+/// jogava o valor cheio do lote no dia do ÚLTIMO pagamento, deixava o dia do
+/// primeiro sem despesa nenhuma e, se o último caía fora do período, sumia com
+/// o lote inteiro do relatório — o mês fechava com saída menor que a real, e é
+/// o número que vai para o contador.
+///
+/// Mesmo desenho de `CreditPayment`, que já existia para o fiado.
+model CrateCleaningPayment {
+  id         String        @id @default(cuid())
+  tenantId   String
+  cleaningId String
+  amount     Decimal       @db.Decimal(14, 2)
+  paidAt     DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  cleaning   CrateCleaning @relation(fields: [cleaningId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, paidAt])
+  @@index([cleaningId])
+  @@map("crate_cleaning_payments")
 }
 
 model PackagingType {

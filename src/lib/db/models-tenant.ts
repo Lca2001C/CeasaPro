@@ -21,6 +21,7 @@ export const TENANT_MODELS = new Set<string>([
   // Fase 2
   "PlasticCrateMovement",
   "CrateCleaning",
+  "CrateCleaningPayment",
   "PackagingType",
   "PackagingSale",
   // Tinha `tenantId` e era consultado via `getTenantPrisma`, mas estava fora

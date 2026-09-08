@@ -30,6 +30,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.plasticCrateMovement.deleteMany({ where: { tenantId } });
+  await prisma.crateCleaningPayment.deleteMany({ where: { tenantId } });
   await prisma.crateCleaning.deleteMany({ where: { tenantId } });
   await prisma.creditAccount.deleteMany({ where: { tenantId } });
   await prisma.expense.deleteMany({ where: { tenantId } });
@@ -316,5 +317,79 @@ describe("reduzir o envio de higienizacao NAO lava caixa (regressao)", () => {
     expect(depois.emHigienizacao).toBe(40);
     expect(depois.sujas).toBe(20);
     expect(depois.limpas).toBe(0);
+  });
+});
+
+/**
+ * Fluxo de caixa: a saída é o que saiu NAQUELE dia.
+ *
+ * `crate_cleanings.paidAmount` é acumulado e `paidDate` guarda só a data do
+ * ÚLTIMO pagamento, e o relatório somava esses dois campos. Pagamento
+ * parcelado ao higienizador jogava o valor cheio do lote no dia do último,
+ * deixava o dia do primeiro sem despesa nenhuma e, se o último caía fora do
+ * período, sumia com o lote inteiro — o mês fechava com saída menor que a
+ * real, e é o número que vai para o contador.
+ */
+describe("fluxo de caixa com pagamento parcelado ao higienizador", () => {
+  // Deslocamento a partir de HOJE, não dia do mês: com dia fixo o teste
+  // reprovaria nos primeiros dias do mês, quando a janela do preset "mes"
+  // (que termina agora) não alcança o dia 5.
+  const dia = (offset: number) => isoDateTz(addDaysTz(new Date(), offset));
+
+  async function loteComDoisPagamentos() {
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 20, dirty: true, movementDate: hoje },
+      ctx,
+    );
+    const lote = await HigienizacaoService.create(
+      {
+        cleanerName: `Silva-${Date.now()}`,
+        sentDate: dia(-6),
+        sentQty: 20,
+        unitPrice: 2,
+        notes: null,
+      },
+      ctx,
+    );
+    // Total 40: paga 10 há 5 dias e 30 ontem.
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 10, paidDate: dia(-5) },
+      ctx,
+    );
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 30, paidDate: dia(-1) },
+      ctx,
+    );
+    return lote;
+  }
+
+  it("cada parcela entra no SEU dia, não tudo no dia do último pagamento", async () => {
+    await loteComDoisPagamentos();
+    const p = resolvePeriod({ preset: "personalizado", from: dia(-6), to: dia(0) });
+    const rel = await buildReport("FLUXO_CAIXA", { tenantId, from: p.from, to: p.to });
+
+    const saidaEm = (offset: number) => {
+      const alvo = dia(offset);
+      const linha = rel.rows.find((r) => isoDateTz(r.date as Date) === alvo);
+      return Number((linha?.saidas as { toString(): string } | undefined)?.toString() ?? 0);
+    };
+
+    expect(saidaEm(-5)).toBe(10);
+    expect(saidaEm(-1)).toBe(30);
+  });
+
+  it("período que termina antes do último pagamento ainda mostra o primeiro", async () => {
+    await loteComDoisPagamentos();
+    // Janela que termina ANTES do último pagamento.
+    const p = resolvePeriod({ preset: "personalizado", from: dia(-6), to: dia(-3) });
+    const rel = await buildReport("FLUXO_CAIXA", { tenantId, from: p.from, to: p.to });
+
+    // Antes o lote inteiro desaparecia: `paidDate` (o último pagamento) ficava
+    // fora da janela, e com ele os R$ 10 que saíram de verdade há 5 dias.
+    const total = rel.rows.reduce(
+      (a, r) => a + Number((r.saidas as { toString(): string }).toString()),
+      0,
+    );
+    expect(total).toBe(10);
   });
 });

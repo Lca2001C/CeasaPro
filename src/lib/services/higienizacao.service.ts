@@ -524,6 +524,22 @@ export const HigienizacaoService = {
             "Confira o saldo e lance de novo.",
         );
       }
+      // Uma linha por pagamento, na MESMA transação.
+      //
+      // `paidAmount` é acumulado e `paidDate` é sobrescrito, então os dois
+      // juntos não dizem quanto saiu do caixa em que dia. O fluxo de caixa
+      // somava `paidAmount` por `paidDate` e jogava o valor cheio do lote no
+      // dia do ÚLTIMO pagamento — deixando o dia do primeiro sem despesa e
+      // sumindo com o lote quando o último caía fora do período.
+      await tx.crateCleaningPayment.create({
+        data: {
+          tenantId: ctx.tenantId,
+          cleaningId: c.id,
+          amount: input.amount,
+          paidAt: parseFormDateTz(input.paidDate),
+        },
+      });
+
       const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
       await audit(
         {
