@@ -291,9 +291,14 @@ export const CAPITULOS: CapituloTour[] = [
       {
         alvo: TITULO,
         titulo: "Tudo isto também está escrito",
+        // Não prometa "abre sem internet": o service worker não pré-cacheia
+        // /ajuda, então sem rede ele devolve /offline. A promessa aparecia no
+        // último passo do tour e mandava o comerciante contar com o guia
+        // justamente quando a conexão cai no box — ele seguia a instrução do
+        // sistema, no pior momento, e não encontrava nada.
         texto:
           "Tela por tela, com as regras que costumam pegar de surpresa e as dúvidas mais " +
-          "comuns. Abre sem internet, para servir também quando algo dá errado no box.",
+          "comuns. Fica sempre no botão Tutorial, no alto da tela.",
       },
       {
         alvo: '[data-tour="tutorial"]',
