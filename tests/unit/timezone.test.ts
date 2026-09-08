@@ -13,7 +13,8 @@ import {
   zonedTimeToUtc,
 } from "@/lib/tz";
 import { resolvePeriod } from "@/lib/dates";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDate, formatDateOnly, formatDateTime, formatDayMonthOnly } from "@/lib/format";
+import { frescorDoBoletim } from "@/lib/cotacoes/frescor";
 
 /**
  * O servidor roda em UTC (Vercel) e o usuário está no Brasil. Estes testes
@@ -194,6 +195,93 @@ describe("parseFormDateTz", () => {
     // aparecer como vencida na comparação com o começo do dia.
     const venc = parseFormDateTz("2026-09-10");
     expect(startOfDayTz(venc).toISOString()).toBe(venc.toISOString());
+  });
+});
+
+/**
+ * Coluna `@db.Date` é o caso ESPELHADO — e o erro nela é o mesmo dia perdido,
+ * na direção contrária.
+ *
+ * `parseFormDateTz` conserta a ENTRADA: o dia digitado no formulário vira meia-
+ * noite brasileira. Mas `CeasaQuote.quoteDate` não vem de formulário nenhum:
+ * é `@db.Date`, o boletim daquele dia de calendário, e o driver a entrega como
+ * meia-noite UTC. Formatá-la em APP_TIME_ZONE devolve 21h do dia ANTERIOR.
+ *
+ * O defeito estava vivo na tela de Cotações e na do super-admin: o boletim de
+ * 07/09 aparecia como 06/09. Nada quebrava, e 06/09 é uma data plausível — mas
+ * num módulo cuja tese é "a data do dado aparece para ninguém repassar preço
+ * velho como novo", é errar na única coisa que a tela promete. Pior: o selo de
+ * frescor lia a mesma coluna com `getUTC*` (ver `frescor.ts`), então a tela
+ * dizia "boletim de hoje" ao lado de uma data que era a de ontem.
+ */
+describe("formatDateOnly (coluna @db.Date)", () => {
+  // Como o driver entrega uma coluna DATE de 7 de setembro.
+  const boletim = new Date("2026-09-07T00:00:00.000Z");
+
+  it("mostra o dia do calendário que está gravado", () => {
+    expect(formatDateOnly(boletim)).toBe("07/09/2026");
+    expect(formatDayMonthOnly(boletim)).toBe("07/09");
+  });
+
+  it("é isso que formatDate errava — o teste guarda o contraste", () => {
+    // Se alguém trocar de volta por "consistência", este número muda.
+    expect(formatDate(boletim)).toBe("06/09/2026");
+  });
+
+  it("concorda com frescorDoBoletim, que lê a mesma coluna em UTC", () => {
+    // As duas leituras da MESMA coluna têm de dar o mesmo dia. Era a
+    // discordância entre elas que produzia "boletim de ontem" com selo de hoje.
+    const agora = new Date("2026-09-07T14:00:00.000Z"); // 11h no Brasil
+    expect(frescorDoBoletim(boletim, agora).nivel).toBe("atual");
+    expect(formatDateOnly(boletim)).toBe("07/09/2026");
+  });
+
+  it("vale na virada do mês e do ano", () => {
+    expect(formatDateOnly(new Date("2026-01-01T00:00:00.000Z"))).toBe("01/01/2026");
+    expect(formatDateOnly(new Date("2026-03-01T00:00:00.000Z"))).toBe("01/03/2026");
+  });
+
+  it("sem data, devolve o traço como os outros formatadores", () => {
+    expect(formatDateOnly(null)).toBe("-");
+    expect(formatDayMonthOnly(undefined)).toBe("-");
+  });
+});
+
+/**
+ * As telas que mostram data de boletim usam o formatador de calendário?
+ *
+ * Lê o fonte porque a alternativa não existe: trocar `formatDateOnly` por
+ * `formatDate` não quebra tipo, teste nem build — só desloca a data em um dia,
+ * de forma plausível. É o mesmo raciocínio de `actions-module-gate.test.ts`.
+ */
+describe("as telas de cotação não voltam a formatar boletim no fuso do app", () => {
+  const TELAS = [
+    "src/app/(app)/cotacoes",
+    "src/app/(admin)/admin/cotacoes",
+  ];
+
+  function arquivosTsx(dir: string): string[] {
+    return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
+      e.isDirectory()
+        ? arquivosTsx(`${dir}/${e.name}`)
+        : e.name.endsWith(".tsx")
+          ? [`${dir}/${e.name}`]
+          : [],
+    );
+  }
+
+  it("as telas foram lidas de verdade", () => {
+    expect(TELAS.flatMap(arquivosTsx).length).toBeGreaterThan(5);
+  });
+
+  it("nenhuma delas chama formatDate — a data ali é de calendário", () => {
+    const infratores = TELAS.flatMap(arquivosTsx).filter((arq) =>
+      /\bformatDate\(/.test(readFileSync(arq, "utf8")),
+    );
+    expect(
+      infratores,
+      "data de boletim (@db.Date) formatada no fuso do app aparece um dia adiantada",
+    ).toEqual([]);
   });
 });
 

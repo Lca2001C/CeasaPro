@@ -1,9 +1,11 @@
 import { after } from "next/server";
-import type { Prisma } from "@prisma/client";
+import type { CeasaSerie, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import { sugerirVinculos } from "@/lib/cotacoes/nome";
+import { variacaoPercentual } from "@/lib/cotacoes/variacao";
+import { toNumber } from "@/lib/money";
 import { serieDaFonte } from "./cotacoes-import.service";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -29,6 +31,28 @@ export interface LinhaDeCotacao {
   meuProdutoNome: string | null;
   /** Saldo do produto vinculado. Null quando não há vínculo. */
   meuSaldo: Prisma.Decimal | null;
+  /**
+   * O boletim ANTERIOR em que este produto apareceu, com a data dele.
+   *
+   * A data vai junto, e não é detalhe de layout: o cartão NÃO pode dizer
+   * "ontem". Medido em 8 dias úteis seguidos contra a fonte real, Juiz de Fora,
+   * Barbacena, Caratinga e Poços de Caldas publicam 2 a 3 vezes por semana — e
+   * um produto fora de safra some do boletim por semanas mesmo onde a praça
+   * publica todo dia. Chamar de "ontem" um preço de seis dias atrás é errar na
+   * direção que faz o comerciante repassar preço velho achando que é de ontem.
+   *
+   * `null` quando o produto não aparece em nenhum dos boletins recentes lidos:
+   * é o caso de estreia no boletim, e aí não há variação a mostrar.
+   */
+  anterior: { quoteDate: Date; refPrice: Prisma.Decimal } | null;
+  /** Variação percentual do boletim anterior para este. `null` sem anterior. */
+  variacao: number | null;
+  /**
+   * Preços dos últimos boletins, do mais antigo ao mais recente, para o
+   * minigráfico do cartão. `number` e não `Decimal` porque isto vira altura de
+   * pixel, não conta de dinheiro.
+   */
+  serie: number[];
 }
 
 export interface PainelDeCotacoes {
@@ -175,20 +199,38 @@ export const CotacoesService = {
       ORDER BY cp.name ASC, q.unit ASC
     `;
 
+    const recentes = await ultimosBoletins(central.code, serie);
+
     return {
       central,
       quoteDate,
-      linhas: rows.map((r) => ({
-        ceasaProductId: r.ceasaProductId,
-        ceasaProductName: r.ceasaProductName,
-        unit: r.unit,
-        refPrice: dec(r.refPrice),
-        minPrice: dec(r.minPrice),
-        maxPrice: dec(r.maxPrice),
-        meuProdutoId: r.meuProdutoId,
-        meuProdutoNome: r.meuProdutoNome,
-        meuSaldo: r.meuProdutoId ? (dec(r.meuSaldo) ?? null) : null,
-      })),
+      linhas: rows.map((r) => {
+        // A série deste produto NESTA embalagem. A unidade entra na chave
+        // porque o boletim cota a mesma fruta em caixa e em quilo com preços de
+        // ordem de grandeza diferente: juntar as duas no mesmo minigráfico
+        // desenharia um dente de serra que não existe no mercado.
+        const doProduto = recentes.get(chaveDaSerie(r.ceasaProductId, r.unit)) ?? [];
+        const anteriores = doProduto.filter((p) => p.quoteDate < quoteDate.getTime());
+        const anterior = anteriores.at(-1) ?? null;
+        const refPrice = dec(r.refPrice);
+
+        return {
+          ceasaProductId: r.ceasaProductId,
+          ceasaProductName: r.ceasaProductName,
+          unit: r.unit,
+          refPrice,
+          minPrice: dec(r.minPrice),
+          maxPrice: dec(r.maxPrice),
+          meuProdutoId: r.meuProdutoId,
+          meuProdutoNome: r.meuProdutoNome,
+          meuSaldo: r.meuProdutoId ? (dec(r.meuSaldo) ?? null) : null,
+          anterior: anterior
+            ? { quoteDate: new Date(anterior.quoteDate), refPrice: anterior.refPrice }
+            : null,
+          variacao: variacaoPercentual(refPrice, anterior?.refPrice ?? null),
+          serie: doProduto.map((p) => toNumber(p.refPrice)),
+        };
+      }),
       semVinculo: await semVinculo(tenantId),
     };
   },
@@ -360,6 +402,68 @@ export const CotacoesService = {
     });
   },
 };
+
+/**
+ * Quantos boletins o minigráfico do cartão resume.
+ *
+ * Oito é o que dá forma sem custar: são cerca de duas semanas onde a praça
+ * publica todo dia útil, e um mês onde publica duas vezes por semana. Medido no
+ * banco local com 205 mil cotações reais, a consulta inteira sai em 1,2 ms —
+ * o `DISTINCT ... LIMIT` percorre a chave primária de trás para frente e para
+ * assim que junta oito datas (370 linhas varridas, não as 14.610 da praça).
+ */
+const BOLETINS_NO_MINIGRAFICO = 8;
+
+function chaveDaSerie(ceasaProductId: string, unit: string): string {
+  return `${ceasaProductId}|${unit}`;
+}
+
+/**
+ * Preços dos últimos boletins da praça, agrupados por produto+embalagem.
+ *
+ * Uma consulta só para os dois usos do cartão — o preço anterior e o
+ * minigráfico —, porque são a mesma leitura: a série recente. Fazer duas seria
+ * pagar o mesmo percurso de índice duas vezes por abertura de tela.
+ *
+ * O recorte por SÉRIE se repete dentro do `WITH` de propósito. Sem ele, numa
+ * praça coberta por duas fontes, as datas mais recentes poderiam ser todas de
+ * uma taxonomia, e o minigráfico dos produtos da outra viria vazio sem motivo
+ * aparente.
+ */
+async function ultimosBoletins(centralCode: string, serie: CeasaSerie) {
+  const pontos = await prisma.$queryRaw<
+    {
+      ceasaProductId: string;
+      unit: string;
+      quoteDate: Date;
+      refPrice: Prisma.Decimal | string;
+    }[]
+  >`
+    WITH datas AS (
+      SELECT DISTINCT q."quoteDate"
+      FROM ceasa_quotes q
+      JOIN ceasa_products cp ON cp.id = q."ceasaProductId" AND cp.serie = ${serie}::"CeasaSerie"
+      WHERE q."centralCode" = ${centralCode}
+      ORDER BY 1 DESC
+      LIMIT ${BOLETINS_NO_MINIGRAFICO}
+    )
+    SELECT q."ceasaProductId", q.unit, q."quoteDate", q."refPrice"
+    FROM ceasa_quotes q
+    JOIN ceasa_products cp ON cp.id = q."ceasaProductId" AND cp.serie = ${serie}::"CeasaSerie"
+    WHERE q."centralCode" = ${centralCode}
+      AND q."quoteDate" IN (SELECT "quoteDate" FROM datas)
+    ORDER BY q."quoteDate" ASC
+  `;
+
+  const porProduto = new Map<string, { quoteDate: number; refPrice: Prisma.Decimal }[]>();
+  for (const p of pontos) {
+    const chave = chaveDaSerie(p.ceasaProductId, p.unit);
+    const lista = porProduto.get(chave) ?? [];
+    lista.push({ quoteDate: p.quoteDate.getTime(), refPrice: p.refPrice as Prisma.Decimal });
+    porProduto.set(chave, lista);
+  }
+  return porProduto;
+}
 
 /** Produtos ativos da empresa que ainda não apontam para nenhuma cotação. */
 async function semVinculo(tenantId: string) {

@@ -1,0 +1,28 @@
+-- Índice para ler a cotação PELO PRODUTO, e não pelo dia da praça.
+--
+-- O módulo tinha um caminho de leitura só: "o boletim de hoje desta praça",
+-- servido por `ceasa_quotes_centralCode_quoteDate_idx`. As telas de histórico,
+-- sazonalidade e comparativo entre praças fazem a pergunta TRANSPOSTA — "este
+-- produto ao longo do tempo" e "este produto em todas as praças" — e nenhuma
+-- delas tem prefixo utilizável naquele índice, nem na chave primária, que
+-- começa por `centralCode`.
+--
+-- Medido no banco local com 205.010 cotações reais (43 praças, 363 dias):
+--
+--   comparativo entre praças   11,9 ms → 3,9 ms   3.845 → 151 páginas lidas
+--   histórico de 365 dias       2,5 ms → 1,4 ms
+--
+-- O plano de antes era `Parallel Seq Scan` descartando 66.815 linhas POR WORKER
+-- para devolver 39. O que torna isso inaceitável não é o número de hoje: é que
+-- ele é O(tabela) numa tabela que só cresce — a série nacional sozinha soma
+-- ~500 mil linhas por ano, então o mesmo clique custaria o triplo no terceiro
+-- ano. Um índice troca isso por custo praticamente constante.
+--
+-- Custo medido e aceito: +12 MB sobre 205 mil linhas.
+--
+-- A coluna `unit` foi deliberadamente DEIXADA DE FORA. Medi as duas versões: com
+-- ela o índice dá 12 MB e o comparativo 3,9 ms; sem ela dá os MESMOS 12 MB e
+-- 3,9 ms — a deduplicação de B-tree do Postgres absorve uma coluna tão repetida
+-- que ela sai de graça, e portanto não paga por si. Fica como filtro no heap.
+CREATE INDEX "ceasa_quotes_ceasaProductId_centralCode_quoteDate_idx"
+  ON "ceasa_quotes" ("ceasaProductId", "centralCode", "quoteDate");

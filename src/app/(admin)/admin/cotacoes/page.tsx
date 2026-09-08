@@ -3,7 +3,7 @@ import { requireSuperAdmin } from "@/lib/auth/session";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
 import { CEASA_IMPORT_STATUS_LABELS } from "@/lib/labels";
-import { formatDate, formatDateTime } from "@/lib/format";
+import { formatDateOnly, formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -104,7 +104,7 @@ export default async function AdminCotacoesPage() {
                       : `${c.clientes} ${c.clientes === 1 ? "empresa usa" : "empresas usam"}`}
                     {" · "}
                     {c.ultimoBoletim
-                      ? `último boletim ${formatDate(c.ultimoBoletim)}`
+                      ? `último boletim ${formatDateOnly(c.ultimoBoletim)}`
                       : "nenhum boletim recebido"}
                   </p>
                   {c.ultimaExecucao && (
@@ -158,7 +158,7 @@ export default async function AdminCotacoesPage() {
               </span>
               <span className="shrink-0 text-xs text-muted-foreground">
                 {c.sourceKey === "manual" ? "manual" : "automática"}
-                {c.ultimoBoletim ? ` · ${formatDate(c.ultimoBoletim)}` : " · sem boletim"}
+                {c.ultimoBoletim ? ` · ${formatDateOnly(c.ultimoBoletim)}` : " · sem boletim"}
               </span>
             </div>
           ))}

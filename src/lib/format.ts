@@ -19,6 +19,21 @@ const DATE = new Intl.DateTimeFormat("pt-BR", {
   year: "numeric",
 });
 
+// UTC, e não o fuso do app: ver `formatDateOnly`. Uma coluna `@db.Date` chega
+// como meia-noite UTC, e convertê-la para São Paulo devolve o dia anterior.
+const DATE_ONLY = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "UTC",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
+const DAY_MONTH_ONLY = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "UTC",
+  day: "2-digit",
+  month: "2-digit",
+});
+
 const DATETIME = new Intl.DateTimeFormat("pt-BR", {
   timeZone: APP_TIME_ZONE,
   day: "2-digit",
@@ -72,6 +87,41 @@ export function formatDate(d: Date | string | null | undefined): string {
 export function formatDateTime(d: Date | string | null | undefined): string {
   if (!d) return "-";
   return DATETIME.format(new Date(d));
+}
+
+/**
+ * Data de CALENDÁRIO — de uma coluna `@db.Date`, não de um instante.
+ *
+ * **Este é o par oposto de `formatDate`, e usar um no lugar do outro erra por um
+ * dia inteiro, calado.**
+ *
+ * `formatDate` existe para instante (`createdAt`, uma venda às 22h) e converte
+ * para o fuso do Brasil, que é o certo ali. Uma coluna `@db.Date` não é
+ * instante: é "o dia 7 de setembro", e o driver a entrega como meia-noite UTC.
+ * Convertida para São Paulo, meia-noite UTC vira 21h do dia ANTERIOR — então o
+ * boletim de 07/09 aparecia na tela como 06/09.
+ *
+ * Num módulo cuja tese inteira é "a data do dado aparece, para ninguém repassar
+ * preço velho como novo", errar essa data por um dia é errar na única coisa que
+ * a tela promete. E era invisível: 06/09 é uma data perfeitamente plausível.
+ *
+ * `frescorDoBoletim` já lia esta coluna com `getUTC*` pelo mesmo motivo, e
+ * documenta a armadilha — a formatação é que tinha ficado para trás. O resultado
+ * era a incoerência que ninguém nota: o selo dizia "boletim de hoje" ao lado de
+ * uma data que é a de ontem.
+ *
+ * Regra: coluna `@db.Date` → estas duas funções. Qualquer outro `DateTime` →
+ * `formatDate`/`formatDateTime`.
+ */
+export function formatDateOnly(d: Date | string | null | undefined): string {
+  if (!d) return "-";
+  return DATE_ONLY.format(new Date(d));
+}
+
+/** 05/09 — a mesma data de calendário, onde o ano não cabe e não faz falta. */
+export function formatDayMonthOnly(d: Date | string | null | undefined): string {
+  if (!d) return "-";
+  return DAY_MONTH_ONLY.format(new Date(d));
 }
 
 /** (31) 99999-9999 */

@@ -365,6 +365,25 @@ model CeasaQuote {
   /// Reimportar o mesmo dia atualiza, não duplica.
   @@id([centralCode, quoteDate, ceasaProductId, unit])
   @@index([centralCode, quoteDate])
+  /// O caminho de leitura do HISTÓRICO: um produto ao longo do tempo.
+  ///
+  /// O índice acima serve a "um dia inteiro de uma praça" — que é o painel. A
+  /// tela de histórico faz a pergunta transposta ("este produto, nos últimos 365
+  /// dias") e o comparativo faz "este produto, em todas as praças", e nenhuma das
+  /// duas tem prefixo utilizável ali.
+  ///
+  /// Medido com 205 mil cotações: o comparativo entre praças fazia SEQ SCAN da
+  /// tabela inteira, descartando 66.815 linhas por worker para devolver 39, em
+  /// 11,9 ms e 3.845 páginas. Com este índice: 3,9 ms e 151 páginas. O histórico
+  /// de 365 dias caiu de 2,5 ms para 1,4 ms.
+  ///
+  /// O custo é real e medido: +12 MB de índice sobre 205 mil linhas. Aceito
+  /// porque o seq scan é O(tabela) numa tabela que só cresce — hoje custa 12 ms,
+  /// e no terceiro ano de histórico custaria o triplo, em toda abertura de
+  /// produto. A `unit` NÃO entra: medida com e sem, a deduplicação do B-tree
+  /// absorve a coluna repetida e o índice dá 12 MB dos dois jeitos, com o mesmo
+  /// tempo — então ela fica como filtro, e o índice fica com uma coluna a menos.
+  @@index([ceasaProductId, centralCode, quoteDate])
   @@map("ceasa_quotes")
 }
 
