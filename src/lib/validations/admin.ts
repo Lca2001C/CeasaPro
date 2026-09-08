@@ -1,11 +1,12 @@
 import { z } from "zod";
 import { emailSchema } from "./auth";
+import { cnpjSchema } from "./config";
 import { OPTIONAL_MODULE_KEYS } from "@/lib/plan/modules";
 
 export const novaEmpresaSchema = z.object({
   tradeName: z.string().trim().min(1, "Informe o nome da empresa").max(120),
   legalName: z.string().trim().max(160).nullable().optional(),
-  cnpj: z.string().trim().max(20).nullable().optional(),
+  cnpj: cnpjSchema,
   phone: z.string().trim().max(20).nullable().optional(),
   ownerName: z.string().trim().min(1, "Informe o nome do responsavel").max(120),
   ownerEmail: emailSchema,

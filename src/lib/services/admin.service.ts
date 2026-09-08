@@ -11,6 +11,7 @@ import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
 import {
   provisionTenant,
+  cnpjEmUso,
   emailEmUso,
   emailDeExcluido,
   liberarEmailDeContaExcluida,
@@ -121,6 +122,11 @@ export const AdminService = {
   async createTenantWithOwner(input: NovaEmpresaInput, ctx: AdminCtx) {
     if (await emailEmUso(input.ownerEmail)) {
       throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
+    }
+    // Colisão de CNPJ chegava como P2002 → "Ocorreu um erro inesperado", sem
+    // dizer o motivo nem o que fazer.
+    if (await cnpjEmUso(input.cnpj)) {
+      throw new BusinessRuleError("Já existe uma empresa cadastrada com esse CNPJ.");
     }
     await liberarEmailDeContaExcluida(input.ownerEmail);
 
@@ -335,7 +341,16 @@ export const AdminService = {
     await prisma.$transaction(async (tx) => {
       await tx.tenant.update({
         where: { id },
-        data: { deletedAt: agora, status: "BLOCKED" },
+        data: {
+          deletedAt: agora,
+          status: "BLOCKED",
+          // Solta o CNPJ, como o e-mail e o `googleSub` do dono: a coluna é
+          // `@unique` e global, e a linha excluída o mantinha ocupado para
+          // sempre. Recadastrar o mesmo cliente com o CNPJ real — o caso que
+          // o comentário acima chama de comum — estourava violação de índice
+          // e chegava na tela como "erro inesperado".
+          cnpj: null,
+        },
       });
       // Um `updateMany` não serve: cada e-mail recebe um carimbo próprio.
       for (const u of usuarios) {

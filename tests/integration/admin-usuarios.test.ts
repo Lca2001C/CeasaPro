@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
+import { novaEmpresaSchema } from "@/lib/validations/admin";
+import { BusinessRuleError } from "@/lib/http/app-error";
 import { verifyPassword } from "@/lib/auth/password";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
 // `tenants` já é declarado abaixo; o helper de criação vem do factory.
@@ -380,5 +382,134 @@ describe("Recadastro de empresa com o mesmo e-mail do dono", () => {
         ctx,
       ),
     ).rejects.toThrow(/já existe/i);
+  });
+});
+
+/**
+ * CNPJ em branco não pode ocupar o índice único.
+ *
+ * `Tenant.cnpj` é `@unique` e GLOBAL: NULL repete à vontade, string vazia
+ * não. O campo é opcional na tela e o formulário manda `""`, então a primeira
+ * empresa salva sem CNPJ ocupava a vaga — e da segunda em diante o cadastro
+ * falhava com "Ocorreu um erro inesperado", de forma determinística. O mesmo
+ * defeito travava o cliente final em Configurações → Empresa.
+ */
+describe("CNPJ opcional e único", () => {
+  let planoId = "";
+
+  beforeAll(async () => {
+    const plano = await prisma.plan.create({
+      data: { name: `Plano CNPJ ${uniq()}`, slug: `p-cnpj-${uniq()}`, priceMonthly: 100, active: true },
+    });
+    planos.push(plano.id);
+    planoId = plano.id;
+  });
+  it("duas empresas sem CNPJ convivem (em branco vira null, não string vazia)", async () => {
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box Sem CNPJ A",
+        cnpj: "",
+        ownerName: "Dono A",
+        ownerEmail: `sem-cnpj-a-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    const b = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box Sem CNPJ B",
+        cnpj: "",
+        ownerName: "Dono B",
+        ownerEmail: `sem-cnpj-b-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(b.tenantId);
+
+    const ambos = await prisma.tenant.findMany({
+      where: { id: { in: [a.tenantId, b.tenantId] } },
+      select: { cnpj: true },
+    });
+    expect(ambos.map((t) => t.cnpj)).toEqual([null, null]);
+  });
+
+  it("CNPJ repetido é recusado com mensagem, não com 'erro inesperado'", async () => {
+    const cnpj = `12345678${uniq().slice(0, 6)}`;
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box CNPJ",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-a-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    await expect(
+      AdminService.createTenantWithOwner(
+        novaEmpresaSchema.parse({
+          tradeName: "Outro Box",
+          cnpj,
+          ownerName: "Outro",
+          ownerEmail: `cnpj-b-${uniq()}@teste.com`,
+          planId: planoId,
+          monthlyAmount: 100,
+          graceDays: 5,
+        }),
+        ctx,
+      ),
+      // P2002 também traz a palavra "cnpj": o que mudou é o TIPO do erro. Erro
+      // de negócio chega na tela como mensagem; P2002 virava "Ocorreu um erro
+      // inesperado. Tente novamente. (ref: …)", que convida a repetir algo que
+      // nunca vai dar certo.
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("excluir a empresa libera o CNPJ para o recadastro", async () => {
+    const cnpj = `98765432${uniq().slice(0, 6)}`;
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box a excluir",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-del-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    await AdminService.deleteTenant(a.tenantId, ctx);
+
+    // "Errou no cadastro, exclui e faz de novo" — o caso que a própria base
+    // trata como comum — batia em violação de índice.
+    const b = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box recadastrado",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-re-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(b.tenantId);
+    const recriada = await prisma.tenant.findUniqueOrThrow({ where: { id: b.tenantId } });
+    expect(recriada.cnpj).toBe(cnpj);
   });
 });

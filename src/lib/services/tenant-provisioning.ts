@@ -47,6 +47,26 @@ export async function emailEmUso(email: string): Promise<boolean> {
 }
 
 /**
+ * Existe empresa ATIVA com este CNPJ?
+ *
+ * A coluna é `@unique` e global. Sem esta checagem, a colisão chegava como
+ * P2002 e virava "Ocorreu um erro inesperado. Tente novamente. (ref: …)" —
+ * mensagem que não diz o motivo e convida a repetir algo que nunca vai dar
+ * certo. `null` e vazio nunca colidem (ver `cnpjSchema`).
+ */
+export async function cnpjEmUso(
+  cnpj: string | null | undefined,
+  exceto?: string,
+): Promise<boolean> {
+  if (!cnpj) return false;
+  const existing = await prisma.tenant.findFirst({
+    where: { cnpj, deletedAt: null, ...(exceto ? { id: { not: exceto } } : {}) },
+    select: { id: true },
+  });
+  return existing !== null;
+}
+
+/**
  * Libera o endereço que uma conta EXCLUÍDA ainda esteja segurando.
  *
  * A migration `20260829120000` já carimbou as antigas, mas isto cobre qualquer
