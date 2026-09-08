@@ -73,7 +73,21 @@ export default async function ConfirmarPage({
               </p>
             </div>
             <Button asChild size="lg" className="w-full">
-              <Link href="/login">Entrar no CeasaPro</Link>
+              {/*
+                Passa pela renovação em vez de ir direto ao /login.
+
+                Quem entrou ANTES de clicar no link carrega um token que ainda
+                diz SUSPENSO — a confirmação libera o trial no banco, não no
+                cookie. Indo ao /login, o proxy via a sessão, mandava para o
+                /dashboard e o token velho derrubava a pessoa em
+                /conta/suspensa: "seu teste grátis terminou" no primeiro dia.
+                A rota reemite o cookie a partir do banco; sem sessão, ela
+                mesma devolve ao /login com o destino preservado.
+
+                `<a>` e não `<Link>`: a rota exige navegação de topo, e a
+                transição do router seria um fetch RSC.
+              */}
+              <a href="/api/auth/renovar?next=%2Fdashboard">Entrar no CeasaPro</a>
             </Button>
           </div>
         ) : (

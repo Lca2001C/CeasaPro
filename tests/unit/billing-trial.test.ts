@@ -8,6 +8,7 @@ import {
   trialEndFrom,
   TRIAL_DAYS,
   TRIAL_WARN_DAYS,
+  motivoDoBloqueio,
 } from "@/lib/billing/status";
 import type { SubscriptionStatus, StatusSource } from "@prisma/client";
 
@@ -262,5 +263,53 @@ describe("billingNotice (banner do topo)", () => {
 
   it("já bloqueada não vê banner (a tela de bloqueio fala por si)", () => {
     expect(billingNotice({ subStatus: "SUSPENSO", trialEndsAt: days(-1), now: NOW })).toBeNull();
+  });
+});
+
+/**
+ * Por que a pessoa caiu na tela de bloqueio.
+ *
+ * A tela decidia por campo cru — `trialEndsAt !== null` era lido como "o teste
+ * terminou". Quem acaba de confirmar o e-mail tem essa data no FUTURO, e chega
+ * na tela de bloqueio porque a confirmação libera o trial no banco e não no
+ * cookie: o token ainda diz SUSPENSO e é ele que o proxy lê. O resultado era
+ * "Seu teste grátis terminou", com botão de pagar, no primeiro dia do teste.
+ */
+describe("motivoDoBloqueio", () => {
+  const AGORA = new Date("2026-09-08T12:00:00Z");
+  const dias = (n: number) => new Date(AGORA.getTime() + n * 24 * 60 * 60 * 1000);
+
+  it("teste começou agora: é sessão velha, não fim de teste", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(7) }, AGORA),
+    ).toBe("teste_ativo");
+  });
+
+  it("último dia do teste ainda é teste ativo", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(0.5) }, AGORA),
+    ).toBe("teste_ativo");
+  });
+
+  it("teste vencido: aí sim é fim de teste", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(-1) }, AGORA),
+    ).toBe("teste_terminou");
+  });
+
+  it("sem teste e sem pagamento: falta a primeira mensalidade", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: null }, AGORA),
+    ).toBe("nunca_ativou");
+  });
+
+  it("quem já pagou alguma vez cai no bloqueio de cobrança", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: dias(-90), trialEndsAt: dias(-83) }, AGORA),
+    ).toBe("bloqueado");
+  });
+
+  it("sem assinatura não inventa teste grátis", () => {
+    expect(motivoDoBloqueio(null, AGORA)).toBe("bloqueado");
   });
 });
