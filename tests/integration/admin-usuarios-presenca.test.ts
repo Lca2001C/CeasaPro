@@ -83,7 +83,7 @@ async function assinatura(
 
 /** Só o usuário procurado, ignorando o resto do banco de teste. */
 async function buscar(userId: string) {
-  const lista = await AdminService.listUsers();
+  const { usuarios: lista } = await AdminService.listUsers();
   const achado = lista.find((u) => u.id === userId);
   if (!achado) throw new Error("usuario nao veio na listagem");
   return achado;

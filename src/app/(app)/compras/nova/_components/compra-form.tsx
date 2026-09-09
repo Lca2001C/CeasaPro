@@ -46,7 +46,7 @@ export function CompraForm({
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
   const [caixasSujas, setCaixasSujas] = useState(false);
-  const [lancarFrete, setLancarFrete] = useState(false);
+  const [lancarFrete, setLancarFrete] = useState(true);
 
   const subtotal = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
   const total = subtotal + (freight || 0);
@@ -191,8 +191,9 @@ export function CompraForm({
             <span>
               Lançar o frete como despesa
               <span className="mt-0.5 block text-xs text-muted-foreground">
-                Cria uma conta a pagar de {formatBRL(freight || 0)} em Despesas, para o frete
-                aparecer no fluxo de caixa. O custo do produto não muda.
+                Cria uma conta a pagar de {formatBRL(freight || 0)} em Despesas, para acompanhar
+                o pagamento do caminhão. O custo do produto (CMV) não muda — o frete já entrou
+                no preço de cada item.
               </span>
             </span>
           </label>

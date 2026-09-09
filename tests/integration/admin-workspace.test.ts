@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
+import { sub as menos } from "@/lib/money";
 import { cleanupTenants } from "../helpers/factory";
 import { ADMIN_PLAN_SLUG } from "@/lib/services/plano.service";
 import type { AdminCtx } from "@/lib/http/with-action";
@@ -12,6 +13,7 @@ import type { AdminCtx } from "@/lib/http/with-action";
 const uniq = () => Math.random().toString(36).slice(2, 8);
 const criados: string[] = [];
 const usuarios: string[] = [];
+const planos: string[] = [];
 
 async function superAdminCtx(): Promise<AdminCtx> {
   const email = `admin-${uniq()}@ceasapro.com.br`;
@@ -51,7 +53,10 @@ afterAll(async () => {
   await prisma.plan.deleteMany({
     where: { slug: ADMIN_PLAN_SLUG, subscriptions: { none: {} } },
   });
-});
+  // Os planos que ESTE teste criou saem sempre — com as assinaturas que
+  // apontam para eles, senão a chave estrangeira barra a exclusão.
+  await prisma.tenantSubscription.deleteMany({ where: { planId: { in: planos } } });
+  await prisma.plan.deleteMany({ where: { id: { in: planos } } });});
 
 describe("Ambiente próprio do super-admin", () => {
   it("provisiona o tenant, liga o usuário e deixa a assinatura sempre ativa", async () => {
@@ -119,5 +124,61 @@ describe("Ambiente próprio do super-admin", () => {
       where: { deletedAt: null, users: { none: { role: "SUPER_ADMIN" } } },
     });
     expect(antes.totalTenants).toBe(contagemReal);
+  });
+});
+
+/**
+ * Empresa excluída não pode continuar valendo dinheiro no painel.
+ *
+ * No mesmo `Promise.all` de `metrics`, o cartão "Empresas" filtrava
+ * `deletedAt` e o MRR e o "Assinaturas por status" não. Depois de um churn a
+ * tela se contradizia (Empresas 8, Ativas 11) e o MRR — número pelo qual se
+ * decide preço e caixa — ficava inflado. Como `deleteTenant` não encerra a
+ * assinatura, o resíduo era permanente.
+ */
+describe("Empresa excluída sai das métricas", () => {
+  it("não conta no MRR nem em 'Assinaturas por status'", async () => {
+    const ctx = await superAdminCtx();
+    const plano = await prisma.plan.create({
+      data: { name: `Plano MRR ${uniq()}`, slug: `mrr-${uniq()}`, priceMonthly: 149, active: true },
+    });
+    planos.push(plano.id);
+
+    const tenant = await prisma.tenant.create({
+      data: {
+        tradeName: "Box que vai sair",
+        status: "ACTIVE",
+        subscription: {
+          create: {
+            planId: plano.id,
+            status: "ATIVO",
+            monthlyAmount: 149,
+            activatedAt: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
+            graceDays: 5,
+          },
+        },
+        users: {
+          create: {
+            name: "Dono",
+            email: `mrr-dono-${uniq()}@teste.com`,
+            passwordHash: "x",
+            role: "OWNER",
+          },
+        },
+      },
+    });
+    criados.push(tenant.id);
+
+    const antes = await AdminService.metrics();
+
+    await AdminService.deleteTenant(tenant.id, ctx);
+
+    const depois = await AdminService.metrics();
+    // Decimal, não float: `Number(a) - Number(b)` dava 148.99999999999997.
+    expect(menos(antes.mrr, depois.mrr).toString()).toBe("149");
+    expect((antes.byStatus.ATIVO ?? 0) - (depois.byStatus.ATIVO ?? 0)).toBe(1);
+    // E o cartão "Empresas" continua coerente com os outros.
+    expect(antes.totalTenants - depois.totalTenants).toBe(1);
   });
 });

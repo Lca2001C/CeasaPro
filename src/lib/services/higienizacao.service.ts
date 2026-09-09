@@ -226,6 +226,26 @@ export const HigienizacaoService = {
           "Este envio já teve devolução ou pagamento — não pode mais ser alterado.",
         );
       }
+      // Perda registrada também tranca a edição, como já acontece no `remove`.
+      //
+      // `registrarPerda` grava a QUEBRA e atualiza só o `status` — nunca
+      // `returnedQty` nem `paidAmount` —, então o lápis "Editar envio"
+      // continuava visível depois de o higienizador quebrar caixas. Reduzir a
+      // quantidade enviada nesse estado encurtava a SAIDA_HIGIENIZACAO abaixo do
+      // que já saiu: o painel passava a mostrar "Em higienização: -10"
+      // (`computeCrateSaldo` não tem piso) e o estoque de sujas ganhava caixas
+      // fantasma — que o próprio painel manda higienizar no atalho "<n> caixa(s)
+      // suja(s)". O dono levava ao higienizador caixas que foram quebradas e não
+      // existem mais, e a contagem física nunca voltava a fechar.
+      //
+      // Não precisa de concorrência: um usuário só, dois cliques.
+      const perdidas = (await perdasPorLote(tx, [before.id])).get(before.id) ?? 0;
+      if (perdidas > 0) {
+        throw new BusinessRuleError(
+          `Este envio já tem ${perdidas} caixa(s) registrada(s) como perdida(s) — ` +
+            "não pode mais ser alterado.",
+        );
+      }
 
       const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
       const delta = input.sentQty - before.sentQty;
@@ -346,10 +366,25 @@ export const HigienizacaoService = {
         returnedQty: novoDevolvido,
         lostQty: perdidas,
       });
-      const updated = await tx.crateCleaning.update({
-        where: { id: c.id },
+      // Compare-and-set no `returnedQty` lido acima. Era ler-decidir-escrever:
+      // em READ COMMITTED (padrão do Postgres) duas devoluções parciais
+      // simultâneas leem o mesmo `returnedQty` e a segunda grava o total dela
+      // por cima da primeira. O lote ficava com menos caixas devolvidas do que
+      // os movimentos de ledger registram — travado num pendente que ninguém
+      // mais consegue quitar, porque a guarda de `pendentes` passa a recusar o
+      // resto. O Postgres reavalia o WHERE depois de esperar o lock da linha,
+      // então o segundo não casa e é recusado com mensagem.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: c.id, returnedQty: c.returnedQty },
         data: { returnedQty: novoDevolvido, returnedDate: parseFormDateTz(input.returnedDate), status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outra devolução deste envio foi registrada agora mesmo. " +
+            "Confira quantas caixas faltam e lance de novo.",
+        );
+      }
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
 
       await CaixasService.registrarInTx(
         tx,
@@ -475,10 +510,37 @@ export const HigienizacaoService = {
         paidAmount: novoPago,
         lostQty: perdidas,
       });
-      const updated = await tx.crateCleaning.update({
-        where: { id: c.id },
+      // Compare-and-set no `paidAmount` lido acima — mesma razão da devolução
+      // e do pagamento de fiado: dois lançamentos simultâneos liam o mesmo
+      // saldo e o segundo gravava o total dele por cima do primeiro, deixando
+      // dinheiro pago fora da conta do higienizador.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: c.id, paidAmount: c.paidAmount },
         data: { paidAmount: novoPago, paidDate: parseFormDateTz(input.paidDate), status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outro pagamento deste envio foi registrado agora mesmo. " +
+            "Confira o saldo e lance de novo.",
+        );
+      }
+      // Uma linha por pagamento, na MESMA transação.
+      //
+      // `paidAmount` é acumulado e `paidDate` é sobrescrito, então os dois
+      // juntos não dizem quanto saiu do caixa em que dia. O fluxo de caixa
+      // somava `paidAmount` por `paidDate` e jogava o valor cheio do lote no
+      // dia do ÚLTIMO pagamento — deixando o dia do primeiro sem despesa e
+      // sumindo com o lote quando o último caía fora do período.
+      await tx.crateCleaningPayment.create({
+        data: {
+          tenantId: ctx.tenantId,
+          cleaningId: c.id,
+          amount: input.amount,
+          paidAt: parseFormDateTz(input.paidDate),
+        },
+      });
+
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
       await audit(
         {
           tenantId: ctx.tenantId,

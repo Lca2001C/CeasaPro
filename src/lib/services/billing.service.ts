@@ -8,7 +8,7 @@ import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { addOneMonth, computeStatus } from "@/lib/billing/status";
-import { money, toNumber, type Decimal } from "@/lib/money";
+import { gte, money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
   assertMercadoPagoConfig,
@@ -44,6 +44,9 @@ const CHARGE_TTL_HOURS = 48;
 export const DUE_REMINDER_DAYS = 3;
 /** Só reconcilia cobranças com alguns minutos de vida, para não competir com o webhook. */
 const RECONCILE_MIN_AGE_MINUTES = 10;
+
+/** Teto de cada lote da reconciliação diária (pendentes e aprovadas separados). */
+const RECONCILE_BATCH = 200;
 
 const CARD_PAYMENT_TYPE: Record<"CREDIT_CARD" | "DEBIT_CARD", CardPaymentTypeId> = {
   CREDIT_CARD: "credit_card",
@@ -276,7 +279,24 @@ export const BillingService = {
         orderBy: { paidAt: "desc" },
       }),
     ]);
-    return { sub, pendingCharge, paidCharge, refMonth };
+    // Cobrança vencida NÃO é cobrança pendente para quem está olhando a tela.
+    //
+    // Sem este `isUsable`, quem gerava o PIX e não pagava em 48h voltava para
+    // `/assinatura` e encontrava o QR MORTO com "Aguardando o pagamento": sem
+    // botão de gerar outro código, sem o formulário de cartão e sem o seletor
+    // de plano, porque a tela esconde tudo isso quando já existe cobrança
+    // (`assinatura-client.tsx`, `payment-brick.tsx`). Como empresa SUSPENSA só
+    // alcança `/assinatura`, ela ficava sem NENHUMA forma de pagar até o cron
+    // do dia seguinte derrubar a linha — e só se o MP devolvesse `cancelled`.
+    //
+    // É o mesmo critério que `prepareCharge` já usa para decidir se reaproveita
+    // a cobrança; faltava valer também para quem lê o status.
+    return {
+      sub,
+      pendingCharge: isUsable(pendingCharge) ? pendingCharge : null,
+      paidCharge,
+      refMonth,
+    };
   },
 
   /**
@@ -526,6 +546,44 @@ export const BillingService = {
       return "ignorado";
     }
 
+    // O valor que ENTROU tem de cobrir a mensalidade DEVIDA.
+    //
+    // Trocar de plano na tela de pagamento marca a cobrança anterior como
+    // CANCELADO só no NOSSO banco: o código PIX antigo continua pagável no
+    // Mercado Pago por 48h, porque não existe cancelamento no gateway
+    // (`mercadopago.ts` só tem `create*` e `getPayment`). Pagando o código
+    // antigo — justamente o que já estava copiado no app do banco — o mês era
+    // creditado por inteiro e a assinatura ficava ATIVA no plano NOVO, mais
+    // caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
+    // MENSALIDADE_JA_PAGA bloqueava a cobrança correta do mês.
+    //
+    // Conferir contra `payment.amount` não pegaria nada: a linha antiga foi
+    // cobrada em 49,90 e foi 49,90 que entrou. Quem decide é o valor devido.
+    //
+    // A checagem fica FORA da transação de propósito: abortá-la lá dentro não
+    // desfaria o `updateMany` já aplicado. Deixando a linha intocada, a tela
+    // continua oferecendo o pagamento — o cliente não fica com "já pago neste
+    // mês" e sem acesso, que seria outro beco sem saída — e o valor a menos
+    // fica registrado no log para um humano resolver (crédito ou devolução).
+    if (newStatus === "APROVADO") {
+      const cobrado = await prisma.tenantSubscription.findUnique({
+        where: { id: payment.subscriptionId },
+        select: { monthlyAmount: true },
+      });
+      if (cobrado && !gte(money(mp.amount), cobrado.monthlyAmount)) {
+        logger.error(
+          {
+            mpPaymentId: mp.id,
+            tenantId: payment.tenantId,
+            pago: String(mp.amount),
+            devido: cobrado.monthlyAmount.toString(),
+          },
+          "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
+        );
+        return "ignorado";
+      }
+    }
+
     const now = new Date();
     // Estorno, chargeback ou cancelamento de uma cobrança que já estava aprovada:
     // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
@@ -681,18 +739,56 @@ export const BillingService = {
     // A idade mínima vale só para as PENDENTES: recém-criada, a cobrança ainda
     // está sendo resolvida pelo webhook e consultar agora só gastaria chamada.
     const cutoff = new Date(now.getTime() - RECONCILE_MIN_AGE_MINUTES * 60 * 1000);
-    const cobrancas = await prisma.subscriptionPayment.findMany({
+    const meses = [currentRefMonth(now), previousRefMonth(now)];
+
+    // Dois lotes, e as PENDENTES primeiro.
+    //
+    // Antes era um só `findMany` com `OR: [PENDENTE, APROVADO]`, `take: 200` e
+    // `createdAt: "asc"`. As APROVADAS são reconsultadas todos os dias por dois
+    // meses e são sempre MAIS ANTIGAS que as pendentes de hoje, então a partir
+    // de ~100 empresas pagantes o lote fechava antes de alcançar uma única
+    // pendente. Quem pagou e teve o webhook perdido — o webhook processa em
+    // `after()`, então uma queda de instância engole o evento em silêncio —
+    // ficava SUSPENSO indefinidamente vendo "Aguardando o pagamento", com esta
+    // rotina sendo a única rede de segurança que existia para o caso.
+    //
+    // As pendentes são o resgate e não podem disputar vaga com a varredura de
+    // estorno; cada lote tem o seu teto.
+    const pendentes = await prisma.subscriptionPayment.findMany({
       where: {
         mpPaymentId: { not: null },
-        referenceMonth: { in: [currentRefMonth(now), previousRefMonth(now)] },
-        OR: [
-          { status: "PENDENTE", createdAt: { lt: cutoff } },
-          { status: "APROVADO" },
-        ],
+        referenceMonth: { in: meses },
+        status: "PENDENTE",
+        createdAt: { lt: cutoff },
       },
       orderBy: { createdAt: "asc" },
-      take: 200,
+      take: RECONCILE_BATCH,
     });
+    const aprovadas = await prisma.subscriptionPayment.findMany({
+      where: {
+        mpPaymentId: { not: null },
+        referenceMonth: { in: meses },
+        status: "APROVADO",
+      },
+      orderBy: { createdAt: "asc" },
+      take: RECONCILE_BATCH,
+    });
+    const cobrancas = [...pendentes, ...aprovadas];
+
+    // Truncamento tem de aparecer: o retorno `{ verificados, atualizados }` não
+    // distingue "nada a fazer" de "lote estourado", e um lote que satura todo
+    // dia significa cobrança que nunca é verificada.
+    for (const [nome, lote] of [
+      ["pendentes", pendentes],
+      ["aprovadas", aprovadas],
+    ]) {
+      if (lote.length === RECONCILE_BATCH) {
+        logger.warn(
+          { lote: nome, teto: RECONCILE_BATCH },
+          "Reconciliação atingiu o teto do lote — há cobranças não verificadas nesta rodada",
+        );
+      }
+    }
 
     let atualizados = 0;
     for (const p of cobrancas) {
@@ -833,7 +929,12 @@ export const BillingService = {
 
   /** Recalcula o status de todas as assinaturas (cron diário). */
   async recomputeStatuses() {
-    const subs = await prisma.tenantSubscription.findMany();
+    // Empresa excluída não tem status a recalcular: o trabalho era inútil e
+    // era ele que transformava a assinatura órfã em VENCIDO/SUSPENSO,
+    // alimentando o cartão "Inadimplentes" do painel do super-admin.
+    const subs = await prisma.tenantSubscription.findMany({
+      where: { tenant: { deletedAt: null } },
+    });
     let updated = 0;
     for (const sub of subs) {
       const effective = computeStatus(sub);

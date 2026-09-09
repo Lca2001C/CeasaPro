@@ -18,15 +18,23 @@ import { cn } from "@/lib/cn";
 /** Empresa → fornecedor → produto. */
 const TOTAL_PASSOS = 3;
 
-export function OnboardingWizard({ initialName }: { initialName: string }) {
+export function OnboardingWizard({
+  initialName,
+  initialPhone,
+  initialAddress,
+}: {
+  initialName: string;
+  initialPhone: string;
+  initialAddress: string;
+}) {
   const router = useRouter();
   const [step, setStep] = useState(1);
   const [busy, setBusy] = useState(false);
 
   // Passo 1 — empresa
   const [tradeName, setTradeName] = useState(initialName);
-  const [phone, setPhone] = useState("");
-  const [address, setAddress] = useState("");
+  const [phone, setPhone] = useState(initialPhone);
+  const [address, setAddress] = useState(initialAddress);
   // Passo 2 — fornecedor
   const [supplierName, setSupplierName] = useState("");
   // Passo 3 — produto
@@ -36,10 +44,25 @@ export function OnboardingWizard({ initialName }: { initialName: string }) {
   async function saveCompany() {
     if (!tradeName.trim()) return toast.error("Informe o nome da empresa.");
     setBusy(true);
-    // Só as três chaves que este passo conhece. Mandar `legalName`, `cnpj` e
-    // `businessHours` como `null` fixo APAGAVA o que já estivesse preenchido em
-    // Configurações — o wizard virou opcional e reabrível, então isso deixou de
-    // ser hipotético. `updateCompany` trata chave ausente como "não mexer".
+    /*
+      Só as três chaves que este passo conhece — e nenhuma a mais.
+
+      Mandar `legalName`, `cnpj` e `businessHours` como `null` fixo APAGAVA o
+      que já estivesse preenchido em Configurações, e o wizard virou opcional e
+      reabrível, então isso deixou de ser hipotético.
+
+      A correção anterior devolvia esses campos num objeto `preservar`, o que
+      resolvia o sintoma e trazia um problema menor junto: o formulário
+      reescrevia valores lidos no carregamento da página, então uma alteração
+      feita em outra aba no meio do caminho era desfeita por um passo que nem
+      edita aquele campo. E cada campo novo da empresa precisava ser lembrado
+      aqui, sob pena de voltar a ser apagado — foi o que aconteceu com `uf` e
+      `establishmentType`.
+
+      Hoje a correção está na RAIZ: `updateCompany` trata chave ausente como
+      "não mexer" (`tests/integration/config-empresa-parcial.test.ts`). Este
+      passo manda o que edita, e o resto fica intocado por construção.
+    */
     const res = await salvarEmpresa({
       tradeName: tradeName.trim(),
       phone: phone || null,

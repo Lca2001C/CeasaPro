@@ -102,14 +102,38 @@ export default async function ConfiguracoesPage() {
                       <span className="text-muted-foreground">Situação</span>
                       <span>{SUBSCRIPTION_STATUS_LABELS[sub.status]}</span>
                     </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Mensalidade</span>
-                      <span>{formatBRL(sub.monthlyAmount)}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Vencimento</span>
-                      <span>{formatDate(sub.currentPeriodEnd)}</span>
-                    </div>
+                    {/*
+                      Quem NUNCA pagou tem `currentPeriodEnd` no passado — é a
+                      data do cadastro. Mostrar "Vencimento <data já passada>" e
+                      "Mensalidade R$ X" durante o teste grátis fazia a tela
+                      afirmar que a assinatura venceu e que havia mensalidade a
+                      pagar, contradizendo a faixa do topo ("seu teste termina em
+                      N dias") — justamente na janela em que o cliente decide se
+                      fica. A tela de /assinatura já se protege disso com a mesma
+                      regra (`primeiraAtivacao`).
+                    */}
+                    {sub.activatedAt ? (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Mensalidade</span>
+                          <span>{formatBRL(sub.monthlyAmount)}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-muted-foreground">Vencimento</span>
+                          <span>{formatDate(sub.currentPeriodEnd)}</span>
+                        </div>
+                      </>
+                    ) : sub.trialEndsAt ? (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Teste grátis até</span>
+                        <span>{formatDate(sub.trialEndsAt)}</span>
+                      </div>
+                    ) : (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Mensalidade</span>
+                        <span>{formatBRL(sub.monthlyAmount)}</span>
+                      </div>
+                    )}
                     <Button asChild className="mt-2">
                       <Link href="/assinatura">Ver / pagar mensalidade</Link>
                     </Button>

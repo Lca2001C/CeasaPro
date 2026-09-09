@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
+import { novaEmpresaSchema } from "@/lib/validations/admin";
+import { BusinessRuleError } from "@/lib/http/app-error";
 import { verifyPassword } from "@/lib/auth/password";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
 // `tenants` já é declarado abaixo; o helper de criação vem do factory.
@@ -66,7 +68,7 @@ describe("Listagem de usuários", () => {
     tenants.push(tenantId);
     const dono = await criarUsuario({ tenantId, nome: "Dono da Empresa" });
 
-    const lista = await AdminService.listUsers();
+    const { usuarios: lista } = await AdminService.listUsers();
     const encontrado = lista.find((u) => u.id === dono.id);
     expect(encontrado?.tenant?.tradeName).toBe("USUARIOS");
     // Quem administra a plataforma tem o acesso mais poderoso — omitir seria
@@ -76,17 +78,19 @@ describe("Listagem de usuários", () => {
 
   it("busca por nome e por e-mail", async () => {
     const alvo = await criarUsuario({ nome: `Zezinho ${uniq()}` });
-    const porNome = await AdminService.listUsers({ busca: "Zezinho" });
+    const { usuarios: porNome } = await AdminService.listUsers({ busca: "Zezinho" });
     expect(porNome.some((u) => u.id === alvo.id)).toBe(true);
 
-    const porEmail = await AdminService.listUsers({ busca: alvo.email.slice(0, 8) });
+    const { usuarios: porEmail } = await AdminService.listUsers({
+      busca: alvo.email.slice(0, 8),
+    });
     expect(porEmail.some((u) => u.id === alvo.id)).toBe(true);
   });
 
   it("filtra somente os sem acesso", async () => {
     const inativo = await criarUsuario({ active: false });
     const ativo = await criarUsuario({ active: true });
-    const lista = await AdminService.listUsers({ somenteInativos: true });
+    const { usuarios: lista } = await AdminService.listUsers({ somenteInativos: true });
     expect(lista.some((u) => u.id === inativo.id)).toBe(true);
     expect(lista.some((u) => u.id === ativo.id)).toBe(false);
   });
@@ -94,7 +98,7 @@ describe("Listagem de usuários", () => {
   it("não lista usuário excluído", async () => {
     const u = await criarUsuario({});
     await prisma.user.update({ where: { id: u.id }, data: { deletedAt: new Date() } });
-    const lista = await AdminService.listUsers();
+    const { usuarios: lista } = await AdminService.listUsers();
     expect(lista.some((x) => x.id === u.id)).toBe(false);
   });
 });
@@ -198,7 +202,8 @@ describe("Exclusão de usuário", () => {
 
     await AdminService.deleteUser(u.id, ctx);
 
-    expect((await AdminService.listUsers()).some((x) => x.id === u.id)).toBe(false);
+    const { usuarios: depois } = await AdminService.listUsers();
+    expect(depois.some((x) => x.id === u.id)).toBe(false);
     expect(
       await prisma.refreshToken.count({ where: { userId: u.id, revokedAt: null } }),
     ).toBe(0);
@@ -380,5 +385,188 @@ describe("Recadastro de empresa com o mesmo e-mail do dono", () => {
         ctx,
       ),
     ).rejects.toThrow(/já existe/i);
+  });
+});
+
+/**
+ * CNPJ em branco não pode ocupar o índice único.
+ *
+ * `Tenant.cnpj` é `@unique` e GLOBAL: NULL repete à vontade, string vazia
+ * não. O campo é opcional na tela e o formulário manda `""`, então a primeira
+ * empresa salva sem CNPJ ocupava a vaga — e da segunda em diante o cadastro
+ * falhava com "Ocorreu um erro inesperado", de forma determinística. O mesmo
+ * defeito travava o cliente final em Configurações → Empresa.
+ */
+describe("CNPJ opcional e único", () => {
+  let planoId = "";
+
+  beforeAll(async () => {
+    const plano = await prisma.plan.create({
+      data: { name: `Plano CNPJ ${uniq()}`, slug: `p-cnpj-${uniq()}`, priceMonthly: 100, active: true },
+    });
+    planos.push(plano.id);
+    planoId = plano.id;
+  });
+  it("duas empresas sem CNPJ convivem (em branco vira null, não string vazia)", async () => {
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box Sem CNPJ A",
+        cnpj: "",
+        ownerName: "Dono A",
+        ownerEmail: `sem-cnpj-a-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    const b = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box Sem CNPJ B",
+        cnpj: "",
+        ownerName: "Dono B",
+        ownerEmail: `sem-cnpj-b-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(b.tenantId);
+
+    const ambos = await prisma.tenant.findMany({
+      where: { id: { in: [a.tenantId, b.tenantId] } },
+      select: { cnpj: true },
+    });
+    expect(ambos.map((t) => t.cnpj)).toEqual([null, null]);
+  });
+
+  it("CNPJ repetido é recusado com mensagem, não com 'erro inesperado'", async () => {
+    const cnpj = `12345678${uniq().slice(0, 6)}`;
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box CNPJ",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-a-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    await expect(
+      AdminService.createTenantWithOwner(
+        novaEmpresaSchema.parse({
+          tradeName: "Outro Box",
+          cnpj,
+          ownerName: "Outro",
+          ownerEmail: `cnpj-b-${uniq()}@teste.com`,
+          planId: planoId,
+          monthlyAmount: 100,
+          graceDays: 5,
+        }),
+        ctx,
+      ),
+      // P2002 também traz a palavra "cnpj": o que mudou é o TIPO do erro. Erro
+      // de negócio chega na tela como mensagem; P2002 virava "Ocorreu um erro
+      // inesperado. Tente novamente. (ref: …)", que convida a repetir algo que
+      // nunca vai dar certo.
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
+  it("excluir a empresa libera o CNPJ para o recadastro", async () => {
+    const cnpj = `98765432${uniq().slice(0, 6)}`;
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box a excluir",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-del-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+
+    await AdminService.deleteTenant(a.tenantId, ctx);
+
+    // "Errou no cadastro, exclui e faz de novo" — o caso que a própria base
+    // trata como comum — batia em violação de índice.
+    const b = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box recadastrado",
+        cnpj,
+        ownerName: "Dono",
+        ownerEmail: `cnpj-re-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(b.tenantId);
+    const recriada = await prisma.tenant.findUniqueOrThrow({ where: { id: b.tenantId } });
+    expect(recriada.cnpj).toBe(cnpj);
+  });
+});
+
+/**
+ * Os contadores não podem sair da lista truncada.
+ *
+ * `listUsers` corta em 200 com ordem "ativo primeiro", e a tela contava os
+ * cartões sobre esse conjunto. Como os desativados ficam no fim da ordenação,
+ * eram exatamente eles os cortados: passando de 200 usuários com acesso, o
+ * cartão "Sem acesso" marcava 0 e o filtro respondia "nenhum usuário
+ * encontrado". O super-admin concluía que não havia ninguém bloqueado.
+ */
+describe("Contadores da tela de usuários", () => {
+  it("o desativado é contado mesmo fora dos 200 exibidos", async () => {
+    const marca = `lote-${uniq()}`;
+    const inativo = await criarUsuario({ nome: `${marca} sem acesso`, active: false });
+
+    // 205 ativos com o mesmo prefixo: a lista (200) enche só de ativos, porque
+    // a ordenação põe `active: true` primeiro.
+    await prisma.user.createMany({
+      data: Array.from({ length: 205 }, (_, i) => ({
+        name: `${marca} ativo ${i}`,
+        email: `${marca}-${i}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER" as const,
+        active: true,
+      })),
+    });
+    const criadosAgora = await prisma.user.findMany({
+      where: { name: { startsWith: marca } },
+      select: { id: true },
+    });
+    usuarios.push(...criadosAgora.map((u) => u.id));
+
+    const { usuarios: lista, totais } = await AdminService.listUsers({ busca: marca });
+
+    // A lista é truncada e avisa...
+    expect(lista.length).toBe(200);
+    expect(totais.truncado).toBe(true);
+    expect(lista.some((u) => u.id === inativo.id)).toBe(false);
+
+    // ...mas o total conta os 206 e enxerga o desativado.
+    expect(totais.total).toBe(206);
+    expect(totais.semAcesso).toBe(1);
+  });
+
+  it("busca sem resultado devolve zeros, não a contagem anterior", async () => {
+    const { usuarios: lista, totais } = await AdminService.listUsers({
+      busca: `nao-existe-${uniq()}`,
+    });
+    expect(lista).toEqual([]);
+    expect(totais.total).toBe(0);
+    expect(totais.semAcesso).toBe(0);
+    expect(totais.truncado).toBe(false);
   });
 });

@@ -5,7 +5,8 @@ import { usePathname } from "next/navigation";
 import { Bell, LogOut } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { Button } from "@/components/ui/button";
-import { encerrarSessao } from "@/lib/session-nav";
+import { toast } from "sonner";
+import { sair } from "@/lib/sair";
 import { AbrirAmbienteButton } from "./abrir-ambiente-button";
 
 const nav = [
@@ -83,7 +84,7 @@ export function AdminShell({
             <Button
               variant="ghost"
               size="icon"
-              onClick={() => void encerrarSessao()}
+              onClick={() => void sair(toast.error)}
               aria-label="Sair"
             >
               <LogOut className="size-5" />

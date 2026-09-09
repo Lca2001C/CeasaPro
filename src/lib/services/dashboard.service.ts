@@ -1,11 +1,12 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
-import { toDecimal, money } from "@/lib/money";
+import { toDecimal, money, sub } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
-import { APP_TIME_ZONE, isoDateTz } from "@/lib/tz";
+import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 export interface DashboardProductRow {
   productId: string;
@@ -43,7 +44,7 @@ export interface DashboardSummary {
 }
 
 export const DashboardService = {
-  async getSummary(tenantId: string): Promise<DashboardSummary> {
+  async getSummary(tenantId: string, modules?: string[]): Promise<DashboardSummary> {
     const db = getTenantPrisma(tenantId);
     const now = new Date();
     const todayStart = startOfDay(now);
@@ -65,6 +66,24 @@ export const DashboardService = {
     // O limite é "até agora", o mesmo que `resolvePeriod({preset:"mes"})` usa.
     const ateAgora = endOfDay(now);
 
+    // Despesa tem teto DIFERENTE: o fim do mês, não "até agora".
+    //
+    // Venda e compra com data futura não são faturamento realizado, então
+    // para elas o teto "até agora" está certo. Despesa não: a conta fixa que
+    // vence dia 20 é despesa DESTE mês desde o dia 1º. Com o teto em "hoje",
+    // no dia 8 o painel dizia "Contas fixas R$ 0,00" e um "Sobrou no mês"
+    // R$ 5.000 acima do real, enquanto /despesas mostrava "Fixas R$ 5.000,00"
+    // no mesmo instante — e o lucro ia "piorando" conforme os vencimentos
+    // chegavam, sem nada ter acontecido. O dono do box decide preço com esse
+    // número.
+    //
+    // O comentário acima dizia que o teto existia para fechar com
+    // `DespesasService.resumoMes`; era o contrário — `resumoMes` usa o mês
+    // INTEIRO (`limitesDoMes`). Fechar de verdade é terminar no fim do mês, o
+    // que preserva a correção original: a parcela recorrente de outubro,
+    // gerada em setembro, continua fora de setembro.
+    const fimDoMes = new Date(startOfNextMonthTz(now).getTime() - 1);
+
     const [
       hoje,
       semana,
@@ -80,6 +99,8 @@ export const DashboardService = {
       topLucrativosRows,
       prejuizoRows,
       estoqueParadoRows,
+      despOperacional,
+      higLotes,
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
@@ -94,9 +115,15 @@ export const DashboardService = {
         _sum: { totalAmount: true, paidAmount: true },
         where: { status: "EM_ABERTO" },
       }),
+      // Sem janela, o card "Contas do mês — A pagar" somava TODO pendente de
+      // qualquer mês: a conta atrasada de julho e a parcela de outubro já
+      // gerada. O rótulo dizia mês e a consulta dizia histórico, então
+      // "Contas fixas" + "Contas variáveis" não fechavam com o card acima
+      // deles e /despesas mostrava um terceiro número. Mesma janela de
+      // `resumoMes.aPagar`: um número por conceito.
       db.expense.aggregate({
         _sum: { amount: true },
-        where: { status: "PENDENTE" },
+        where: { status: "PENDENTE", dueDate: { gte: monthStart, lte: fimDoMes } },
       }),
       db.purchase.aggregate({
         _sum: { totalAmount: true },
@@ -117,7 +144,7 @@ export const DashboardService = {
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
-          AND COALESCE("dueDate", "createdAt") <= ${ateAgora}
+          AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
         GROUP BY type
       `,
       // A coluna é `timestamp` sem fuso, guardando UTC. Truncar direto agrupava
@@ -205,15 +232,48 @@ export const DashboardService = {
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
         LIMIT 5
       `,
+      prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+        SELECT COALESCE(SUM(amount), 0) AS total
+        FROM expenses
+        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+          AND "purchaseId" IS NULL
+          AND COALESCE("dueDate", "createdAt") >= ${monthStart}
+          AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
+      `,
+      isModuleEnabled(modules, "higienizacao")
+        ? db.crateCleaning.findMany({
+            select: { totalAmount: true, paidAmount: true, sentDate: true, paidDate: true },
+          })
+        : Promise.resolve([]),
     ]);
 
     const vendasMesTotal = toDecimal(vendasMes._sum.totalAmount ?? 0);
     const cmvMes = toDecimal((cmvRows[0]?.cmv ?? 0) as Prisma.Decimal.Value);
     const despesasFixasMes = sumExpenseByType(despRows, "FIXA");
-    const despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
-    const despesasMes = money(despesasFixasMes.plus(despesasVariaveisMes));
+    let despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
+
+    let higSaldoAberto = toDecimal(0);
+    let higPagaMes = toDecimal(0);
+    let higEnviadaMes = toDecimal(0);
+    for (const lote of higLotes) {
+      const saldo = sub(lote.totalAmount, lote.paidAmount);
+      if (saldo.greaterThan(0)) higSaldoAberto = higSaldoAberto.plus(saldo);
+      if (lote.paidDate && lote.paidDate >= monthStart && lote.paidDate <= fimDoMes) {
+        higPagaMes = higPagaMes.plus(lote.paidAmount);
+      }
+      if (lote.sentDate >= monthStart && lote.sentDate <= fimDoMes) {
+        higEnviadaMes = higEnviadaMes.plus(lote.totalAmount);
+      }
+    }
+    despesasVariaveisMes = money(despesasVariaveisMes.plus(higEnviadaMes));
+
+    // Frete lançado como despesa já está no CMV (unitCost). Higienização paga
+    // no mês é opex de verdade e entra no lucro líquido.
+    const despesasLucro = money(
+      toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higPagaMes),
+    );
     const lucroBrutoMes = FinancialCalc.lucroBruto(vendasMesTotal, cmvMes);
-    const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasMes);
+    const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasLucro);
 
     const aReceber = FinancialCalc.saldoFiado(
       cred._sum.totalAmount ?? 0,
@@ -241,7 +301,7 @@ export const DashboardService = {
       mesVendi: money(vendasMesTotal),
       totalCompradoMes: money(toDecimal(comprasMes._sum.totalAmount ?? 0)),
       aReceber,
-      contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0)),
+      contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0).plus(higSaldoAberto)),
       estoqueValor,
       lucroBrutoMes,
       lucroMes,

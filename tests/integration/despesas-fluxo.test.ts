@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { DespesasService } from "@/lib/services/despesas.service";
 import { ContasPagarService } from "@/lib/services/contas-pagar.service";
 import { AvisosService } from "@/lib/services/avisos.service";
+import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { createDefaultExpenseCategories } from "@/lib/services/expense-categories";
 import { isoDateTz, startOfDayTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
@@ -34,6 +35,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.expense.deleteMany({ where: { tenantId } });
+  await prisma.crateCleaning.deleteMany({ where: { tenantId } });
 });
 
 async function criar(patch: Partial<Parameters<typeof DespesasService.create>[0]> = {}) {
@@ -103,7 +105,7 @@ describe("Filtro de vencidas", () => {
 
   it("o aviso do dashboard aponta para a conta quando é uma só", async () => {
     const vencida = await criar({ description: "Luz", dueDate: ontem });
-    const avisos = await AvisosService.get(tenantId, HOJE);
+    const avisos = await AvisosService.get(tenantId, undefined, HOJE);
     const aviso = avisos.find((a) => a.tipo === "despesa_vencida");
     expect(aviso?.href).toBe(`/despesas/${vencida.id}`);
   });
@@ -111,7 +113,7 @@ describe("Filtro de vencidas", () => {
   it("com mais de uma vencida, aponta para a lista já filtrada", async () => {
     await criar({ description: "Luz", dueDate: ontem });
     await criar({ description: "Água", dueDate: ontem });
-    const avisos = await AvisosService.get(tenantId, HOJE);
+    const avisos = await AvisosService.get(tenantId, undefined, HOJE);
     const aviso = avisos.find((a) => a.tipo === "despesa_vencida");
     expect(aviso?.count).toBe(2);
     expect(aviso?.href).toBe("/despesas?vencidas=1");
@@ -252,6 +254,46 @@ describe("Replicar mês anterior", () => {
     await expect(DespesasService.replicarMes("2026-01", ctx, HOJE)).rejects.toThrow(
       /não há despesas/i,
     );
+  });
+
+  /**
+   * Conta que já se repete sozinha não entra na replicação.
+   *
+   * Copiá-la fazia duas coisas ruins de uma vez: duas contas iguais no mês
+   * seguinte (a cópia e a parcela da recorrência) e, pior, a morte silenciosa
+   * da recorrência — `gerarProximaParcela` usa a existência de um filho com
+   * `parentId` como marca de "já gerei", encontrava a CÓPIA e apagava o
+   * `recurring` da origem. O aluguel parava de aparecer para sempre.
+   */
+  it("não copia a conta recorrente, e a recorrência dela continua viva", async () => {
+    const aluguel = await criar({
+      description: "Aluguel recorrente",
+      dueDate: "2026-08-05",
+      recurring: true,
+    });
+    await criar({ description: "Luz avulsa", dueDate: "2026-08-10" });
+
+    const r = await DespesasService.replicarMes("2026-08", ctx, HOJE);
+    expect(r.criadas).toBe(1); // só a avulsa
+
+    const setembro = await DespesasService.list(tenantId, {
+      from: "2026-09-01",
+      to: "2026-09-30",
+    });
+    expect(setembro.map((d) => d.description)).toEqual(["Luz avulsa"]);
+
+    // A marca de recorrência sobrevive...
+    const depois = await prisma.expense.findUniqueOrThrow({ where: { id: aluguel.id } });
+    expect(depois.recurring).toBe(true);
+
+    // ...e quitar gera a parcela do mês seguinte, uma só.
+    await DespesasService.marcarComoPago({ id: aluguel.id }, ctx);
+    const parcelas = await prisma.expense.findMany({
+      where: { tenantId, description: "Aluguel recorrente" },
+      orderBy: { dueDate: "asc" },
+    });
+    expect(parcelas.length).toBe(2);
+    expect(parcelas[1]!.recurring).toBe(true);
   });
 });
 
@@ -473,5 +515,79 @@ describe("Frete da compra como despesa", () => {
       ctx,
     );
     expect(r).toBeNull();
+  });
+});
+
+describe("Lista unificada com higienização", () => {
+  it("mostra o saldo da higienização nas pendentes quando o plano inclui o módulo", async () => {
+    await criar({ description: "Aluguel", amount: 1000, dueDate: amanha });
+    await prisma.crateCleaning.create({
+      data: {
+        tenantId,
+        cleanerName: "Lava Tudo",
+        sentDate: startOfDayTz(HOJE),
+        sentQty: 10,
+        unitPrice: 5,
+        totalAmount: 50,
+        status: "DEVOLVIDO",
+      },
+    });
+
+    const linhas = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(linhas.some((l) => l.origem === "higienizacao" && l.amount === "50.00")).toBe(true);
+    expect(linhas.some((l) => l.description === "Aluguel")).toBe(true);
+
+    const semModulo = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["caixas"],
+      HOJE,
+    );
+    expect(semModulo.some((l) => l.origem === "higienizacao")).toBe(false);
+
+    const resumo = await DespesasService.resumoMes(tenantId, "2026-09", HOJE, ["higienizacao"]);
+    expect(Number(resumo.aPagar)).toBe(1050);
+    expect(Number(resumo.variaveis)).toBe(50);
+  });
+
+  it("pagamento da higienização some das pendentes e entra nas pagas", async () => {
+    const lote = await prisma.crateCleaning.create({
+      data: {
+        tenantId,
+        cleanerName: "Lava Tudo",
+        sentDate: startOfDayTz(HOJE),
+        sentQty: 10,
+        unitPrice: 5,
+        totalAmount: 50,
+        paidAmount: 0,
+        status: "DEVOLVIDO",
+      },
+    });
+
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 50, paidDate: hoje },
+      ctx,
+    );
+
+    const pendentes = await DespesasService.listContas(
+      tenantId,
+      { status: "PENDENTE" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(pendentes.some((l) => l.id === lote.id)).toBe(false);
+
+    const pagas = await DespesasService.listContas(
+      tenantId,
+      { status: "PAGO" },
+      ["higienizacao"],
+      HOJE,
+    );
+    expect(pagas.some((l) => l.id === lote.id && l.status === "PAGO")).toBe(true);
   });
 });

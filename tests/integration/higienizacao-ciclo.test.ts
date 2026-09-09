@@ -2,6 +2,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { CaixasService } from "@/lib/services/caixas.service";
+import { AvisosService } from "@/lib/services/avisos.service";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -278,5 +279,134 @@ describe("Pendências da lista", () => {
     expect(aguardandoDevolucao).toBeGreaterThan(0);
     expect(aguardandoPagamento).toBeGreaterThan(0);
     expect(caixasAReceber).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Dois lançamentos ao mesmo tempo no mesmo lote.
+ *
+ * Devolução e pagamento eram ler-decidir-escrever. Em READ COMMITTED (padrão
+ * do Postgres) as duas transações leem o mesmo valor e a segunda grava o dela
+ * por cima da primeira. No pagamento, dinheiro entregue ao higienizador ficava
+ * fora da conta; na devolução, o lote ficava com menos caixas devolvidas do
+ * que o ledger registra — e travado, porque a guarda de pendentes passa a
+ * recusar o resto.
+ *
+ * O que se fixa aqui é a invariante, não a ordem: o registro do lote tem de
+ * fechar com os lançamentos aceitos, em qualquer interleaving.
+ */
+describe("Lançamentos simultâneos no mesmo lote", () => {
+  it("pagamento: o total pago fecha com o que foi aceito", async () => {
+    await entrarSujas(20);
+    const lote = await enviar(20, 2); // total 40
+
+    const tentativas = await Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        HigienizacaoService.registrarPagamento(
+          { id: lote.id, amount: 10, paidDate: hoje() },
+          ctx,
+        ),
+      ),
+    );
+    const aceitos = tentativas.filter((t) => t.status === "fulfilled").length;
+    expect(aceitos).toBeGreaterThan(0);
+
+    const depois = await prisma.crateCleaning.findUniqueOrThrow({ where: { id: lote.id } });
+    expect(Number(depois.paidAmount)).toBe(aceitos * 10);
+  });
+
+  it("devolução: o devolvido fecha com o ledger de caixas", async () => {
+    await entrarSujas(20);
+    const lote = await enviar(20);
+
+    const tentativas = await Promise.allSettled(
+      Array.from({ length: 4 }, () =>
+        HigienizacaoService.registrarDevolucao(
+          { id: lote.id, quantity: 5, returnedDate: hoje() },
+          ctx,
+        ),
+      ),
+    );
+    const aceitos = tentativas.filter((t) => t.status === "fulfilled").length;
+    expect(aceitos).toBeGreaterThan(0);
+
+    const depois = await prisma.crateCleaning.findUniqueOrThrow({ where: { id: lote.id } });
+    expect(depois.returnedQty).toBe(aceitos * 5);
+
+    // E o ledger não pode ter mais RETORNO_HIGIENIZACAO do que o lote registra.
+    const movimentos = await prisma.plasticCrateMovement.findMany({
+      where: { crateCleaningId: lote.id, type: "RETORNO_HIGIENIZACAO" },
+      select: { quantity: true },
+    });
+    const somaLedger = movimentos.reduce((t, m) => t + m.quantity, 0);
+    expect(somaLedger).toBe(depois.returnedQty);
+  });
+});
+
+/**
+ * O aviso de higienização respeita o plano.
+ *
+ * `AvisosService.get` não recebia os módulos e consultava `crateCleaning` sem
+ * gate: a empresa que saiu do plano com Higienização continuava vendo
+ * "Higienização a pagar" no topo do painel, e o toque levava a
+ * `/plano?bloqueado=higienizacao`. Pelo push era pior — a notificação do dia
+ * podia ser exatamente essa e caía no paywall.
+ */
+describe("Aviso de higienização e o plano", () => {
+  it("aparece para quem tem o módulo e não aparece para quem não tem", async () => {
+    await entrarSujas(10);
+    await enviar(10, 3); // R$ 30 a pagar, status ENVIADO
+
+    const comModulo = await AvisosService.get(tenantId, ["higienizacao"]);
+    expect(comModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(true);
+
+    const semModulo = await AvisosService.get(tenantId, []);
+    expect(semModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(false);
+  });
+});
+
+/**
+ * Perda registrada tranca a edição do envio.
+ *
+ * `registrarPerda` grava a QUEBRA e atualiza só o `status` — nunca
+ * `returnedQty` nem `paidAmount` —, então o lápis "Editar envio" continuava
+ * visível depois de o higienizador quebrar caixas. Reduzir a quantidade
+ * enviada nesse estado encurtava a SAIDA_HIGIENIZACAO abaixo do que já saiu: o
+ * painel mostrava "Em higienização" NEGATIVO e o estoque de sujas ganhava
+ * caixas fantasma — que o próprio painel manda higienizar. Um usuário só,
+ * dois cliques.
+ */
+describe("Editar envio com perda registrada", () => {
+  it("é recusado, e o saldo de caixas não fica negativo", async () => {
+    await entrarSujas(50);
+    const lote = await enviar(50);
+    await HigienizacaoService.registrarPerda(
+      { id: lote.id, quantity: 20, movementDate: hoje() },
+      ctx,
+    );
+
+    // O tenant é compartilhado pelo arquivo, então o que importa é o DELTA.
+    const antes = await CaixasService.getSaldo(tenantId);
+
+    await expect(
+      HigienizacaoService.update(
+        {
+          id: lote.id,
+          cleanerName: lote.cleanerName,
+          sentDate: hoje(),
+          sentQty: 10,
+          unitPrice: 1,
+          notes: null,
+        },
+        ctx,
+      ),
+    ).rejects.toThrow(/perdida/i);
+
+    // Recusa não mexe em nada: sem a guarda, o `delta = -40` encurtava a
+    // SAIDA_HIGIENIZACAO e derrubava este saldo em 40.
+    const depois = await CaixasService.getSaldo(tenantId);
+    expect(depois.emHigienizacao).toBe(antes.emHigienizacao);
+    expect(depois.sujas).toBe(antes.sujas);
+    expect(depois.emHigienizacao).toBeGreaterThanOrEqual(0);
   });
 });

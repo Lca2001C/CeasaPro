@@ -78,23 +78,18 @@ export default async function AdminUsuariosPage({
   const busca = q?.trim() || undefined;
 
   /**
-   * Uma consulta só, e a filtragem da tela em memória.
+   * A LISTA é truncada; os CONTADORES não.
    *
-   * Assim os contadores contam sempre o mesmo conjunto, independente do filtro
-   * escolhido — se o filtro entrasse no SQL, clicar em "Sem acesso" faria os
-   * cartões contarem apenas os sem acesso, e o painel passaria a se contradizer.
+   * O filtro continua sendo aplicado em memória de propósito: se entrasse no
+   * SQL, clicar em "Sem acesso" faria os cartões contarem apenas os sem
+   * acesso e o painel se contradiria. O que mudou é a origem dos números —
+   * eles vêm do conjunto inteiro (`totais`), e não das linhas exibidas.
+   * Contando sobre a lista, um cartão como "Sem acesso" marcava 0 justamente
+   * porque os desativados eram os cortados pelo `take`.
    */
-  const todos = await AdminService.listUsers({ busca });
+  const { usuarios: todos, totais } = await AdminService.listUsers({ busca });
 
-  const online = todos.filter((u) => u.online).length;
-  const emTeste = todos.filter(
-    (u) => u.cobranca?.situacao === "em_teste",
-  ).length;
-  const emDia = todos.filter((u) => u.cobranca?.situacao === "em_dia").length;
-  const inadimplentes = todos.filter(
-    (u) => u.cobranca?.situacao === "inadimplente",
-  ).length;
-  const semAcesso = todos.filter((u) => !u.active).length;
+  const { online, emTeste, emDia, inadimplentes, semAcesso } = totais;
 
   const usuarios = todos.filter((u) => {
     switch (filtro) {
@@ -149,7 +144,7 @@ export default async function AdminUsuariosPage({
       </div>
 
       <div className="mb-4 grid grid-cols-2 gap-2">
-        <StatCard label="Com acesso" value={String(todos.length - semAcesso)} />
+        <StatCard label="Com acesso" value={String(totais.total - semAcesso)} />
         <StatCard label="Sem acesso" value={String(semAcesso)} />
       </div>
 

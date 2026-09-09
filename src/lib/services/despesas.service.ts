@@ -4,7 +4,7 @@ import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
-import { money, toDecimal } from "@/lib/money";
+import { money, sub, toDecimal } from "@/lib/money";
 import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
 import {
   civilParts,
@@ -17,6 +17,13 @@ import {
   zonedTimeToUtc,
 } from "@/lib/tz";
 import { describeError, logger } from "@/lib/logger";
+import { isModuleEnabled } from "@/lib/plan/modules";
+import {
+  fatiaListaComPrefixo,
+  linhaDeDespesa,
+  linhasDeHigienizacao,
+  type ContaUnificada,
+} from "@/lib/despesas/contas-unificadas";
 import type {
   DespesaInput,
   DespesaUpdateInput,
@@ -151,6 +158,37 @@ export interface ResumoMes {
   faturamento: Prisma.Decimal;
   percentualDoFaturamento: Prisma.Decimal;
   referencia: string;
+}
+
+async function higienizacoesFiltradas(
+  tenantId: string,
+  filtro: DespesaFiltro,
+  modules: string[] | undefined,
+  agora: Date,
+): Promise<ContaUnificada[]> {
+  if (!isModuleEnabled(modules, "higienizacao")) return [];
+  const db = getTenantPrisma(tenantId);
+  const lotes = await db.crateCleaning.findMany({
+    select: {
+      id: true,
+      cleanerName: true,
+      totalAmount: true,
+      paidAmount: true,
+      sentDate: true,
+      paidDate: true,
+      createdAt: true,
+    },
+  });
+  const linhas = lotes.flatMap((lote) => linhasDeHigienizacao(lote, filtro, agora));
+  const pagas = filtro.status === "PAGO";
+  return linhas.sort((a, b) => {
+    const dataA = pagas ? a.paidDate : a.dueDate;
+    const dataB = pagas ? b.paidDate : b.dueDate;
+    if (!dataA && !dataB) return 0;
+    if (!dataA) return 1;
+    if (!dataB) return -1;
+    return pagas ? dataB.localeCompare(dataA) : dataA.localeCompare(dataB);
+  });
 }
 
 export const DespesasService = {
@@ -355,6 +393,66 @@ export const DespesasService = {
   },
 
   /**
+   * Lista unificada: despesas + saldos de higienização (se o plano tiver o módulo).
+   *
+   * Higienização não vira linha em `expenses` — pagamento parcial e status do
+   * lote vivem no próprio módulo. Aqui só lemos o saldo para o dono do box ver
+   * "tudo que deve" numa tela só.
+   */
+  async listContas(
+    tenantId: string,
+    opts: DespesaFiltro & { take?: number; skip?: number } = {},
+    modules?: string[],
+    agora = new Date(),
+  ): Promise<ContaUnificada[]> {
+    const take = opts.take ?? DESPESAS_POR_PAGINA;
+    const skip = opts.skip ?? 0;
+    const prefixo = await higienizacoesFiltradas(tenantId, opts, modules, agora);
+    const fatia = fatiaListaComPrefixo(prefixo.length, skip, take);
+    const visiveis = prefixo.slice(fatia.prefixSkip, fatia.prefixSkip + fatia.prefixTake);
+    if (fatia.restoTake <= 0) return visiveis;
+
+    const despesas = await DespesasService.list(
+      tenantId,
+      { ...opts, skip: fatia.restoSkip, take: fatia.restoTake },
+      agora,
+    );
+    return [
+      ...visiveis,
+      ...despesas.map((d) =>
+        linhaDeDespesa(
+          {
+            id: d.id,
+            description: d.description,
+            amount: d.amount,
+            type: d.type,
+            status: d.status,
+            paymentMethod: d.paymentMethod,
+            recurring: d.recurring,
+            categoryName: d.category?.name ?? null,
+            dueDate: d.dueDate,
+            paidDate: d.paidDate,
+          },
+          agora,
+        ),
+      ),
+    ];
+  },
+
+  async countContas(
+    tenantId: string,
+    opts: DespesaFiltro = {},
+    modules?: string[],
+    agora = new Date(),
+  ) {
+    const [despesas, hig] = await Promise.all([
+      DespesasService.count(tenantId, opts, agora),
+      higienizacoesFiltradas(tenantId, opts, modules, agora),
+    ]);
+    return despesas + hig.length;
+  },
+
+  /**
    * Totais por tipo, somados NO BANCO.
    *
    * Somam SEMPRE todas as despesas, não só a página nem o filtro: são o retrato
@@ -380,7 +478,12 @@ export const DespesasService = {
    * filtro — o número no topo nunca fechava com o que estava embaixo. Aqui todo
    * recorte é do mês, e cada card diz de qual data ele fala.
    */
-  async resumoMes(tenantId: string, ref?: string, agora = new Date()): Promise<ResumoMes> {
+  async resumoMes(
+    tenantId: string,
+    ref?: string,
+    agora = new Date(),
+    modules?: string[],
+  ): Promise<ResumoMes> {
     const db = getTenantPrisma(tenantId);
     const referencia = ref ?? refMes(agora);
     const mes = limitesDoMes(referencia, agora);
@@ -389,7 +492,7 @@ export const DespesasService = {
 
     const noMes = { gte: mes.inicio, lte: mes.fim };
 
-    const [aPagar, pagas, porTipo, porTipoAnterior, vencidas, vendas] = await Promise.all([
+    const [aPagar, pagas, porTipo, porTipoAnterior, vencidas, vendas, hig] = await Promise.all([
       db.expense.aggregate({
         _sum: { amount: true },
         _count: { _all: true },
@@ -419,6 +522,16 @@ export const DespesasService = {
         _sum: { totalAmount: true },
         where: { saleDate: noMes, cancelledAt: null },
       }),
+      isModuleEnabled(modules, "higienizacao")
+        ? db.crateCleaning.findMany({
+            select: {
+              totalAmount: true,
+              paidAmount: true,
+              sentDate: true,
+              paidDate: true,
+            },
+          })
+        : Promise.resolve([]),
     ]);
 
     const doMes = FinancialCalc.totaisDespesas(
@@ -427,22 +540,54 @@ export const DespesasService = {
     const doMesAnterior = FinancialCalc.totaisDespesas(
       porTipoAnterior.map((g) => ({ type: g.type, amount: g._sum.amount ?? 0 })),
     );
+
+    let aPagarValor = money(toDecimal(aPagar._sum.amount ?? 0));
+    let aPagarCount = aPagar._count._all;
+    let pagasValor = money(toDecimal(pagas._sum.amount ?? 0));
+    let pagasCount = pagas._count._all;
+    let variaveis = doMes.variaveis;
+    let variaveisMesAnterior = doMesAnterior.variaveis;
+    let vencidasValor = money(toDecimal(vencidas._sum.amount ?? 0));
+    let vencidasCount = vencidas._count._all;
+
+    for (const lote of hig) {
+      const saldo = money(sub(lote.totalAmount, lote.paidAmount));
+      if (saldo.greaterThan(0)) {
+        aPagarValor = money(aPagarValor.plus(saldo));
+        aPagarCount += 1;
+        if (lote.sentDate < hoje) {
+          vencidasValor = money(vencidasValor.plus(saldo));
+          vencidasCount += 1;
+        }
+      }
+      if (lote.paidDate && lote.paidDate >= mes.inicio && lote.paidDate <= mes.fim) {
+        pagasValor = money(pagasValor.plus(lote.paidAmount));
+        pagasCount += 1;
+      }
+      if (lote.sentDate >= mes.inicio && lote.sentDate <= mes.fim) {
+        variaveis = money(variaveis.plus(lote.totalAmount));
+      }
+      if (lote.sentDate >= anterior.inicio && lote.sentDate <= anterior.fim) {
+        variaveisMesAnterior = money(variaveisMesAnterior.plus(lote.totalAmount));
+      }
+    }
+
     const faturamento = money(toDecimal(vendas._sum.totalAmount ?? 0));
+    const geralDoMes = money(doMes.fixas.plus(variaveis));
 
     return {
-      aPagar: money(toDecimal(aPagar._sum.amount ?? 0)),
-      aPagarCount: aPagar._count._all,
-      pagas: money(toDecimal(pagas._sum.amount ?? 0)),
-      pagasCount: pagas._count._all,
+      aPagar: aPagarValor,
+      aPagarCount,
+      pagas: pagasValor,
+      pagasCount,
       fixas: doMes.fixas,
-      variaveis: doMes.variaveis,
-      vencidas: money(toDecimal(vencidas._sum.amount ?? 0)),
-      vencidasCount: vencidas._count._all,
+      variaveis,
+      vencidas: vencidasValor,
+      vencidasCount,
       fixasMesAnterior: doMesAnterior.fixas,
-      variaveisMesAnterior: doMesAnterior.variaveis,
+      variaveisMesAnterior,
       faturamento,
-      // Reaproveita a fórmula de margem: "quanto % do que entrou foi para contas".
-      percentualDoFaturamento: FinancialCalc.margemLiquida(doMes.geral, faturamento),
+      percentualDoFaturamento: FinancialCalc.margemLiquida(geralDoMes, faturamento),
       referencia,
     };
   },
@@ -758,7 +903,17 @@ export const DespesasService = {
       select: { parentId: true },
     });
     const copiados = new Set(jaCopiadas.map((c) => c.parentId));
-    const pendentesDeCopia = origem.filter((o) => !copiados.has(o.id) && o.dueDate);
+
+    // Conta marcada "Repetir todo mês" NÃO entra: ela gera a própria parcela
+    // seguinte ao ser quitada. Copiá-la fazia duas coisas ruins de uma vez —
+    // duas contas iguais no mês seguinte (a cópia e a parcela), e a morte
+    // silenciosa da recorrência: `gerarProximaParcela` usa a presença de um
+    // filho com `parentId` como marca de "já gerei", encontrava a CÓPIA,
+    // concluía que o trabalho estava feito e apagava o `recurring` da origem.
+    // O aluguel do box parava de aparecer para sempre, sem erro e sem aviso.
+    const pendentesDeCopia = origem.filter(
+      (o) => !copiados.has(o.id) && o.dueDate && !o.recurring,
+    );
 
     let criadas = 0;
     for (const o of pendentesDeCopia) {

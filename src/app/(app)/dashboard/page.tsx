@@ -37,8 +37,8 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const { tenantId, session } = await requireTenant();
   const [s, avisos, contas, proximas, cadastro] = await Promise.all([
-    DashboardService.getSummary(tenantId),
-    AvisosService.get(tenantId),
+    DashboardService.getSummary(tenantId, session.modules),
+    AvisosService.get(tenantId, session.modules),
     // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
     // em "quanto tenho que pagar", não em módulos.
     ContasPagarService.get(tenantId, session.modules),

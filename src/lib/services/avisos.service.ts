@@ -3,6 +3,7 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { FinancialCalc } from "./financial-calc.service";
 import { money } from "@/lib/money";
 import { addDaysTz, endOfDayTz, startOfDayTz } from "@/lib/tz";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 export interface Aviso {
   tipo: "fiado_vencido" | "despesa_vencida" | "despesa_a_vencer" | "higienizacao_pendente";
@@ -25,7 +26,19 @@ export interface Aviso {
  *    destino é a própria despesa: da notificação ao botão de pagar, sem escala.
  */
 export const AvisosService = {
-  async get(tenantId: string, agora = new Date()): Promise<Aviso[]> {
+  /**
+   * @param modules módulos do plano. Higienização só entra se estiver
+   *   contratada: sem isso, a empresa que saiu do plano continuava vendo
+   *   "Higienização a pagar" no topo do painel, e o toque levava a
+   *   `/plano?bloqueado=higienizacao`. Pelo push era pior — a notificação do
+   *   dia podia ser exatamente essa e caía no paywall, o oposto do que o
+   *   serviço de push se propõe. `ContasPagarService.get` já fazia isto.
+   */
+  async get(
+    tenantId: string,
+    modules?: string[],
+    agora = new Date(),
+  ): Promise<Aviso[]> {
     const db = getTenantPrisma(tenantId);
     // O corte é o INÍCIO de hoje, não "agora": uma conta que vence hoje não
     // está vencida às 9h da manhã. Era o que acontecia com `dueDate < now`, e
@@ -50,10 +63,12 @@ export const AvisosService = {
         select: { id: true, amount: true },
         orderBy: { dueDate: "asc" },
       }),
-      db.crateCleaning.findMany({
-        where: { status: { not: "PAGO" } },
-        select: { totalAmount: true, paidAmount: true },
-      }),
+      isModuleEnabled(modules, "higienizacao")
+        ? db.crateCleaning.findMany({
+            where: { status: { not: "PAGO" } },
+            select: { totalAmount: true, paidAmount: true },
+          })
+        : [],
     ]);
 
     const avisos: Aviso[] = [];

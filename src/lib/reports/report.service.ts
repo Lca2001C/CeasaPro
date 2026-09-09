@@ -179,7 +179,15 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         totals: {
           customerName: "TOTAL",
           caixas: rows.reduce((a, r) => a + r.caixas, 0),
-          aDevolver: rows.reduce((a, r) => a + r.aDevolver, 0),
+          // "A devolver" é por CLIENTE, e a linha é por conta — cada venda a
+          // prazo abre uma conta. Somando linha a linha, o freguês com duas
+          // compras em aberto entrava duas vezes e o rodapé mostrava o dobro de
+          // caixas na rua. Mesma correção já feita na tela do fiado; o relatório
+          // ficou de fora, e é ele que o comerciante usa para cobrar devolução.
+          aDevolver: [...new Set(rows.map((r) => r.customerName))].reduce(
+            (a, nome) => a + (caixasPorCliente.get(nome) ?? 0),
+            0,
+          ),
           saldo: add(...rows.map((r) => r.saldo)),
         },
       };
@@ -739,7 +747,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "FLUXO_CAIXA": {
       // Entradas = vendas à vista + recebimentos de fiado + venda de embalagens.
-      // Saidas = compras + despesas pagas + pagamentos de higienizacao.
+      // Saidas = compras + despesas pagas (sem o frete já embutido na compra) +
+      // pagamentos de higienizacao.
       // Agrupa pelo dia BRASILEIRO. As colunas são `timestamp` sem fuso guardando
       // UTC, então truncar direto jogava o movimento das 21h em diante para o dia
       // seguinte — o fluxo de caixa nunca fechava com o do balcão.
@@ -786,11 +795,27 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidDate"')} AS d, SUM(amount) AS total FROM expenses
             WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
+              AND "purchaseId" IS NULL
               AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
+          // Soma os PAGAMENTOS, não o acumulado do lote.
+          //
+          // Era SUM("paidAmount") agrupado por "paidDate" em crate_cleanings,
+          // onde paidAmount é ACUMULADO e paidDate guarda só a data do ÚLTIMO
+          // pagamento. Pagamento parcelado ao higienizador jogava o valor cheio
+          // do lote no dia do último, deixava o dia do primeiro sem despesa
+          // nenhuma e, se o último caía fora do período, sumia com o lote
+          // inteiro — o mês fechava com saída menor que a real (lucro inflado),
+          // e é o número que vai para o contador.
+          //
+          // crate_cleaning_payments tem uma linha por pagamento, como
+          // credit_payments já tinha para o fiado. O lote soft-deletado sai pelo
+          // JOIN: a linha de pagamento não tem deletedAt própria.
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
-            SELECT ${dayExpr('"paidDate"')} AS d, SUM("paidAmount") AS total FROM crate_cleanings
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
-              AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
+            SELECT ${dayExpr('pg."paidAt"')} AS d, SUM(pg.amount) AS total
+            FROM crate_cleaning_payments pg
+            JOIN crate_cleanings cc ON cc.id = pg."cleaningId"
+            WHERE pg."tenantId" = ${p.tenantId} AND cc."deletedAt" IS NULL
+              AND pg."paidAt" >= ${p.from} AND pg."paidAt" <= ${p.to} GROUP BY 1`,
         ]);
 
       const days = new Map<string, { entradas: Prisma.Decimal; saidas: Prisma.Decimal }>();

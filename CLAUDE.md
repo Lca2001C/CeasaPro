@@ -1,1 +1,2 @@
 @AGENTS.md
+@docs/CONTEXTO-AGENTE.md

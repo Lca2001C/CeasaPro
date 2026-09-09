@@ -6,7 +6,7 @@ import { DespesasService } from "@/lib/services/despesas.service";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { resolvePeriod } from "@/lib/dates";
-import { isoDateTz, addDaysTz, startOfMonthTz } from "@/lib/tz";
+import { isoDateTz, addDaysTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 
 /**
@@ -30,6 +30,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await prisma.plasticCrateMovement.deleteMany({ where: { tenantId } });
+  await prisma.crateCleaningPayment.deleteMany({ where: { tenantId } });
   await prisma.crateCleaning.deleteMany({ where: { tenantId } });
   await prisma.creditAccount.deleteMany({ where: { tenantId } });
   await prisma.expense.deleteMany({ where: { tenantId } });
@@ -175,6 +176,116 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
     const resumo = await DespesasService.resumoMes(tenantId);
     expect(Number(painel.despesasFixasMes)).toBe(Number(resumo.fixas));
   });
+
+  /**
+   * O teto do mês é o FIM DO MÊS, não "até agora".
+   *
+   * A conta fixa que vence dia 20 é despesa deste mês desde o dia 1º. Com o
+   * teto em "hoje", no dia 8 o painel dizia "Contas fixas R$ 0,00" e um
+   * "Sobrou no mês" inflado, enquanto /despesas mostrava o valor cheio no
+   * mesmo instante — e o lucro ia "piorando" conforme os vencimentos chegavam,
+   * sem nada ter acontecido.
+   *
+   * No último dia do mês não existe "mais adiante no mês", então nesse dia o
+   * caso é degenerado: o teste continua passando, só não exercita a borda.
+   */
+  it("conta que vence mais adiante NESTE mês já entra no mês", async () => {
+    const cat = await DespesasService.createCategory({ name: `Luz ${Date.now()}` }, ctx);
+    const fimDoMes = new Date(startOfNextMonthTz(new Date()).getTime() - 1);
+
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Luz a vencer",
+        type: "VARIAVEL",
+        amount: 300,
+        status: "PENDENTE",
+        dueDate: fimDoMes,
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    const resumo = await DespesasService.resumoMes(tenantId);
+
+    // O painel não pode discordar da tela de Despesas sobre o mesmo mês.
+    expect(Number(painel.despesasVariaveisMes)).toBe(Number(resumo.variaveis));
+    expect(Number(painel.despesasVariaveisMes)).toBeGreaterThanOrEqual(300);
+  });
+
+  it("'Contas do mês — A pagar' é do MÊS, não o pendente de toda a história", async () => {
+    const cat = await DespesasService.createCategory({ name: `Atraso ${Date.now()}` }, ctx);
+    // Conta atrasada de um mês anterior e parcela de um mês futuro: nenhuma
+    // das duas é "conta do mês", e as duas entravam no card.
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Atrasada de outro mês",
+        type: "VARIAVEL",
+        amount: 777,
+        status: "PENDENTE",
+        dueDate: addDaysTz(startOfMonthTz(new Date()), -20),
+      },
+    });
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Parcela de mês futuro",
+        type: "VARIAVEL",
+        amount: 888,
+        status: "PENDENTE",
+        dueDate: startOfMonthTz(addDaysTz(startOfMonthTz(new Date()), 40)),
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    const resumo = await DespesasService.resumoMes(tenantId);
+    expect(Number(painel.contasPagar)).toBe(Number(resumo.aPagar));
+  });
+
+  it("frete com purchaseId não entra no lucro — já está no CMV", async () => {
+    const purchase = await prisma.purchase.create({
+      data: {
+        tenantId,
+        purchaseDate: new Date(),
+        freight: 180,
+        totalAmount: 1180,
+      },
+    });
+    const cat = await DespesasService.createCategory({ name: `Op ${Date.now()}` }, ctx);
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Internet",
+        type: "VARIAVEL",
+        amount: 100,
+        status: "PENDENTE",
+        dueDate: new Date(),
+      },
+    });
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Frete da compra",
+        type: "VARIAVEL",
+        amount: 180,
+        status: "PENDENTE",
+        dueDate: new Date(),
+        purchaseId: purchase.id,
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    // Sem vendas/CMV, lucro = 0 - despesas operacionais. O frete (180) fica de fora.
+    expect(Number(painel.lucroMes)).toBe(-100);
+
+    await prisma.expense.deleteMany({ where: { tenantId } });
+    await prisma.purchase.deleteMany({ where: { tenantId } });
+  });
 });
 
 describe("reduzir o envio de higienizacao NAO lava caixa (regressao)", () => {
@@ -206,5 +317,79 @@ describe("reduzir o envio de higienizacao NAO lava caixa (regressao)", () => {
     expect(depois.emHigienizacao).toBe(40);
     expect(depois.sujas).toBe(20);
     expect(depois.limpas).toBe(0);
+  });
+});
+
+/**
+ * Fluxo de caixa: a saída é o que saiu NAQUELE dia.
+ *
+ * `crate_cleanings.paidAmount` é acumulado e `paidDate` guarda só a data do
+ * ÚLTIMO pagamento, e o relatório somava esses dois campos. Pagamento
+ * parcelado ao higienizador jogava o valor cheio do lote no dia do último,
+ * deixava o dia do primeiro sem despesa nenhuma e, se o último caía fora do
+ * período, sumia com o lote inteiro — o mês fechava com saída menor que a
+ * real, e é o número que vai para o contador.
+ */
+describe("fluxo de caixa com pagamento parcelado ao higienizador", () => {
+  // Deslocamento a partir de HOJE, não dia do mês: com dia fixo o teste
+  // reprovaria nos primeiros dias do mês, quando a janela do preset "mes"
+  // (que termina agora) não alcança o dia 5.
+  const dia = (offset: number) => isoDateTz(addDaysTz(new Date(), offset));
+
+  async function loteComDoisPagamentos() {
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 20, dirty: true, movementDate: hoje },
+      ctx,
+    );
+    const lote = await HigienizacaoService.create(
+      {
+        cleanerName: `Silva-${Date.now()}`,
+        sentDate: dia(-6),
+        sentQty: 20,
+        unitPrice: 2,
+        notes: null,
+      },
+      ctx,
+    );
+    // Total 40: paga 10 há 5 dias e 30 ontem.
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 10, paidDate: dia(-5) },
+      ctx,
+    );
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 30, paidDate: dia(-1) },
+      ctx,
+    );
+    return lote;
+  }
+
+  it("cada parcela entra no SEU dia, não tudo no dia do último pagamento", async () => {
+    await loteComDoisPagamentos();
+    const p = resolvePeriod({ preset: "personalizado", from: dia(-6), to: dia(0) });
+    const rel = await buildReport("FLUXO_CAIXA", { tenantId, from: p.from, to: p.to });
+
+    const saidaEm = (offset: number) => {
+      const alvo = dia(offset);
+      const linha = rel.rows.find((r) => isoDateTz(r.date as Date) === alvo);
+      return Number((linha?.saidas as { toString(): string } | undefined)?.toString() ?? 0);
+    };
+
+    expect(saidaEm(-5)).toBe(10);
+    expect(saidaEm(-1)).toBe(30);
+  });
+
+  it("período que termina antes do último pagamento ainda mostra o primeiro", async () => {
+    await loteComDoisPagamentos();
+    // Janela que termina ANTES do último pagamento.
+    const p = resolvePeriod({ preset: "personalizado", from: dia(-6), to: dia(-3) });
+    const rel = await buildReport("FLUXO_CAIXA", { tenantId, from: p.from, to: p.to });
+
+    // Antes o lote inteiro desaparecia: `paidDate` (o último pagamento) ficava
+    // fora da janela, e com ele os R$ 10 que saíram de verdade há 5 dias.
+    const total = rel.rows.reduce(
+      (a, r) => a + Number((r.saidas as { toString(): string }).toString()),
+      0,
+    );
+    expect(total).toBe(10);
   });
 });

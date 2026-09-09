@@ -41,6 +41,7 @@ export async function cleanupTenants(ids: string[]) {
   // então não cai por cascata: apagar aqui evita vazar linhas entre testes.
   await prisma.adminNotification.deleteMany({ where });
   await prisma.plasticCrateMovement.deleteMany({ where });
+  await prisma.crateCleaningPayment.deleteMany({ where });
   await prisma.crateCleaning.deleteMany({ where });
   await prisma.packagingSale.deleteMany({ where });
   await prisma.packagingType.deleteMany({ where });

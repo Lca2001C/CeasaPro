@@ -143,6 +143,34 @@ export interface SituacaoCobrancaDetalhe {
   diasDeTeste: number | null;
 }
 
+/** Por que a pessoa caiu na tela de bloqueio — decide o texto que ela lê. */
+export type MotivoBloqueio = "teste_ativo" | "teste_terminou" | "nunca_ativou" | "bloqueado";
+
+/**
+ * Traduz a assinatura no motivo do bloqueio, pelas DATAS.
+ *
+ * A tela decidia por campo cru: `trialEndsAt !== null` era lido como "o teste
+ * terminou". Só que quem acaba de confirmar o e-mail recebe essa data no
+ * FUTURO — e dá para chegar na tela de bloqueio nesse estado, porque a
+ * confirmação grava o trial no banco sem reemitir o cookie, e o proxy decide
+ * pelo token. A pessoa lia "Seu teste grátis terminou", com botão para pagar,
+ * no primeiro dia de um teste que a tela anterior acabara de anunciar.
+ *
+ * `teste_ativo` é justamente esse caso: não é cobrança, é sessão velha — o
+ * caminho é reemitir o cookie, não pedir dinheiro.
+ *
+ * Mesma razão de `situacaoCobranca` existir: a classificação sai das datas.
+ */
+export function motivoDoBloqueio(
+  sub: { activatedAt: Date | null; trialEndsAt: Date | null } | null | undefined,
+  now: Date = new Date(),
+): MotivoBloqueio {
+  // Já pagou alguma vez: o bloqueio é de cobrança, não de ativação.
+  if (!sub || sub.activatedAt !== null) return "bloqueado";
+  if (sub.trialEndsAt === null) return "nunca_ativou";
+  return sub.trialEndsAt > now ? "teste_ativo" : "teste_terminou";
+}
+
 /**
  * Classifica a assinatura para acompanhamento.
  *

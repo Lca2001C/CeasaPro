@@ -863,10 +863,36 @@ model CrateCleaning {
   deletedAt      DateTime?
   tenant         Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   crateMovements PlasticCrateMovement[]
+  payments       CrateCleaningPayment[]
 
   @@index([tenantId, sentDate])
   @@index([tenantId, status])
   @@map("crate_cleanings")
+}
+
+/// Cada pagamento ao higienizador, com a data em que saiu do caixa.
+///
+/// `CrateCleaning.paidAmount` é ACUMULADO e `paidDate` é sobrescrito a cada
+/// pagamento, então os dois juntos não dizem quanto saiu em que dia. O fluxo de
+/// caixa somava `paidAmount` agrupando por `paidDate`: o pagamento parcelado
+/// jogava o valor cheio do lote no dia do ÚLTIMO pagamento, deixava o dia do
+/// primeiro sem despesa nenhuma e, se o último caía fora do período, sumia com
+/// o lote inteiro do relatório — o mês fechava com saída menor que a real, e é
+/// o número que vai para o contador.
+///
+/// Mesmo desenho de `CreditPayment`, que já existia para o fiado.
+model CrateCleaningPayment {
+  id         String        @id @default(cuid())
+  tenantId   String
+  cleaningId String
+  amount     Decimal       @db.Decimal(14, 2)
+  paidAt     DateTime      @default(now())
+  createdAt  DateTime      @default(now())
+  cleaning   CrateCleaning @relation(fields: [cleaningId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId, paidAt])
+  @@index([cleaningId])
+  @@map("crate_cleaning_payments")
 }
 
 model PackagingType {

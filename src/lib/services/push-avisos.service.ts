@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { AvisosService } from "./avisos.service";
+import { planModules } from "@/lib/plan/modules";
 import { accessDecision } from "@/lib/billing/status";
 import { enviarPushParaUsuario, isPushConfigured } from "@/lib/pwa/push-server";
 import { audit } from "@/lib/audit";
@@ -79,7 +80,20 @@ export const PushAvisosService = {
     }
 
     // Um usuário por inscrição; agrupa por tenant para calcular os avisos uma vez.
+    //
+    // O filtro de usuário VIVO não é detalhe: nem `desativarUsuario` nem
+    // `deleteUser`/`deleteTenant` apagam a inscrição (o admin nunca toca em
+    // `pushSubscription`), e a inscrição do navegador não é cancelada no
+    // logout. Sem isto, quem perdeu o acesso continuava recebendo o aviso
+    // diário da empresa todos os dias — com o movimento no corpo da
+    // notificação ("3 cliente(s) com fiado vencido") — e o toque só levava à
+    // tela de login. O bloqueio da EMPRESA já era checado dentro do laço; o do
+    // usuário, não.
+    //
+    // Filtrar aqui também cura as linhas que a base já tem órfãs, o que uma
+    // limpeza no momento da exclusão não alcançaria.
     const inscricoes = await prisma.pushSubscription.findMany({
+      where: { user: { active: true, deletedAt: null } },
       distinct: ["userId"],
       select: { userId: true, tenantId: true },
     });
@@ -119,7 +133,7 @@ export const PushAvisosService = {
           select: {
             status: true,
             deletedAt: true,
-            subscription: { select: { status: true } },
+            subscription: { select: { status: true, plan: { select: { features: true } } } },
           },
         });
         if (!tenant || tenant.deletedAt) {
@@ -131,7 +145,13 @@ export const PushAvisosService = {
           continue;
         }
 
-        const avisos = await AvisosService.get(tenantId);
+        // Sem sessão aqui: os módulos vêm do plano da assinatura. Sem eles, a
+        // notificação do dia podia ser "Higienização a pagar" para quem não
+        // tem o módulo, e o toque caía no paywall.
+        const avisos = await AvisosService.get(
+          tenantId,
+          planModules(tenant.subscription?.plan?.features),
+        );
         if (avisos.length === 0) {
           resultado.pulados += 1;
           continue;

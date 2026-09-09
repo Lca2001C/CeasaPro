@@ -3,7 +3,11 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowDown, ArrowUp, Minus, Plus, Tags } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
-import { DespesasService, DESPESAS_POR_PAGINA } from "@/lib/services/despesas.service";
+import {
+  DespesasService,
+  DESPESAS_POR_PAGINA,
+  mesAnterior,
+} from "@/lib/services/despesas.service";
 import { formatBRL, formatQty } from "@/lib/format";
 import { addDaysTz, isoDateTz, startOfDayTz } from "@/lib/tz";
 import { toDecimal } from "@/lib/money";
@@ -14,7 +18,7 @@ import { EmptyState } from "@/components/data/empty-state";
 import { StatCard } from "@/components/data/stat-card";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { DespesaLinha, type DespesaLinhaDados } from "./_components/despesa-linha";
+import { DespesaLinha } from "./_components/despesa-linha";
 import { DespesasFiltros } from "./_components/despesas-filtros";
 import { ReplicarMesButton } from "./_components/replicar-mes-button";
 
@@ -105,7 +109,7 @@ export default async function DespesasPage({
         : "PENDENTE";
   const pagina = paginaDaUrl(sp.pagina);
 
-  const { tenantId } = await requireTenant();
+  const { tenantId, session } = await requireTenant();
   const agora = new Date();
 
   // "Vence nos próximos N dias": atalho vindo dos avisos, traduzido em período.
@@ -139,9 +143,9 @@ export default async function DespesasPage({
   // TODAS as despesas para filtrar e somar em JS: ~278 ms com 2 anos de
   // histórico, crescendo sem teto.
   const [despesas, total, resumo, categorias] = await Promise.all([
-    DespesasService.list(tenantId, { ...filtro, skip }),
-    DespesasService.count(tenantId, filtro),
-    DespesasService.resumoMes(tenantId, undefined, agora),
+    DespesasService.listContas(tenantId, { ...filtro, skip }, session.modules, agora),
+    DespesasService.countContas(tenantId, filtro, session.modules, agora),
+    DespesasService.resumoMes(tenantId, undefined, agora, session.modules),
     DespesasService.listCategories(tenantId),
   ]);
 
@@ -172,23 +176,7 @@ export default async function DespesasPage({
     });
   }
 
-  const hoje = startOfDayTz(agora);
-  const vencida = (d: (typeof despesas)[number]) =>
-    d.status !== "PAGO" && d.dueDate !== null && d.dueDate < hoje;
-
-  const linhas: DespesaLinhaDados[] = despesas.map((d) => ({
-    id: d.id,
-    description: d.description,
-    amount: d.amount.toString(),
-    type: d.type,
-    status: d.status,
-    paymentMethod: d.paymentMethod,
-    recurring: d.recurring,
-    categoryName: d.category?.name ?? null,
-    dueDate: d.dueDate?.toISOString() ?? null,
-    paidDate: d.paidDate?.toISOString() ?? null,
-    vencida: vencida(d),
-  }));
+  const linhas = despesas;
 
   return (
     <div>
@@ -263,7 +251,18 @@ export default async function DespesasPage({
             você vendeu ({formatBRL(resumo.faturamento)}).
           </p>
           <div className="mt-3">
-            <ReplicarMesButton mesOrigem={resumo.referencia} />
+            {/*
+              O mês de ORIGEM é o ANTERIOR ao de referência.
+
+              Passando `resumo.referencia` (o mês corrente), o botão fazia o
+              oposto do que promete: no dia 1º, com a lista vazia, respondia
+              "não há despesas com vencimento em <mês corrente> para replicar"
+              — sem nenhum caminho na tela para pedir o mês passado; e com o
+              mês já preenchido, criava as contas do mês SEGUINTE, um mês
+              adiantadas e invisíveis nos cartões, com o toast dizendo que
+              copiou.
+            */}
+            <ReplicarMesButton mesOrigem={mesAnterior(resumo.referencia)} />
           </div>
         </CardContent>
       </Card>
@@ -284,6 +283,7 @@ export default async function DespesasPage({
       <DespesasFiltros
         atuais={{
           status: aba === "VENCIDAS" ? "PENDENTE" : aba,
+          vencidas: aba === "VENCIDAS",
           q: sp.q ?? "",
           type: sp.type ?? "",
           categoryId: sp.categoria ?? "",
@@ -319,9 +319,9 @@ export default async function DespesasPage({
           }
         />
       ) : (
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 pb-4">
           {linhas.map((d) => (
-            <DespesaLinha key={d.id} d={d} />
+            <DespesaLinha key={`${d.origem}-${d.id}`} d={d} />
           ))}
         </div>
       )}

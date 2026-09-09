@@ -25,7 +25,8 @@ import {
 import { useState } from "react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
-import { encerrarSessao } from "@/lib/session-nav";
+import { toast } from "sonner";
+import { sair } from "@/lib/sair";
 import {
   Sheet,
   SheetContent,
@@ -137,7 +138,7 @@ export function BottomNav({
                 type="button"
                 onClick={() => {
                   setOpen(false);
-                  void encerrarSessao();
+                  void sair(toast.error);
                 }}
                 className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-3 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
               >

@@ -40,6 +40,7 @@ export default async function ConfirmarPage({
 
   let trialEndsAt: Date | null = null;
   let erro: string | null = null;
+  let codigo: string | null = null;
 
   try {
     const res = await SignupService.confirmEmail(token);
@@ -47,6 +48,7 @@ export default async function ConfirmarPage({
   } catch (e) {
     if (e instanceof AppError) {
       erro = e.message;
+      codigo = e.code;
     } else {
       // Falha inesperada não pode virar "link inválido": isso mandaria a pessoa
       // se cadastrar de novo (e falhar por e-mail duplicado) por um problema
@@ -73,25 +75,55 @@ export default async function ConfirmarPage({
               </p>
             </div>
             <Button asChild size="lg" className="w-full">
-              <Link href="/login">Entrar no CeasaPro</Link>
+              {/*
+                Passa pela renovação em vez de ir direto ao /login.
+
+                Quem entrou ANTES de clicar no link carrega um token que ainda
+                diz SUSPENSO — a confirmação libera o trial no banco, não no
+                cookie. Indo ao /login, o proxy via a sessão, mandava para o
+                /dashboard e o token velho derrubava a pessoa em
+                /conta/suspensa: "seu teste grátis terminou" no primeiro dia.
+                A rota reemite o cookie a partir do banco; sem sessão, ela
+                mesma devolve ao /login com o destino preservado.
+
+                `<a>` e não `<Link>`: a rota exige navegação de topo, e a
+                transição do router seria um fetch RSC.
+              */}
+              <a href="/api/auth/renovar?next=%2Fdashboard">Entrar no CeasaPro</a>
             </Button>
           </div>
         ) : (
           <div className="flex flex-col items-center gap-4 text-center">
             <TriangleAlert className="size-8 text-destructive" />
             <div className="flex flex-col gap-1">
-              <p className="font-medium">Não foi possível confirmar</p>
+              <p className="font-medium">
+                {codigo === "TOKEN_REENVIADO" ? "Esse link expirou" : "Não foi possível confirmar"}
+              </p>
               <p className="text-sm text-muted-foreground">{erro}</p>
             </div>
-            <Button asChild size="lg" className="w-full">
-              <Link href="/cadastro">
-                <UserPlus className="size-4" />
-                Fazer o cadastro
+            {/*
+              Link expirado agora dispara um e-mail novo (ver `confirmEmail`),
+              então "fazer o cadastro" seria mandar a pessoa para um caminho
+              que não faz nada: o cadastro vê o e-mail em uso e não reemite.
+              O que resta é abrir o e-mail que acabou de chegar.
+            */}
+            {codigo === "TOKEN_REENVIADO" ? (
+              <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
+                Já tenho conta
               </Link>
-            </Button>
-            <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
-              Já tenho conta
-            </Link>
+            ) : (
+              <>
+                <Button asChild size="lg" className="w-full">
+                  <Link href="/cadastro">
+                    <UserPlus className="size-4" />
+                    Fazer o cadastro
+                  </Link>
+                </Button>
+                <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
+                  Já tenho conta
+                </Link>
+              </>
+            )}
           </div>
         )}
       </CardContent>

@@ -85,8 +85,28 @@ export function PushOptIn({ vapidPublicKey }: { vapidPublicKey: string | null })
     navigator.serviceWorker
       .getRegistration()
       .then((reg) => reg?.pushManager.getSubscription() ?? null)
-      .then((sub) => {
+      .then(async (sub) => {
         if (vivo) setInscrito(Boolean(sub));
+        if (!sub) return;
+
+        // Reafirma quem é o dono da inscrição a cada carregamento.
+        //
+        // A inscrição do navegador é por ORIGEM, não por usuário, e o logout
+        // não a cancela. Num celular compartilhado entre dois boxes, depois
+        // que A sai e B entra o `getSubscription()` devolve a MESMA inscrição
+        // e a linha no banco continua apontando para A: os avisos diários que
+        // chegam naquele aparelho são os da empresa de A ("3 cliente(s) com
+        // fiado vencido"), e B via o estado "inscrito" com apenas "Desativar"
+        // — sem caminho para fazer os avisos da própria empresa funcionarem.
+        //
+        // O servidor já resolve: `PushInscricaoService.registrar` faz upsert
+        // pelo endpoint e REATRIBUI `userId`/`tenantId`. Só ninguém chamava.
+        // Best-effort de propósito: falhar aqui não muda o que a tela mostra.
+        await fetch("/api/pwa/push", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(sub.toJSON()),
+        }).catch(() => undefined);
       })
       .catch(() => {
         if (vivo) setInscrito(false);

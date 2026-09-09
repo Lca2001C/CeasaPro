@@ -65,9 +65,11 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
       return false;
     };
 
-    // `.bg-card` é a assinatura do componente `Card` — a "caixa" do requisito.
-    // Só `main`: a barra lateral também usa `bg-card` de fundo, e não é cartão.
-    for (const caixa of Array.from(document.querySelectorAll("main .bg-card"))) {
+    // `[data-slot="card"]` é a assinatura do componente `Card` — a "caixa" do
+    // requisito. Não a classe `bg-card`: o tailwind-merge a apaga quando quem
+    // chama passa outro fundo, e esses cartões saíam da varredura em silêncio.
+    // Só `main`: a barra lateral também tem fundo de cartão e não é cartão.
+    for (const caixa of Array.from(document.querySelectorAll('main [data-slot="card"]'))) {
       const r = caixa.getBoundingClientRect();
       if (r.width === 0) continue;
 

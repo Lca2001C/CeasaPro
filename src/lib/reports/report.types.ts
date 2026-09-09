@@ -50,20 +50,35 @@ export const BASIC_REPORTS: ReportKind[] = [
   "ESTOQUE",
 ];
 
-/** Relatórios do módulo opcional `relatorios_avancados`. */
-export const ADVANCED_REPORTS: ReportKind[] = [
-  "LUCRO_PRODUTO",
-  "MAIS_VENDIDOS",
-  "INADIMPLENTES",
-  "FORNECEDORES",
-  "FLUXO_CAIXA",
-  "CAIXAS_PLASTICAS",
-  "HIGIENIZACAO",
-  "EMBALAGENS",
-];
+/**
+ * Relatórios do módulo opcional `relatorios_avancados`.
+ *
+ * Mantida apenas para leitura/documentação: quem decide é `isAdvancedReport`,
+ * pela AUSÊNCIA em `BASIC_REPORTS`. Ver o comentário lá.
+ */
+export const ADVANCED_REPORTS: ReportKind[] = REPORT_TYPES.filter(
+  (t) => !BASIC_REPORTS.includes(t),
+);
 
+/**
+ * É relatório do módulo pago?
+ *
+ * Decide pela ausência em `BASIC_REPORTS`, e não pela presença numa lista de
+ * avançados — a diferença é o que acontece com quem esquece de classificar.
+ *
+ * Era `ADVANCED_REPORTS.includes(kind)`, fail-OPEN, e quatro relatórios nunca
+ * foram para a lista: "Lucro por fornecedor", "Produtos com prejuízo",
+ * "Estoque parado" e "Total de caixas de papelão". Os dois gates dependem só
+ * desta função, então eles apareciam em /relatorios para quem está no plano
+ * básico E a rota de exportação gerava o Excel/PDF sem pedir módulo — furo de
+ * receita, e no caso de CAIXAS_PAPELAO entrega de dados de `packaging_sales`,
+ * que é de outro módulo.
+ *
+ * Nesta direção, esquecer de classificar um relatório novo o deixa BLOQUEADO
+ * (alguém reclama e conserta) em vez de liberado em silêncio.
+ */
 export function isAdvancedReport(kind: ReportKind): boolean {
-  return ADVANCED_REPORTS.includes(kind);
+  return !BASIC_REPORTS.includes(kind);
 }
 
 export const REPORT_LABELS: Record<ReportKind, string> = {

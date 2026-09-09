@@ -11,6 +11,7 @@ import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
 import {
   provisionTenant,
+  cnpjEmUso,
   emailEmUso,
   emailDeExcluido,
   liberarEmailDeContaExcluida,
@@ -59,16 +60,27 @@ export const AdminService = {
 
     const [subs, tenants, recentPayments, mrrRows, novosNoMes, receitaMes, aguardandoAtivacao] =
       await Promise.all([
+        // `deletedAt: null` aqui e no MRR abaixo: sem isso, a empresa excluída
+        // continuava contada em "Ativas"/"Inadimplentes" e somada na receita,
+        // enquanto o cartão "Empresas" (que filtra) já não a contava — a tela
+        // se contradizia (Empresas 8, Ativas 11) e o MRR, que é o número pelo
+        // qual se decide preço e caixa, ficava inflado. `deleteTenant` não
+        // encerra a assinatura, então o resíduo é permanente: passado o
+        // vencimento, o cron a move para VENCIDO/SUSPENSO e ela engorda
+        // "Inadimplentes" para sempre, mandando cobrar quem não existe mais.
         prisma.tenantSubscription.groupBy({
           by: ["status"],
           _count: true,
-          where: { tenant: NAO_E_AMBIENTE_ADMIN },
+          where: { tenant: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN } },
         }),
         prisma.tenant.count({ where: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN } }),
         prisma.subscriptionPayment.count({ where: { status: "APROVADO" } }),
         prisma.tenantSubscription.aggregate({
           _sum: { monthlyAmount: true },
-          where: { status: { in: ["ATIVO"] }, tenant: NAO_E_AMBIENTE_ADMIN },
+          where: {
+            status: { in: ["ATIVO"] },
+            tenant: { deletedAt: null, ...NAO_E_AMBIENTE_ADMIN },
+          },
         }),
         prisma.tenant.count({
           where: { deletedAt: null, createdAt: { gte: monthStart }, ...NAO_E_AMBIENTE_ADMIN },
@@ -121,6 +133,11 @@ export const AdminService = {
   async createTenantWithOwner(input: NovaEmpresaInput, ctx: AdminCtx) {
     if (await emailEmUso(input.ownerEmail)) {
       throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
+    }
+    // Colisão de CNPJ chegava como P2002 → "Ocorreu um erro inesperado", sem
+    // dizer o motivo nem o que fazer.
+    if (await cnpjEmUso(input.cnpj)) {
+      throw new BusinessRuleError("Já existe uma empresa cadastrada com esse CNPJ.");
     }
     await liberarEmailDeContaExcluida(input.ownerEmail);
 
@@ -335,7 +352,16 @@ export const AdminService = {
     await prisma.$transaction(async (tx) => {
       await tx.tenant.update({
         where: { id },
-        data: { deletedAt: agora, status: "BLOCKED" },
+        data: {
+          deletedAt: agora,
+          status: "BLOCKED",
+          // Solta o CNPJ, como o e-mail e o `googleSub` do dono: a coluna é
+          // `@unique` e global, e a linha excluída o mantinha ocupado para
+          // sempre. Recadastrar o mesmo cliente com o CNPJ real — o caso que
+          // o comentário acima chama de comum — estourava violação de índice
+          // e chegava na tela como "erro inesperado".
+          cnpj: null,
+        },
       });
       // Um `updateMany` não serve: cada e-mail recebe um carimbo próprio.
       for (const u of usuarios) {
@@ -595,23 +621,42 @@ export const AdminService = {
    * entre duas execuções ele mostraria "em dia" quem venceu de madrugada —
    * exatamente o caso que esta tela existe para pegar.
    */
+  /**
+   * Usuários da plataforma para a tela do super-admin.
+   *
+   * Devolve a LISTA truncada e os TOTAIS do conjunto inteiro, separados.
+   *
+   * Antes era só a lista, com `take: 200` e ordem "ativo primeiro" — e a tela
+   * contava os cartões sobre esse conjunto truncado. Como os desativados
+   * ficam no fim da ordenação, eram exatamente eles os cortados: passando de
+   * 200 usuários com acesso, o cartão "Sem acesso" marcava 0 e o filtro
+   * respondia "nenhum usuário encontrado". O super-admin concluía que não
+   * havia ninguém bloqueado olhando uma tela que só tinha visto os 200
+   * primeiros nomes, e sem nenhum aviso de truncagem.
+   *
+   * Os totais saem de uma consulta enxuta sobre TODO o conjunto, reusando o
+   * mesmo `situacaoCobranca` da lista: contador e linha nunca discordam por
+   * terem lógicas diferentes.
+   */
   async listUsers(filtro?: { busca?: string; somenteInativos?: boolean }) {
     const busca = filtro?.busca?.trim();
     const agora = new Date();
 
+    const where = {
+      deletedAt: null,
+      ...(filtro?.somenteInativos ? { active: false } : {}),
+      ...(busca
+        ? {
+            OR: [
+              { name: { contains: busca, mode: "insensitive" as const } },
+              { email: { contains: busca, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
+
     const usuarios = await prisma.user.findMany({
-      where: {
-        deletedAt: null,
-        ...(filtro?.somenteInativos ? { active: false } : {}),
-        ...(busca
-          ? {
-              OR: [
-                { name: { contains: busca, mode: "insensitive" as const } },
-                { email: { contains: busca, mode: "insensitive" as const } },
-              ],
-            }
-          : {}),
-      },
+      where,
       include: {
         tenant: {
           select: {
@@ -637,11 +682,16 @@ export const AdminService = {
       take: 200,
     });
 
-    if (usuarios.length === 0) return [];
+    // Sem `return []` aqui: os totais precisam ser calculados de qualquer
+    // forma (uma busca sem resultado tem de mostrar zeros, não a contagem
+    // anterior), e a consulta de presença abaixo não depende da lista.
 
+    // Sem `userId: { in: ... }`: a presença também alimenta o TOTAL de online,
+    // que é do conjunto inteiro e não dos 200 exibidos. A intersecção com cada
+    // conjunto é feita em memória, e uma lista de milhares de ids no `IN`
+    // seria pior que o `distinct` global.
     const online = await prisma.refreshToken.findMany({
       where: {
-        userId: { in: usuarios.map((u) => u.id) },
         // As três condições são a definição de presença, e cada uma tira um
         // falso positivo: revogado = saiu ou foi desativado; expirado = sessão
         // morta; criado fora da janela = entrou há muito e não voltou.
@@ -654,7 +704,50 @@ export const AdminService = {
     });
     const idsOnline = new Set(online.map((t) => t.userId));
 
-    return usuarios.map((u) => ({
+    // Consulta enxuta (sem include pesado) só para os contadores.
+    const paraContar = await prisma.user.findMany({
+      where,
+      select: {
+        id: true,
+        active: true,
+        tenant: {
+          select: {
+            deletedAt: true,
+            subscription: {
+              select: {
+                status: true,
+                statusSource: true,
+                activatedAt: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                graceDays: true,
+                cancelledAt: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    const totais = {
+      total: paraContar.length,
+      semAcesso: paraContar.filter((u) => !u.active).length,
+      online: paraContar.filter((u) => idsOnline.has(u.id)).length,
+      emTeste: 0,
+      emDia: 0,
+      inadimplentes: 0,
+      /** A tela avisa quando não mostrou tudo, em vez de calar. */
+      truncado: paraContar.length > usuarios.length,
+    };
+    for (const u of paraContar) {
+      if (!u.tenant || u.tenant.deletedAt) continue;
+      const situacao = situacaoCobranca(u.tenant.subscription, agora).situacao;
+      if (situacao === "em_teste") totais.emTeste++;
+      else if (situacao === "em_dia") totais.emDia++;
+      else if (situacao === "inadimplente") totais.inadimplentes++;
+    }
+
+    const lista = usuarios.map((u) => ({
       ...u,
       online: idsOnline.has(u.id),
       /**
@@ -667,6 +760,8 @@ export const AdminService = {
           ? situacaoCobranca(u.tenant.subscription, agora)
           : (null as SituacaoCobrancaDetalhe | null),
     }));
+
+    return { usuarios: lista, totais };
   },
 
   /**

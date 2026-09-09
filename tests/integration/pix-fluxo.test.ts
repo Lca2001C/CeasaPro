@@ -16,6 +16,8 @@ const gw = vi.hoisted(() => ({
   porChave: new Map<string, string>(),
   ultimoPayload: null as Record<string, unknown> | null,
   status: new Map<string, string>(),
+  /** Valor de cada cobrança — o `transaction_amount` que o MP devolve. */
+  valores: new Map<string, number>(),
 }));
 
 vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
@@ -43,6 +45,7 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
           gw.porChave.set(chave, id);
           gw.status.set(id, "pending");
         }
+        gw.valores.set(id, args.amount);
         return {
           mpPaymentId: id,
           status: gw.status.get(id) ?? "pending",
@@ -60,7 +63,10 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
         status,
         statusDetail: status,
         externalReference: null,
-        amount: 0,
+        // O fake devolvia 0 aqui. O serviço confere o valor pago contra a
+        // mensalidade devida, então um 0 fixo tornaria todo pagamento
+        // "a menos" e o fake deixaria de representar a realidade.
+        amount: gw.valores.get(id) ?? 0,
         method: "pix",
         paymentTypeId: "bank_transfer",
         paidAt: status === "approved" ? new Date() : null,
@@ -272,6 +278,70 @@ describe("Troca de plano no PIX", () => {
     expect(Number(completo.amount)).toBe(99.9);
     expect(gw.ultimoPayload!.amount).toBe(99.9);
   });
+
+  /**
+   * O código antigo continua pagável no Mercado Pago.
+   *
+   * Trocar de plano marca a cobrança anterior como CANCELADO só no NOSSO
+   * banco — não existe cancelamento no gateway. O copia-e-cola de 49,90 já
+   * estava no app do banco, e pagá-lo creditava o mês INTEIRO no plano de
+   * 99,90: prejuízo silencioso, e depois disso a guarda MENSALIDADE_JA_PAGA
+   * bloqueava a cobrança correta do mês.
+   */
+  it("pagar o código ANTIGO, mais barato, não libera o plano novo", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    const basico = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true, planId: planoCompleto },
+      ctx,
+    );
+    const antes = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(Number(antes.monthlyAmount)).toBe(99.9);
+
+    // O cliente paga o QR velho, de 49,90.
+    gw.status.set(basico.mpPaymentId!, "approved");
+    const r = await BillingService.handleWebhook(basico.mpPaymentId!);
+    expect(r).toBe("ignorado");
+
+    // Nada de mês creditado nem de acesso liberado.
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(sub.status).toBe("SUSPENSO");
+    expect(sub.activatedAt).toBeNull();
+    expect(sub.currentPeriodEnd.getTime()).toBe(antes.currentPeriodEnd.getTime());
+
+    // A linha fica intocada: a tela segue oferecendo o pagamento correto, em
+    // vez de dizer "já pago neste mês" e manter a empresa bloqueada.
+    const velha = await prisma.subscriptionPayment.findUniqueOrThrow({
+      where: { id: basico.id },
+    });
+    expect(velha.status).not.toBe("APROVADO");
+    expect((await BillingService.getStatus(tenantId))?.paidCharge).toBeNull();
+  });
+
+  it("pagar o valor devido libera normalmente (a guarda não atrapalha o certo)", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    const completo = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true, planId: planoCompleto },
+      ctx,
+    );
+
+    gw.status.set(completo.mpPaymentId!, "approved");
+    expect(await BillingService.handleWebhook(completo.mpPaymentId!)).toBe("aplicado");
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(sub.status).toBe("ATIVO");
+  });
 });
 
 describe("Pagamento confirmado pelo webhook", () => {
@@ -341,5 +411,130 @@ describe("Pagamento confirmado pelo webhook", () => {
 
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
     expect(sub.status).toBe("ATIVO");
+  });
+});
+
+/**
+ * Cobrança vencida não pode trancar a tela de pagamento.
+ *
+ * A tela esconde o seletor de plano, o formulário de cartão e o botão de gerar
+ * código enquanto existe cobrança pendente. Como `getStatus` devolvia a linha
+ * vencida como pendente, quem gerava o PIX e não pagava em 48h voltava e
+ * encontrava o QR morto com "Aguardando o pagamento" — e empresa SUSPENSA só
+ * alcança /assinatura, então ficava sem nenhuma forma de pagar.
+ */
+describe("Cobrança PIX vencida", () => {
+  it("sai de `pendingCharge` e devolve a tela de pagamento ao cliente", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    const cobranca = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+
+    // Enquanto vale, a tela mostra o QR — comportamento preservado.
+    const antes = await BillingService.getStatus(tenantId);
+    expect(antes?.pendingCharge?.id).toBe(cobranca.id);
+
+    // Passaram-se as 48h sem pagamento.
+    await prisma.subscriptionPayment.update({
+      where: { id: cobranca.id },
+      data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+    });
+
+    const depois = await BillingService.getStatus(tenantId);
+    expect(depois?.pendingCharge).toBeNull();
+    // A linha continua no banco (o cron ainda vai conciliá-la); o que muda é
+    // que ela não é mais oferecida como cobrança em aberto.
+    expect(
+      await prisma.subscriptionPayment.findUnique({ where: { id: cobranca.id } }),
+    ).not.toBeNull();
+  });
+
+  it("e a tela volta a oferecer cobrança utilizável depois de gerar de novo", async () => {
+    // Fecha o ciclo do ponto de vista da tela: o QR morto sai de `pendingCharge`
+    // (teste acima), o cliente clica em gerar e o status volta a apontar uma
+    // cobrança válida. A regeneração em si já tem teste próprio; o que faltava
+    // era garantir que `getStatus` a reconhece.
+    const { tenantId, ctx } = await novoCliente();
+    const velha = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    await prisma.subscriptionPayment.update({
+      where: { id: velha.id },
+      data: { expiresAt: new Date("2020-01-01T00:00:00Z") },
+    });
+
+    // Com só a linha vencida, a tela não recebe cobrança nenhuma...
+    expect((await BillingService.getStatus(tenantId))?.pendingCharge).toBeNull();
+
+    const nova = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+
+    // ...e depois de gerar, recebe de novo — com validade no futuro.
+    expect(temPagamentoPix({ ...nova, amount: nova.amount.toString() })).toBe(true);
+    const status = await BillingService.getStatus(tenantId);
+    expect(status?.pendingCharge?.id).toBe(nova.id);
+    expect(status?.pendingCharge?.expiresAt?.getTime()).toBeGreaterThan(
+      new Date("2020-01-02T00:00:00Z").getTime(),
+    );
+  });
+});
+
+/**
+ * A reconciliação é a ÚNICA rede para webhook perdido.
+ *
+ * O webhook responde na hora e processa em `after()`, então uma queda de
+ * instância engole o evento em silêncio: a empresa pagou e fica SUSPENSA
+ * vendo "Aguardando o pagamento", porque a tela libera o acesso olhando
+ * `paidThisMonth`.
+ *
+ * O lote era um só (`OR: [PENDENTE, APROVADO]`, `take: 200`, mais antigas
+ * primeiro). As APROVADAS são reconsultadas todo dia por dois meses e são
+ * sempre mais antigas que as pendentes de hoje — a partir de ~100 empresas
+ * pagantes o lote fechava sem alcançar uma única pendente.
+ */
+describe("Reconciliação com muitas cobranças aprovadas", () => {
+  it("resgata a pendente mesmo com o lote cheio de aprovadas mais antigas", async () => {
+    const { tenantId, ctx } = await novoCliente();
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+
+    const cobranca = await BillingService.createCheckout(
+      tenantId,
+      { method: "PIX", acceptedTerms: true },
+      ctx,
+    );
+    // Pagou no banco; a notificação nunca chegou.
+    gw.status.set(cobranca.mpPaymentId!, "approved");
+    // Mais velha que a idade mínima, senão a rotina a ignora de propósito.
+    await prisma.subscriptionPayment.update({
+      where: { id: cobranca.id },
+      data: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+
+    // 200 aprovadas ANTERIORES a ela: é exatamente o teto do lote.
+    const antigas = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    await prisma.subscriptionPayment.createMany({
+      data: Array.from({ length: 200 }, (_, i) => ({
+        subscriptionId: sub.id,
+        tenantId,
+        amount: 49.9,
+        status: "APROVADO" as const,
+        referenceMonth: cobranca.referenceMonth,
+        mpPaymentId: `mp-antiga-${i}-${uniq()}`,
+        createdAt: antigas,
+        paidAt: antigas,
+      })),
+    });
+
+    await BillingService.reconcilePendingPayments();
+
+    const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(depois.status).toBe("ATIVO");
   });
 });
