@@ -21,6 +21,9 @@ import { ContasPagarService } from "@/lib/services/contas-pagar.service";
 import { DespesasService } from "@/lib/services/despesas.service";
 import { ContasAPagarCard } from "@/components/data/contas-a-pagar-card";
 import { CompletarCadastroCard } from "@/components/data/completar-cadastro-card";
+import { CotacoesInteresseCard } from "@/components/data/cotacoes-interesse-card";
+import { CotacoesAlertasService } from "@/lib/services/cotacoes-alertas.service";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { ConfigService } from "@/lib/services/config.service";
 import { startOfDayTz } from "@/lib/tz";
 import { formatBRL, formatDate, formatQty, valorExibivel } from "@/lib/format";
@@ -36,7 +39,7 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const { tenantId, session } = await requireTenant();
-  const [s, avisos, contas, proximas, cadastro] = await Promise.all([
+  const [s, avisos, contas, proximas, cadastro, cotacoes] = await Promise.all([
     DashboardService.getSummary(tenantId, session.modules),
     AvisosService.get(tenantId, session.modules),
     // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
@@ -44,6 +47,16 @@ export default async function DashboardPage() {
     ContasPagarService.get(tenantId, session.modules),
     DespesasService.proximasContas(tenantId),
     ConfigService.pendenciasDoCadastro(tenantId),
+    /*
+      Cotações é módulo PAGO e o Início não é protegido por rota — o gate tem de
+      ser aqui, como em `ContasPagarService`. Sem ele, quem não contratou veria
+      preços no painel e cairia no paywall ao tocar. `isModuleEnabled` é
+      fail-closed (sem a lista, responde não), então o custo do esquecimento
+      seria mostrar demais, nunca de menos.
+    */
+    isModuleEnabled(session.modules, "cotacoes")
+      ? CotacoesAlertasService.getInteresses(tenantId)
+      : null,
   ]);
   const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
@@ -93,9 +106,14 @@ export default async function DashboardPage() {
                   <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
                   <span className="min-w-0 [overflow-wrap:anywhere]">{aviso.label}</span>
                 </span>
-                <span className="shrink-0 self-end font-semibold tabular-nums sm:self-auto">
-                  {valorExibivel(formatBRL(aviso.total))}
-                </span>
+                {/* Aviso sem dinheiro (cotação) não ganha coluna de valor:
+                    `formatBRL(null)` escreveria "R$ 0,00", que leria como
+                    "não tem nada a pagar" em vez de "isto não é dinheiro". */}
+                {aviso.total !== null && (
+                  <span className="shrink-0 self-end font-semibold tabular-nums sm:self-auto">
+                    {valorExibivel(formatBRL(aviso.total))}
+                  </span>
+                )}
               </Link>
             ))}
           </CardContent>
@@ -171,6 +189,15 @@ export default async function DashboardPage() {
           tone={lucroTone}
         />
       </div>
+
+      {/* Depois dos números do dia e ANTES das seções recolhíveis: é
+          referência para a compra de amanhã, não número de fechamento — mas o
+          comerciante sai para o CEASA de madrugada, e escondê-la atrás de um
+          toque significa, na prática, que ele vai sem saber. Não sobe acima dos
+          botões porque a frente de caixa continua sendo a ação principal. */}
+      {cotacoes && cotacoes.itens.length > 0 && (
+        <CotacoesInteresseCard interesses={cotacoes} agora={new Date()} />
+      )}
 
       <SecaoRecolhivel
         titulo="Ver financeiro completo"

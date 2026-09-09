@@ -17,10 +17,11 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
-import { SeloDeVariacao } from "../../_components/selo-de-variacao";
+import { SeloDeVariacao } from "@/components/data/selo-de-variacao";
 import { GraficoDeHistorico } from "./_components/grafico-de-historico";
 import { MediaPorMes } from "./_components/media-por-mes";
 import { ComparativoDePracas } from "./_components/comparativo-de-pracas";
+import { AlertaForm } from "./_components/alerta-form";
 
 export const dynamic = "force-dynamic";
 
@@ -202,6 +203,33 @@ export default async function ProdutoCotacaoPage({
               menos que isso seria chutar com cara de gráfico.
             </p>
           )}
+        </Card>
+      </section>
+
+      {/*
+        O aviso fica ANTES do comparativo entre praças e depois do histórico: é
+        a ação que a tela habilita. A pessoa acabou de ver o movimento do
+        período e a média por mês — é com esses números na frente que ela sabe
+        se 10% é muito para este produto.
+      */}
+      <section className="flex flex-col gap-2">
+        <h2 className="text-sm font-semibold">Me avise quando mexer</h2>
+        <Card className="p-4">
+          <AlertaForm
+            ceasaProductId={h.produto.id}
+            unit={unit}
+            atual={
+              h.alerta
+                ? {
+                    // String, e não Decimal: o formulário é Client Component e
+                    // Decimal não atravessa a fronteira de serialização.
+                    variacaoMinima: h.alerta.variacaoMinima.toString(),
+                    precoTeto: h.alerta.precoTeto?.toString() ?? null,
+                    precoPiso: h.alerta.precoPiso?.toString() ?? null,
+                  }
+                : null
+            }
+          />
         </Card>
       </section>
 

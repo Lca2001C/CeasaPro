@@ -5,7 +5,7 @@ import { formatBRL, formatDayMonthOnly, formatQty, valorExibivel } from "@/lib/f
 import { nivelEstoque } from "@/lib/estoque/nivel";
 import type { LinhaDeCotacao } from "@/lib/services/cotacoes.service";
 import { Minigrafico } from "./minigrafico";
-import { SeloDeVariacao } from "./selo-de-variacao";
+import { SeloDeVariacao } from "@/components/data/selo-de-variacao";
 
 /**
  * Um produto do boletim, do tamanho de um cartão.

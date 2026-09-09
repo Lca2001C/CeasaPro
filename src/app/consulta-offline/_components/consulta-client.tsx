@@ -165,7 +165,10 @@ export function ConsultaOfflineClient() {
                   {/* `min-w-0`: sem ele o rótulo não encolhe abaixo da palavra
                       mais longa e empurra o valor para fora do cartão. */}
                   <span className="min-w-0">{a.label}</span>
-                  <span className="shrink-0 font-medium tabular-nums">{brl(a.total)}</span>
+                  {/* Ver `Aviso.total`: nulo é "não é dinheiro", e não zero. */}
+                  {a.total !== null && (
+                    <span className="shrink-0 font-medium tabular-nums">{brl(a.total)}</span>
+                  )}
                 </div>
               ))}
             </CardContent>

@@ -6,7 +6,7 @@ import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import { sugerirVinculos } from "@/lib/cotacoes/nome";
 import { variacaoPercentual } from "@/lib/cotacoes/variacao";
 import { toNumber } from "@/lib/money";
-import { serieDaFonte } from "./cotacoes-import.service";
+import { serieDaFonte } from "@/lib/cotacoes/serie";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 /**

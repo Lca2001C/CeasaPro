@@ -117,6 +117,7 @@ export const AUDIT_ENTITY_LABELS: Record<string, string> = {
   PackagingType: "tipo de embalagem",
   PackagingSale: "venda de embalagem",
   TenantCeasaLink: "vínculo de cotação",
+  TenantCeasaAlerta: "alerta de cotação",
   Tenant: "empresa",
   User: "usuário",
   TenantSubscription: "assinatura",

@@ -260,6 +260,15 @@ describe("as telas de cotação não voltam a formatar boletim no fuso do app", 
     "src/app/(admin)/admin/cotacoes",
   ];
 
+  /**
+   * Arquivos soltos que também mostram data de boletim.
+   *
+   * O cartão do Início vive em `components/data/`, fora das duas subárvores
+   * acima — e mostra `quoteDate` igual às telas do módulo. Sem esta linha, ele
+   * era o buraco por onde o defeito voltava.
+   */
+  const AVULSOS = ["src/components/data/cotacoes-interesse-card.tsx"];
+
   function arquivosTsx(dir: string): string[] {
     return readdirSync(dir, { withFileTypes: true }).flatMap((e) =>
       e.isDirectory()
@@ -272,10 +281,11 @@ describe("as telas de cotação não voltam a formatar boletim no fuso do app", 
 
   it("as telas foram lidas de verdade", () => {
     expect(TELAS.flatMap(arquivosTsx).length).toBeGreaterThan(5);
+    for (const a of AVULSOS) expect(readFileSync(a, "utf8").length).toBeGreaterThan(100);
   });
 
   it("nenhuma delas chama formatDate — a data ali é de calendário", () => {
-    const infratores = TELAS.flatMap(arquivosTsx).filter((arq) =>
+    const infratores = [...TELAS.flatMap(arquivosTsx), ...AVULSOS].filter((arq) =>
       /\bformatDate\(/.test(readFileSync(arq, "utf8")),
     );
     expect(

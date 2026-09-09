@@ -39,7 +39,8 @@ export interface PwaSnapshot {
     estoqueValor: number;
     contasPagar: number;
   };
-  avisos: { tipo: string; label: string; count: number; total: number; href: string }[];
+  /** `total` nulo = o aviso não é sobre dinheiro (ver `Aviso.total`). */
+  avisos: { tipo: string; label: string; count: number; total: number | null; href: string }[];
   estoque: {
     productId: string;
     name: string;
@@ -79,7 +80,7 @@ export const GET = withTenantRoute({
         tipo: a.tipo,
         label: a.label,
         count: a.count,
-        total: Number(a.total),
+        total: a.total === null ? null : Number(a.total),
         href: a.href,
       })),
       // Sem estoque não há o que consultar naquela linha; ordena pelo que tem

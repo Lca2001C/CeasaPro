@@ -4,11 +4,32 @@ import { FinancialCalc } from "./financial-calc.service";
 import { money } from "@/lib/money";
 import { addDaysTz, endOfDayTz, startOfDayTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { frase } from "@/lib/cotacoes/alerta";
+import { formatBRL } from "@/lib/format";
+
+export type TipoDeAviso =
+  | "fiado_vencido"
+  | "despesa_vencida"
+  | "despesa_a_vencer"
+  | "higienizacao_pendente"
+  | "cotacao_variacao";
 
 export interface Aviso {
-  tipo: "fiado_vencido" | "despesa_vencida" | "despesa_a_vencer" | "higienizacao_pendente";
+  tipo: TipoDeAviso;
   count: number;
-  total: Prisma.Decimal;
+  /**
+   * Quanto dinheiro o aviso põe em jogo — ou `null` quando não há dinheiro.
+   *
+   * O `null` não é conveniência de tipo: os três lugares que renderizam um
+   * aviso passam este campo por um formatador de REAIS (o cartão do Início, o
+   * snapshot do PWA e a tela de consulta offline). O aviso de cotação fala de
+   * variação percentual, e enfiar 3,2 aqui faria as três telas escreverem
+   * "R$ 3,20" com toda a naturalidade — um número plausível, do jeito errado,
+   * que é o defeito mais difícil de perceber que existe.
+   *
+   * O percentual vai no `label`, que é justamente o que a notificação usa.
+   */
+  total: Prisma.Decimal | null;
   href: string;
   label: string;
 }
@@ -127,6 +148,46 @@ export const AvisosService = {
           total,
           href: "/higienizacao",
           label: `Higienização a pagar`,
+        });
+      }
+    }
+
+    /*
+      Cotação vai por ÚLTIMO, e a posição é regra, não estética.
+
+      O push usa `avisos[0].href` como destino do toque (ver
+      `push-avisos.service.ts`), então pôr cotação na frente trocaria o destino
+      da notificação de todo mundo: quem tem uma despesa vencida deixaria de
+      cair na despesa. Dinheiro a pagar hoje vem antes de preço de referência.
+
+      É UM aviso agregado, e não um por produto: o cartão do Início e a tela
+      offline usam `key={aviso.tipo}`, então um por produto produziria chaves
+      repetidas — e, pior, encheria a notificação diária com uma linha por item.
+    */
+    if (isModuleEnabled(modules, "cotacoes")) {
+      const { CotacoesAlertasService } = await import("./cotacoes-alertas.service");
+      const r = await CotacoesAlertasService.disparosDoBoletim(tenantId, agora);
+      if (r && r.disparos.length > 0) {
+        const primeiro = r.disparos[0]!;
+        const resto = r.disparos.length - 1;
+        avisos.push({
+          tipo: "cotacao_variacao",
+          count: r.disparos.length,
+          // Variação não é dinheiro. Ver o comentário de `Aviso.total`.
+          total: null,
+          // Um disparo só leva ao produto; vários levam à lista, porque não há
+          // um produto para escolher.
+          href:
+            r.disparos.length === 1
+              ? `/cotacoes/produto/${primeiro.ceasaProductId}?u=${encodeURIComponent(primeiro.unit)}`
+              : "/cotacoes",
+          label:
+            frase(
+              primeiro.meuProdutoNome ?? primeiro.nome,
+              primeiro.motivos,
+              primeiro.variacao,
+              formatBRL(primeiro.refPrice),
+            ) + (resto > 0 ? ` e mais ${resto}` : ""),
         });
       }
     }

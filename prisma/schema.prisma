@@ -50,6 +50,7 @@ model Tenant {
   deletedAt             DateTime?
   ceasaCentral          CeasaCentral?          @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
   ceasaLinks            TenantCeasaLink[]
+  ceasaAlertas          TenantCeasaAlerta[]
   crateCleanings        CrateCleaning[]
   creditAccounts        CreditAccount[]
   expenseCategories     ExpenseCategory[]
@@ -298,6 +299,7 @@ model CeasaProduct {
   active      Boolean           @default(true)
   quotes      CeasaQuote[]
   links       TenantCeasaLink[]
+  alertas     TenantCeasaAlerta[]
 
   /// Único DENTRO da série, não global. É esta linha que separa as taxonomias:
   /// `uva-italia` da série CENTRAL e `uva-italia` da NACIONAL passam a ser dois
@@ -436,6 +438,43 @@ model TenantCeasaLink {
   @@unique([tenantId, productId])
   @@index([tenantId, ceasaProductId])
   @@map("tenant_ceasa_links")
+}
+
+/// Alerta de flutuação de preço que UMA empresa pediu para um item do boletim.
+///
+/// É o segundo (e último) modelo do módulo com `tenantId`: preço é público, mas
+/// "me avise se a batata subir 10%" é decisão de uma empresa só.
+///
+/// A UNIDADE entra na chave junto com o produto, e isso não é detalhe. O mesmo
+/// item é cotado por quilo e por caixa, com preços de ordem de grandeza
+/// diferente — um teto de R$ 5,00 é barato para a caixa e caro para o quilo.
+/// Sem a unidade, o alerta dispararia comparando embalagens e o comerciante
+/// receberia "subiu 1.900%" toda vez que a praça trocasse de embalagem no
+/// boletim.
+model TenantCeasaAlerta {
+  id             String   @id @default(cuid())
+  tenantId       String
+  ceasaProductId String
+  unit           String   @default("")
+  /// De quantos por cento para cima OU para baixo o movimento merece aviso.
+  ///
+  /// Guardado por alerta, e não fixo no código, porque a tolerância é do
+  /// produto: cebola oscila muito mais que batata, e um limiar único faria a
+  /// cebola avisar todo dia (virando ruído) e a batata quase nunca.
+  variacaoMinima Decimal  @db.Decimal(5, 2)
+  /// Avisar quando o preço PASSAR deste valor — está caro para comprar.
+  precoTeto      Decimal? @db.Decimal(14, 2)
+  /// Avisar quando o preço CAIR abaixo deste valor — é hora de comprar.
+  precoPiso      Decimal? @db.Decimal(14, 2)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ceasaProduct   CeasaProduct @relation(fields: [ceasaProductId], references: [id], onDelete: Cascade)
+
+  /// Um alerta por item+embalagem. Reconfigurar atualiza, não empilha.
+  @@unique([tenantId, ceasaProductId, unit])
+  @@index([tenantId])
+  @@map("tenant_ceasa_alertas")
 }
 
 model TenantSubscription {

@@ -1,5 +1,5 @@
 
-import { Prisma, type CeasaSerie } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { slugProduto } from "@/lib/cotacoes/nome";
@@ -9,6 +9,12 @@ import { fontePara, type FonteDeCotacao } from "@/lib/cotacoes/fontes";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { NotFoundError } from "@/lib/http/app-error";
 import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
+import { serieDaFonte } from "@/lib/cotacoes/serie";
+
+// Reexportada para não quebrar quem já a importava daqui. A definição saiu
+// deste arquivo e mora em `lib/cotacoes/serie.ts` — o comentário lá explica
+// por quê: importá-la daqui arrasta o raspador junto.
+export { serieDaFonte };
 
 /**
  * Quantos dias para trás tentar quando o dia de hoje não tem boletim.
@@ -37,20 +43,6 @@ const ORCAMENTO_PADRAO_MS = 40_000;
 
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/**
- * A que taxonomia o dado de uma fonte pertence.
- *
- * `sourceKey` responde "quem busca"; `serie` responde "que tipo de número é
- * este". As duas divergem de propósito: um raspador novo do boletim de outra
- * praça seria um `sourceKey` novo na MESMA série CENTRAL, e comparar os dois
- * seria legítimo.
- *
- * Boletim colado à mão é CENTRAL: quem cola está transcrevendo o boletim de uma
- * praça, com os nomes específicos e a unidade que aquela praça usa.
- */
-export function serieDaFonte(sourceKey: string): CeasaSerie {
-  return sourceKey === "conab" ? "NACIONAL" : "CENTRAL";
-}
 
 export interface ResultadoDaImportacao {
   status: "OK" | "VAZIO" | "FALHA" | "SEM_FONTE";

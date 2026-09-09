@@ -2,7 +2,7 @@ import type { CeasaSerie, Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { civilParts } from "@/lib/tz";
 import { variacaoPercentual } from "@/lib/cotacoes/variacao";
-import { serieDaFonte } from "./cotacoes-import.service";
+import { serieDaFonte } from "@/lib/cotacoes/serie";
 
 /**
  * A tela de UM produto: histórico, médias por mês e o preço nas outras praças.
@@ -99,6 +99,12 @@ export interface HistoricoDeProduto {
   mesesComDado: number;
   comparativo: PracaComparada[];
   meuProduto: { id: string; name: string } | null;
+  /** Alerta de flutuação configurado para ESTE item nesta embalagem. */
+  alerta: {
+    variacaoMinima: Prisma.Decimal;
+    precoTeto: Prisma.Decimal | null;
+    precoPiso: Prisma.Decimal | null;
+  } | null;
 }
 
 export const CotacoesHistoricoService = {
@@ -143,13 +149,19 @@ export const CotacoesHistoricoService = {
     const corte = (dias: number) =>
       new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - dias));
 
-    const [pontos, porMes, comparativo, vinculo] = await Promise.all([
+    const [pontos, porMes, comparativo, vinculo, alerta] = await Promise.all([
       pontosDoPeriodo(central.code, input, corte(input.periodo)),
       mediasMensais(central.code, input, corte(365)),
       pracasComparaveis(input, central.code),
       prisma.tenantCeasaLink.findFirst({
         where: { tenantId, ceasaProductId: produto.id },
         select: { product: { select: { id: true, name: true, deletedAt: true, active: true } } },
+      }),
+      // O alerta é por produto E EMBALAGEM: um teto de R$ 5,00 é barato para a
+      // caixa e caro para o quilo, então a tela precisa mostrar o desta unidade.
+      prisma.tenantCeasaAlerta.findFirst({
+        where: { tenantId, ceasaProductId: produto.id, unit: input.unit },
+        select: { variacaoMinima: true, precoTeto: true, precoPiso: true },
       }),
     ]);
 
@@ -184,6 +196,7 @@ export const CotacoesHistoricoService = {
         vinculo?.product && !vinculo.product.deletedAt && vinculo.product.active
           ? { id: vinculo.product.id, name: vinculo.product.name }
           : null,
+      alerta,
     };
   },
 };
