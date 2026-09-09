@@ -113,6 +113,18 @@ const CSP_HEADER = process.env.CSP_REPORT_ONLY === "1"
 export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
+  /*
+    Sitemap e robots saem ANTES do JWT e SEM CSP.
+
+    O Search Console busca /sitemap.xml sem cookie. Passar pelo restante do
+    proxy (CSP de app, verificação de sessão) já fez o fetch do Google falhar
+    com "Não foi possível buscar o sitemap" enquanto o curl humano via 200.
+    Texto/XML de crawler não executa script — a política do app não se aplica.
+  */
+  if (pathname === "/sitemap.xml" || pathname === "/robots.txt") {
+    return NextResponse.next();
+  }
+
   const nonce = Buffer.from(crypto.randomUUID()).toString("base64");
   const protoCadeia = (req.headers.get("x-forwarded-proto") ?? "")
     .split(",")

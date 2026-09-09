@@ -1,5 +1,6 @@
 import type { MetadataRoute } from "next";
 import { absoluteUrl, appBaseUrl } from "@/lib/app-url";
+import { isoDateTz } from "@/lib/tz";
 
 /**
  * Páginas que o Google pode indexar.
@@ -31,6 +32,7 @@ export const ROBOTS_DISALLOW = [
   "/fiado",
   "/estoque",
   "/despesas",
+  "/cotacoes",
   "/caixas-plasticas",
   "/higienizacao",
   "/embalagens",
@@ -49,12 +51,30 @@ export const ROBOTS_DISALLOW = [
 ] as const;
 
 export function sitemapEntries(now: Date = new Date()): MetadataRoute.Sitemap {
+  const lastModified = isoDateTz(now);
   return PAGINAS_INDEXAVEIS.map((pagina) => ({
     url: absoluteUrl(pagina.path),
-    lastModified: now,
+    lastModified,
     changeFrequency: pagina.changeFrequency,
     priority: pagina.priority,
   }));
+}
+
+/**
+ * XML que o Google Search Console precisa GET em /sitemap.xml.
+ *
+ * Gerado na mão (não pelo `app/sitemap.ts` do Next): a convenção de metadata
+ * em produção respondia 500 para parte dos fetches — o Search Console marcava
+ * "Não foi possível buscar o sitemap" / tipo Desconhecido. A rota devolve este
+ * texto com `Content-Type: application/xml`.
+ */
+export function sitemapXml(now: Date = new Date()): string {
+  const lastmod = isoDateTz(now);
+  const urls = PAGINAS_INDEXAVEIS.map((pagina) => {
+    const loc = absoluteUrl(pagina.path);
+    return `  <url>\n    <loc>${loc}</loc>\n    <lastmod>${lastmod}</lastmod>\n    <changefreq>${pagina.changeFrequency}</changefreq>\n    <priority>${pagina.priority}</priority>\n  </url>`;
+  }).join("\n");
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls}\n</urlset>\n`;
 }
 
 export function robotsConfig(): MetadataRoute.Robots {

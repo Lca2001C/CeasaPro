@@ -4,6 +4,7 @@ import {
   ROBOTS_DISALLOW,
   robotsConfig,
   sitemapEntries,
+  sitemapXml,
 } from "@/lib/seo/paginas-publicas";
 
 const KEYS = ["APP_URL", "NEXT_PUBLIC_APP_URL", "VERCEL_PROJECT_PRODUCTION_URL", "VERCEL_URL"] as const;
@@ -34,6 +35,19 @@ describe("sitemap — só páginas públicas", () => {
     expect(PAGINAS_INDEXAVEIS[0]?.priority).toBe(1);
   });
 
+  it("o XML do Search Console lista as mesmas URLs e não a área logada", () => {
+    process.env.APP_URL = "https://www.ceasapro.com.br";
+    const xml = sitemapXml(new Date("2026-09-09T15:00:00Z"));
+
+    expect(xml).toContain('<?xml version="1.0" encoding="UTF-8"?>');
+    expect(xml).toContain('<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">');
+    expect(xml).toContain("<loc>https://www.ceasapro.com.br/</loc>");
+    expect(xml).toContain("<loc>https://www.ceasapro.com.br/cadastro</loc>");
+    expect(xml).toContain("<lastmod>2026-09-09</lastmod>");
+    expect(xml).not.toContain("/dashboard");
+    expect(xml).not.toContain("/admin");
+  });
+
   it("robots aponta o sitemap da mesma origem e bloqueia a área logada", () => {
     process.env.APP_URL = "https://app.ceasapro.com.br";
     const robots = robotsConfig();
@@ -44,6 +58,7 @@ describe("sitemap — só páginas públicas", () => {
     expect(regras?.disallow).toEqual([...ROBOTS_DISALLOW]);
     expect(regras?.disallow).toContain("/dashboard");
     expect(regras?.disallow).toContain("/admin");
+    expect(regras?.disallow).toContain("/cotacoes");
     expect(regras?.disallow).toContain("/cadastro/confirmar");
   });
 });
