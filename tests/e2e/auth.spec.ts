@@ -112,4 +112,33 @@ test.describe("Sitemap e robots (Google Search Console)", () => {
       'name="google-site-verification" content="Ot8CbUdqquSApG960z4a2BMiH-mCUNWZj5uFkbqpxkM"',
     );
   });
+
+  test("landing entrega title, canonical, Open Graph e JSON-LD para o Google", async ({
+    request,
+  }) => {
+    const res = await request.get("/", { maxRedirects: 0 });
+    expect(res.status()).toBe(200);
+    const html = await res.text();
+
+    expect(html).toContain("CeasaPro | Sistema de Gestão para Atacadistas e Hortifrúti");
+    expect(html).toContain('rel="canonical" href="https://www.ceasapro.com.br/"');
+    expect(html).toMatch(/property="og:title"/);
+    expect(html).toMatch(/property="og:description"/);
+    expect(html).toMatch(/property="og:url"/);
+    expect(html).toMatch(/property="og:image"/);
+    expect(html).toMatch(/name="twitter:card" content="summary_large_image"/);
+    expect(html).toContain('type="application/ld+json"');
+    expect(html).toContain('"@type":"SoftwareApplication"');
+    expect(html).toContain('"applicationCategory":"BusinessApplication"');
+  });
+
+  test("landing tem um único H1 com a proposta de valor", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.getByRole("heading", { level: 1 })).toHaveCount(1);
+    await expect(page.getByRole("heading", { level: 1 })).toContainText("CEASA");
+    await expect(
+      page.getByRole("heading", { name: "Gestão de caixaria e embalagens" }),
+    ).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Controle financeiro do box" })).toBeVisible();
+  });
 });

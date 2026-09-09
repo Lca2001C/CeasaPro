@@ -22,6 +22,10 @@ const PUBLIC_PREFIXES = [
   // crawler (sem sessão) para /login e o XML nunca é lido.
   "/sitemap.xml",
   "/robots.txt",
+  // Imagem OG gerada em `opengraph-image.tsx`. Sem isto o crawler do WhatsApp
+  // cai no login e o preview do link sai sem figura.
+  "/opengraph-image",
+  "/twitter-image",
   "/api/auth",
   "/api/webhooks",
   "/api/cron",
@@ -35,6 +39,11 @@ const PASSWORD_CHANGE_PATH = "/alterar-senha";
 const PASSWORD_CHANGE_API = "/api/auth/change-password";
 
 function isPublic(pathname: string) {
+  // O Next pode servir a OG com sufixo (`/opengraph-image-abc`), não só o
+  // prefixo com barra. `startsWith("/opengraph-image/")` não cobriria.
+  if (pathname.startsWith("/opengraph-image") || pathname.startsWith("/twitter-image")) {
+    return true;
+  }
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
@@ -114,14 +123,19 @@ export async function proxy(req: NextRequest) {
   const { pathname, search } = req.nextUrl;
 
   /*
-    Sitemap e robots saem ANTES do JWT e SEM CSP.
+    Sitemap, robots e imagem OG saem ANTES do JWT e SEM CSP.
 
-    O Search Console busca /sitemap.xml sem cookie. Passar pelo restante do
-    proxy (CSP de app, verificação de sessão) já fez o fetch do Google falhar
-    com "Não foi possível buscar o sitemap" enquanto o curl humano via 200.
-    Texto/XML de crawler não executa script — a política do app não se aplica.
+    O Search Console e o crawler do WhatsApp buscam sem cookie. Passar pelo
+    restante do proxy já fez o sitemap falhar no Console; a mesma armadilha
+    deixaria o preview do link sem figura. XML/PNG de crawler não executa
+    script — a política do app não se aplica.
   */
-  if (pathname === "/sitemap.xml" || pathname === "/robots.txt") {
+  if (
+    pathname === "/sitemap.xml" ||
+    pathname === "/robots.txt" ||
+    pathname.startsWith("/opengraph-image") ||
+    pathname.startsWith("/twitter-image")
+  ) {
     return NextResponse.next();
   }
 

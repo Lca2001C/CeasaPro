@@ -1,25 +1,21 @@
 import Link from "next/link";
-import type { Metadata } from "next";
+import { headers } from "next/headers";
 import {
   ArrowRight,
   Boxes,
   Check,
   ClipboardList,
+  FileSpreadsheet,
   HandCoins,
-  LineChart,
   ShoppingCart,
-  Sparkles,
+  Warehouse,
 } from "lucide-react";
 import { PlanoService } from "@/lib/services/plano.service";
 import { TRIAL_DAYS } from "@/lib/billing/status";
 import { Button } from "@/components/ui/button";
+import { landingMetadata, softwareApplicationLd } from "@/lib/seo/landing";
 
-export const metadata: Metadata = {
-  title: "CeasaPro — Gestão para comercializadores do CEASA",
-  description:
-    "Controle vendas, fiado, estoque, caixas e despesas do seu box no CEASA. " +
-    `Teste ${TRIAL_DAYS} dias grátis, sem cartão de crédito.`,
-};
+export const metadata = landingMetadata();
 
 // Renderizada por requisição para receber o nonce do CSP (ver `src/proxy.ts`).
 // Pré-renderizada em build, o HTML sairia sem nonce e o `'strict-dynamic'`
@@ -27,48 +23,48 @@ export const metadata: Metadata = {
 // ela lê os planos do banco a cada visita.
 export const dynamic = "force-dynamic";
 
-const DORES = [
+const RECURSOS = [
   {
     icon: ShoppingCart,
-    titulo: "Venda no balcão, sem fila",
+    titulo: "Frente de caixa e vendas no box",
     texto:
-      "Frente de caixa pensada para o ritmo do box: escolhe o produto, ajusta o peso, " +
-      "fecha. Sem navegar por dez telas com o cliente esperando.",
+      "PDV pensado para o ritmo do CEASA: escolhe o produto, ajusta o peso, fecha. " +
+      "Sem navegar por dez telas com o cliente esperando.",
   },
   {
-    icon: LineChart,
-    titulo: "O preço mudou de novo hoje",
+    icon: Warehouse,
+    titulo: "Controle de estoque de hortifrúti",
     texto:
-      "Hortifrúti vira todo dia. Registre a compra com o preço do dia e veja na hora " +
+      "O preço muda todo dia. Registre a compra com o valor do boletim e veja na hora " +
       "quanto sobra em cada caixa que você vende.",
   },
   {
     icon: Boxes,
-    titulo: "Caixas e paletes que não voltam",
+    titulo: "Gestão de caixaria e embalagens",
     texto:
-      "Controle de caixas plásticas emprestadas por cliente, com higienização e o que " +
-      "ainda está na rua. O prejuízo que ninguém lança na planilha.",
+      "Caixas plásticas emprestadas por cliente, higienização e o que ainda está na rua. " +
+      "O prejuízo que ninguém lança na planilha.",
   },
   {
     icon: HandCoins,
-    titulo: "Fiado anotado no caderno",
+    titulo: "Controle de fiado no box",
     texto:
       "Quem deve, quanto, desde quando e o que já pagou. Com aviso de vencido antes de " +
       "você lembrar de perguntar.",
   },
   {
     icon: ClipboardList,
-    titulo: "Despesas soltas",
+    titulo: "Controle financeiro do box",
     texto:
       "Frete, funcionário, aluguel do box, embalagem. Lançadas por categoria, com " +
       "vencimento, para o resultado do mês não ser uma surpresa.",
   },
   {
-    icon: Sparkles,
-    titulo: "Fecha o mês em minutos",
+    icon: FileSpreadsheet,
+    titulo: "Relatórios de venda e carga",
     texto:
-      "Relatórios de vendas, compras, fiado e resultado. Exportáveis em Excel e PDF, " +
-      "prontos para o contador.",
+      "Vendas, compras, fiado e resultado em Excel e PDF — a lista do que saiu e o " +
+      "fechamento do dia, prontos para o contador.",
   },
 ];
 
@@ -78,12 +74,28 @@ function precoBR(valor: number): string {
 
 export default async function LandingPage() {
   const planos = await PlanoService.listPublicPlans();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
+      <script
+        type="application/ld+json"
+        nonce={nonce}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApplicationLd()) }}
+      />
+
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
-          <span className="text-lg font-bold text-primary">CeasaPro</span>
+          <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary">
+            <img
+              src="/icons/icon-192.png"
+              width={32}
+              height={32}
+              alt="Logotipo do CeasaPro, sistema de gestão para atacadistas e hortifrúti no CEASA"
+              className="size-8 rounded-md"
+            />
+            CeasaPro
+          </Link>
           <div className="flex items-center gap-2">
             <Button asChild variant="ghost" size="sm">
               <Link href="/login">Já tenho conta</Link>
@@ -96,25 +108,24 @@ export default async function LandingPage() {
       </header>
 
       <main className="flex-1">
-        {/* ─── Chamada principal ─── */}
         <section className="mx-auto w-full max-w-5xl px-4 py-14 sm:py-20">
           <div className="flex flex-col items-start gap-5">
             <span className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-3 py-1 text-xs font-semibold text-primary">
-              <Sparkles className="size-3.5" />
               {TRIAL_DAYS} dias grátis — sem cartão de crédito
             </span>
             <h1 className="max-w-2xl text-4xl font-bold leading-tight tracking-tight sm:text-5xl">
-              A gestão do seu box no CEASA, sem planilha e sem caderno
+              Sistema de gestão para atacadistas e hortifrúti no CEASA — sem planilha e sem
+              caderno
             </h1>
             <p className="max-w-2xl text-lg text-muted-foreground">
-              Vendas, fiado, estoque, caixas plásticas e despesas no mesmo lugar. Feito para
+              Vendas, estoque, caixaria, fiado e o financeiro do box no mesmo lugar. Feito para
               quem comercializa hortifrúti e precisa saber, no fim do dia, quanto entrou e
               quanto sobrou.
             </p>
             <div className="flex flex-col gap-3 pt-2 sm:flex-row">
               <Button asChild size="lg">
                 <Link href="/cadastro">
-                  Testar {TRIAL_DAYS} dias grátis <ArrowRight />
+                  Testar {TRIAL_DAYS} dias grátis <ArrowRight aria-hidden="true" />
                 </Link>
               </Button>
               <Button asChild size="lg" variant="outline">
@@ -128,28 +139,26 @@ export default async function LandingPage() {
           </div>
         </section>
 
-        {/* ─── Dores reais ─── */}
         <section className="border-y bg-secondary/30">
           <div className="mx-auto w-full max-w-5xl px-4 py-14">
             <h2 className="text-2xl font-bold tracking-tight">
-              Feito para o dia a dia do CEASA
+              Recursos para atacadistas e hortifrúti no CEASA
             </h2>
             <p className="mt-1.5 text-muted-foreground">
               Não é um ERP genérico adaptado. Cada tela nasceu de um problema do box.
             </p>
             <div className="mt-8 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-              {DORES.map(({ icon: Icon, titulo, texto }) => (
-                <div key={titulo} className="flex flex-col gap-2">
-                  <Icon className="size-6 text-primary" />
+              {RECURSOS.map(({ icon: Icon, titulo, texto }) => (
+                <article key={titulo} className="flex flex-col gap-2">
+                  <Icon className="size-6 text-primary" aria-hidden="true" />
                   <h3 className="font-semibold">{titulo}</h3>
                   <p className="text-sm leading-relaxed text-muted-foreground">{texto}</p>
-                </div>
+                </article>
               ))}
             </div>
           </div>
         </section>
 
-        {/* ─── Planos ─── */}
         <section className="mx-auto w-full max-w-5xl px-4 py-14">
           <h2 className="text-2xl font-bold tracking-tight">Planos</h2>
           <p className="mt-1.5 text-muted-foreground">
@@ -158,7 +167,6 @@ export default async function LandingPage() {
           </p>
 
           {planos.length === 0 ? (
-            // Sem plano ativo cadastrado: não invente preço na tela.
             <p className="mt-8 rounded-lg border bg-secondary/30 p-4 text-sm text-muted-foreground">
               Nossos planos estão sendo atualizados. Comece o teste grátis e falamos com você
               antes do fim do período.
@@ -166,13 +174,13 @@ export default async function LandingPage() {
           ) : (
             <div className="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {planos.map((plano, i) => (
-                <div
+                <article
                   key={plano.id}
                   className={`flex flex-col gap-4 rounded-xl border p-5 ${
                     i === 0 ? "border-primary shadow-sm" : ""
                   }`}
                 >
-                  <div>
+                  <header>
                     <div className="flex items-center gap-2">
                       <h3 className="font-semibold">{plano.name}</h3>
                       {i === 0 && (
@@ -185,16 +193,19 @@ export default async function LandingPage() {
                       <span className="text-3xl font-bold">{precoBR(plano.priceMonthly)}</span>
                       <span className="text-sm text-muted-foreground"> /mês</span>
                     </p>
-                  </div>
+                  </header>
 
                   <ul className="flex flex-col gap-1.5 text-sm">
                     <li className="flex items-start gap-2">
-                      <Check className="mt-0.5 size-4 shrink-0 text-primary" />
+                      <Check className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />
                       <span>Vendas, fiado, estoque e despesas</span>
                     </li>
                     {plano.modules.map((m) => (
                       <li key={m} className="flex items-start gap-2">
-                        <Check className="mt-0.5 size-4 shrink-0 text-primary" />
+                        <Check
+                          className="mt-0.5 size-4 shrink-0 text-primary"
+                          aria-hidden="true"
+                        />
                         <span>{m}</span>
                       </li>
                     ))}
@@ -203,7 +214,7 @@ export default async function LandingPage() {
                   <Button asChild className="mt-auto" variant={i === 0 ? "default" : "outline"}>
                     <Link href="/cadastro">Testar {TRIAL_DAYS} dias grátis</Link>
                   </Button>
-                </div>
+                </article>
               ))}
             </div>
           )}
@@ -213,7 +224,6 @@ export default async function LandingPage() {
           </p>
         </section>
 
-        {/* ─── Fechamento ─── */}
         <section className="border-t bg-primary/5">
           <div className="mx-auto flex w-full max-w-5xl flex-col items-start gap-4 px-4 py-14">
             <h2 className="text-2xl font-bold tracking-tight">
@@ -224,7 +234,7 @@ export default async function LandingPage() {
             </p>
             <Button asChild size="lg">
               <Link href="/cadastro">
-                Criar minha conta grátis <ArrowRight />
+                Criar minha conta grátis <ArrowRight aria-hidden="true" />
               </Link>
             </Button>
           </div>
@@ -233,7 +243,7 @@ export default async function LandingPage() {
 
       <footer className="border-t">
         <div className="mx-auto flex w-full max-w-5xl flex-col gap-2 px-4 py-6 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
-          <span>CeasaPro — gestão para comercializadores do CEASA</span>
+          <span>CeasaPro — sistema de gestão para atacadistas e hortifrúti no CEASA</span>
           <span className="flex gap-4">
             <Link href="/termos" className="hover:underline">
               Termos de Uso

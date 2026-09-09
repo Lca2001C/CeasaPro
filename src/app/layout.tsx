@@ -5,6 +5,11 @@ import { Providers } from "@/components/providers";
 import { PwaRegister } from "@/components/pwa-register";
 import { iosSplashLinks } from "@/lib/pwa/ios-splash";
 import { Analytics } from "@vercel/analytics/next";
+import {
+  CANONICAL_ORIGIN,
+  LANDING_DESCRIPTION,
+  LANDING_TITLE,
+} from "@/lib/seo/landing";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -12,11 +17,19 @@ const geistSans = Geist({
 });
 
 export const metadata: Metadata = {
-  title: "CeasaPro — Gestão para comercializadores do CEASA",
-  description:
-    "Sistema simples de gestão de produtos, vendas, fiado, estoque, despesas e financeiro para comerciantes do CEASA.",
+  metadataBase: new URL(CANONICAL_ORIGIN),
+  title: LANDING_TITLE,
+  description: LANDING_DESCRIPTION,
   verification: {
     google: "Ot8CbUdqquSApG960z4a2BMiH-mCUNWZj5uFkbqpxkM",
+  },
+  openGraph: {
+    siteName: "CeasaPro",
+    locale: "pt_BR",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
   },
   appleWebApp: {
     capable: true,
