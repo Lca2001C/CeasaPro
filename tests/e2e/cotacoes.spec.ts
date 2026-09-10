@@ -223,9 +223,26 @@ test.describe("Histórico do produto", () => {
     await expect(comparativo).toContainText(/boletim de \d{2}\/\d{2}\/\d{4}/);
   });
 
-  test("produto que a praça da empresa não cota devolve 404", async ({ page }) => {
-    const r = await page.goto("/cotacoes/produto/naoexiste123?u=KG");
-    expect(r?.status()).toBe(404);
+  test("produto que a praça da empresa não cota cai na tela de não encontrado", async ({ page }) => {
+    /*
+      Este teste cobrava `status === 404`, e passou a falhar quando a
+      auditoria criou `(app)/not-found.tsx`.
+
+      A mudança de status é real e é do framework: a documentação desta
+      versão do Next diz que `notFound()` devolve **200 em resposta
+      transmitida em fluxo** e 404 só sem streaming. Sem `not-found.tsx` a
+      resposta não era streamed e vinha 404; com a tela custom, vem 200.
+
+      O teste passa a afirmar o que a PESSOA vê, que é o que ele queria
+      dizer desde o começo — e que antes era "a página branca do Next".
+    */
+    await page.goto("/cotacoes/produto/naoexiste123?u=KG");
+
+    await expect(
+      page.getByRole("heading", { name: /não encontramos este registro/i }),
+    ).toBeVisible();
+    // E o produto inventado não aparece em lugar nenhum da tela.
+    await expect(page.getByText("naoexiste123")).toHaveCount(0);
   });
 });
 

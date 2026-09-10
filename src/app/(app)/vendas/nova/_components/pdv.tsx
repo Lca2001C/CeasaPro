@@ -181,6 +181,17 @@ export function Pdv({
   const [usaCaixaPlastica, setUsaCaixaPlastica] = useState(false);
   const [crateQty, setCrateQty] = useState("");
   const [saving, setSaving] = useState(false);
+  /**
+   * A pessoa já tentou finalizar pelo menos uma vez?
+   *
+   * Guarda a TENTATIVA, e não a mensagem. A mensagem é derivada de `validar()`
+   * na renderização, o que dá duas coisas de graça: ela se corrige sozinha
+   * conforme o carrinho muda (guardar o texto deixaria um aviso velho na tela
+   * depois de o problema ter sido resolvido), e ela não aparece antes da
+   * primeira tentativa — cobrar campo que a pessoa ainda nem chegou a
+   * preencher é o jeito mais rápido de ensinar a ignorar aviso vermelho.
+   */
+  const [jaTentouFinalizar, setJaTentouFinalizar] = useState(false);
   const [confirmarPrecoZero, setConfirmarPrecoZero] = useState(false);
   const [resumo, setResumo] = useState<ResumoVenda | null>(null);
   /** Chave de idempotência do carrinho atual — ver o uso em `finalizar`. */
@@ -403,6 +414,19 @@ export function Pdv({
 
   async function finalizar(permitirPrecoZero = false) {
     const erro = validar();
+    /*
+      O erro aparece em DOIS lugares, e não é redundância.
+
+      O toast é `position="top-center"` (ver `ui/sonner.tsx`) e o botão
+      "Finalizar venda" é uma barra FIXA no rodapé. No celular, o dedo está
+      embaixo e o aviso nasce no extremo oposto da tela — com a lista de itens
+      rolada, ele pode aparecer inteiramente fora do campo de visão. O
+      comerciante toca, nada muda à vista, e o desfecho natural é tocar de novo.
+
+      A mensagem inline resolve isso sem tirar o toast: quem está olhando o
+      topo continua vendo, e quem está olhando o botão passa a ver também.
+    */
+    setJaTentouFinalizar(true);
     if (erro) return toast.error(erro);
 
     // Preço zero: bloqueia e pede confirmação explícita. Passava batido e a
@@ -583,6 +607,10 @@ export function Pdv({
       </div>
     );
   }
+
+  // Ver `jaTentouFinalizar`: a mensagem sai de `validar()` a cada render, então
+  // some no instante em que a causa é resolvida.
+  const erroVisivel = jaTentouFinalizar ? validar() : null;
 
   return (
     <div className="flex flex-col gap-4 pb-[11rem] [&>*]:scroll-mb-[11rem] md:pb-0 md:[&>*]:scroll-mb-0">
@@ -1273,6 +1301,22 @@ export function Pdv({
             <span className="text-2xl font-bold tabular-nums">{formatBRL(total)}</span>
           </span>
         </div>
+
+        {erroVisivel && (
+          /*
+            `role="alert"` para o leitor de tela anunciar sem a pessoa ter de
+            procurar, e `aria-live="assertive"` porque isto interrompe uma ação
+            que ela acabou de tentar — é o caso em que interromper é o certo.
+          */
+          <p
+            role="alert"
+            aria-live="assertive"
+            className="mb-2 flex items-start gap-1.5 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+          >
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <span className="min-w-0 [overflow-wrap:anywhere]">{erroVisivel}</span>
+          </p>
+        )}
 
         <Button
           size="lg"

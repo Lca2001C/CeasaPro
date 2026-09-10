@@ -160,3 +160,29 @@ O que estes testes fixam, e que antes ninguém garantia:
 - `withAdminAction` **não** checa assinatura (o operador da plataforma não é
   cliente pagante) — fixado para ninguém "uniformizar" os dois wrappers e
   trancar o admin fora do painel.
+
+### Etapa 3a — os estados de tela que não existiam (10/09)
+
+Aqui não era falta de teste, era falta de código. A árvore inteira tinha
+**zero** `error.tsx`, `not-found.tsx` e `loading.tsx`, e o `Skeleton` de
+`ui/skeleton.tsx` estava lá com zero usos.
+
+| Antes | Depois |
+|---|---|
+| exceção em Server Component → página de erro crua do Next, sem menu | boundary dentro do AppShell, com `retry()` e o `digest` para o suporte |
+| 10 chamadas de `notFound()` → 404 padrão, em inglês, sem saída | tela em português com navegação e caminho de volta |
+| erro no layout raiz → 500 do framework | `global-error.tsx` com estilo inline (o Next não passa os estilos globais ali) |
+| navegar no 3G não mostrava nada | 7 `loading.tsx` com contorno da tela, não spinner |
+| recusa do PDV só em toast `top-center`, com o botão no rodapé | mensagem também junto do botão, derivada e com `role="alert"` |
+
+**A documentação do Next foi lida antes de escrever, e isso evitou dois
+defeitos.** Nesta versão a prop do boundary é `retry`, não `reset` — escrever
+de memória teria produzido um botão que chama `undefined`. E `global-error`
+renderiza o próprio documento **sem** os estilos globais, então classe do
+Tailwind ali não aplica nada.
+
+**Uma regressão que eu mesmo causei, e o que ela ensina.** Criar
+`not-found.tsx` mudou o status de `notFound()` de 404 para 200: a resposta
+passou a ser transmitida em fluxo, e a documentação diz que streaming devolve
+200. Um teste de cotações cobrava o 404 e quebrou. Passou a afirmar o que a
+pessoa vê — que é o que ele queria dizer desde o começo.
