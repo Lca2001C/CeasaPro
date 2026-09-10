@@ -14,7 +14,7 @@ import {
 import { PlanoService } from "@/lib/services/plano.service";
 import { TRIAL_DAYS } from "@/lib/billing/status";
 import { Button } from "@/components/ui/button";
-import { landingMetadata, softwareApplicationLd } from "@/lib/seo/landing";
+import { landingMetadata, landingJsonLd } from "@/lib/seo/landing";
 
 export const metadata = landingMetadata();
 
@@ -82,7 +82,7 @@ export default async function LandingPage() {
       <script
         type="application/ld+json"
         nonce={nonce}
-        dangerouslySetInnerHTML={{ __html: JSON.stringify(softwareApplicationLd()) }}
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(landingJsonLd()) }}
       />
 
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">

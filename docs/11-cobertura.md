@@ -215,3 +215,96 @@ O que passou a estar garantido:
   senha e é deslogada no mesmo instante;
 - a troca apaga o token de recuperação pendente: um link de "esqueci minha
   senha" circulando no e-mail continuaria valendo depois.
+
+### Etapa 2c — a marca, e o ícone que era de outra pessoa (10/09)
+
+O pedido era "fazer uma logo do site para aparecer no Google", a partir de um
+resultado de busca que mostrava o globo genérico. O diagnóstico inicial —
+"falta favicon" — estava **errado**, e vale registrar porque foi a leitura do
+código que corrigiu.
+
+**O que estava publicado.** `src/app/favicon.ico` existia desde a fase 1 e era
+o ícone do TEMPLATE do Next: círculo preto com triângulo branco, o que vem no
+`create-next-app`. O site anunciava a marca de outra pessoa na aba do navegador
+e no resultado de busca. Nada no CI reparava — ícone é binário, e binário não
+aparece em revisão de diff.
+
+**Duas armadilhas encontradas no caminho, ambas verificadas na fonte e não
+supostas:**
+
+1. **`public/favicon.ico` COLIDE com `src/app/favicon.ico`.** A primeira
+   tentativa foi gerar o ícone em `public/`. O Next responde
+   "A conflicting public file and page file was found for path /favicon.ico"
+   (`router-server.js`) — o arquivo teria derrubado a rota, não consertado nada.
+2. **As duas origens de ícone do Next não são simétricas.** Em
+   `resolve-metadata.js`, o favicon de convenção entra com
+   `icon.unshift(favicon)` **sempre**, mesmo com `metadata.icons` declarado; já
+   os demais arquivos de convenção são ignorados quando ele existe. Declarar
+   `/favicon.ico` no `metadata.icons` sairia como dois `<link>` iguais.
+
+**Dois geradores para os mesmos arquivos.** Havia `scripts/generate-icons.mjs`
+(sem dependência de imagem, desenhando o "C" por geometria) e eu havia escrito
+um segundo apoiado em `sharp`. `sharp` está aqui só como dependência
+**transitiva** do Next: um script do repositório apoiado nisso quebra em
+silêncio no dia em que o Next trocar de rasterizador. Os dois foram
+consolidados no gerador sem dependência, que agora é a única origem da marca —
+e o teste cobra que o duplicado não volte.
+
+**O que mudou no desenho.** O anel tinha 12,8% do lado do quadro e a 16px o "C"
+virava um borrão esverdeado com um risco claro; passou a 18,75%. E o
+rasterizador decidia cada pixel por um único teste no canto, sem antisserrilha:
+o defeito é invisível a 512px e gritante a 16px, que é o tamanho de uso real.
+Agora cada pixel de borda é amostrado 4 × 4.
+
+**A medida que virou teste.** Contar branco PURO não serve para medir a marca:
+a 16px quase todo o "C" é mistura, e o mesmo desenho mede 0,17 a 16px e 0,26 a
+512px. Como os dois tons são conhecidos e a mistura é linear, dá para recuperar
+a fração de branco pelo canal vermelho — e aí a medida é a MESMA em qualquer
+resolução:
+
+| arquivo | tinta medida |
+|---|---|
+| `.ico` 16px | 0,2549 |
+| `.ico` 32px | 0,2570 |
+| `.ico` 48px | 0,2579 |
+| `icon-192.png` | 0,2587 |
+| `icon-512.png` | 0,2588 |
+| `icon-maskable-512.png` | 0,1656 |
+
+O valor bate com a conta geométrica (0,2588), o anel antigo dá 0,1519, e o
+maskable é exatamente 0,8² do cheio — que é a zona segura da máscara circular
+do Android. Os três números viraram asserção.
+
+**`tests/unit/marca-e-favicon.test.ts` (27 casos)** decodifica o ICO e o PNG na
+mão e afirma propriedades, não bytes: que o ícone é a marca (verde e branco,
+sem preto — é isto que pega o ícone do template), que tem 16/32/48 quadrados,
+que o traço tem piso e TETO (fechar a abertura até virar um disco branco seria
+o defeito oposto), e que um rastreador **sem cookie** alcança cada caminho —
+a mesma classe de furo da imagem de link corrigida na Etapa 4.
+
+**Logotipo no JSON-LD.** A landing publicava só `SoftwareApplication`: não
+havia `logo` nenhum na página. Passou a emitir um `@graph` com `Organization`
+(que é o nó que carrega `logo`) amarrado ao produto por `@id`.
+
+**Verificado com build de produção e requisição sem cookie**, não por leitura:
+
+```
+/favicon.ico              status=200 tipo=image/x-icon  920 bytes
+/icons/icon-192.png       status=200 tipo=image/png    1842 bytes
+/icons/icon-512.png       status=200 tipo=image/png    5525 bytes
+/icons/apple-touch-icon…  status=200 tipo=image/png    1739 bytes
+/manifest.webmanifest     status=200 tipo=application/manifest+json
+```
+
+O `<head>` sai com quatro `<link>` de ícone e nenhum duplicado, e o JSON-LD com
+um único `@context` e o nonce da requisição.
+
+**Seis mutações injetadas, seis apanhadas:** ícone do template de volta (4
+casos falham), anel fino de antes (3), `icons/` fora do matcher do proxy (5),
+`.ico` declarado também no `metadata.icons` (1), `publisher` removido do grafo
+(1), maskable sem zona segura (1).
+
+**Ressalva honesta.** Isto garante que o site *serve* a marca certa, de forma
+alcançável e declarada. Não garante *quando* o Google vai trocar o globo pelo
+ícone: isso depende de recrawl, e nenhum código aqui controla o calendário do
+rastreador.

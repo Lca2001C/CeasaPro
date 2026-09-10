@@ -57,12 +57,70 @@ export function landingMetadata(): Metadata {
 }
 
 /**
- * JSON-LD SoftwareApplication — o Google lê o texto; o CSP bloqueia execução,
- * então o script na página leva o nonce da requisição.
+ * Logotipo em URL ABSOLUTA.
+ *
+ * O `logo` do JSON-LD é uma das entradas que o Google usa para escolher o
+ * ícone do resultado de busca, junto do `<link rel="icon">`. Caminho relativo
+ * não serve: o consumidor do dado é um rastreador que pode ter lido o JSON
+ * fora do contexto da página.
+ *
+ * Aponta para o PNG de 512 e não para o `.ico` porque o `logo` do schema.org é
+ * lido como imagem comum (o mínimo que o Google aceita é 112 px), e porque
+ * `/icons/` está fora do matcher do proxy — um logotipo que responde redirect
+ * para `/login` é um logotipo que o Google descarta.
  */
-export function softwareApplicationLd() {
+export const LOGO_URL = `${CANONICAL_ORIGIN}/icons/icon-512.png`;
+
+/**
+ * JSON-LD Organization — quem publica o software.
+ *
+ * Existe separado do `SoftwareApplication` porque são coisas diferentes para o
+ * Google: o primeiro descreve a EMPRESA (e é o nó que carrega `logo`), o
+ * segundo descreve o PRODUTO. Sem o nó de organização não há `logo` nenhum na
+ * página, e a única pista de marca que sobra é o favicon.
+ *
+ * O `@id` amarra os dois nós do `@graph`: sem ele o Google vê dois objetos
+ * soltos e não sabe que a organização é a publicadora do aplicativo.
+ */
+export function organizationLd() {
   return {
+    "@type": "Organization",
+    "@id": `${CANONICAL_ORIGIN}/#organizacao`,
+    name: "CeasaPro",
+    alternateName: "CEASA PRO",
+    url: CANONICAL_URL,
+    logo: LOGO_URL,
+    image: LOGO_URL,
+    description: LANDING_DESCRIPTION,
+  };
+}
+
+/**
+ * Os dois nós num único `@graph`.
+ *
+ * Um `<script>` só, em vez de dois: o CSP exige nonce por script, e cada script
+ * a mais é mais uma chance de alguém acrescentar um sem o nonce e descobrir só
+ * em produção, quando o navegador o bloqueia em silêncio.
+ */
+export function landingJsonLd() {
+  return {
+    // Um `@context` só, aqui na raiz. Os nós entram sem o seu — repetir o
+    // contexto dentro de cada um é válido em JSON-LD, mas é ruído que o
+    // validador do Google aponta.
     "@context": "https://schema.org",
+    "@graph": [organizationLd(), aplicacaoNo()],
+  };
+}
+
+/**
+ * O nó do produto, sem `@context` — é esta forma que entra no `@graph`.
+ *
+ * Separado de `softwareApplicationLd()` porque as duas formas têm usos
+ * diferentes: o nó vai para dentro do grafo, e o documento completo (com
+ * contexto) vale sozinho, que é como `landing-seo.test.ts` o exercita.
+ */
+function aplicacaoNo() {
+  return {
     "@type": "SoftwareApplication",
     name: "CeasaPro",
     alternateName: "CEASA PRO",
@@ -70,6 +128,10 @@ export function softwareApplicationLd() {
     applicationCategory: "BusinessApplication",
     operatingSystem: "Web",
     description: LANDING_DESCRIPTION,
+    // Amarra o produto a quem o publica. É por esta referência que o Google
+    // liga o `logo` da organização a esta aplicação; sem ela os dois nós do
+    // grafo ficam soltos.
+    publisher: { "@id": `${CANONICAL_ORIGIN}/#organizacao` },
     featureList: [...LANDING_FEATURE_LIST],
     offers: {
       "@type": "Offer",
@@ -79,4 +141,12 @@ export function softwareApplicationLd() {
     },
     inLanguage: "pt-BR",
   };
+}
+
+/**
+ * JSON-LD SoftwareApplication — o Google lê o texto; o CSP bloqueia execução,
+ * então o script na página leva o nonce da requisição.
+ */
+export function softwareApplicationLd() {
+  return { "@context": "https://schema.org", ...aplicacaoNo() };
 }
