@@ -186,3 +186,32 @@ Tailwind ali não aplica nada.
 passou a ser transmitida em fluxo, e a documentação diz que streaming devolve
 200. Um teste de cotações cobrava o 404 e quebrou. Passou a afirmar o que a
 pessoa vê — que é o que ele queria dizer desde o começo.
+
+### Etapa 2b — as rotas de autenticação (10/09)
+
+A lógica por baixo já era bem coberta (Argon2, JWT, rotação de refresh,
+contador no Postgres). O que ninguém executava era a **fiação** — e é aí que
+mora o defeito de "o serviço protege, mas a rota esqueceu de chamar".
+
+| Arquivo | antes | depois |
+|---|---|---|
+| `api/auth/login/route.ts` | 0% | **100%** |
+| `api/auth/change-password/route.ts` | 0% | **96,7%** |
+| pasta `api/auth` | 0% | 24,9% |
+
+O que passou a estar garantido:
+
+- **login não vira oráculo de contas**: e-mail inexistente e senha errada
+  devolvem resposta idêntica, e o hash de isca é verificado mesmo sem usuário
+  — mensagem igual não basta, porque a DIFERENÇA DE TEMPO entrega a mesma
+  informação;
+- os **dois** limites de tentativa são consultados, e o de e-mail é mais
+  folgado que o de IP (iguais, trancar a conta de um concorrente sairia
+  barato);
+- o acerto **libera** a janela: sem isso, entrar do celular e do computador
+  trancaria a própria conta;
+- a troca de senha **revoga as outras sessões** — é a razão de a rota
+  existir — e revoga ANTES de criar o novo refresh, senão a pessoa troca a
+  senha e é deslogada no mesmo instante;
+- a troca apaga o token de recuperação pendente: um link de "esqueci minha
+  senha" circulando no e-mail continuaria valendo depois.
