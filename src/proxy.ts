@@ -22,10 +22,12 @@ const PUBLIC_PREFIXES = [
   // crawler (sem sessão) para /login e o XML nunca é lido.
   "/sitemap.xml",
   "/robots.txt",
-  // Imagem OG gerada em `opengraph-image.tsx`. Sem isto o crawler do WhatsApp
-  // cai no login e o preview do link sai sem figura.
-  "/opengraph-image",
-  "/twitter-image",
+  // A imagem de link NÃO entra aqui: ver `IMAGEM_DE_LINK`, logo abaixo.
+  //
+  // A regra desta lista é `=== p || startsWith(p + "/")`, e com
+  // `/opengraph-image` dentro dela `/opengraph-image/segredo` viraria rota
+  // pública — sem sessão, sem papel, sem assinatura, sem módulo e sem CSP.
+  // O padrão ancorado cobre o que o Next serve de verdade e nada além.
   "/api/auth",
   "/api/webhooks",
   "/api/cron",
@@ -38,12 +40,26 @@ const BILLING_SAFE_PREFIXES = ["/conta", "/assinatura", "/api/billing", "/api/au
 const PASSWORD_CHANGE_PATH = "/alterar-senha";
 const PASSWORD_CHANGE_API = "/api/auth/change-password";
 
+/**
+ * A imagem de link (Open Graph / Twitter), gerada por `opengraph-image.tsx`.
+ *
+ * Medido no build de produção: o Next serve em `/opengraph-image` e põe o
+ * hash em QUERY STRING (`?5350eaaf…`), que não entra no `pathname`. O sufixo
+ * com hífen (`/opengraph-image-a1b2c3`) segue aceito porque outras versões do
+ * framework usam esse formato, e quebrar o preview num upgrade seria um
+ * defeito invisível — ninguém testa o card do WhatsApp.
+ *
+ * O padrão é ANCORADO de propósito. Antes era `startsWith("/opengraph-image")`
+ * solto, e o que sai por esta porta não passa por sessão, papel, assinatura,
+ * módulo nem CSP. Não era explorável — rota nasce da árvore de arquivos, não
+ * do pedido — mas é o mesmo formato de furo que `proxy-matcher.test.ts` existe
+ * para pegar, e a lista de rotas públicas logo acima já usava fronteira.
+ */
+const IMAGEM_DE_LINK = /^\/(opengraph|twitter)-image(-[A-Za-z0-9_-]+)?$/;
 function isPublic(pathname: string) {
-  // O Next pode servir a OG com sufixo (`/opengraph-image-abc`), não só o
-  // prefixo com barra. `startsWith("/opengraph-image/")` não cobriria.
-  if (pathname.startsWith("/opengraph-image") || pathname.startsWith("/twitter-image")) {
-    return true;
-  }
+  // Ver `IMAGEM_DE_LINK`: o caminho não termina em `/`, então a regra de
+  // prefixo da lista abaixo não o cobriria.
+  if (IMAGEM_DE_LINK.test(pathname)) return true;
   return PUBLIC_PREFIXES.some((p) => pathname === p || pathname.startsWith(p + "/"));
 }
 
@@ -133,8 +149,7 @@ export async function proxy(req: NextRequest) {
   if (
     pathname === "/sitemap.xml" ||
     pathname === "/robots.txt" ||
-    pathname.startsWith("/opengraph-image") ||
-    pathname.startsWith("/twitter-image")
+    IMAGEM_DE_LINK.test(pathname)
   ) {
     return NextResponse.next();
   }
