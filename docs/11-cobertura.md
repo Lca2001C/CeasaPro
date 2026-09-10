@@ -80,8 +80,9 @@ Configurado em `vitest.config.ts`, bloco `coverage.exclude`:
 `src/app/manifest.ts` **continua incluído** — tem teste próprio
 (`tests/unit/pwa-manifest.test.ts`).
 
-`all: true` está ligado, e é o que torna o número honesto: sem ele, arquivo que
-nenhum teste importa não aparece no relatório, e a cobertura sobe por omissão.
+Todo arquivo que casa com `include` entra no relatório, tenha teste ou não — é
+o que impede a cobertura de subir por omissão, contando só o que alguém já se
+lembrou de testar. (No Vitest 4 isso é o padrão; a opção `all` saiu da API.)
 
 ---
 
@@ -117,3 +118,45 @@ menos porque conta só dependências de produção.
 | `vitest`, `@vitest/mocker` | moderada | [GHSA-82fw-gwwq-j7x9](https://github.com/advisories/GHSA-82fw-gwwq-j7x9) — path traversal via mock de redirect | subiu para 4.1.11 ao instalar o provider de cobertura; o range em `package.json` foi fechado em `^4.1.11` para um `npm ci` não voltar à versão vulnerável |
 
 Restam **6**. As demais estão em análise na Etapa 4 desta auditoria.
+
+---
+
+## 5. Progresso da auditoria
+
+### Etapa 2a — as camadas de entrada (10/09)
+
+Os quatro arquivos por onde passam as 13 Server Actions e as 11 rotas
+transacionais. Nenhum era executado por teste; a única verificação era uma
+regex sobre o texto do fonte.
+
+| Arquivo | antes | depois (linhas / branches) |
+|---|---|---|
+| `lib/http/with-action.ts` | 0% | **100% / 91,7%** |
+| `lib/http/with-route.ts` | 0% | **100% / 95,5%** |
+| `lib/auth/pagina.ts` | 0% | **100% / 100%** |
+| `lib/auth/session.ts` | 0% | **100% / 100%** |
+| `lib/http/error-response.ts` | 0% | 100% / 75% (de brinde) |
+| `lib/security/rate-limit.ts` | 0% | 100% / 100% (de brinde) |
+| **pasta `lib/http`** | **18,3%** | **94,8%** |
+| **pasta `lib/auth`** | 73,4% | **82,3%** |
+
+Total: 41,43% → **43,00%** de linha; 1.301 → 1.368 casos.
+
+**Cada teste foi provado por remoção.** Tirar `assertActive` derruba 3 casos;
+fazer o `tenantId` vir do corpo derruba 1; tirar `requireModule` derruba 3;
+tirar `assertSessaoValida` derruba 2; ignorar `allowInactive` derruba 1;
+inverter a ordem de assinatura e módulo derruba 1. Teste que não falha quando
+a proteção sai não é rede, é decoração.
+
+O que estes testes fixam, e que antes ninguém garantia:
+
+- o `tenantId` do contexto vem da SESSÃO, e o valor mandado no corpo é
+  ignorado (regra 1 do briefing);
+- assinatura bloqueada não executa o handler — nem em action, nem em rota;
+- `allowInactive` e `permiteInativo` deixam o bloqueado chegar à tela de
+  pagamento, que é como ele regulariza;
+- o gate de módulo é fail-closed: token sem o claim `modules` não libera nada;
+- erro inesperado não vaza mensagem interna, e devolve uma referência;
+- `withAdminAction` **não** checa assinatura (o operador da plataforma não é
+  cliente pagante) — fixado para ninguém "uniformizar" os dois wrappers e
+  trancar o admin fora do painel.
