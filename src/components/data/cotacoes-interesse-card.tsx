@@ -7,6 +7,7 @@ import { formatBRL, formatDateOnly } from "@/lib/format";
 import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
 import { cn } from "@/lib/cn";
 import type { InteressesDaEmpresa } from "@/lib/services/cotacoes-alertas.service";
+import type { ComparacaoComOBoletim } from "@/lib/services/cotacoes.service";
 
 /**
  * "Como está o preço do que eu compro" — no Início, sem abrir o módulo.
@@ -32,9 +33,12 @@ const LINHAS_NO_CARTAO = 4;
 export function CotacoesInteresseCard({
   interesses,
   agora,
+  comparacao,
 }: {
   interesses: InteressesDaEmpresa;
   agora: Date;
+  /** Última compra × boletim. Ausente quando não há compra vinculada. */
+  comparacao?: ComparacaoComOBoletim;
 }) {
   const frescor = frescorDoBoletim(
     interesses.quoteDate,
@@ -101,6 +105,47 @@ export function CotacoesInteresseCard({
             </Link>
           ))}
         </div>
+
+        {/*
+          "Comprei acima do boletim" — com o denominador à mostra.
+
+          O número de produtos comparados vai junto, e não é modéstia: a
+          comparação só é possível quando a embalagem do boletim fala da mesma
+          unidade em que o produto é vendido, e isso costuma valer para uma parte
+          dos vínculos. Um "2 produtos acima do boletim" sem dizer "de 9
+          comparados" leria como "2 dos seus produtos", que é outra frase.
+
+          Nada de porcentagem agregada aqui: média de diferença entre produtos de
+          embalagens diferentes é um número sem significado.
+        */}
+        {comparacao && comparacao.comparados > 0 && (
+          <p className="border-t pt-2 text-xs text-muted-foreground">
+            {comparacao.acima.length === 0 ? (
+              <>
+                Nenhuma compra sua saiu acima do boletim
+                <span className="text-muted-foreground/70">
+                  {" "}
+                  ({comparacao.comparados} de {comparacao.elegiveis}{" "}
+                  {comparacao.elegiveis === 1 ? "produto comparado" : "produtos comparados"})
+                </span>
+              </>
+            ) : (
+              <>
+                <strong className="font-semibold text-foreground">
+                  {comparacao.acima.length}
+                </strong>{" "}
+                {comparacao.acima.length === 1
+                  ? "produto foi comprado acima do boletim"
+                  : "produtos foram comprados acima do boletim"}
+                <span className="text-muted-foreground/70">
+                  {" "}
+                  ({comparacao.comparados} de {comparacao.elegiveis}{" "}
+                  {comparacao.elegiveis === 1 ? "produto comparado" : "produtos comparados"})
+                </span>
+              </>
+            )}
+          </p>
+        )}
 
         <Link
           href="/cotacoes"

@@ -151,6 +151,19 @@ export const CEASA_IMPORT_STATUS_LABELS: Record<string, string> = {
   FALHA: "Falhou",
 };
 
+/**
+ * Estado do boletim que o CLIENTE enviou para publicação.
+ *
+ * "Aguardando revisão" e não "pendente": o cliente precisa saber que a bola está
+ * com a plataforma, não com ele. "Pendente" lê como se faltasse algo dele, e
+ * quem lê isso reenvia o mesmo boletim achando que o primeiro não chegou.
+ */
+export const BOLETIM_ENVIADO_STATUS_LABELS: Record<string, string> = {
+  PENDENTE: "aguardando revisão",
+  PUBLICADO: "publicado",
+  RECUSADO: "recusado",
+};
+
 export function toOptions(map: Record<string, string>) {
   return Object.entries(map).map(([value, label]) => ({ value, label }));
 }

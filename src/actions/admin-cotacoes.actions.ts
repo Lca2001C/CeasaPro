@@ -3,6 +3,7 @@
 import { z } from "zod";
 import { withAdminAction } from "@/lib/http/with-action";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
+import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
 import { lerCsvDeCotacoes } from "@/lib/cotacoes/csv";
 import { endOfDayTz, parseFormDateTz, parseIsoDateTz } from "@/lib/tz";
 import { BusinessRuleError } from "@/lib/http/app-error";
@@ -59,4 +60,48 @@ export const importarBoletimManual = withAdminAction({
 
     return { ...r, ignoradas: erros.length, primeirosErros: erros.slice(0, 5) };
   },
+});
+
+/**
+ * Apagar o boletim de uma praça em uma data — o desfazer da colagem errada.
+ *
+ * Só super-admin, e é apagar de verdade, não desativar: cotação errada não tem
+ * estado intermediário útil. O preço que os clientes daquela praça veem volta a
+ * ser o do boletim anterior, que é o desfecho certo.
+ *
+ * A data aqui NÃO recusa futuro, ao contrário da importação: se um boletim com
+ * data futura foi gravado por engano — o cenário que a validação da importação
+ * existe para evitar —, ele é exatamente o que precisa ser apagado.
+ */
+/**
+ * O operador publica o boletim que um cliente enviou.
+ *
+ * É AQUI que o dado do cliente entra na tabela global de cotações, e é por isso
+ * que a ação é de super-admin: `ceasa_quotes` é lida por todos os clientes
+ * daquela praça, e `gravar` sobrescreve o que já existe na data.
+ */
+export const publicarBoletimEnviado = withAdminAction({
+  schema: z.object({ id: z.string().min(1) }),
+  handler: (input, ctx) => CotacoesEnvioService.publicar(input, ctx),
+});
+
+/** Recusa com motivo — sem ele o cliente reenvia o mesmo erro. */
+export const recusarBoletimEnviado = withAdminAction({
+  schema: z.object({
+    id: z.string().min(1),
+    motivo: z.string().trim().min(3, "Diga o motivo — o cliente vai ler").max(300),
+  }),
+  handler: (input, ctx) => CotacoesEnvioService.recusar(input, ctx),
+});
+
+export const apagarBoletim = withAdminAction({
+  schema: z.object({
+    centralCode: z.string().trim().min(1, "Escolha a central").max(20),
+    quoteDate: z
+      .string()
+      .trim()
+      .refine((v) => parseIsoDateTz(v) !== null, "Data inválida (use o seletor de data)"),
+  }),
+  handler: (input) =>
+    CotacoesImportService.apagarBoletim(input.centralCode, parseFormDateTz(input.quoteDate)),
 });

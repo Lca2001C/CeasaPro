@@ -31,7 +31,7 @@ Não existe `STAFF` nesta versão. O super-admin também pode **usar o sistema**
 
 Violar qualquer uma destas é regressão grave:
 
-1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks e auditoria.
+1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks, auditoria e **cotações** — este último porque as tabelas do boletim são globais por desenho e a extensão multi-tenant cobriria só metade do módulo; ali o `tenantId` entra explícito em cada consulta, e é isso que `tests/integration/cotacoes-vinculo.test.ts` guarda.
 2. **Fórmulas financeiras só em** `src/lib/services/financial-calc.service.ts`. Não duplicar cálculo de total, lucro, margem ou rateio de frete.
 3. **Dinheiro é `Decimal`**, nunca `number`/`Float`. Helpers em `src/lib/money.ts`. Quantidade: 3 casas; dinheiro: 2.
 4. **Estoque e caixas plásticas são livros-razão.** Não existe coluna de saldo mutável. Saldo = soma de movimentos (`stock_movements`, `plastic_crate_movements`).
@@ -155,7 +155,7 @@ Catálogo **único**: `src/lib/plan/modules.ts`.
 
 **Núcleo (sempre):** dashboard, produtos, fornecedores, compras, PDV/vendas, fiado, estoque, despesas, relatórios básicos, config, atividades, meu plano, assinatura.
 
-**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = todos liberados (retrocompat).
+**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = todos liberados (retrocompat).
 
 Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403) → `module:` nos wrappers. Troca de plano: `PlanoService.changePlan` no servidor; depois `/api/auth/refresh` para reemitir o claim `modules`. Novo preço vale na **próxima** cobrança (sem pró-rata).
 
@@ -210,6 +210,32 @@ Envio → devolução parcial → pagamento parcial. Status ENVIADO → DEVOLVID
 ### Embalagens (módulo `embalagens`)
 
 Tipos + vendas avulsas (caixa, sacaria, etc.).
+
+### Cotações do CEASA (módulo `cotacoes`)
+
+Preço do **boletim** da praça onde a empresa compra — referência de mercado, não preço do momento (o do momento é negociado no balcão e nenhuma central divulga). É o módulo com mais armadilhas do sistema; leia `docs/auditoria-2026-09-07.md` antes de mexer.
+
+**As quatro tabelas do boletim são GLOBAIS, sem `tenantId`** (`ceasa_centrals`, `ceasa_products`, `ceasa_quotes`, `ceasa_import_runs`): o preço da praça é o mesmo para todos que compram ali, e copiá-lo por empresa multiplicaria a importação por número de clientes. Elas seguem o molde de `rate_limits` — `prisma` cru, fora de `TENANT_MODELS`. Só `tenant_ceasa_links` e `tenant_ceasa_alertas` têm `tenantId`, e são a única superfície do módulo onde vazar dado entre clientes seria possível.
+
+- **Importação:** adaptador por fonte (`src/lib/cotacoes/fontes/`, interface em `tipos.ts`, registro em `index.ts`). `buscar` faz I/O, `parse` é **puro** e testado contra fixture real. Três estados, não dois: ok / vazio (dia sem boletim, não alarma) / falha. Página sem o marcador esperado é **falha**, nunca vazio. Roda como sub-tarefa de `GET /api/cron/billing` (**13:30 BRT** — de manhã a praça ainda não publicou o boletim do dia).
+- **Vínculo** (`tenant_ceasa_links`): produto do cliente ↔ produto do boletim **+ embalagem** (`unit`, anulável = "qualquer"). Manual por desenho: "Tomate" ≠ "Tomate cereja" são preços diferentes. `sugerirVinculos` só ordena; escore 1 (nome idêntico) pode ser pré-marcado na tela, nunca gravado sozinho.
+- **Alertas** (`tenant_ceasa_alertas`): por produto **e embalagem**. Nunca criados automaticamente — ver Armadilhas.
+- **Telas:** `/cotacoes` (grade), `/cotacoes/comecar` (partida em 3 passos), `/cotacoes/vincular` (revisão em lote), `/cotacoes/produto/[id]` (histórico, comparativo, alerta), `/admin/cotacoes` (situação das praças + envio manual).
+- **Fora do módulo:** o boletim aparece como referência **somente-leitura** na Compra e no PDV, e no Início (cartão de interesse, estoque parado com preço em queda, "comprei acima do boletim"). Todas essas telas são de núcleo, então o gate é `isModuleEnabled(session.modules, "cotacoes")` no servidor, nunca só esconder.
+- **Envio pelo cliente** (`/cotacoes/enviar-boletim`, só em praça `manual`): vai para `tenant_boletins_enviados`, uma fila que só quem enviou vê, e o super-admin publica em `/admin/cotacoes`. Não é gravação direta — o porquê está no doc-comment de `cotacoes-envio.service.ts`. Desfazer publicação: `CotacoesImportService.apagarBoletim`.
+
+**Cobertura de fontes, e o que trava o resto.** Praças com raspador hoje: as 7 da CEASAMINAS + Grande Vitória (adaptador `ceasaminas`) e a **CEAGESP São Paulo** (`ceagesp`, só o código `SPCEA` — as outras 11 unidades "CEAGESP" do catálogo são servidas por `/cotacoes/interior/`, que não foi medida). As demais dependem de envio manual.
+
+Foram sondadas e **descartadas por publicarem só PDF** — o projeto não tem extrator de PDF, e um parse de layout de PDF é justamente o tipo de leitura que quebra em silêncio:
+
+| Praça | Onde o boletim está | Por que não tem adaptador |
+|---|---|---|
+| CEASA-RJ | índice HTML → `.../arquivos_paginas/Boletim diário de preços DD MM AAAA.pdf` | preço só no PDF |
+| CEASA-SC | `index.php?option=com_docman&view=documents&format=json&search=DD-MM-AAAA` → `links.file.href` | o JSON é índice de documento; preço só no PDF |
+| CEASA-GO | post do WordPress com a lista mensal de `.../DD-MM-AAAA.pdf` | idem |
+| CEASA-PR, CE, PE | — | host inalcançável na sondagem (TLS/timeout/conexão recusada) |
+
+CONAB/PROHORT é a de maior alavancagem (acenderia dezenas de praças), e **não é "só um adaptador"**: ela é série `NACIONAL`, e a série é função pura do `sourceKey` da praça — ver a última armadilha do §15.
 
 ### Relatórios (`/relatorios`, `GET /api/reports/[type]/export`)
 
@@ -269,6 +295,8 @@ src/
     services/           regras (um arquivo por domínio)
     db/                 prisma + getTenantPrisma + models-tenant
     auth/ billing/ plan/ payments/ reports/ validations/
+    cotacoes/           regras puras do boletim (nome, embalagem, frescor,
+                        variação, gráfico, alerta, csv) + fontes/ (raspadores)
     http/               ActionResult, AppError, withAction, withRoute
     seo/                páginas indexáveis
     tz.ts money.ts format.ts labels.ts
@@ -328,6 +356,13 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 - Testes E2E de layout: cartões visíveis estão em `main .bg-card` (o `aside` também tem `bg-card` e é o primeiro match).
 - Páginas públicas estáticas quebram CSP (`force-dynamic`).
 - Dois `next dev` no Windows travam Prisma.
+- **Só 2 crons.** O plano Hobby da Vercel aceita dois agendamentos; um terceiro faz o **deploy** falhar, não o cron. É por isso que a importação de cotações pega carona no cron de billing.
+- **Não criar alerta de cotação automaticamente.** `push-avisos.service.ts` manda o push diário sempre que existe QUALQUER aviso pendente. Alerta em cada produto vinculado transforma a notificação de "só quando há algo a tratar" em "todo dia, para sempre" — e quem desliga isso perde junto o aviso de fiado vencido.
+- **`ceasa_quotes.unit` é texto livre da fonte** (`KG`, `CX 30 DZ`, `DZ 4 KG`, `UN 1,5 KG`). O peso em quilo só existe quando a **própria fonte** o declara no texto; `pesoEmKg` devolve `null` no resto, e é para continuar assim — R$/kg inventado é o preço errado com cara de certo.
+- **No vínculo, `unit = NULL` ≠ `unit = ''`.** `NULL` é "o cliente não escolheu embalagem" (vale para todas); `''` é uma embalagem real, que a praça manual grava quando o boletim não traz a coluna. No `<select>` da tela, "qualquer embalagem" precisa de um valor-sentinela, nunca `""`.
+- **Não existe caminho de despublicar cotação**, e a tela mostra `MAX(quoteDate)`: dado ruim em praça manual é permanente até chegar um boletim com data posterior — o que, numa praça manual, não acontece sozinho.
+- **`buscarHtml` se identifica como `CeasaProBot/1.0`, e algumas fontes recusam** (a CONAB devolve 403 nesse UA e 200 no de navegador). `valeRepetir` não repete 4xx, então isso vira `FALHA` limpa com aviso ao super-admin — mas o adaptador precisa decidir isso de propósito.
+- **A série é função pura do `sourceKey` da praça** (`serieDaFonte`), e toda leitura filtra por ela. Gravar cotação de outra série numa praça existente produz dado que **nenhuma tela lê**; trocar o `sourceKey` de uma praça com histórico faz o histórico antigo desaparecer da tela e os alertas salvos pararem de disparar em silêncio.
 
 ---
 
@@ -342,6 +377,7 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 | Planos, PIX, cartão, cron | [`05-planos-e-modulos.md`](05-planos-e-modulos.md) |
 | Auth, isolamento, webhook | [`06-seguranca.md`](06-seguranca.md) |
 | Dev local / convenções | [`07-instalacao-e-deploy.md`](07-instalacao-e-deploy.md), [`08-desenvolvimento.md`](08-desenvolvimento.md) |
+| Cotações: o que já mordeu | [`auditoria-2026-09-07.md`](auditoria-2026-09-07.md) |
 | Vercel + Neon | [`09-deploy-vercel.md`](09-deploy-vercel.md) |
 | PWA | [`10-pwa-evolucao.md`](10-pwa-evolucao.md) |
 | Next 16 (breaking) | `AGENTS.md` + `node_modules/next/dist/docs/` |

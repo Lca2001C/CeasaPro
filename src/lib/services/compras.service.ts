@@ -1,4 +1,6 @@
+import type { Prisma } from "@prisma/client";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
+import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { add, mul, money } from "@/lib/money";
@@ -22,6 +24,41 @@ export const ComprasService = {
       orderBy: { purchaseDate: "desc" },
       take: 100,
     });
+  },
+
+  /**
+   * O último preço PAGO por produto, para a tela de compra lembrar por ela.
+   *
+   * Devolve `unitPrice`, e não `unitCost`, e a diferença é o ponto todo: o
+   * `unitCost` já inclui o rateio do frete (`custoRealUnitario`), então é o preço
+   * negociado MAIS o caminhão do comprador. Exibir isso ao lado do preço que ele
+   * está digitando — e ao lado do boletim, que é preço na praça, antes de
+   * qualquer transporte — faria toda comparação apontar "você pagou acima", todo
+   * dia, para todo mundo. O viés seria constante e invisível.
+   *
+   * `DISTINCT ON` no molde de `VendasService.precosSugeridosDaCompra`. O `JOIN`
+   * com `purchases` é obrigatório: `purchase_items` não tem `deletedAt` próprio,
+   * então sem ele uma compra excluída continuaria ditando o "último preço".
+   */
+  async ultimosPrecosPagos(
+    tenantId: string,
+  ): Promise<Record<string, { unitPrice: number; purchaseDate: Date }>> {
+    const rows = await prisma.$queryRaw<
+      { productId: string; unitPrice: Prisma.Decimal; purchaseDate: Date }[]
+    >`
+      SELECT DISTINCT ON (pi."productId")
+             pi."productId", pi."unitPrice", p."purchaseDate"
+      FROM purchase_items pi
+      JOIN purchases p ON p.id = pi."purchaseId"
+      WHERE pi."tenantId" = ${tenantId} AND p."deletedAt" IS NULL
+      ORDER BY pi."productId", p."purchaseDate" DESC, pi."createdAt" DESC
+    `;
+    const mapa: Record<string, { unitPrice: number; purchaseDate: Date }> = {};
+    for (const r of rows) {
+      const valor = Number(money(r.unitPrice));
+      if (valor > 0) mapa[r.productId] = { unitPrice: valor, purchaseDate: r.purchaseDate };
+    }
+    return mapa;
   },
 
   async registrarCompra(input: CompraInput, ctx: TenantCtx) {

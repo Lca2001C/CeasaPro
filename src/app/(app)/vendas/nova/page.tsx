@@ -3,6 +3,8 @@ import { ProdutosService } from "@/lib/services/produtos.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { VendasService } from "@/lib/services/vendas.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
+import { ComprasService } from "@/lib/services/compras.service";
+import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { Pdv } from "./_components/pdv";
 
@@ -27,6 +29,8 @@ export default async function NovaVendaPage({
     clientesConhecidos,
     posicoes,
     ultimaVenda,
+    ultimosPagos,
+    boletim,
   ] = await Promise.all([
     ProdutosService.list(tenantId),
     // Sem o módulo de caixas o saldo não é lido: nada na tela usa.
@@ -39,6 +43,13 @@ export default async function NovaVendaPage({
     VendasService.clientesConhecidos(tenantId),
     EstoqueService.getPositions(tenantId),
     VendasService.ultimaVenda(tenantId),
+    ComprasService.ultimosPrecosPagos(tenantId),
+    // Mesma regra do saldo de caixas acima: quem não contratou Cotações não paga
+    // a consulta, e o PDV — a tela mais sensível a latência do sistema — não
+    // ganha uma ida ao banco por um bloco que não vai renderizar.
+    isModuleEnabled(session.modules, "cotacoes")
+      ? CotacoesService.precosDoBoletimPorProduto(tenantId)
+      : Promise.resolve({}),
   ]);
 
   // O saldo vai como número simples: o PDV só precisa comparar e mostrar, e
@@ -61,6 +72,8 @@ export default async function NovaVendaPage({
       clientesConhecidos={clientesConhecidos}
       estoquePorProduto={estoquePorProduto}
       produtoInicial={produtoInicial}
+      boletim={boletim}
+      ultimosPagos={ultimosPagos}
       ultimaVenda={
         ultimaVenda
           ? { customerName: ultimaVenda.customerName, itens: ultimaVenda.itens }

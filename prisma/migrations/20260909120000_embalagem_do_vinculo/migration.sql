@@ -1,0 +1,42 @@
+-- A embalagem entra no vínculo: "meu tomate é a CAIXA do boletim, não o quilo".
+--
+-- O que estava errado
+--
+-- O boletim cota o mesmo item em embalagens diferentes — medido no boletim real
+-- da CEASAMINAS, o tomate sai por `KG` e a banana por `CX 30 DZ` na mesma
+-- publicação, e são 215 linhas para cerca de 130 produtos distintos. O vínculo
+-- só guardava produto → produto do boletim, então a tela marcava "Você vende"
+-- em TODOS os cartões daquele item: quem compra caixa via a estrela verde na
+-- linha do quilo, e quem compra quilo via na linha da caixa. A seção "Produtos
+-- que você vende" — a primeira coisa que o cliente olha — vinha com o dobro ou
+-- o triplo de linhas que ele reconhece como dele.
+--
+-- Por que ANULÁVEL, e não `NOT NULL DEFAULT ''`
+--
+-- Porque `''` já é uma embalagem DE VERDADE neste banco. `ceasa_quotes.unit` é
+-- `NOT NULL DEFAULT ''` (ali a razão é outra: a unidade entra num índice único, e
+-- vários NULL não colidem em índice único no Postgres, então a reimportação do
+-- mesmo dia duplicaria linha), e o boletim colado à mão sem coluna de embalagem
+-- grava exatamente `''` — `lerCsvDeCotacoes` faz `unidade ?? ""`. Em 57 das 66
+-- praças do catálogo o boletim vem desse caminho manual.
+--
+-- Aqui a unidade NÃO entra em índice único — a chave segue `(tenantId,
+-- productId)`, um produto do boletim por produto meu — então a razão que
+-- justifica o `''` lá não vale aqui, e usá-lo custaria significado: o JOIN
+-- precisaria ler `(l.unit = '' OR l.unit = q.unit)`, e aí um vínculo legítimo à
+-- embalagem em branco passaria a significar "qualquer embalagem". Indistinguível,
+-- e errado justamente na praça manual, que é a maioria.
+--
+-- Com a coluna anulável são três coisas distintas e legíveis:
+--
+--     NULL   o cliente não escolheu embalagem  → vale para todas
+--     ''     o boletim não informou embalagem  → vale para essa linha
+--     'KG'   o cliente escolheu o quilo        → vale para essa linha
+--
+-- Retrocompatibilidade: todo vínculo já gravado nasce `NULL`, que é o
+-- comportamento de hoje. Ninguém acorda com vínculo mais restrito do que
+-- escolheu, e a coluna vira uma decisão que o cliente toma quando quiser.
+--
+-- Custo: desde o Postgres 11, `ADD COLUMN ... TEXT` anulável é alteração só de
+-- metadado, sem reescrever a tabela.
+ALTER TABLE "tenant_ceasa_links" ADD COLUMN "unit" TEXT;

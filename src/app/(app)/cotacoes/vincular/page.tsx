@@ -2,6 +2,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
+import { explicacaoSemBoletim } from "@/lib/cotacoes/frescor";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { Button } from "@/components/ui/button";
@@ -11,7 +12,7 @@ export const dynamic = "force-dynamic";
 
 export default async function VincularCotacoesPage() {
   const { tenantId } = await requireTenant();
-  const { produtos, doBoletim } = await CotacoesService.getTelaDeVinculo(tenantId);
+  const { produtos, doBoletim, central } = await CotacoesService.getTelaDeVinculo(tenantId);
 
   return (
     <div className="flex flex-col gap-4">
@@ -33,9 +34,15 @@ export default async function VincularCotacoesPage() {
           description="Cadastre seus produtos para poder vinculá-los às cotações do CEASA."
         />
       ) : doBoletim.length === 0 ? (
+        /*
+          A explicação depende de a praça ter fonte automática. "Assim que o
+          primeiro chegar" é uma promessa que só se cumpre onde existe raspador;
+          em 57 das 66 praças do catálogo o boletim depende de alguém enviar, e
+          dizer a mesma frase ali é prometer o que não vem.
+        */
         <EmptyState
           title="Nenhuma cotação disponível"
-          description="Ainda não recebemos boletim. Assim que o primeiro chegar, dá para vincular."
+          description={explicacaoSemBoletim(central?.automatica ?? false)}
         />
       ) : (
         <VinculoForm produtos={produtos} doBoletim={doBoletim} />

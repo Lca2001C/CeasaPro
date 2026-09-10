@@ -1,18 +1,15 @@
 import { timingSafeEqual } from "node:crypto";
 import { PushAvisosService } from "@/lib/services/push-avisos.service";
-import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 /**
- * A rota passou a falar com um site externo (importação dos boletins), e o
- * padrão da função serverless é curto demais para isso: duas requisições HTTP
- * por central, contra um PHP legado, mais a pausa entre elas.
+ * 60 s é o teto do plano Hobby.
  *
- * 60 s é o teto do plano Hobby. O serviço tem orçamento PRÓPRIO menor
- * (`ORCAMENTO_PADRAO_MS`) e para sozinho antes: ser morto pela plataforma no
- * meio de uma gravação deixaria a central pela metade e sem registro nenhum.
+ * Mantido mesmo depois de a importação dos boletins sair daqui: o envio de push
+ * percorre todas as empresas e todas as inscrições de aparelho, e o padrão da
+ * função serverless (~10 s) é curto para isso.
  */
 export const maxDuration = 60;
 
@@ -47,34 +44,21 @@ async function handle(req: Request): Promise<Response> {
   try {
     const avisos = await PushAvisosService.enviarAvisosDiarios();
     logger.info(avisos, "Cron de avisos por push concluido");
-
     /*
-      Importação dos boletins de cotação, como SUB-TAREFA desta rota.
+      A importação dos boletins ficava AQUI e passou para o cron de billing.
 
-      Não ganha cron próprio porque `vercel.json` já tem 2 agendamentos, que é o
-      teto do plano Hobby — um terceiro faria o deploy falhar. Entra aqui, e não
-      no cron de billing, pela mesma regra que separou as duas rotas: cobrança é
-      receita, e raspagem de site de terceiro não pode encostar no caminho que
-      reconcilia pagamento.
+      O motivo é o horário, não a arquitetura. Este cron roda 09:30 UTC = 06:30
+      BRT, que é a hora certa para o push — o box abre de madrugada e o dono lê o
+      aviso antes de começar — e a hora ERRADA para buscar boletim: às 6h30 a
+      praça ainda não publicou o do dia, então o recuo de datas pegava sempre o de
+      ontem, e o boletim de hoje só aparecia na manhã seguinte.
 
-      O `.catch()` é o que garante isso na prática: a fonte é um sistema legado
-      que não nos deve nada, e o dia em que ela cair não pode ser o dia em que os
-      avisos por push param. Mesmo padrão das seis sub-tarefas de `cron/billing`.
+      O plano Hobby limita a 2 agendamentos, então não havia um terceiro horário
+      a pedir. A saída foi trocar de carona: a importação foi para o cron de
+      billing, que passou a rodar 13:30 BRT. O push continua às 6h30, com o
+      boletim que a importação da tarde anterior já gravou.
     */
-    const cotacoes = await CotacoesImportService.importarTodasAsCentrais()
-      .then(async (r) => {
-        // A defasagem é conferida DEPOIS de importar: assim ela enxerga o
-        // resultado desta execução, e não o de ontem.
-        const defasadas = await CotacoesImportService.verificarDefasagem();
-        return { centrais: r.centrais, defasadas: defasadas.length };
-      })
-      .catch((e) => {
-        logger.error({ err: describeError(e) }, "Importacao de cotacoes falhou");
-        return { erro: "falhou" };
-      });
-    logger.info({ cotacoes }, "Sub-tarefa de cotacoes concluida");
-
-    return Response.json({ ok: true, avisos, cotacoes });
+    return Response.json({ ok: true, avisos });
   } catch (e) {
     logger.error({ err: describeError(e) }, "Cron de avisos por push falhou");
     return Response.json({ ok: false, error: "internal" }, { status: 500 });

@@ -50,6 +50,42 @@ export const VARIACAO_MAXIMA_ACEITA = 200;
 export const VARIACAO_SUGERIDA = 10;
 
 /**
+ * Quanto o teto e o piso sugeridos ficam longe da média do período.
+ *
+ * Quinze por cento é o que deixa o alerta calado no comportamento normal do
+ * mercado e falante no que sai dele. Se a folga fosse pequena — 5%, por exemplo —
+ * o teto seria cruzado em quase todo boletim, porque hortifruti oscila vários por
+ * cento entre publicações como regra, não como exceção; e alerta que toca sempre
+ * é desligado em uma semana. Se fosse grande, o preço teria de disparar para o
+ * aviso existir, e aí ele chega depois da compra.
+ *
+ * É SUGESTÃO de tela, não regra de negócio: o valor gravado é o que o cliente
+ * confirmar, e a média de que ela parte é a do período que ele está olhando.
+ */
+export const FOLGA_DO_LIMITE_SUGERIDO = 0.15;
+
+/**
+ * Teto e piso propostos a partir da média do período. `null` sem média utilizável.
+ *
+ * Devolve `null` — e não zero — quando a média não é positiva: seria o caso de
+ * um produto que só apareceu com preço zerado, e um teto de R$ 0,00 dispararia em
+ * todo boletim (`avaliarAlerta` já ignora limite não positivo, mas propor um
+ * seria oferecer um botão que não faz nada).
+ */
+export function limitesSugeridos(
+  media: Numeric | null | undefined,
+): { teto: number; piso: number } | null {
+  if (media === null || media === undefined) return null;
+  const m = toNumber(media);
+  if (!Number.isFinite(m) || m <= 0) return null;
+  const arredonda = (v: number) => Math.round(v * 100) / 100;
+  return {
+    teto: arredonda(m * (1 + FOLGA_DO_LIMITE_SUGERIDO)),
+    piso: arredonda(m * (1 - FOLGA_DO_LIMITE_SUGERIDO)),
+  };
+}
+
+/**
  * Avalia UM alerta contra o preço observado.
  *
  * Devolve todos os motivos que se aplicam, e não só o primeiro: um produto pode

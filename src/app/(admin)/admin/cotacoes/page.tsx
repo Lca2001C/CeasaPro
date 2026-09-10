@@ -1,6 +1,7 @@
 import { AlertTriangle } from "lucide-react";
 import { requireSuperAdmin } from "@/lib/auth/session";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
+import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
 import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
 import { CEASA_IMPORT_STATUS_LABELS } from "@/lib/labels";
 import { formatDateOnly, formatDateTime } from "@/lib/format";
@@ -10,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/cn";
 import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
 import { ImportarManual } from "./_components/importar-manual";
+import { FilaDeEnvios } from "./_components/fila-de-envios";
 
 export const dynamic = "force-dynamic";
 
@@ -23,7 +25,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function AdminCotacoesPage() {
   await requireSuperAdmin();
-  const centrais = await CotacoesImportService.situacaoDasCentrais();
+  const [centrais, fila] = await Promise.all([
+    CotacoesImportService.situacaoDasCentrais(),
+    CotacoesEnvioService.listarFila(),
+  ]);
   const agora = new Date();
 
   /*
@@ -76,8 +81,27 @@ export default async function AdminCotacoesPage() {
               </span>
             </>
           )}
+          {fila.length > 0 && (
+            <>
+              {" · "}
+              <span className="font-medium text-warning">
+                {fila.length} {fila.length === 1 ? "envio de cliente" : "envios de clientes"} na
+                fila
+              </span>
+            </>
+          )}
         </p>
       </Card>
+
+      {/*
+        A fila vem ANTES da lista de centrais.
+
+        É trabalho que alguém já fez e está esperando um clique — e um envio
+        parado é pior que não ter o recurso: o cliente cumpriu a parte dele e o
+        preço continua não aparecendo na tela dele. A lista de praças é
+        diagnóstico; a fila é ação.
+      */}
+      <FilaDeEnvios envios={fila} />
 
       <div className="flex flex-col gap-2">
         {comCliente.map((c) => {

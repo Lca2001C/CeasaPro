@@ -29,15 +29,19 @@ export const TENANT_MODELS = new Set<string>([
   // passam o tenantId à mão, então nada vazava — mas a primeira que esquecesse
   // cruzaria empresas em silêncio.
   "PackagingMovement",
-  // Cotações. É o ÚNICO modelo do módulo com `tenantId`: as tabelas de central,
+  // Cotações. Três modelos do módulo têm `tenantId`; as tabelas de central,
   // produto do boletim e cotação são globais de propósito (o preço da central é
   // o mesmo para todo mundo), e por não terem a coluna nem chegam a este teste.
   // O vínculo, não: ele é a decisão de UMA empresa sobre o produto DELA.
   "TenantCeasaLink",
-  // O alerta de flutuação é o segundo modelo do módulo com `tenantId`, pela
-  // mesma razão do vínculo: preço é público, mas "me avise se subir 10%" é
-  // decisão de uma empresa só.
+  // O alerta de flutuação, pela mesma razão do vínculo: preço é público, mas
+  // "me avise se subir 10%" é decisão de uma empresa só.
   "TenantCeasaAlerta",
+  // O boletim que o cliente ENVIOU e ainda não foi publicado. É rascunho dele:
+  // enquanto está na fila, nenhum outro cliente da mesma praça pode ver — e é
+  // justamente essa invisibilidade que permite ao envio existir sem um tenant
+  // escrever na tabela global de cotações.
+  "TenantBoletimEnviado",
 ]);
 
 export const SOFT_DELETE_MODELS = new Set<string>([

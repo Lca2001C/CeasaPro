@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
-import type { TenantCtx } from "@/lib/http/with-action";
+import type { AdminCtx, TenantCtx } from "@/lib/http/with-action";
 
 export function makeCtx(tenantId: string, userId = "test-user"): TenantCtx {
   return {
@@ -22,6 +22,28 @@ export function makeCtx(tenantId: string, userId = "test-user"): TenantCtx {
       // que estes testes querem simular.
       modules: [...ALL_OPTIONAL_KEYS],
     },
+  };
+}
+
+/**
+ * Contexto de SUPER-ADMIN, para testar o que só o operador da plataforma faz.
+ *
+ * Sem `tenantId`, e é a diferença que importa: o super-admin age sobre dados de
+ * qualquer empresa (publicar o boletim que um cliente enviou, por exemplo), e um
+ * ctx com tenant fixo esconderia justamente o erro de escopo que se quer pegar.
+ */
+export function makeAdminCtx(userId = "test-admin"): AdminCtx {
+  return {
+    userId,
+    ip: null,
+    session: {
+      sub: userId,
+      role: "SUPER_ADMIN",
+      tenantId: null,
+      email: "admin@ceasapro.com.br",
+      name: "Operador de Teste",
+      mustChangePassword: false,
+    } as AdminCtx["session"],
   };
 }
 
@@ -57,6 +79,9 @@ export async function cleanupTenants(ids: string[]) {
   // Antes dos produtos: o vínculo aponta para `products`.
   await prisma.tenantCeasaAlerta.deleteMany({ where });
   await prisma.tenantCeasaLink.deleteMany({ where });
+  // O envio do cliente aponta para `ceasa_centrals`, que cada teste de cotações
+  // limpa por conta própria — então ele sai antes, para a central poder ir.
+  await prisma.tenantBoletimEnviado.deleteMany({ where });
   await prisma.product.deleteMany({ where });
   await prisma.tenant.deleteMany({ where: { id: { in: ids } } });
 }

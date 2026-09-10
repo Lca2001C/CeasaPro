@@ -31,6 +31,11 @@ Banco **PostgreSQL** modelado com **Prisma**. O schema-fonte é [`prisma/schema.
 | `ReportType` | VENDAS, COMPRAS, ESTOQUE, FIADO, INADIMPLENTES, FORNECEDORES, DESPESAS, FLUXO_CAIXA, LUCRO_PRODUTO, MAIS_VENDIDOS, CAIXAS_PLASTICAS, HIGIENIZACAO, EMBALAGENS |
 | `ReportFormat` | PDF, EXCEL |
 | `ReportStatus` | PENDENTE, PROCESSANDO, CONCLUIDO, ERRO |
+| `CeasaSerie` | CENTRAL, NACIONAL |
+| `CeasaImportStatus` | OK, VAZIO, FALHA |
+| `BoletimEnviadoStatus` | PENDENTE, PUBLICADO, RECUSADO |
+
+Enum novo precisa de mapa em [`src/lib/labels.ts`](../src/lib/labels.ts) **ou** de dispensa justificada — `tests/unit/labels-cobertura.test.ts` compara esta tabela com o schema e reprova quem esquecer. Sem rótulo a tela renderiza vazio, sem erro e sem log.
 
 ## Plataforma / SaaS
 
@@ -88,6 +93,31 @@ Histórico de exportações: `userId?`, `type`, `format`, `status`, `periodStart
 
 ### `packaging_types` + `packaging_sales`
 Tipo: `name`, `active` (único por `(tenantId, name)`). Venda: `packagingTypeId`, `customerName?`, `saleDate`, `quantity` (Int), `unitPrice`, `totalAmount`.
+
+## Cotações do CEASA (módulo `cotacoes`)
+
+**As quatro primeiras tabelas NÃO têm `tenantId`, e é decisão.** O preço que a praça publica é o mesmo para todo mundo que compra ali; copiá-lo por empresa multiplicaria a importação pelo número de clientes sem nenhum ganho. Seguem o molde de `rate_limits`: sem relação com `Tenant`, acesso pelo `prisma` cru, e por construção fora de `TENANT_MODELS`.
+
+### `ceasa_centrals`
+Entreposto. `code` (**PK textual**, ex. `CEAMG`, `SPCEA` — o importador referencia a praça por código, não por id gerado), `name`, `city`, `uf`, `sourceKey` (qual adaptador busca; `manual` = ninguém busca), `sourceParams?` (Json, parâmetros da fonte), `active`, `maxDiasSemBoletim` (a partir de quantos dias o boletim é "velho" — o **mesmo** número que a tela do cliente e o alarme de defasagem usam, para os dois nunca discordarem), `sortOrder`.
+
+### `ceasa_products`
+Catálogo do boletim, **global e não por praça** — assim o vínculo da empresa sobrevive à troca de central quando o nome coincide. `name`, `serie` (`CeasaSerie`), `slug`, `firstSeenAt`, `lastSeenAt`, `active`. Único por `(serie, slug)`: dentro da série, não global.
+
+### `ceasa_quotes`
+A cotação. **Chave primária composta natural, sem `id`:** `(centralCode, quoteDate, ceasaProductId, unit)`. O `id` de cuid era 23% do tamanho da tabela e nunca era lido (medido com 205 mil linhas). `quoteDate` é `@db.Date`; `unit` é `NOT NULL DEFAULT ''` porque vários NULL não colidem em índice único no Postgres, e a reimportação do mesmo dia duplicaria linha; `refPrice` **não** é anulável; `minPrice`/`avgPrice`/`maxPrice` são.
+
+### `ceasa_import_runs`
+Uma linha por tentativa de importação: `status` (`CeasaImportStatus`), `rowsParsed`, `rowsUpserted`, `durationMs`, `httpStatus?`, `error?`, `fingerprint?` (assinatura **estrutural** da resposta — quais campos vieram, nunca hash do corpo).
+
+### `tenant_ceasa_links` (tem `tenantId`)
+Produto da empresa ↔ produto do boletim, **mais a embalagem**. Único por `(tenantId, productId)` — um item do boletim por produto seu, e **não** o inverso ("Tomate caixa" e "Tomate kg" podem apontar para o mesmo item). `unit` é **anulável**, e os três valores são distintos: `NULL` = o cliente não escolheu (vale para todas as embalagens), `''` = o boletim não informou embalagem, `'KG'` = ele escolheu o quilo.
+
+### `tenant_ceasa_alertas` (tem `tenantId`)
+"Me avise se mexer". Único por `(tenantId, ceasaProductId, unit)` — a unidade entra na chave porque um teto de R$ 5,00 é barato para a caixa e caro para o quilo. `variacaoMinima` (`Decimal(5,2)`, por alerta e não fixo no código: cebola oscila muito mais que batata), `precoTeto?`, `precoPiso?`.
+
+### `tenant_boletins_enviados` (tem `tenantId`)
+Boletim que o **cliente** enviou, aguardando o super-admin publicar. `centralCode`, `quoteDate` (`@db.Date`), `textoCru` (o que foi colado, não as linhas parseadas), `linhasValidas`, `linhasIgnoradas`, `status` (`BoletimEnviadoStatus`), `motivo?` (da recusa — o cliente lê), `revisadoPor?`, `revisadoEm?`. É rascunho com escopo de empresa de propósito: gravação direta em `ceasa_quotes` (tabela global, e a gravação sobrescreve) faria um cliente mexer no preço que os concorrentes dele leem, sem caminho de volta.
 
 ## Auditoria
 

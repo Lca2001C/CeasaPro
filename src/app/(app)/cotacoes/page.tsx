@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { AlertTriangle, Link2 } from "lucide-react";
+import { redirect } from "next/navigation";
+import { AlertTriangle, Link2, Send } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { CotacoesService, type LinhaDeCotacao } from "@/lib/services/cotacoes.service";
 import {
@@ -8,6 +9,7 @@ import {
   frescorDoBoletim,
   rotuloDeFrescor,
 } from "@/lib/cotacoes/frescor";
+import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem";
 import { formatDateOnly } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
@@ -39,6 +41,22 @@ export default async function CotacoesPage({
   const { tenantId } = await requireTenant();
   const painel = await CotacoesService.getPainel(tenantId);
 
+  /*
+    Quem tem central e NENHUM vínculo vai para a tela de partida.
+
+    É o estado de quem acabou de contratar o módulo, ou de quem escolheu a praça
+    no cadastro: a grade mostraria duzentas e quarenta linhas de produtos que ele
+    não vende, sem nada indicando que o trabalho útil é dizer quais são os dele.
+    Com um vínculo já feito, a grade é o destino certo e este desvio não acontece
+    mais.
+
+    Só com central: sem ela a própria grade já virou o formulário de escolha
+    (abaixo), que é a mesma pergunta em menos cliques.
+  */
+  if (painel.central && !painel.temVinculo && painel.semVinculo.length > 0) {
+    redirect("/cotacoes/comecar");
+  }
+
   // Sem central escolhida não há o que mostrar, e a única coisa a fazer é
   // escolher. A tela vira esse formulário em vez de uma lista vazia.
   if (!painel.central) {
@@ -57,13 +75,20 @@ export default async function CotacoesPage({
     );
   }
 
-  const temVinculo = painel.linhas.some((l) => l.meuProdutoId);
-  // Abrir em "Meus produtos" só faz sentido se houver algum: senão a primeira
-  // impressão do módulo seria uma lista vazia — o mesmo raciocínio do filtro
-  // padrão do estoque.
+  /*
+    Abrir em "Meus produtos" só faz sentido se houver algum: senão a primeira
+    impressão do módulo seria uma lista vazia — o mesmo raciocínio do filtro
+    padrão do estoque.
+
+    `painel.temVinculo` vem da contagem de VÍNCULOS, e antes esta linha o derivava
+    das linhas do boletim (`linhas.some(l => l.meuProdutoId)`). A diferença
+    aparece no dia em que a embalagem vinculada não sai no boletim: a tela
+    concluía "esta empresa nunca vinculou nada", abria em "Todos" e a seção verde
+    desaparecia inteira — para quem tinha vinculado tudo.
+  */
   const filtro: Filtro = FILTROS.some((f) => f.value === rawFiltro)
     ? (rawFiltro as Filtro)
-    : temVinculo
+    : painel.temVinculo
       ? "MEUS"
       : "TODOS";
 
@@ -80,9 +105,18 @@ export default async function CotacoesPage({
     resposta não pode estar na página 3 de uma lista de 246 itens que ele não
     vende. É a mesma decisão do destaque de estoque, levada ao layout.
   */
-  const meus = painel.linhas.filter((l) => l.meuProdutoId).filter(casaComBusca);
+  /*
+    "Meus produtos" é só o vínculo EXATO. A linha do mesmo item em outra
+    embalagem vai para "Todos" — se ela subisse para a seção verde, quem escolheu
+    a caixa veria a caixa e o quilo lado a lado ali, o que confunde exatamente
+    quem esta mudança quer ajudar. Ela não desaparece: continua em "Todos", com a
+    marca discreta de "sua embalagem é X".
+  */
+  const meus = painel.linhas.filter((l) => l.vinculo === "exato").filter(casaComBusca);
   const outros =
-    filtro === "MEUS" ? [] : painel.linhas.filter((l) => !l.meuProdutoId).filter(casaComBusca);
+    filtro === "MEUS"
+      ? []
+      : painel.linhas.filter((l) => l.vinculo !== "exato").filter(casaComBusca);
   const nenhum = meus.length === 0 && outros.length === 0;
 
   const frescor = frescorDoBoletim(
@@ -124,6 +158,7 @@ export default async function CotacoesPage({
           <p className="mt-1 text-xs text-muted-foreground">
             {explicacaoDaCadencia(painel.central.automatica)}
           </p>
+          <EnviarBoletimCta automatica={painel.central.automatica} />
         </Card>
       ) : (
         <Card className="border-warning/50 bg-warning/5 p-3">
@@ -131,6 +166,7 @@ export default async function CotacoesPage({
           <p className="mt-1 text-xs text-muted-foreground">
             {explicacaoSemBoletim(painel.central.automatica)}
           </p>
+          <EnviarBoletimCta automatica={painel.central.automatica} />
         </Card>
       )}
 
@@ -143,11 +179,60 @@ export default async function CotacoesPage({
                 ? "produto seu ainda não tem cotação"
                 : "produtos seus ainda não têm cotação"}
               .
+              {/*
+                O número de nomes idênticos diz se o trabalho é de um clique ou
+                de uma tarde — a diferença entre abrir a tela agora e deixar para
+                depois para sempre. Sobe sozinho no dia em que a praça passa a
+                publicar um item que casa com algo que o cliente vende.
+              */}
+              {painel.semVinculoComNomeIdentico > 0 && (
+                <span className="text-muted-foreground">
+                  {" "}
+                  {painel.semVinculoComNomeIdentico === 1
+                    ? "1 deles já tem o nome exato no boletim de hoje."
+                    : `${painel.semVinculoComNomeIdentico} deles já têm o nome exato no boletim de hoje.`}
+                </span>
+              )}
             </p>
             <Button asChild size="sm" variant="outline">
               <Link href="/cotacoes/vincular">
                 <Link2 className="size-4" />
                 Vincular
+              </Link>
+            </Button>
+          </div>
+        </Card>
+      )}
+
+      {/*
+        Vínculo que não achou preço hoje.
+
+        Sem este cartão o produto sai da tela sem uma palavra: ele não está em
+        `semVinculo` (tem vínculo) nem nas linhas (nada casou), e o cliente que
+        escolheu "CX 20 KG" simplesmente não encontra mais o tomate dele no dia em
+        que a praça publicou só o quilo. Dizer qual embalagem faltou é o que
+        permite a ele corrigir a escolha em vez de concluir que o módulo quebrou.
+      */}
+      {painel.vinculosSemCotacao.length > 0 && (
+        <Card className="p-3">
+          <p className="text-sm font-medium">
+            {painel.vinculosSemCotacao.length === 1
+              ? "1 produto seu não saiu neste boletim"
+              : `${painel.vinculosSemCotacao.length} produtos seus não saíram neste boletim`}
+          </p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground">
+            {painel.vinculosSemCotacao.map((v) => (
+              <li key={v.produtoId} className="[overflow-wrap:anywhere]">
+                <strong className="font-medium">{v.produtoNome}</strong> — {v.ceasaProductName}
+                {v.unit !== null && ` na embalagem ${rotuloDeEmbalagem(v.unit)}`}
+              </li>
+            ))}
+          </ul>
+          <div className="mt-2">
+            <Button asChild size="sm" variant="outline">
+              <Link href="/cotacoes/vincular">
+                <Link2 className="size-4" />
+                Revisar vínculos
               </Link>
             </Button>
           </div>
@@ -210,6 +295,28 @@ function SecaoTitulo({ texto, quantidade }: { texto: string; quantidade: number 
     <h2 className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
       {texto} <span className="tabular-nums">({quantidade})</span>
     </h2>
+  );
+}
+
+/**
+ * O convite a enviar o boletim — só onde não há quem busque.
+ *
+ * Fica junto da explicação da cadência, que é onde a pessoa está lendo "esta
+ * praça não publica de forma automática" e pensando "e agora?". Em praça com
+ * raspador não aparece: os dois caminhos gravariam a mesma data, a gravação
+ * sobrescreve, e o preço passaria a mudar conforme quem chegou por último.
+ */
+function EnviarBoletimCta({ automatica }: { automatica: boolean }) {
+  if (automatica) return null;
+  return (
+    <div className="mt-2">
+      <Button asChild size="sm" variant="outline">
+        <Link href="/cotacoes/enviar-boletim">
+          <Send className="size-4" />
+          Enviar o boletim desta praça
+        </Link>
+      </Button>
+    </div>
   );
 }
 

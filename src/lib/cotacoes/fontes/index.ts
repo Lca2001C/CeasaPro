@@ -1,3 +1,4 @@
+import { ceagesp } from "./ceagesp";
 import { ceasaminas } from "./ceasaminas";
 import type { FonteDeCotacao } from "./tipos";
 
@@ -15,6 +16,7 @@ export type { FonteDeCotacao, ResultadoDaFonte, ParametrosDeBusca } from "./tipo
  */
 export const FONTES: Record<string, FonteDeCotacao> = {
   [ceasaminas.chave]: ceasaminas,
+  [ceagesp.chave]: ceagesp,
 };
 
 export function fontePara(sourceKey: string): FonteDeCotacao | null {

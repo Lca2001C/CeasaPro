@@ -51,6 +51,7 @@ model Tenant {
   ceasaCentral          CeasaCentral?          @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
   ceasaLinks            TenantCeasaLink[]
   ceasaAlertas          TenantCeasaAlerta[]
+  boletinsEnviados      TenantBoletimEnviado[]
   crateCleanings        CrateCleaning[]
   creditAccounts        CreditAccount[]
   expenseCategories     ExpenseCategory[]
@@ -256,6 +257,7 @@ model CeasaCentral {
   quotes            CeasaQuote[]
   importRuns        CeasaImportRun[]
   tenants           Tenant[]
+  boletinsEnviados  TenantBoletimEnviado[]
 
   @@index([active, sortOrder])
   @@map("ceasa_centrals")
@@ -427,6 +429,20 @@ model TenantCeasaLink {
   tenantId       String
   productId      String
   ceasaProductId String
+  /// A embalagem do boletim que este produto é — "minha caixa", não "o quilo".
+  ///
+  /// Três valores distintos, e a diferença importa:
+  ///
+  ///     NULL   o cliente não escolheu  → o vínculo vale para TODAS as embalagens
+  ///     ''     o boletim não informou  → vale só para a linha sem embalagem
+  ///     'KG'   o cliente escolheu      → vale só para o quilo
+  ///
+  /// Anulável, e não `NOT NULL @default("")` como em `CeasaQuote.unit`: lá a
+  /// unidade entra num índice único, e vários NULL não colidem em índice único no
+  /// Postgres. Aqui ela NÃO entra na chave, então o `''` só custaria significado —
+  /// o vínculo legítimo à embalagem em branco (comum na praça manual, que é 57 das
+  /// 66 do catálogo) ficaria indistinguível de "qualquer embalagem".
+  unit           String?
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
@@ -475,6 +491,54 @@ model TenantCeasaAlerta {
   @@unique([tenantId, ceasaProductId, unit])
   @@index([tenantId])
   @@map("tenant_ceasa_alertas")
+}
+
+/// Boletim que o CLIENTE enviou, esperando o super-admin publicar.
+///
+/// Rascunho, e é o ponto todo. Das 66 praças do catálogo, 57 não têm raspador: o
+/// boletim delas depende de alguém colar. Deixar o cliente colar direto em
+/// `ceasa_quotes` resolveria o gargalo e abriria quatro buracos — `gravar`
+/// sobrescreve (`ON CONFLICT DO UPDATE`), escreve no catálogo GLOBAL
+/// `ceasa_products`, publica preço que os concorrentes dele leem, e nenhum dos
+/// três alarmes vigia praça manual. Como toda leitura parte de `MAX(quoteDate)`,
+/// o dado ruim seria permanente.
+///
+/// Então o envio para AQUI, visível só para quem enviou, e publicar continua
+/// sendo ato do super-admin — pelo mesmo `gravar`, do lado de dentro da fronteira
+/// de confiança que já existia.
+model TenantBoletimEnviado {
+  id              String               @id @default(cuid())
+  tenantId        String
+  centralCode     String
+  quoteDate       DateTime             @db.Date
+  /// O texto COLADO, não as linhas parseadas.
+  ///
+  /// É o que permite ao operador ver o que o cliente realmente mandou quando o
+  /// parse discorda do esperado, e reprocessar sem pedir para colar de novo.
+  textoCru        String
+  linhasValidas   Int                  @default(0)
+  linhasIgnoradas Int                  @default(0)
+  status          BoletimEnviadoStatus @default(PENDENTE)
+  /// Por que foi recusado — o cliente tem direito de saber, senão reenvia igual.
+  motivo          String?
+  revisadoPor     String?
+  revisadoEm      DateTime?
+  createdAt       DateTime             @default(now())
+  updatedAt       DateTime             @updatedAt
+  tenant          Tenant               @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  central         CeasaCentral         @relation(fields: [centralCode], references: [code], onDelete: Cascade)
+
+  /// A fila do operador: pendentes primeiro, mais antigo antes.
+  @@index([status, createdAt])
+  /// "O que eu enviei", na tela do cliente.
+  @@index([tenantId, createdAt])
+  @@map("tenant_boletins_enviados")
+}
+
+enum BoletimEnviadoStatus {
+  PENDENTE
+  PUBLICADO
+  RECUSADO
 }
 
 model TenantSubscription {
@@ -1061,6 +1125,12 @@ enum AdminNotificationKind {
   /// por engano, ou bug na própria detecção de falha. É o único alarme que um
   /// defeito nos outros não desarma.
   COTACOES_DESATUALIZADAS
+  /// Um cliente enviou o boletim da praça dele e espera publicação.
+  ///
+  /// Sem este aviso a fila só seria vista por quem abrisse `/admin/cotacoes` por
+  /// conta própria — e um envio que fica dias parado é pior que não ter o
+  /// recurso: o cliente fez a parte dele e o preço continua não aparecendo.
+  COTACOES_ENVIO_CLIENTE
 }
 
 /// Desfecho de uma tentativa de importar boletim.

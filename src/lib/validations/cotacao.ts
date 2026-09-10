@@ -3,6 +3,7 @@ import {
   VARIACAO_MAXIMA_ACEITA,
   VARIACAO_MINIMA_ACEITA,
 } from "@/lib/cotacoes/alerta";
+import { endOfDayTz, parseIsoDateTz } from "@/lib/tz";
 
 /** Central escolhida pela empresa. `null` = voltar a não ter central. */
 export const escolherCentralSchema = z.object({
@@ -10,16 +11,76 @@ export const escolherCentralSchema = z.object({
 });
 export type EscolherCentralInput = z.infer<typeof escolherCentralSchema>;
 
+/**
+ * A embalagem do vínculo.
+ *
+ * SEM `.min(1)`, e é decisão: `""` é uma embalagem real do boletim (a praça
+ * manual grava assim quando o boletim não traz a coluna), e exigir um caractere
+ * recusaria justamente o vínculo à linha sem embalagem. `null` e ausente
+ * significam "qualquer embalagem" — os três estados são distintos e chegam
+ * distintos ao serviço.
+ *
+ * `.trim()` é seguro porque a entrada já vem trimada dos dois caminhos de
+ * gravação (`ceasaminas.ts` e `lerCsvDeCotacoes`), então nenhuma unidade no banco
+ * tem espaço nas pontas para o trim comer.
+ */
+const unidadeDoVinculo = z.string().trim().max(40).nullable().optional();
+
 export const vincularSchema = z.object({
   productId: z.string().min(1, "Informe o produto"),
   ceasaProductId: z.string().min(1, "Escolha a cotação correspondente"),
+  unit: unidadeDoVinculo,
 });
 export type VincularInput = z.infer<typeof vincularSchema>;
+
+/**
+ * Confirmação de vários vínculos de uma vez.
+ *
+ * O teto de 200 não é o número de produtos que alguém tem — é o que impede um
+ * lote absurdo de virar uma transação que segura conexão do pool. Quem tiver
+ * mais que isso confirma em duas rodadas, e a tela continua funcionando.
+ */
+export const vincularEmLoteSchema = z.object({
+  itens: z
+    .array(
+      z.object({
+        productId: z.string().min(1, "Informe o produto"),
+        ceasaProductId: z.string().min(1, "Escolha a cotação correspondente"),
+        unit: unidadeDoVinculo,
+      }),
+    )
+    .min(1, "Marque ao menos um produto")
+    .max(200, "Confirme no máximo 200 produtos por vez"),
+});
+export type VincularEmLoteInput = z.infer<typeof vincularEmLoteSchema>;
 
 export const desvincularSchema = z.object({
   productId: z.string().min(1, "Informe o produto"),
 });
 export type DesvincularInput = z.infer<typeof desvincularSchema>;
+
+/**
+ * Boletim enviado pelo cliente (praça sem busca automática).
+ *
+ * A recusa de data futura é a MESMA do envio pelo super-admin, e pela mesma
+ * razão: a tela do cliente mostra o boletim de `MAX(quoteDate)`, então uma data
+ * futura viraria "o mais recente" e passaria a ser o preço exibido para todos os
+ * clientes daquela praça — indefinidamente, já que nenhum boletim real a
+ * superaria. Aqui a validação importa ainda mais que lá, porque quem digita não
+ * é o operador da plataforma.
+ */
+export const enviarBoletimSchema = z.object({
+  quoteDate: z
+    .string()
+    .trim()
+    .refine((v) => parseIsoDateTz(v) !== null, "Data inválida (use o seletor de data)")
+    .refine((v) => {
+      const d = parseIsoDateTz(v);
+      return d !== null && d.getTime() <= endOfDayTz(new Date()).getTime();
+    }, "O boletim não pode ter data futura"),
+  texto: z.string().min(1, "Cole o boletim").max(500_000, "Texto grande demais"),
+});
+export type EnviarBoletimInput = z.infer<typeof enviarBoletimSchema>;
 
 /**
  * Alerta de flutuação: "me avise se este item subir ou cair mais de X%".

@@ -11,6 +11,7 @@ import {
 } from "@/lib/services/cotacoes-historico.service";
 import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
 import { rotuloDeVariacao, variacaoPercentual } from "@/lib/cotacoes/variacao";
+import { limitesSugeridos } from "@/lib/cotacoes/alerta";
 import { formatBRL, formatDateOnly, valorExibivel } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { Button } from "@/components/ui/button";
@@ -227,6 +228,19 @@ export default async function ProdutoCotacaoPage({
                     precoTeto: h.alerta.precoTeto?.toString() ?? null,
                     precoPiso: h.alerta.precoPiso?.toString() ?? null,
                   }
+                : null
+            }
+            /*
+              A média do período vira proposta de teto e piso. Só com dois
+              boletins ou mais: uma "média" de um ponto é o próprio preço de hoje
+              disfarçado de referência histórica.
+            */
+            sugestao={
+              h.resumo && h.pontos.length >= 2
+                ? (() => {
+                    const l = limitesSugeridos(h.resumo.media);
+                    return l ? { ...l, amostras: h.pontos.length } : null;
+                  })()
                 : null
             }
           />

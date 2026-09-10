@@ -26,7 +26,10 @@ describe("SEO da landing", () => {
     expect(meta.alternates?.canonical).toBe("https://www.ceasapro.com.br/");
     expect(CANONICAL_URL).toBe("https://www.ceasapro.com.br/");
     expect(meta.openGraph?.url).toBe(CANONICAL_URL);
-    expect(meta.twitter?.card).toBe("summary_large_image");
+    // `Metadata["twitter"]` é uma UNIÃO no Next, e `card` só existe em parte dos
+    // membros — ler direto não compila (`Property 'card' does not exist on type
+    // 'Twitter'`). O estreitamento é só para o TypeScript; a asserção é a mesma.
+    expect((meta.twitter as { card?: string } | undefined)?.card).toBe("summary_large_image");
   });
 
   it("o JSON-LD é SoftwareApplication de negócio, sem inventar módulo", () => {

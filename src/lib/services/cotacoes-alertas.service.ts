@@ -31,6 +31,14 @@ export interface ItemDeInteresse {
   variacao: number | null;
   /** Nome do produto do cliente, quando este item do boletim está vinculado. */
   meuProdutoNome: string | null;
+  /**
+   * Id do produto do cliente, quando vinculado.
+   *
+   * Existe para cruzar este item com o resto do sistema — estoque parado,
+   * última compra — sem uma segunda consulta. O nome sozinho não serve de
+   * chave: dois produtos podem se chamar quase igual.
+   */
+  meuProdutoId: string | null;
   /** Configuração do alerta, quando existe. */
   alerta: { variacaoMinima: Prisma.Decimal; precoTeto: Prisma.Decimal | null; precoPiso: Prisma.Decimal | null } | null;
 }
@@ -70,7 +78,11 @@ export const CotacoesAlertasService = {
     const [vinculos, alertas] = await Promise.all([
       prisma.tenantCeasaLink.findMany({
         where: { tenantId, product: { deletedAt: null, active: true } },
-        select: { ceasaProductId: true, product: { select: { name: true } } },
+        select: {
+          ceasaProductId: true,
+          unit: true,
+          product: { select: { id: true, name: true } },
+        },
       }),
       prisma.tenantCeasaAlerta.findMany({
         where: { tenantId },
@@ -92,28 +104,63 @@ export const CotacoesAlertasService = {
     const cotacoes = await ultimosDoisBoletins(central.code, serie, idsDeInteresse);
     if (!cotacoes) return null;
 
-    const nomeDoMeuProduto = new Map(vinculos.map((v) => [v.ceasaProductId, v.product.name]));
+    /*
+      O vínculo é casado por produto E EMBALAGEM, não só por produto.
+
+      Antes, quem vinculava a batata recebia neste cartão a batata por quilo E a
+      batata em caixa — porque a chave era só o id do item do boletim. Duas
+      linhas para uma decisão, com preços de ordem de grandeza diferente, num
+      cartão que mostra quatro linhas no total: metade do espaço ia para a
+      embalagem que a pessoa não compra.
+
+      Vínculo sem embalagem escolhida (`unit` nulo) segue casando todas — é o
+      significado de "qualquer embalagem", e é o que todo vínculo antigo herdou.
+    */
+    const vinculoPorChave = new Map<string, { id: string; name: string }>();
+    const vinculoPorItem = new Map<string, { id: string; name: string }>();
+    for (const v of vinculos) {
+      if (v.unit === null) vinculoPorItem.set(v.ceasaProductId, v.product);
+      else vinculoPorChave.set(`${v.ceasaProductId}|${v.unit}`, v.product);
+    }
     const porChave = new Map(alertas.map((a) => [`${a.ceasaProductId}|${a.unit}`, a]));
 
-    const itens: ItemDeInteresse[] = cotacoes.linhas.map((l) => {
-      const alerta = porChave.get(`${l.ceasaProductId}|${l.unit}`) ?? null;
-      return {
-        ceasaProductId: l.ceasaProductId,
-        nome: l.nome,
-        unit: l.unit,
-        refPrice: l.refPrice,
-        anterior: l.anterior,
-        variacao: variacaoPercentual(l.refPrice, l.anterior),
-        meuProdutoNome: nomeDoMeuProduto.get(l.ceasaProductId) ?? null,
-        alerta: alerta
-          ? {
-              variacaoMinima: alerta.variacaoMinima,
-              precoTeto: alerta.precoTeto,
-              precoPiso: alerta.precoPiso,
-            }
-          : null,
-      };
+    const itens: ItemDeInteresse[] = cotacoes.linhas.flatMap((l) => {
+      const chave = `${l.ceasaProductId}|${l.unit}`;
+      const alerta = porChave.get(chave) ?? null;
+      const meuProduto = vinculoPorChave.get(chave) ?? vinculoPorItem.get(l.ceasaProductId) ?? null;
+
+      /*
+        Linha que não é nem vínculo desta embalagem nem alerta sai fora.
+
+        A consulta de cotações filtra pelos IDS de interesse, então ela traz
+        todas as embalagens de um item que interessa numa delas. Sem este corte,
+        a embalagem não escolhida voltaria pela porta de trás.
+      */
+      if (!meuProduto && !alerta) return [];
+
+      return [
+        {
+          ceasaProductId: l.ceasaProductId,
+          nome: l.nome,
+          unit: l.unit,
+          refPrice: l.refPrice,
+          anterior: l.anterior,
+          variacao: variacaoPercentual(l.refPrice, l.anterior),
+          meuProdutoNome: meuProduto?.name ?? null,
+          meuProdutoId: meuProduto?.id ?? null,
+          alerta: alerta
+            ? {
+                variacaoMinima: alerta.variacaoMinima,
+                precoTeto: alerta.precoTeto,
+                precoPiso: alerta.precoPiso,
+              }
+            : null,
+        },
+      ];
     });
+    // Todo interesse pode ter sumido do boletim mais recente (embalagem que a
+    // praça não publicou hoje). Sem linha nenhuma não há cartão a mostrar.
+    if (itens.length === 0) return null;
 
     /*
       Ordena por MOVIMENTO, não por nome.

@@ -153,9 +153,29 @@ export const CotacoesHistoricoService = {
       pontosDoPeriodo(central.code, input, corte(input.periodo)),
       mediasMensais(central.code, input, corte(365)),
       pracasComparaveis(input, central.code),
-      prisma.tenantCeasaLink.findFirst({
-        where: { tenantId, ceasaProductId: produto.id },
-        select: { product: { select: { id: true, name: true, deletedAt: true, active: true } } },
+      /*
+        O vínculo desta EMBALAGEM, quando há um; senão o vínculo "qualquer".
+
+        `findMany` e escolha em JS, e não `findFirst` com `orderBy`: ordenar por
+        uma coluna anulável cobra decidir NULLS FIRST/LAST, que o Prisma expressa
+        de um jeito e o Postgres de outro — armadilha desnecessária para escolher
+        entre duas linhas. Duas é o teto real aqui: um vínculo com esta embalagem
+        e um "qualquer".
+
+        Sem o recorte por embalagem, a tela do QUILO diria "vinculado ao seu
+        Tomate" para quem vinculou a CAIXA — e ofereceria o saldo da caixa ao
+        lado do preço do quilo.
+      */
+      prisma.tenantCeasaLink.findMany({
+        where: {
+          tenantId,
+          ceasaProductId: produto.id,
+          OR: [{ unit: input.unit }, { unit: null }],
+        },
+        select: {
+          unit: true,
+          product: { select: { id: true, name: true, deletedAt: true, active: true } },
+        },
       }),
       // O alerta é por produto E EMBALAGEM: um teto de R$ 5,00 é barato para a
       // caixa e caro para o quilo, então a tela precisa mostrar o desta unidade.
@@ -178,6 +198,9 @@ export const CotacoesHistoricoService = {
     if (!atual) return null;
 
     const mesesComDado = porMes.length;
+    // Embalagem exata ganha do "qualquer": é a escolha mais específica que o
+    // cliente fez.
+    const meuVinculo = vinculo.find((v) => v.unit === input.unit) ?? vinculo[0] ?? null;
 
     return {
       produto,
@@ -193,8 +216,8 @@ export const CotacoesHistoricoService = {
       // Produto excluído ou desativado não é "meu produto" na tela — o vínculo
       // sobrevive ao soft delete, e mostrá-lo ofereceria estoque que não existe.
       meuProduto:
-        vinculo?.product && !vinculo.product.deletedAt && vinculo.product.active
-          ? { id: vinculo.product.id, name: vinculo.product.name }
+        meuVinculo?.product && !meuVinculo.product.deletedAt && meuVinculo.product.active
+          ? { id: meuVinculo.product.id, name: meuVinculo.product.name }
           : null,
       alerta,
     };

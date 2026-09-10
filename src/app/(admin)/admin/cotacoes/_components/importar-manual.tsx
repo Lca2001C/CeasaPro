@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
-import { importarBoletimManual } from "@/actions/admin-cotacoes.actions";
+import { apagarBoletim, importarBoletimManual } from "@/actions/admin-cotacoes.actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -70,6 +70,38 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
     router.refresh();
   }
 
+  async function apagar() {
+    const central = centrais.find((c) => c.code === centralCode);
+    /*
+      Confirmação nativa, e com os DOIS dados no texto.
+
+      Apagar cotação é irreversível e afeta todos os clientes daquela praça. A
+      pergunta precisa repetir qual praça e qual dia, porque o erro provável não
+      é clicar sem querer — é clicar com a central errada selecionada, que é
+      exatamente o engano que trouxe o operador a esta tela.
+    */
+    const ok = window.confirm(
+      `Apagar o boletim de ${central?.name ?? centralCode} do dia ` +
+        `${quoteDate.split("-").reverse().join("/")}?\n\n` +
+        `Isso remove as cotações desse dia para todos os clientes dessa praça.`,
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    const res = await apagarBoletim({ centralCode, quoteDate });
+    setBusy(false);
+    if (!res.ok) {
+      toast.error(res.error.message);
+      return;
+    }
+    toast.success(
+      res.data.cotacoesApagadas === 0
+        ? "Não havia boletim dessa central nessa data."
+        : `${res.data.cotacoesApagadas} cotações apagadas.`,
+    );
+    router.refresh();
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <div className="grid gap-3 sm:grid-cols-2">
@@ -132,6 +164,34 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
         {busy && <Loader2 className="animate-spin" />}
         Importar boletim
       </Button>
+
+      {/*
+        O desfazer, e ele fica aqui de propósito: na mesma tela, com a mesma
+        central e a mesma data já preenchidas.
+
+        `gravar` sobrescreve (ON CONFLICT DO UPDATE), e toda leitura do cliente
+        parte de MAX(quoteDate) — então um boletim colado na praça errada, ou com
+        a coluna de preço trocada, era o preço oficial daquela praça até chegar um
+        boletim com data POSTERIOR. Numa praça manual isso não chega sozinho.
+        Antes disto existir, corrigir exigia SQL na produção.
+      */}
+      <div className="flex flex-col gap-2 border-t pt-4">
+        <span className="text-sm font-medium">Apagar o boletim desta central nesta data</span>
+        <span className="text-xs text-muted-foreground">
+          Use quando o boletim entrou errado — praça trocada, colunas invertidas, data
+          errada. O preço volta a ser o do boletim anterior. Não dá para desfazer.
+        </span>
+        <Button
+          type="button"
+          variant="destructive"
+          className="self-start"
+          disabled={busy || !centralCode}
+          onClick={apagar}
+        >
+          {busy && <Loader2 className="animate-spin" />}
+          Apagar boletim de {quoteDate.split("-").reverse().join("/")}
+        </Button>
+      </div>
     </div>
   );
 }

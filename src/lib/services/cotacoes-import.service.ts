@@ -218,6 +218,51 @@ export const CotacoesImportService = {
   },
 
   /**
+   * Apaga o boletim de uma praça em UMA data. O desfazer que faltava.
+   *
+   * Por que isto precisa existir, e por que a falta doía mais do que parecia:
+   * `gravar` termina em `ON CONFLICT DO UPDATE`, então é primitiva de
+   * SOBRESCRITA. Um boletim colado com a coluna errada, ou com o preço de uma
+   * praça no código de outra, ficava gravado — e como toda leitura parte de
+   * `MAX(quoteDate)`, o jeito de "corrigir" era esperar um boletim com data
+   * posterior. Numa praça manual (57 das 66 do catálogo) isso não acontece
+   * sozinho: o dado errado era o preço oficial daquela praça para todos os
+   * clientes dela, indefinidamente, e a única saída era SQL na produção.
+   *
+   * Só o super-admin chega aqui. Apaga as cotações daquele dia e as execuções de
+   * importação daquele dia — as duas, porque deixar a run para trás faria
+   * `/admin/cotacoes` continuar afirmando "importado com sucesso" para um dia que
+   * não tem mais preço nenhum.
+   *
+   * NÃO apaga `ceasa_products`: o catálogo é global e compartilhado entre praças
+   * e datas, então remover um produto por causa de um boletim ruim derrubaria os
+   * vínculos que outros clientes fizeram com ele. Produto que só existiu naquele
+   * boletim fica no catálogo sem cotação, que é inerte — `getTelaDeVinculo` só
+   * oferece o que a praça de fato cota.
+   */
+  async apagarBoletim(centralCode: string, quoteDate: Date) {
+    // A data chega da tela como início do dia no fuso do app; a coluna é
+    // `@db.Date`, e é assim que `gravar` normaliza. Sem isto, um fuso negativo
+    // apagaria o dia errado.
+    const dia = new Date(
+      Date.UTC(quoteDate.getUTCFullYear(), quoteDate.getUTCMonth(), quoteDate.getUTCDate()),
+    );
+
+    const cotacoes = await prisma.ceasaQuote.deleteMany({
+      where: { centralCode, quoteDate: dia },
+    });
+    const execucoes = await prisma.ceasaImportRun.deleteMany({
+      where: { centralCode, quoteDate: dia },
+    });
+
+    logger.warn(
+      { centralCode, quoteDate: dia.toISOString().slice(0, 10), cotacoes: cotacoes.count },
+      "Boletim de cotações APAGADO",
+    );
+    return { cotacoesApagadas: cotacoes.count, execucoesApagadas: execucoes.count };
+  },
+
+  /**
    * Importa o boletim de UMA central.
    *
    * `fonteInjetada` existe para o teste: injetar uma fonte falsa é mais honesto

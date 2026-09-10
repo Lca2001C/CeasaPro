@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Bell, BellOff, Loader2 } from "lucide-react";
 import { removerAlertaDeCotacao, salvarAlertaDeCotacao } from "@/actions/cotacoes.actions";
 import { VARIACAO_SUGERIDA } from "@/lib/cotacoes/alerta";
+import { formatBRL } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,10 +28,16 @@ export function AlertaForm({
   ceasaProductId,
   unit,
   atual,
+  sugestao,
 }: {
   ceasaProductId: string;
   unit: string;
   atual: { variacaoMinima: string; precoTeto: string | null; precoPiso: string | null } | null;
+  /**
+   * Teto e piso propostos a partir da média do período, com quantos boletins
+   * essa média resume. Ausente quando não há série suficiente.
+   */
+  sugestao?: { teto: number; piso: number; amostras: number } | null;
 }) {
   const router = useRouter();
   const [aberto, setAberto] = useState(false);
@@ -163,6 +170,43 @@ export function AlertaForm({
           )}
         </div>
       </div>
+
+      {/*
+        Sugestão de teto e piso a partir da MÉDIA do período que a pessoa está
+        olhando — com um botão, nunca preenchida sozinha.
+
+        Os dois campos são opcionais e ficavam vazios porque ninguém tem intuição
+        para eles: "R$ 5,00 é caro para a caixa de tomate?" depende do mês, da
+        safra e da praça. A média dos boletins responde isso melhor que qualquer
+        chute, e é um dado que esta tela já tem na mão.
+
+        O número de boletins vai junto de propósito. Uma média de três
+        publicações não é a mesma coisa que uma de noventa, e quem decide se
+        confia nela é quem vende — não a tela.
+      */}
+      {sugestao && (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border bg-muted/40 p-2">
+          <span className="text-xs text-muted-foreground">
+            Pela média deste período: teto {formatBRL(sugestao.teto)}, piso{" "}
+            {formatBRL(sugestao.piso)}{" "}
+            <span className="text-muted-foreground/70">
+              ({sugestao.amostras} {sugestao.amostras === 1 ? "boletim" : "boletins"})
+            </span>
+          </span>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="ml-auto"
+            onClick={() => {
+              setTeto(String(sugestao.teto));
+              setPiso(String(sugestao.piso));
+            }}
+          >
+            Usar
+          </Button>
+        </div>
+      )}
 
       {/*
         A ressalva vai junto do botão, e não num rodapé que ninguém lê: o aviso

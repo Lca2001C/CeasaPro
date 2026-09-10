@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { Prisma } from "@prisma/client";
 import {
+  FOLGA_DO_LIMITE_SUGERIDO,
   VARIACAO_MAXIMA_ACEITA,
   VARIACAO_MINIMA_ACEITA,
   avaliarAlerta,
   frase,
+  limitesSugeridos,
 } from "@/lib/cotacoes/alerta";
 
 const dec = (v: string) => new Prisma.Decimal(v);
@@ -103,6 +105,57 @@ describe("avaliarAlerta — teto e piso", () => {
     const r = avaliarAlerta(config({ precoTeto: 1 }), { refPrice: null, anterior: 10 });
     expect(r.motivos).toEqual([]);
     expect(r.variacao).toBeNull();
+  });
+});
+
+describe("limitesSugeridos", () => {
+  it("propõe teto acima e piso abaixo da média", () => {
+    // 15% de folga: R$ 10,00 de média → teto 11,50, piso 8,50.
+    expect(limitesSugeridos(10)).toEqual({ teto: 11.5, piso: 8.5 });
+  });
+
+  it("arredonda para centavos, que é o que o campo aceita", () => {
+    // 4,33 × 1,15 = 4,9795 → 4,98; × 0,85 = 3,6805 → 3,68.
+    expect(limitesSugeridos(dec("4.33"))).toEqual({ teto: 4.98, piso: 3.68 });
+  });
+
+  it("aceita Decimal, que é como a média chega do banco", () => {
+    expect(limitesSugeridos(dec("20.00"))).toEqual({ teto: 23, piso: 17 });
+  });
+
+  it("média ausente ou não positiva não vira sugestão", () => {
+    /*
+      Zero aqui seria pior que nada: um teto de R$ 0,00 é ignorado por
+      `avaliarAlerta` (limite não positivo não dispara), então a tela ofereceria
+      um botão que grava um alerta que nunca toca — sem nada explicando.
+    */
+    expect(limitesSugeridos(null)).toBeNull();
+    expect(limitesSugeridos(undefined)).toBeNull();
+    expect(limitesSugeridos(0)).toBeNull();
+    expect(limitesSugeridos(-5)).toBeNull();
+  });
+
+  it("a folga é a constante exportada, não um número solto na tela", () => {
+    // Se alguém mexer na folga, este teste diz onde a decisão mora.
+    expect(FOLGA_DO_LIMITE_SUGERIDO).toBe(0.15);
+    const m = 100;
+    /*
+      O arredondamento é conferido, não contornado: `100 * 1.15` em ponto
+      flutuante é 114.99999999999999, e é por isso que a função arredonda. Sem o
+      arredondamento, o campo do formulário receberia esse valor e o cliente
+      veria "R$ 114,99999999999999" no teto do alerta.
+    */
+    expect(m * (1 + FOLGA_DO_LIMITE_SUGERIDO)).not.toBe(115);
+    expect(limitesSugeridos(m)!.teto).toBe(115);
+  });
+
+  it("o piso sugerido é sempre MENOR que o teto — a regra que o Zod cobra", () => {
+    // `salvarAlertaSchema` recusa piso >= teto. Uma sugestão que caísse nessa
+    // regra faria o botão "Usar" produzir um formulário que não salva.
+    for (const media of [0.07, 1, 4.33, 85, 9999.99]) {
+      const l = limitesSugeridos(media)!;
+      expect(l.piso).toBeLessThan(l.teto);
+    }
   });
 });
 

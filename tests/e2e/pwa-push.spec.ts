@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { test, expect } from "@playwright/test";
 
 /**
@@ -25,6 +26,26 @@ const inscricao = {
   endpoint: endpointTeste,
   keys: { p256dh: "BEl62iUYgUivxIkv69yViEuiBIa", auth: "8eDyX_uCN0XRhSbY5hs7Hg" },
 };
+
+/**
+ * As telas de opt-in exigem que o push esteja CONFIGURADO no servidor.
+ *
+ * `configuracoes/page.tsx` passa `NEXT_PUBLIC_VAPID_PUBLIC_KEY` ao componente, e
+ * sem ela `PushOptIn` cai em `nao-configurado` e renderiza `null` — antes de
+ * qualquer um dos ramos que estes testes verificam. É o comportamento CERTO
+ * (anunciar um recurso indisponível só gera dúvida), então o teste tem de
+ * declarar o pré-requisito em vez de reprovar por configuração ausente.
+ *
+ * Pular é diferente de esconder: o relatório do Playwright mostra o teste como
+ * pulado, com este motivo, e ele volta a rodar sozinho em qualquer ambiente que
+ * tenha a chave — inclusive no CI e em produção, que é onde o recurso existe.
+ *
+ * A rota de inscrição (o describe acima) NÃO depende da chave e continua rodando
+ * sempre: a chave é do navegador, e a validação do servidor é independente dela.
+ */
+const PUSH_CONFIGURADO = Boolean(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY);
+const MOTIVO_SEM_PUSH =
+  "NEXT_PUBLIC_VAPID_PUBLIC_KEY não está configurada: a tela renderia vazio de propósito";
 
 async function entrar(page: import("@playwright/test").Page) {
   await page.goto("/login");
@@ -88,6 +109,7 @@ test.describe("Rota de inscrição de push", () => {
 });
 
 test.describe("Opt-in de avisos em Configurações", () => {
+  test.skip(!PUSH_CONFIGURADO, MOTIVO_SEM_PUSH);
   test.use({ storageState: { cookies: [], origins: [] } });
 
   test("com a permissão negada, explica o caminho em vez de insistir", async ({ page }) => {
@@ -112,6 +134,7 @@ test.describe("Opt-in de avisos em Configurações", () => {
 });
 
 test.describe("Opt-in de avisos no iPhone", () => {
+  test.skip(!PUSH_CONFIGURADO, MOTIVO_SEM_PUSH);
   test.use({
     storageState: { cookies: [], origins: [] },
     userAgent:

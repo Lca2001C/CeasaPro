@@ -23,6 +23,7 @@ import { ContasAPagarCard } from "@/components/data/contas-a-pagar-card";
 import { CompletarCadastroCard } from "@/components/data/completar-cadastro-card";
 import { CotacoesInteresseCard } from "@/components/data/cotacoes-interesse-card";
 import { CotacoesAlertasService } from "@/lib/services/cotacoes-alertas.service";
+import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { ConfigService } from "@/lib/services/config.service";
 import { startOfDayTz } from "@/lib/tz";
@@ -39,7 +40,8 @@ export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const { tenantId, session } = await requireTenant();
-  const [s, avisos, contas, proximas, cadastro, cotacoes] = await Promise.all([
+  const temCotacoes = isModuleEnabled(session.modules, "cotacoes");
+  const [s, avisos, contas, proximas, cadastro, cotacoes, comparacao] = await Promise.all([
     DashboardService.getSummary(tenantId, session.modules),
     AvisosService.get(tenantId, session.modules),
     // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
@@ -54,9 +56,9 @@ export default async function DashboardPage() {
       fail-closed (sem a lista, responde não), então o custo do esquecimento
       seria mostrar demais, nunca de menos.
     */
-    isModuleEnabled(session.modules, "cotacoes")
-      ? CotacoesAlertasService.getInteresses(tenantId)
-      : null,
+    temCotacoes ? CotacoesAlertasService.getInteresses(tenantId) : null,
+    // A última compra contra o boletim. Mesmo gate, mesma razão.
+    temCotacoes ? CotacoesService.comprasAcimaDoBoletim(tenantId) : null,
   ]);
   const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
@@ -196,7 +198,11 @@ export default async function DashboardPage() {
           toque significa, na prática, que ele vai sem saber. Não sobe acima dos
           botões porque a frente de caixa continua sendo a ação principal. */}
       {cotacoes && cotacoes.itens.length > 0 && (
-        <CotacoesInteresseCard interesses={cotacoes} agora={new Date()} />
+        <CotacoesInteresseCard
+          interesses={cotacoes}
+          agora={new Date()}
+          comparacao={comparacao ?? undefined}
+        />
       )}
 
       <SecaoRecolhivel
@@ -306,6 +312,29 @@ export default async function DashboardPage() {
                         <p className="text-xs text-muted-foreground">
                           Último movimento: {formatDate(row.lastMovementAt)}
                         </p>
+                        {/*
+                          Estoque parado E preço caindo no boletim: é a hora de
+                          queimar, e é a conclusão que o comerciante tiraria se
+                          tivesse as duas informações na mesma linha. Cruzamento
+                          em memória, sem consulta nova — o Início já carregou as
+                          cotações de interesse acima.
+
+                          A FRASE carrega o sentido, não a cor. `SeloDeVariacao`
+                          pinta alta de vermelho de propósito, porque na tela de
+                          cotações o boletim é o preço que o dono do box PAGA;
+                          para estoque que ele já tem na mão, a leitura se
+                          inverte, e cor sozinha diria o contrário do que é.
+                        */}
+                        {quedaDoBoletim(row.productId, cotacoes) !== null && (
+                          <p className="text-xs text-warning">
+                            Boletim caiu{" "}
+                            {Math.abs(quedaDoBoletim(row.productId, cotacoes)!).toLocaleString(
+                              "pt-BR",
+                              { maximumFractionDigits: 0 },
+                            )}
+                            % — pode ser hora de queimar
+                          </p>
+                        )}
                       </div>
                       <span className="shrink-0 text-sm font-semibold tabular-nums">
                         {formatQty(row.quantity)}
@@ -320,6 +349,30 @@ export default async function DashboardPage() {
       </SecaoRecolhivel>
     </div>
   );
+}
+
+/**
+ * Quanto o boletim CAIU para este produto do cliente, ou `null`.
+ *
+ * `null` cobre três casos que são o mesmo para a tela: o produto não está
+ * vinculado, o módulo não foi contratado, ou o preço não caiu. Só queda
+ * interessa aqui — estoque parado com preço subindo é boa notícia, e não precisa
+ * de linha nenhuma avisando.
+ *
+ * O limiar existe pela mesma razão de `LIMIAR_DE_ESTABILIDADE` em `variacao.ts`:
+ * o boletim publica centavos, e "caiu 0,4%" ao lado de "hora de queimar" ensina
+ * a ignorar o aviso.
+ */
+const QUEDA_QUE_INTERESSA = 5;
+
+function quedaDoBoletim(
+  productId: string,
+  cotacoes: Awaited<ReturnType<typeof CotacoesAlertasService.getInteresses>>,
+): number | null {
+  if (!cotacoes) return null;
+  const item = cotacoes.itens.find((i) => i.meuProdutoId === productId);
+  if (!item || item.variacao === null) return null;
+  return item.variacao <= -QUEDA_QUE_INTERESSA ? item.variacao : null;
 }
 
 function ProductList({

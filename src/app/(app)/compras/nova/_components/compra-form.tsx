@@ -6,7 +6,8 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, formatDateOnly } from "@/lib/format";
+import type { ReferenciaDoBoletim } from "@/lib/services/cotacoes.service";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -28,9 +29,15 @@ interface Item {
 export function CompraForm({
   produtos,
   fornecedores,
+  ultimosPagos = {},
+  boletim = {},
 }: {
   produtos: Option[];
   fornecedores: Option[];
+  /** Último preço NEGOCIADO por produto (sem frete) — ver `ultimosPrecosPagos`. */
+  ultimosPagos?: Record<string, { unitPrice: number; purchaseDate: string | Date }>;
+  /** Boletim do produto vinculado. Vazio quando o plano não inclui Cotações. */
+  boletim?: Record<string, ReferenciaDoBoletim>;
 }) {
   const router = useRouter();
   const [supplierId, setSupplierId] = useState("");
@@ -167,6 +174,10 @@ export function CompraForm({
                 />
               </div>
             </div>
+            <Referencia
+              ultimo={ultimosPagos[it.productId]}
+              boletim={boletim[it.productId]}
+            />
           </Card>
         ))}
         <Button type="button" variant="outline" onClick={addItem}>
@@ -277,5 +288,57 @@ export function CompraForm({
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * Duas referências debaixo do preço, e nada além disso.
+ *
+ * O que o comerciante fazia de cabeça, ou não fazia: lembrar quanto pagou da
+ * última vez e quanto a praça está publicando. As duas coisas ficam ao lado do
+ * campo, no momento da decisão.
+ *
+ * Três decisões de produto aqui, todas do tipo "o que NÃO fazer":
+ *
+ *  - **Não preenche o campo.** Não há botão "usar". O boletim é preço de
+ *    mercado na praça; o que a pessoa paga é negociado no balcão. Preencher o
+ *    custo com o boletim gravaria um custo que ninguém pagou, e esse número
+ *    entra no CMV, no lucro e na margem de todos os relatórios.
+ *  - **Não calcula diferença.** "Você pagou 8% acima" só faz sentido se as duas
+ *    pontas estiverem na mesma unidade, e não estão: o cliente compra por caixa
+ *    ou por quilo, e o boletim publica na embalagem dele. A embalagem vai
+ *    SEMPRE colada ao preço, e a conta fica com quem sabe qual é qual.
+ *  - **"sem frete" é escrito.** O último pago é o `unitPrice`, sem o rateio do
+ *    caminhão. Sem essa palavra, quem compara com o boletim conclui que pagou
+ *    caro quando a diferença é o transporte.
+ */
+function Referencia({
+  ultimo,
+  boletim,
+}: {
+  ultimo?: { unitPrice: number; purchaseDate: string | Date };
+  boletim?: ReferenciaDoBoletim;
+}) {
+  if (!ultimo && !boletim) return null;
+  return (
+    <p className="flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
+      {ultimo && (
+        <span>
+          último pago{" "}
+          <span className="font-medium tabular-nums">{formatBRL(ultimo.unitPrice)}</span> (sem
+          frete)
+        </span>
+      )}
+      {boletim && (
+        <span>
+          boletim de {formatDateOnly(boletim.quoteDate)}{" "}
+          <span className="font-medium tabular-nums">{formatBRL(boletim.refPrice)}</span>
+          {boletim.unit ? ` por ${boletim.unit}` : ""}
+          {boletim.precoPorKg !== null && boletim.unit.trim().toUpperCase() !== "KG"
+            ? ` (≈ ${formatBRL(boletim.precoPorKg)}/kg)`
+            : ""}
+        </span>
+      )}
+    </p>
   );
 }

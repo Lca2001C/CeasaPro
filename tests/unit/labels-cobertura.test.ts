@@ -49,6 +49,7 @@ const PARES: Record<string, string> = {
   TENANT_STATUS_LABELS: "TenantStatus",
   CEASA_IMPORT_STATUS_LABELS: "CeasaImportStatus",
   CEASA_SERIE_LABELS: "CeasaSerie",
+  BOLETIM_ENVIADO_STATUS_LABELS: "BoletimEnviadoStatus",
 };
 
 /**

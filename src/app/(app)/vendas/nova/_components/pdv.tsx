@@ -26,6 +26,9 @@ import { apiPost } from "@/lib/api-client";
 import { formatBRL, formatQty } from "@/lib/format";
 import { RECIPIENT_TYPE_LABELS, SALE_UNIT_LABELS, toOptions } from "@/lib/labels";
 import { nivelEstoque, passaDoEstoque, saldoApos } from "@/lib/estoque/nivel";
+import { embalagemCasaComVenda } from "@/lib/cotacoes/embalagem";
+import type { ReferenciaDoBoletim } from "@/lib/services/cotacoes.service";
+import type { SaleUnit } from "@prisma/client";
 import {
   calcularTotaisVenda,
   centsParaNumero,
@@ -121,6 +124,8 @@ export function Pdv({
   estoquePorProduto = {},
   produtoInicial,
   ultimaVenda = null,
+  boletim = {},
+  ultimosPagos = {},
 }: {
   produtos: Produto[];
   caixasLimpas: number;
@@ -143,6 +148,16 @@ export function Pdv({
     customerName: string | null;
     itens: { productId: string; name: string; saleUnit: string; quantity: number; unitPrice: number }[];
   } | null;
+  /**
+   * Boletim do produto vinculado. Vazio quando o plano não inclui Cotações.
+   *
+   * SOMENTE LEITURA, e nunca entra em `precoSugerido`. O boletim é o preço que
+   * o dono do box PAGA na praça; o preço do balcão é dele. Um módulo de consulta
+   * mexendo no valor de uma venda seria trocar informação por decisão.
+   */
+  boletim?: Record<string, ReferenciaDoBoletim>;
+  /** Último preço pago por produto (sem frete), para a margem ficar visível. */
+  ultimosPagos?: Record<string, { unitPrice: number; purchaseDate: string | Date }>;
 }) {
   const router = useRouter();
   const online = useOnline();
@@ -835,6 +850,27 @@ export function Pdv({
                   </div>
                 </div>
 
+                {/*
+                  Quanto custou e quanto a praça publica — a margem visível na
+                  hora de dizer o preço.
+
+                  Fica FORA da grade de três colunas de propósito. Dentro dela, o
+                  campo de preço vive na coluna flexível (`minmax(0,1fr)`), que a
+                  partir de 640px divide a linha com quantidade e total; um texto
+                  ali brigaria por largura com o campo que o operador precisa
+                  acertar com a mão suja. Aqui embaixo ele tem o cartão inteiro.
+
+                  Nunca altera `precoSugerido`, e o preço do boletim nunca sai
+                  como um valor solto: vai sempre com a palavra "boletim" e com a
+                  embalagem colada. Um "R$ 4,20" órfão ao lado do campo de preço
+                  seria lido como o preço a cobrar.
+                */}
+                <ReferenciaDeMercado
+                  saleUnit={i.saleUnit}
+                  pago={ultimosPagos[i.productId]}
+                  boletim={boletim[i.productId]}
+                />
+
                 {i.unitPrice <= 0 && (
                   <p className="mt-1.5 flex items-center gap-1 text-xs font-medium text-warning">
                     <AlertTriangle className="size-3.5 shrink-0" /> Sem preço — a venda sairia
@@ -1273,3 +1309,56 @@ export function Pdv({
     </div>
   );
 }
+
+/**
+ * O custo e o boletim, embaixo da linha do carrinho.
+ *
+ * Responde "posso cobrar isso?" com os dois números que o dono do box teria de
+ * lembrar de cabeça: o que ele pagou e o que a praça está publicando. Não sugere
+ * preço, não calcula margem, não escreve porcentagem — a decisão do balcão é
+ * dele, e uma porcentagem aqui viraria alvo.
+ *
+ * O boletim só aparece quando a embalagem dele fala da mesma unidade que o
+ * produto é vendido. Um "R$ 4,20 por KG" ao lado do preço de um produto vendido
+ * por CAIXA está certo e é ilegível no balcão: o operador vê o número, digita
+ * por cima e vende a caixa a R$ 4,20.
+ */
+function ReferenciaDeMercado({
+  saleUnit,
+  pago,
+  boletim,
+}: {
+  saleUnit: string;
+  pago?: { unitPrice: number; purchaseDate: string | Date };
+  boletim?: ReferenciaDoBoletim;
+}) {
+  const comparavel =
+    boletim && ehSaleUnit(saleUnit) && embalagemCasaComVenda(boletim.unit, saleUnit);
+  if (!pago && !comparavel) return null;
+
+  return (
+    <p
+      data-testid="referencia-de-mercado"
+      className="mt-1.5 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground"
+    >
+      {pago && (
+        <span>
+          comprou a <span className="tabular-nums">{formatBRL(pago.unitPrice)}</span> (sem frete)
+        </span>
+      )}
+      {comparavel && (
+        <span>
+          boletim <span className="tabular-nums">{formatBRL(boletim.refPrice)}</span> por{" "}
+          {boletim.unit}
+        </span>
+      )}
+    </p>
+  );
+}
+
+/** `CartItem.saleUnit` é `string`; só o enum serve para casar embalagem. */
+function ehSaleUnit(v: string): v is SaleUnit {
+  return SALE_UNITS.includes(v as SaleUnit);
+}
+
+const SALE_UNITS: SaleUnit[] = ["CAIXA", "KG", "SACO", "BANDEJA", "UNIDADE"];

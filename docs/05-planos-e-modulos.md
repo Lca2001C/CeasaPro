@@ -13,7 +13,10 @@ Dashboard, produtos, fornecedores, compras, vendas/PDV, fiado, estoque, despesas
 | `caixas` | Caixas plásticas |
 | `higienizacao` | Higienização |
 | `embalagens` | Venda de embalagens |
+| `cotacoes` | Cotações do CEASA (boletim da praça, vínculo por produto e embalagem, histórico, comparativo entre praças, alertas de flutuação) |
 | `relatorios_avancados` | Relatórios avançados (lucro por produto, mais vendidos, inadimplentes, fornecedores, fluxo de caixa, caixas, higienização, embalagens) |
+
+`cotacoes` é o único opcional que aparece **fora** do seu próprio prefixo de rota: a referência de preço entra na tela de Compra, no PDV e no Início, que são de núcleo. Nessas três o gate não é o `pathPrefixes` do proxy — é `isModuleEnabled(session.modules, "cotacoes")` no servidor, antes de consultar o boletim. Quem não contratou não paga a consulta nem vê o dado.
 
 Fonte única da verdade: [`src/lib/plan/modules.ts`](../src/lib/plan/modules.ts) (registry + funções `planModules`, `moduleForPath`, `isModuleEnabled`, `requireModule`).
 

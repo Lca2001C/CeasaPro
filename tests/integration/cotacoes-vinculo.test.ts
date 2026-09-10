@@ -255,6 +255,395 @@ describe("tela de vínculo", () => {
   });
 });
 
+/**
+ * A EMBALAGEM no vínculo.
+ *
+ * O boletim cota o mesmo item em embalagens de ordem de grandeza diferente — a
+ * batata sai por quilo e em caixa de 20 kg na mesma publicação. Sem embalagem no
+ * vínculo, TODOS os cartões daquele item se marcavam como "Você vende", e a
+ * seção "Produtos que você vende" vinha com o dobro de linhas que o cliente
+ * reconhece como dele.
+ */
+describe("embalagem do vínculo", () => {
+  let batata = "";
+  let batataDoCliente = "";
+  let outroTenant = "";
+
+  beforeAll(async () => {
+    batata = await criarProdutoDoBoletim(`BATATA LISA ${uniq()}`);
+    await cotar(batata, "KG", "4.20");
+    await cotar(batata, "CX 20 KG", "84.00");
+
+    outroTenant = await createTestTenant(`Empresa Embalagem ${uniq()}`);
+    tenants.push(outroTenant);
+    await prisma.tenant.update({
+      where: { id: outroTenant },
+      data: { ceasaCentralCode: CENTRAL },
+    });
+    const p = await prisma.product.create({
+      data: { tenantId: outroTenant, name: "Batata", saleUnit: "CAIXA" },
+    });
+    batataDoCliente = p.id;
+  });
+
+  it("vínculo na caixa marca a caixa e NÃO marca o quilo", async () => {
+    await CotacoesService.vincular(
+      { productId: batataDoCliente, ceasaProductId: batata, unit: "CX 20 KG" },
+      makeCtx(outroTenant),
+    );
+
+    const painel = await CotacoesService.getPainel(outroTenant);
+    const daBatata = painel.linhas.filter((l) => l.ceasaProductId === batata);
+    const caixa = daBatata.find((l) => l.unit === "CX 20 KG")!;
+    const quilo = daBatata.find((l) => l.unit === "KG")!;
+
+    expect(caixa.vinculo).toBe("exato");
+    expect(caixa.minhaEmbalagem).toBe("CX 20 KG");
+
+    /*
+      A linha do quilo não é destaque, mas também não é anônima: ela continua
+      dizendo que este item é do cliente e em que embalagem ele o compra. É o que
+      responde "minha batata está a R$ 84 a caixa E a R$ 4,20 o quilo".
+    */
+    expect(quilo.vinculo).toBe("outra_embalagem");
+    expect(quilo.minhaEmbalagem).toBe("CX 20 KG");
+  });
+
+  it("vínculo SEM embalagem escolhida vale para todas — é o que os antigos herdaram", async () => {
+    await CotacoesService.vincular(
+      { productId: batataDoCliente, ceasaProductId: batata, unit: null },
+      makeCtx(outroTenant),
+    );
+
+    const painel = await CotacoesService.getPainel(outroTenant);
+    const daBatata = painel.linhas.filter((l) => l.ceasaProductId === batata);
+    expect(daBatata).toHaveLength(2);
+    expect(daBatata.every((l) => l.vinculo === "exato")).toBe(true);
+    expect(daBatata.every((l) => l.minhaEmbalagem === null)).toBe(true);
+  });
+
+  it("trocar de item NÃO herda a embalagem do vínculo anterior", async () => {
+    // `undefined` no update do Prisma significa "não mexa": sem passar `null`
+    // explicitamente, o vínculo novo ficaria com a embalagem do antigo — que pode
+    // não existir no item novo, e aí o produto sairia da tela sem ninguém pedir.
+    await CotacoesService.vincular(
+      { productId: batataDoCliente, ceasaProductId: batata, unit: "CX 20 KG" },
+      makeCtx(outroTenant),
+    );
+    await CotacoesService.vincular(
+      { productId: batataDoCliente, ceasaProductId: batata },
+      makeCtx(outroTenant),
+    );
+    const link = await prisma.tenantCeasaLink.findFirstOrThrow({
+      where: { tenantId: outroTenant, productId: batataDoCliente },
+    });
+    expect(link.unit).toBeNull();
+  });
+
+  it("recusa embalagem que a praça não publica", async () => {
+    await expect(
+      CotacoesService.vincular(
+        { productId: batataDoCliente, ceasaProductId: batata, unit: "SC 60 KG" },
+        makeCtx(outroTenant),
+      ),
+    ).rejects.toThrow(/não cota este produto nesta embalagem/i);
+  });
+
+  /**
+   * Este reprova sem a correção: `vincular` conferia só "o produto é meu" e "o
+   * item existe no catálogo GLOBAL". A auditoria de 07/09 corrigiu isso na TELA,
+   * mas a Server Action é um POST e não passa pela tela.
+   */
+  it("recusa item de outra taxonomia, que nunca teria preço nesta praça", async () => {
+    const nacional = await prisma.ceasaProduct.create({
+      data: { name: `CEBOLA NACIONAL ${uniq()}`, slug: `cebola-nac-${uniq()}`, serie: "NACIONAL" },
+    });
+    ceasaProdutos.push(nacional.id);
+
+    await expect(
+      CotacoesService.vincular(
+        { productId: batataDoCliente, ceasaProductId: nacional.id },
+        makeCtx(outroTenant),
+      ),
+    ).rejects.toThrow(/não é cotado pela sua central/i);
+  });
+
+  /**
+   * Também reprova sem a correção, e o defeito é ANTERIOR à embalagem.
+   *
+   * A chave única é (tenantId, productId), então dois produtos meus podem
+   * apontar para o mesmo item do boletim — o schema documenta isso. Com LEFT
+   * JOIN comum, esses dois vínculos multiplicavam a linha da cotação: dois
+   * cartões idênticos na tela e chaves React duplicadas na grade.
+   */
+  it("dois produtos meus no mesmo item do boletim geram UMA linha por embalagem", async () => {
+    const segundo = await prisma.product.create({
+      data: { tenantId: outroTenant, name: "Batata em caixa", saleUnit: "CAIXA" },
+    });
+    await CotacoesService.vincular(
+      { productId: batataDoCliente, ceasaProductId: batata, unit: "KG" },
+      makeCtx(outroTenant),
+    );
+    await CotacoesService.vincular(
+      { productId: segundo.id, ceasaProductId: batata, unit: "CX 20 KG" },
+      makeCtx(outroTenant),
+    );
+
+    const painel = await CotacoesService.getPainel(outroTenant);
+    const daBatata = painel.linhas.filter((l) => l.ceasaProductId === batata);
+    expect(daBatata).toHaveLength(2);
+
+    // E cada linha aponta para o produto CERTO, não para um dos dois ao acaso.
+    expect(daBatata.find((l) => l.unit === "KG")!.meuProdutoId).toBe(batataDoCliente);
+    expect(daBatata.find((l) => l.unit === "CX 20 KG")!.meuProdutoId).toBe(segundo.id);
+
+    await CotacoesService.desvincular({ productId: segundo.id }, makeCtx(outroTenant));
+    await prisma.product.delete({ where: { id: segundo.id } });
+  });
+
+  /**
+   * O único jeito de a embalagem no vínculo PIORAR a tela: a praça publica só o
+   * quilo no dia, e o produto de quem escolheu a caixa não está nem em
+   * `semVinculo` (tem vínculo) nem nas linhas (nada casou). Sem aviso, ele
+   * desaparece sem uma palavra.
+   */
+  it("embalagem vinculada que não saiu no boletim é NOMEADA, não sumida", async () => {
+    const soHoje = await criarProdutoDoBoletim(`ALHO ${uniq()}`);
+    await cotar(soHoje, "KG", "30.00");
+    const meuAlho = await prisma.product.create({
+      data: { tenantId: outroTenant, name: "Alho", saleUnit: "KG" },
+    });
+    // Vincula a uma embalagem que existe no histórico mas não no boletim de hoje.
+    await prisma.tenantCeasaLink.create({
+      data: {
+        tenantId: outroTenant,
+        productId: meuAlho.id,
+        ceasaProductId: soHoje,
+        unit: "CX 10 KG",
+      },
+    });
+
+    const painel = await CotacoesService.getPainel(outroTenant);
+    const orfao = painel.vinculosSemCotacao.find((v) => v.produtoId === meuAlho.id);
+    expect(orfao).toBeDefined();
+    expect(orfao!.unit).toBe("CX 10 KG");
+    expect(painel.semVinculo.map((p) => p.id)).not.toContain(meuAlho.id);
+
+    // E o módulo continua sabendo que esta empresa tem vínculos — senão a tela
+    // abriria em "Todos" e a seção verde desapareceria inteira.
+    expect(painel.temVinculo).toBe(true);
+  });
+
+  it("a tela de vínculo oferece as embalagens de cada item, com escore", async () => {
+    const tela = await CotacoesService.getTelaDeVinculo(outroTenant);
+    const item = tela.doBoletim.find((c) => c.id === batata)!;
+    expect(item.unidades).toEqual(["CX 20 KG", "KG"]);
+
+    const semVinculo = tela.produtos.find((p) => p.vinculo === null);
+    if (semVinculo) {
+      for (const s of semVinculo.sugestoes) {
+        expect(typeof s.escore).toBe("number");
+        expect(s.escore).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("trocar de praça devolve os vínculos a 'qualquer embalagem'", async () => {
+    /*
+      `CeasaProduct` é catálogo global justamente para o vínculo sobreviver à
+      troca de central quando o nome coincide — está escrito no schema. A praça
+      nova pode cotar o mesmo item como `CX 18 KG`, e aí a embalagem antiga não
+      casa mais: o vínculo sobreviveria como carcaça. Zerar preserva a garantia.
+    */
+    const migrante = await createTestTenant(`Empresa Migrante ${uniq()}`);
+    tenants.push(migrante);
+    const destino = `MIG${uniq().slice(0, 5)}`.toUpperCase();
+    centraisCriadas.push(destino);
+    await prisma.ceasaCentral.create({
+      data: { code: destino, name: "Destino", city: "Betim", uf: "MG", sourceKey: "manual" },
+    });
+
+    await CotacoesService.escolherCentral({ centralCode: CENTRAL }, makeCtx(migrante));
+    const p = await prisma.product.create({
+      data: { tenantId: migrante, name: "Batata", saleUnit: "CAIXA" },
+    });
+    await CotacoesService.vincular(
+      { productId: p.id, ceasaProductId: batata, unit: "CX 20 KG" },
+      makeCtx(migrante),
+    );
+
+    await CotacoesService.escolherCentral({ centralCode: destino }, makeCtx(migrante));
+
+    const link = await prisma.tenantCeasaLink.findFirstOrThrow({
+      where: { tenantId: migrante, productId: p.id },
+    });
+    expect(link.unit).toBeNull();
+    // O vínculo em si SOBREVIVE — é a propriedade que o schema promete.
+    expect(link.ceasaProductId).toBe(batata);
+  });
+});
+
+describe("quantos produtos sem vínculo já têm nome exato no boletim", () => {
+  let contaTenant = "";
+
+  beforeAll(async () => {
+    contaTenant = await createTestTenant(`Empresa Contagem ${uniq()}`);
+    tenants.push(contaTenant);
+    await prisma.tenant.update({
+      where: { id: contaTenant },
+      data: { ceasaCentralCode: CENTRAL },
+    });
+  });
+
+  it("conta só o nome IDÊNTICO, não o parecido", async () => {
+    /*
+      A distinção é a razão do número existir. "Abobrinha" e "ABOBRINHA" são o
+      mesmo produto — o slug normalizado é igual, e o vínculo sai em um clique.
+      "Tomate" e "TOMATE SALADA LONGA VIDA" compartilham prefixo e NÃO são o
+      mesmo preço: contar esse como "nome exato" seria prometer na tela um clique
+      que na verdade é uma decisão.
+    */
+    const nome = `ABOBRINHA ${uniq()}`.toUpperCase();
+    const doBoletim = await criarProdutoDoBoletim(nome);
+    await cotar(doBoletim, "KG", "3.00");
+
+    // Nome idêntico ao do boletim (a normalização ignora caixa e acento).
+    await prisma.product.create({
+      data: { tenantId: contaTenant, name: nome.toLowerCase(), saleUnit: "KG" },
+    });
+    // Só parecido: prefixo comum com o tomate criado no beforeAll do arquivo.
+    await prisma.product.create({
+      data: { tenantId: contaTenant, name: "Tomate", saleUnit: "CAIXA" },
+    });
+
+    const painel = await CotacoesService.getPainel(contaTenant);
+    expect(painel.semVinculo).toHaveLength(2);
+    expect(painel.semVinculoComNomeIdentico).toBe(1);
+  });
+
+  it("sem boletim, o número é zero em vez de uma promessa", async () => {
+    const semBoletim = await createTestTenant(`Empresa Sem Boletim ${uniq()}`);
+    tenants.push(semBoletim);
+    const vazia = `VAZ${uniq().slice(0, 5)}`.toUpperCase();
+    centraisCriadas.push(vazia);
+    await prisma.ceasaCentral.create({
+      data: { code: vazia, name: "Praca Vazia", city: "Ipatinga", uf: "MG", sourceKey: "manual" },
+    });
+    await prisma.tenant.update({
+      where: { id: semBoletim },
+      data: { ceasaCentralCode: vazia },
+    });
+    await prisma.product.create({
+      data: { tenantId: semBoletim, name: "Cebola", saleUnit: "KG" },
+    });
+
+    const painel = await CotacoesService.getPainel(semBoletim);
+    expect(painel.quoteDate).toBeNull();
+    expect(painel.semVinculo).toHaveLength(1);
+    expect(painel.semVinculoComNomeIdentico).toBe(0);
+  });
+});
+
+describe("vínculo em lote", () => {
+  let loteTenant = "";
+  let itemA = "";
+  let itemB = "";
+
+  beforeAll(async () => {
+    loteTenant = await createTestTenant(`Empresa Lote ${uniq()}`);
+    tenants.push(loteTenant);
+    await prisma.tenant.update({
+      where: { id: loteTenant },
+      data: { ceasaCentralCode: CENTRAL },
+    });
+    itemA = await criarProdutoDoBoletim(`CENOURA ${uniq()}`);
+    itemB = await criarProdutoDoBoletim(`BETERRABA ${uniq()}`);
+    await cotar(itemA, "KG", "3.50");
+    await cotar(itemB, "KG", "2.80");
+  });
+
+  it("grava a lista inteira numa vez", async () => {
+    const p1 = await prisma.product.create({
+      data: { tenantId: loteTenant, name: "Cenoura", saleUnit: "KG" },
+    });
+    const p2 = await prisma.product.create({
+      data: { tenantId: loteTenant, name: "Beterraba", saleUnit: "KG" },
+    });
+
+    const r = await CotacoesService.vincularEmLote(
+      {
+        itens: [
+          { productId: p1.id, ceasaProductId: itemA, unit: "KG" },
+          { productId: p2.id, ceasaProductId: itemB, unit: null },
+        ],
+      },
+      makeCtx(loteTenant),
+    );
+    expect(r.vinculados).toBe(2);
+
+    const links = await prisma.tenantCeasaLink.findMany({ where: { tenantId: loteTenant } });
+    expect(links).toHaveLength(2);
+    expect(links.find((l) => l.productId === p1.id)!.unit).toBe("KG");
+    expect(links.find((l) => l.productId === p2.id)!.unit).toBeNull();
+  });
+
+  it("um item inválido recusa o LOTE INTEIRO, sem gravar metade", async () => {
+    /*
+      Meio-lote gravado é pior que erro: o cliente confirmou 3 e não tem como
+      saber onde parou. "Confirmei 3, apareceram 2" não tem explicação possível
+      na tela.
+    */
+    const antes = await prisma.tenantCeasaLink.count({ where: { tenantId: loteTenant } });
+    const novo = await prisma.product.create({
+      data: { tenantId: loteTenant, name: "Chuchu do lote", saleUnit: "KG" },
+    });
+
+    await expect(
+      CotacoesService.vincularEmLote(
+        {
+          itens: [
+            { productId: novo.id, ceasaProductId: itemA, unit: "KG" },
+            { productId: novo.id, ceasaProductId: itemB, unit: "EMBALAGEM QUE NAO EXISTE" },
+          ],
+        },
+        makeCtx(loteTenant),
+      ),
+    ).rejects.toThrow(/duas vezes|não cota/i);
+
+    expect(await prisma.tenantCeasaLink.count({ where: { tenantId: loteTenant } })).toBe(antes);
+  });
+
+  it("não vincula produto de outra empresa nem no meio de um lote válido", async () => {
+    const antes = await prisma.tenantCeasaLink.count({ where: { tenantId: loteTenant } });
+    await expect(
+      CotacoesService.vincularEmLote(
+        { itens: [{ productId: produtoA, ceasaProductId: itemA, unit: "KG" }] },
+        makeCtx(loteTenant),
+      ),
+    ).rejects.toThrow(/não encontrado/i);
+    expect(await prisma.tenantCeasaLink.count({ where: { tenantId: loteTenant } })).toBe(antes);
+  });
+
+  it("o lote deixa UM registro de auditoria, não um por produto", async () => {
+    // `/atividades` é a lista que o dono do box lê. Quarenta linhas iguais no
+    // mesmo minuto afogariam a venda e o fiado do dia dele.
+    const p = await prisma.product.create({
+      data: { tenantId: loteTenant, name: "Auditoria do lote", saleUnit: "KG" },
+    });
+    const antes = await prisma.auditLog.count({
+      where: { tenantId: loteTenant, entity: "TenantCeasaLink" },
+    });
+    await CotacoesService.vincularEmLote(
+      { itens: [{ productId: p.id, ceasaProductId: itemA, unit: "KG" }] },
+      makeCtx(loteTenant),
+    );
+    const depois = await prisma.auditLog.count({
+      where: { tenantId: loteTenant, entity: "TenantCeasaLink" },
+    });
+    expect(depois - antes).toBe(1);
+  });
+});
+
 describe("central da empresa", () => {
   it("sem central escolhida, a tela não mostra cotação de ninguém", async () => {
     const semCentral = await createTestTenant(`Empresa Sem Central ${uniq()}`);

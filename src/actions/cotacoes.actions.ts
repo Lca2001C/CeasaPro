@@ -3,11 +3,15 @@
 import { withTenantAction } from "@/lib/http/with-action";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { CotacoesAlertasService } from "@/lib/services/cotacoes-alertas.service";
+import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
+import { parseFormDateTz } from "@/lib/tz";
 import {
   desvincularSchema,
+  enviarBoletimSchema,
   escolherCentralSchema,
   removerAlertaSchema,
   salvarAlertaSchema,
+  vincularEmLoteSchema,
   vincularSchema,
 } from "@/lib/validations/cotacao";
 
@@ -29,6 +33,12 @@ export const vincularCotacao = withTenantAction({
   schema: vincularSchema,
   module: "cotacoes",
   handler: (input, ctx) => CotacoesService.vincular(input, ctx),
+});
+
+export const vincularEmLoteCotacao = withTenantAction({
+  schema: vincularEmLoteSchema,
+  module: "cotacoes",
+  handler: (input, ctx) => CotacoesService.vincularEmLote(input, ctx),
 });
 
 export const desvincularCotacao = withTenantAction({
@@ -57,4 +67,21 @@ export const removerAlertaDeCotacao = withTenantAction({
   schema: removerAlertaSchema,
   module: "cotacoes",
   handler: (input, ctx) => CotacoesAlertasService.remover(input, ctx),
+});
+
+/**
+ * O cliente envia o boletim da praça dele. Vai para uma FILA, não para o ar.
+ *
+ * `parseFormDateTz` é obrigatório para data de `<input type="date">`:
+ * `new Date("2026-09-10")` é meia-noite UTC, que no Brasil é o dia 9 — e o dia
+ * errado num boletim é preço errado.
+ */
+export const enviarBoletimDaPraca = withTenantAction({
+  schema: enviarBoletimSchema,
+  module: "cotacoes",
+  handler: (input, ctx) =>
+    CotacoesEnvioService.enviar(
+      { quoteDate: parseFormDateTz(input.quoteDate), texto: input.texto },
+      ctx,
+    ),
 });

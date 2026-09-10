@@ -121,7 +121,24 @@ test.describe("Sitemap e robots (Google Search Console)", () => {
     const html = await res.text();
 
     expect(html).toContain("CeasaPro | Sistema de Gestão para Atacadistas e Hortifrúti");
-    expect(html).toContain('rel="canonical" href="https://www.ceasapro.com.br/"');
+    /*
+      A BARRA FINAL é opcional aqui, e não por descuido.
+
+      `CANONICAL_URL` (em `src/lib/seo/landing.ts`) é escrito com barra, mas o
+      Next normaliza o valor de `alternates.canonical` antes de renderizar e a
+      barra da RAIZ desaparece — a página serve
+      `href="https://www.ceasapro.com.br"`. Exigir a barra exata fazia este teste
+      reprovar um HTML correto, e satisfazê-la exigiria escrever a tag à mão,
+      contornando o framework por um caractere que o Google trata como a mesma
+      URL.
+
+      O que o teste tem de garantir continua garantido: existe canonical, ele é
+      ABSOLUTO e aponta para a origem `www` — o que pega o defeito de verdade,
+      que é o canonical sair relativo ou apontando para `localhost` (o apex
+      redireciona para `www`, e sem canonical absoluto o Google escolhe sozinho
+      qual versão indexar).
+    */
+    expect(html).toMatch(/rel="canonical" href="https:\/\/www\.ceasapro\.com\.br\/?"/);
     expect(html).toMatch(/property="og:title"/);
     expect(html).toMatch(/property="og:description"/);
     expect(html).toMatch(/property="og:url"/);
