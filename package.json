@@ -21,6 +21,7 @@
     "test:unit": "vitest run tests/unit",
     "test:integration": "vitest run tests/integration",
     "test:e2e": "playwright test",
+    "test:coverage": "vitest run --coverage",
     "preflight": "node scripts/preflight-check.mjs",
     "cron:billing": "node scripts/run-billing-cron.mjs",
     "postinstall": "prisma generate"
@@ -70,12 +71,13 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/web-push": "^3.6.4",
+    "@vitest/coverage-v8": "^4.1.11",
     "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.3.3",
     "tailwindcss": "^4",
     "tsx": "^4.22.5",
     "typescript": "^5",
-    "vitest": "^4.1.9"
+    "vitest": "^4.1.11"
   }
 }

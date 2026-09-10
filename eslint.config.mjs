@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Saída do relatório de cobertura (`npm run test:coverage`). É código
+    // gerado pelo reporter HTML, já ignorado pelo git, e traz um
+    // `eslint-disable` próprio que aparecia como aviso — e o CI roda com
+    // `--max-warnings=0`.
+    "coverage/**",
   ]),
 ]);
 
