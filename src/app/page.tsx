@@ -1,4 +1,5 @@
 import Link from "next/link";
+import Image from "next/image";
 import { headers } from "next/headers";
 import {
   ArrowRight,
@@ -87,10 +88,26 @@ export default async function LandingPage() {
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex w-full max-w-5xl items-center justify-between px-4 py-3">
           <Link href="/" className="flex items-center gap-2 text-lg font-bold text-primary">
-            <img
+            {/*
+              `next/image` e não `<img>`: é a única imagem do app, e ela está na
+              landing — a página que o Google mede. O otimizador serve o PNG de
+              192px como webp no tamanho pedido, em vez de mandar o arquivo
+              inteiro para renderizar a 32px.
+
+              `priority` porque o logo fica no cabeçalho fixo, acima da dobra: o
+              padrão do componente é carregar preguiçosamente, e aqui isso
+              atrasaria justamente o elemento que entra na medição de LCP.
+
+              O `/_next/image` do otimizador passa POR FORA do proxy
+              (`proxy.ts`, e `tests/unit/proxy-matcher.test.ts` guarda isso), então
+              não exige sessão — o que importa numa página que o visitante anônimo
+              é quem mais vê.
+            */}
+            <Image
               src="/icons/icon-192.png"
               width={32}
               height={32}
+              priority
               alt="Logotipo do CeasaPro, sistema de gestão para atacadistas e hortifrúti no CEASA"
               className="size-8 rounded-md"
             />
