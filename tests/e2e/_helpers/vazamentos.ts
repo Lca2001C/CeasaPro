@@ -47,19 +47,41 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
     const texto = (el: Element | null) => (el?.textContent ?? "").replace(/\s+/g, " ").trim();
 
     /**
-     * O elemento está dentro de algo que rola de lado?
+     * O elemento está dentro de algo que ROLA ou que CORTA?
      *
-     * Uma tabela mais larga que o cartão, dentro de um container
-     * `overflow-x-auto`, é decisão de layout e não vazamento: quem lê arrasta a
-     * tabela e a página fica quieta. Pular só o container — o que este helper
-     * fazia — não bastava, porque a `<table>` dentro dele *é* mais larga que o
-     * cartão, e era ela (com cabeçalho e todas as células) que entrava na lista.
-     * O detalhe da venda aparecia com 25px de "vazamento" sem ter defeito algum.
+     * Nos dois casos o excesso não chega ao olho de ninguém, e medi-lo produz
+     * falso positivo — o tipo que faz o teste ser desativado por "instável".
+     *
+     * `auto`/`scroll`: uma tabela mais larga que o cartão, dentro de um container
+     * `overflow-x-auto`, é decisão de layout. Quem lê arrasta a tabela e a página
+     * fica quieta. Pular só o container não bastava, porque a `<table>` dentro
+     * dele *é* mais larga que o cartão, e era ela (com cabeçalho e todas as
+     * células) que entrava na lista: o detalhe da venda aparecia com 25px de
+     * "vazamento" sem ter defeito algum.
+     *
+     * `hidden`/`clip`: é o caso do `truncate` do Tailwind, que é
+     * `overflow: hidden` + `text-overflow: ellipsis` + `white-space: nowrap`. O
+     * texto NÃO quebra linha, então o box de um filho INLINE (um `<a>`, um
+     * `<span>`) fica com a largura inteira do texto e o `getBoundingClientRect`
+     * dele passa longe da borda do cartão — enquanto na tela o pai corta com
+     * "…" e nada aparece fora.
+     *
+     * Foi exatamente o que reprovou `/admin/usuarios` em 320px: o link do nome da
+     * empresa media 540px num cartão de 288px. Reprovava no Chromium do Linux e
+     * passava no do Windows, porque com o nome curto do fixture o excesso era de
+     * 3px — menor que a diferença de métrica da fonte de fallback entre os dois
+     * sistemas. Um teste que muda de resposta com a fonte do sistema não está
+     * medindo layout.
+     *
+     * O que continua sendo pego: conteúdo mais largo que a caixa quando a caixa
+     * NÃO corta (o "Jeito 1" abaixo, por `scrollWidth`), e filho empurrado para
+     * fora sem ninguém cortando — que é o defeito de verdade, o "R$ 11.000,00"
+     * cortado na borda.
      */
-    const dentroDeAlgoQueRola = (el: Element, limite: Element) => {
+    const dentroDeAlgoQueRolaOuCorta = (el: Element, limite: Element) => {
       for (let no: Element | null = el; no; no = no.parentElement) {
         const ox = getComputedStyle(no).overflowX;
-        if (ox === "auto" || ox === "scroll") return true;
+        if (ox === "auto" || ox === "scroll" || ox === "hidden" || ox === "clip") return true;
         if (no === limite) break;
       }
       return false;
@@ -87,7 +109,7 @@ export async function vazamentos(page: Page): Promise<Vazamento[]> {
       for (const filho of Array.from(caixa.querySelectorAll("*"))) {
         const f = filho.getBoundingClientRect();
         if (f.width === 0 && f.height === 0) continue;
-        if (dentroDeAlgoQueRola(filho, caixa)) continue;
+        if (dentroDeAlgoQueRolaOuCorta(filho, caixa)) continue;
 
         const excesso = Math.max(f.right - r.right, r.left - f.left);
         if (excesso > TOLERANCIA) {

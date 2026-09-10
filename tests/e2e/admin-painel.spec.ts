@@ -334,7 +334,7 @@ test.describe("Painel em tela estreita (320px)", () => {
    * um rótulo comprido para o crachá ser empurrado para fora, então vale medir
    * aqui também em vez de assumir que o componente resolve sozinho.
    */
-  for (const url of ["/admin", "/admin/usuarios", "/admin/notificacoes"]) {
+  for (const url of ["/admin", "/admin/usuarios", "/admin/clientes", "/admin/notificacoes"]) {
     test(`nada vaza dos cartões em ${url}`, async ({ page }) => {
       await entrarComoAdmin(page);
       await page.goto(url);
