@@ -150,17 +150,32 @@ export function OnboardingWizard({
           {step === 1 && (
             <>
               <p className="font-medium">Confirme os dados da sua empresa</p>
+              {/* Os `<Label>` deste passo não apontam para os campos; sem
+                  `aria-label` nenhum deles tem nome acessível. */}
               <div className="flex flex-col gap-1.5">
                 <Label>Nome da empresa</Label>
-                <Input value={tradeName} onChange={(e) => setTradeName(e.target.value)} autoFocus />
+                <Input
+                  aria-label="Nome da empresa"
+                  value={tradeName}
+                  onChange={(e) => setTradeName(e.target.value)}
+                  autoFocus
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Telefone</Label>
-                <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+                <Input
+                  aria-label="Telefone da empresa"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Endereço / Box</Label>
-                <Input value={address} onChange={(e) => setAddress(e.target.value)} />
+                <Input
+                  aria-label="Endereço ou box"
+                  value={address}
+                  onChange={(e) => setAddress(e.target.value)}
+                />
               </div>
               <Button onClick={saveCompany} disabled={busy}>
                 {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} Continuar

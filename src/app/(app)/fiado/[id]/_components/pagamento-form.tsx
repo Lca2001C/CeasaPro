@@ -39,11 +39,17 @@ export function PagamentoForm({
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-1.5">
         <Label>Valor recebido</Label>
-        <CurrencyInput value={amount} onChange={setAmount} />
+        {/* Os `<Label>` daqui não apontam para os campos. Sem `aria-label`, o
+            campo que define quanto o cliente pagou fica sem nome acessível. */}
+        <CurrencyInput aria-label="Valor recebido" value={amount} onChange={setAmount} />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Forma</Label>
-        <Select value={method} onChange={(e) => setMethod(e.target.value)}>
+        <Select
+          aria-label="Forma de pagamento"
+          value={method}
+          onChange={(e) => setMethod(e.target.value)}
+        >
           <option value="DINHEIRO">Dinheiro</option>
           <option value="PIX">PIX</option>
           <option value="CARTAO">Cartão</option>

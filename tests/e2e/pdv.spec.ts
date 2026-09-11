@@ -61,6 +61,60 @@ test.describe("Frente de caixa (PDV) — carrinho e botões", () => {
     await expect(page.getByLabel(`Quantidade de ${PRODUTO}`)).toHaveValue("40");
   });
 
+  test("desconto no item e pagamento em duas formas fecham a conta", async ({ page }) => {
+    /*
+      Os dois casos que o balcão usa junto e que a venda simples não cobre:
+      "faz por R$ 90" (desconto na linha) e "metade no dinheiro, metade no PIX".
+
+      O que se mede é a ARITMÉTICA QUE O OPERADOR VÊ antes de apertar finalizar —
+      o total da barra depois do desconto, e a soma das formas fechando com ele.
+      Errar aqui é fechar a venda com valor diferente do combinado, com o cliente
+      na frente. As somas em centavos estão em `tests/unit/venda-total.test.ts`;
+      aqui é a tela.
+    */
+    await page.goto("/vendas/nova");
+
+    await page.getByPlaceholder("Buscar produto...").fill(PRODUTO);
+    await page.getByRole("button", { name: new RegExp(PRODUTO) }).first().click();
+
+    await page.getByLabel(`Quantidade de ${PRODUTO}`).fill("2");
+    await page.getByLabel(`Preço de ${PRODUTO}`).fill("50");
+    await expect(page.getByText("R$ 100,00").first()).toBeVisible();
+
+    // Desconto de R$ 10 na linha: 2 × 50 − 10 = 90.
+    await page.getByRole("button", { name: /Vasilhame e desconto/ }).click();
+    await page.getByLabel(`Desconto de ${PRODUTO}`).fill("10");
+    await expect(page.getByText("R$ 90,00").first()).toBeVisible();
+
+    // Divide em duas formas. A primeira já vem com o total; tira-se um pedaço.
+    await page.getByRole("button", { name: "Dividir em mais de uma forma" }).click();
+    const primeiro = page.getByLabel("Valor da forma de pagamento 1");
+    await expect(primeiro).toHaveValue("R$ 90,00");
+    await primeiro.fill("40");
+
+    /*
+      A segunda forma já nasce com o RESTO preenchido e com a próxima forma
+      ainda não usada — dividir é "tirar um pedaço", não remontar a conta.
+    */
+    await page.getByRole("button", { name: "Adicionar forma" }).click();
+    // `exact`: "Valor da forma de pagamento 2" contém este nome por substring.
+    await page.getByLabel("Forma de pagamento 2", { exact: true }).selectOption("PIX");
+    const segundo = page.getByLabel("Valor da forma de pagamento 2");
+    await expect(segundo).toHaveValue("R$ 50,00");
+    await expect(page.getByText("Fecha com o total")).toBeVisible();
+
+    // Erra o valor de propósito: a tela tem de dizer QUANTO falta, senão a venda
+    // fecharia por um valor diferente do combinado com o cliente.
+    await segundo.fill("10");
+    await expect(page.getByText(/^Falta/)).toBeVisible();
+
+    await segundo.fill("50");
+    await expect(page.getByText("Fecha com o total")).toBeVisible();
+
+    await page.getByRole("button", { name: "Finalizar venda" }).click();
+    await expect(page.getByText(/Venda registrada/i)).toBeVisible();
+  });
+
   test("item sem preço pede confirmação em vez de registrar venda zerada", async ({ page }) => {
     await page.goto("/vendas/nova");
 

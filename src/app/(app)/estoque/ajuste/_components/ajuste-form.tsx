@@ -46,9 +46,16 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Os `<Label>` deste formulário não apontam para os campos; `aria-label`
+          dá nome a cada um — o que o leitor de tela anuncia e o que o teste
+          alcança sem depender da ordem na página. */}
       <div className="flex flex-col gap-1.5">
         <Label>Produto</Label>
-        <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
+        <Select
+          aria-label="Produto"
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+        >
           {produtos.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -58,7 +65,11 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Tipo de movimentação</Label>
-        <Select value={type} onChange={(e) => setType(e.target.value)}>
+        <Select
+          aria-label="Tipo de movimentação"
+          value={type}
+          onChange={(e) => setType(e.target.value)}
+        >
           {TIPOS.map((t) => (
             <option key={t.value} value={t.value}>
               {t.label}
@@ -68,11 +79,15 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Quantidade</Label>
-        <QuantityInput value={quantity} onChange={setQuantity} />
+        <QuantityInput aria-label="Quantidade" value={quantity} onChange={setQuantity} />
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Motivo (opcional)</Label>
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+        <Input
+          aria-label="Motivo"
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+        />
       </div>
       <div className="flex gap-2">
         <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>

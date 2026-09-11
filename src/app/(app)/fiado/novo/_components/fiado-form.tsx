@@ -143,8 +143,12 @@ export function FiadoForm({
         {items.map((it, idx) => (
           <Card key={idx} className="flex flex-col gap-2 p-3">
             <div className="flex items-center gap-2">
+              {/* Os rótulos visíveis deste bloco são `<span>` soltos, sem
+                  `htmlFor`: sem `aria-label` os campos não têm nome para leitor
+                  de tela nem para teste, e só dava para alcançá-los por posição. */}
               <Select
                 className="flex-1"
+                aria-label={`Produto do item ${idx + 1}`}
                 value={it.productId}
                 onChange={(e) => setItem(idx, { productId: e.target.value })}
               >
@@ -169,6 +173,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Quantidade</span>
                 <QuantityInput
+                  aria-label={`Quantidade do item ${idx + 1}`}
                   value={it.quantity}
                   onChange={(v) => setItem(idx, { quantity: v ?? 0 })}
                 />
@@ -176,6 +181,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
+                  aria-label={`Preço unitário do item ${idx + 1}`}
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}
                 />

@@ -103,7 +103,13 @@ export function MovimentoCaixaForm({
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label>Tipo de movimentação</Label>
-        <Select value={type} onChange={(e) => setType(e.target.value as Tipo)}>
+        {/* Os `<Label>` deste formulário não apontam para os campos; sem
+            `aria-label` nenhum deles tem nome acessível. */}
+        <Select
+          aria-label="Tipo de movimentação"
+          value={type}
+          onChange={(e) => setType(e.target.value as Tipo)}
+        >
           {toOptions(CRATE_MOVEMENT_LABELS).map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
@@ -120,6 +126,7 @@ export function MovimentoCaixaForm({
             type="number"
             inputMode="numeric"
             min={1}
+            aria-label="Quantidade de caixas"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
           />
@@ -169,6 +176,7 @@ export function MovimentoCaixaForm({
             {isQuebra ? "Cliente (se a caixa sumiu com um cliente — opcional)" : "Cliente"}
           </Label>
           <Input
+            aria-label="Cliente das caixas"
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
             list={LISTA_CLIENTES}
@@ -196,7 +204,11 @@ export function MovimentoCaixaForm({
 
       <div className="flex flex-col gap-1.5">
         <Label>Observações (opcional)</Label>
-        <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <Input
+          aria-label="Observações"
+          value={notes}
+          onChange={(e) => setNotes(e.target.value)}
+        />
       </div>
 
       <div className="flex gap-2">
