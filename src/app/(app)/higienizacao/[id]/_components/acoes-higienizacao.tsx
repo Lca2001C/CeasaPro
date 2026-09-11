@@ -95,11 +95,15 @@ export function AcoesHigienizacao({
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Qtd. devolvida</Label>
+                {/* Os `<Label>` desta tela não apontam para os campos, e há três
+                    blocos com "Qtd." e "Data". Sem `aria-label` nenhum campo tem
+                    nome acessível e só dá para alcançá-los por posição. */}
                 <Input
                   type="number"
                   inputMode="numeric"
                   min={1}
                   max={caixasAReceber}
+                  aria-label="Quantidade devolvida"
                   value={devQty}
                   onChange={(e) => setDevQty(e.target.value)}
                 />
@@ -130,6 +134,7 @@ export function AcoesHigienizacao({
                     inputMode="numeric"
                     min={1}
                     max={caixasAReceber}
+                    aria-label="Quantidade perdida"
                     value={perdaQty}
                     onChange={(e) => setPerdaQty(e.target.value)}
                   />
@@ -170,7 +175,11 @@ export function AcoesHigienizacao({
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Valor pago</Label>
-                <CurrencyInput value={payAmount} onChange={setPayAmount} />
+                <CurrencyInput
+                  aria-label="Valor pago"
+                  value={payAmount}
+                  onChange={setPayAmount}
+                />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Data</Label>

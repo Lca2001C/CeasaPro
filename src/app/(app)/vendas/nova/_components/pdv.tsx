@@ -1114,7 +1114,12 @@ export function Pdv({
               </div>
               <div className="flex items-end gap-2">
                 <div className="min-w-0 flex-1 sm:w-32 sm:flex-none">
+                  {/* A forma de pagamento ao lado já tem nome acessível; o VALOR
+                      dela não tinha, e é o campo que decide quanto do total vira
+                      fiado. Sem nome, nem leitor de tela nem teste o alcançam
+                      senão por posição. */}
                   <CurrencyInput
+                    aria-label={`Valor da forma de pagamento ${idx + 1}`}
                     value={p.amount}
                     onChange={(v) => setParcela(idx, { amount: v ?? 0 })}
                   />

@@ -50,7 +50,13 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label>Tipo de embalagem</Label>
-        <Select value={packagingTypeId} onChange={(e) => setPackagingTypeId(e.target.value)}>
+        {/* Os `<Label>` daqui não apontam para os campos; `aria-label` dá nome a
+            cada um, para leitor de tela e para teste. */}
+        <Select
+          aria-label="Tipo de embalagem"
+          value={packagingTypeId}
+          onChange={(e) => setPackagingTypeId(e.target.value)}
+        >
           {tipos.map((t) => (
             <option key={t.id} value={t.id}>
               {t.name}
@@ -60,7 +66,11 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Cliente (opcional)</Label>
-        <Input value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
+        <Input
+          aria-label="Cliente"
+          value={customerName}
+          onChange={(e) => setCustomerName(e.target.value)}
+        />
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
@@ -73,6 +83,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
             type="number"
             inputMode="numeric"
             min={1}
+            aria-label="Quantidade"
             value={quantity}
             onChange={(e) => setQuantity(e.target.value)}
           />
@@ -80,7 +91,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
       </div>
       <div className="flex flex-col gap-1.5">
         <Label>Valor unitário</Label>
-        <CurrencyInput value={unitPrice} onChange={setUnitPrice} />
+        <CurrencyInput aria-label="Valor unitário" value={unitPrice} onChange={setUnitPrice} />
       </div>
 
       <Card className="flex items-center justify-between p-3">

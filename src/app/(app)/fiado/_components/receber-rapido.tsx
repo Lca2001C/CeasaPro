@@ -94,11 +94,18 @@ export function ReceberRapido({
           <div className="flex flex-col gap-3">
             <div className="flex flex-col gap-1.5">
               <Label>Valor recebido</Label>
-              <CurrencyInput value={amount} onChange={setAmount} />
+              {/* Os `<Label>` deste diálogo não apontam para os campos, então sem
+                  `aria-label` o campo que decide QUANTO o cliente pagou não tem
+                  nome nenhum — nem para leitor de tela, nem para teste. */}
+              <CurrencyInput aria-label="Valor recebido" value={amount} onChange={setAmount} />
             </div>
             <div className="flex flex-col gap-1.5">
               <Label>Forma</Label>
-              <Select value={method} onChange={(e) => setMethod(e.target.value)}>
+              <Select
+                aria-label="Forma de recebimento"
+                value={method}
+                onChange={(e) => setMethod(e.target.value)}
+              >
                 <option value="DINHEIRO">Dinheiro</option>
                 <option value="PIX">PIX</option>
                 <option value="CARTAO">Cartão</option>
