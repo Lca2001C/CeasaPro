@@ -70,3 +70,85 @@ Alterações de status de assinatura/plano/módulos valem no **próximo refresh 
 
 - Cobertas: hashing forte, tokens rotativos/revogáveis, isolamento automático, gating server-side, webhook assinado e idempotente, auditoria, validação dupla, rate limit no login compartilhado entre instâncias.
 - Evoluções recomendadas: **RLS (Row-Level Security)** no PostgreSQL como segunda barreira do banco; verificação de força de senha.
+
+## Dependências vulneráveis
+
+Estado atual: **`npm audit` → 0 vulnerabilidades**.
+
+O que estava aberto e como foi fechado (11/09/2026):
+
+| pacote | chega aqui por | era | virou | advisory |
+|---|---|---|---|---|
+| `deepmerge-ts` | `prisma` → `@prisma/config` | 7.1.5 | **8.0.2** | GHSA-ggr8-5vv4-36mx (alta) |
+| `uuid` | `exceljs` | 8.3.2 | **11.1.1** | GHSA-w5hq-g745-h8pq (moderada) |
+
+### Por que NÃO se usou `npm audit fix --force`
+
+Para as duas advisories, a correção que o npm oferecia era um **downgrade**:
+`prisma` para 6.12.0 e `exceljs` para 3.4.0 — os dois major para trás. Isso não
+conserta nada: troca uma falha conhecida por um salto para trás em duas peças
+centrais (o ORM e o gerador de relatório), perdendo junto todas as correções do
+intervalo, inclusive de segurança.
+
+O conserto correto é o inverso — manter `prisma` e `exceljs` onde estão e
+empurrar a transitiva vulnerável para CIMA, que é o que o campo `overrides` do
+npm existe para fazer:
+
+```json
+"overrides": {
+  "exceljs": { "uuid": "^11.1.1" },
+  "@prisma/config": { "deepmerge-ts": "^8.0.2" }
+}
+```
+
+Os overrides são **escopados** ao pacote que puxa a transitiva, e não postos na
+raiz. Hoje dá no mesmo (cada um tem um único dependente), mas um `"uuid": "^11"`
+solto forçaria a versão para qualquer dependente futuro — inclusive um que
+precise legitimamente da 8 — e o dia em que isso acontecer é o dia em que
+ninguém vai lembrar de reescopar.
+
+### Alcance real, medido antes de mexer
+
+Vale registrar, porque muda a leitura da gravidade:
+
+- **`uuid`**: a falha é em **v3/v5/v6 quando `buf` é passado**. O `exceljs` usa
+  **apenas `v4`**, sem argumentos (`cf-rule-ext-xform.js`, formatação
+  condicional). O caminho vulnerável **nunca era alcançado** por este projeto.
+- **`deepmerge-ts`**: esgotamento de pilha ao mesclar grafos recursivos. Chega
+  aqui pelo carregador de configuração do **CLI do Prisma**, que mescla o nosso
+  próprio `prisma.config.ts` em tempo de build/CLI. Não há entrada de usuário
+  nesse caminho.
+
+Ou seja: nenhuma das duas era explorável a partir da aplicação. Foram corrigidas
+mesmo assim — alcance é mitigação, não conserto, e depender de "o exceljs hoje
+só chama `v4`" é apostar que a próxima versão dele não vai chamar `v5`.
+
+### O risco que a correção introduziu, e como foi verificado
+
+Pular `uuid` de 8 para 11 atravessa três majors. A API do `v4` não mudou, mas o
+**formato de módulo** poderia ter: o `exceljs` é CommonJS e faz
+`require("uuid")`; se a 11 fosse só ESM, o relatório em Excel quebraria **em
+produção e não no build**, porque o carregamento é em tempo de execução. A 11.1.1
+ainda publica CJS (`"require": "./dist/cjs/index.js"`), e isso está preso em
+teste.
+
+Verificação feita, e não presumida:
+
+- geração e releitura de um `.xlsx` exercitando o caminho de formatação
+  condicional, que é o único que chama `uuidv4()`;
+- `prisma validate`, que carrega a config pelo `@prisma/config` → `deepmerge-ts`;
+- suíte completa: lint, tipos, 1519 unit+integração, 19 de componente, 158 E2E
+  (inclui `relatorios-export.spec.ts`, que baixa um Excel de verdade) e build.
+
+### A trava
+
+`tests/unit/dependencias-vulneraveis.test.ts` prende os pisos de versão, a
+presença dos overrides e o escopo deles. Existe porque `overrides` é silencioso:
+apagar o campo não quebra build, nem tipo, nem nenhum outro teste — só reinstala
+a versão vulnerável. O teste também falha se alguém rodar
+`npm audit fix --force` e derrubar `prisma`/`exceljs` para trás.
+
+**Não** há passo de `npm audit` no CI, de propósito: ele ficaria vermelho por
+advisory nova publicada em dependência de terceiro, sem relação com o que o PR
+mudou, e o desfecho conhecido disso é gente aprendendo a ignorar CI vermelho. A
+varredura contínua fica com o Dependabot, que abre PR com contexto.

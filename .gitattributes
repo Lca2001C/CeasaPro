@@ -1,2 +1,9 @@
 # Scripts Bash precisam de LF — CRLF quebra execução no WSL/Git Bash.
 *.sh text eol=lf
+
+# O npm escreve estes arquivos em LF. O blob no repositório estava em CRLF, e a
+# diferença fazia o lockfile inteiro (25 mil linhas) aparecer como alterado a
+# cada `npm install` feito em máquina com outra configuração de `core.autocrlf`
+# — escondendo, no meio do ruído, as poucas linhas que de fato mudaram.
+package-lock.json text eol=lf
+package.json text eol=lf
