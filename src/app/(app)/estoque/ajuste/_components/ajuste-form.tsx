@@ -46,9 +46,22 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
 
   return (
     <div className="flex flex-col gap-4">
+      {/*
+        `htmlFor` + `id` em todos os quatro campos.
+
+        O axe acusava `label` e `select-name` com impacto CRÍTICO nesta tela:
+        os rótulos apareciam, mas soltos, sem nada ligando texto e campo. Num
+        ajuste de estoque isso é sério — quem não enxerga a tela ouvia quatro
+        controles sem nome e tinha de adivinhar qual era o produto e qual era a
+        quantidade, num formulário que MEXE no saldo.
+      */}
       <div className="flex flex-col gap-1.5">
-        <Label>Produto</Label>
-        <Select value={productId} onChange={(e) => setProductId(e.target.value)}>
+        <Label htmlFor="productId">Produto</Label>
+        <Select
+          id="productId"
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+        >
           {produtos.map((p) => (
             <option key={p.id} value={p.id}>
               {p.name}
@@ -57,8 +70,8 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
         </Select>
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Tipo de movimentação</Label>
-        <Select value={type} onChange={(e) => setType(e.target.value)}>
+        <Label htmlFor="type">Tipo de movimentação</Label>
+        <Select id="type" value={type} onChange={(e) => setType(e.target.value)}>
           {TIPOS.map((t) => (
             <option key={t.value} value={t.value}>
               {t.label}
@@ -67,12 +80,12 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
         </Select>
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Quantidade</Label>
-        <QuantityInput value={quantity} onChange={setQuantity} />
+        <Label htmlFor="quantity">Quantidade</Label>
+        <QuantityInput id="quantity" value={quantity} onChange={setQuantity} />
       </div>
       <div className="flex flex-col gap-1.5">
-        <Label>Motivo (opcional)</Label>
-        <Input value={reason} onChange={(e) => setReason(e.target.value)} />
+        <Label htmlFor="reason">Motivo (opcional)</Label>
+        <Input id="reason" value={reason} onChange={(e) => setReason(e.target.value)} />
       </div>
       <div className="flex gap-2">
         <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>

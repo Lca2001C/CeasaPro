@@ -17,11 +17,29 @@
   --muted-foreground: 240 4% 44%;
   --accent: 142 45% 94%;
   --accent-foreground: 142 60% 22%;
-  --destructive: 0 72% 48%;
+  /*
+    Era `0 72% 48%`. Escurecido porque o selo `bg-destructive/10` com texto
+    `text-destructive` dava 4,46:1 — reprovando AA por uma casa decimal, no
+    selo que marca conta VENCIDA. Agora dá 5,13:1, e o branco sobre o botão
+    destrutivo sobe de 5,22:1 para 6,03:1. Contas em `tests/unit/contraste-de-cor.test.ts`.
+  */
+  --destructive: 0 72% 44%;
   --destructive-foreground: 0 0% 100%;
   --success: 142 68% 30%;
   --success-foreground: 0 0% 100%;
-  --warning: 35 92% 45%;
+  /*
+    Era `35 92% 45%`, e reprovava nos DOIS sentidos: 2,86:1 como texto sobre
+    branco e 2,86:1 com o branco por cima, no selo. Um laranja no meio da
+    escala não tem contraste contra nada — é o pior lugar possível para uma cor
+    que só existe para AVISAR.
+
+    Onde isso doía de verdade: o "N a devolver" de caixas plásticas na tela de
+    fiado, em `text-xs`, era o único lugar em que o número pendente aparecia; e
+    a faixa de "sem conexão", que precisa ser lida exatamente quando a tela está
+    ruim. Agora dá 5,20:1 nos dois sentidos — o mesmo contraste do
+    `text-muted-foreground` que o resto do app já usa.
+  */
+  --warning: 35 92% 32%;
   --warning-foreground: 0 0% 100%;
   --info: 221 83% 53%;
   --info-foreground: 0 0% 100%;

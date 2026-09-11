@@ -102,12 +102,18 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label>Valor</Label>
+        {/* Era o único campo desta tela sem `htmlFor` — e é o do VALOR. */}
+        <Label htmlFor="amount">Valor</Label>
         <Controller
           control={control}
           name="amount"
           render={({ field }) => (
-            <CurrencyInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+            <CurrencyInput
+              id="amount"
+              value={field.value}
+              onChange={field.onChange}
+              onBlur={field.onBlur}
+            />
           )}
         />
         {errors.amount && <span className="text-xs text-destructive">{errors.amount.message}</span>}

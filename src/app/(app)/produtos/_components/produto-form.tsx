@@ -84,23 +84,46 @@ export function ProdutoForm({ initial }: Props) {
       </div>
 
       <div className="grid grid-cols-2 gap-3">
+        {/*
+          `htmlFor` + `id` nos dois campos abaixo.
+
+          Sem eles o axe acusava `label` com impacto CRÍTICO nesta tela: o
+          rótulo estava na tela, mas solto — nada ligava "Qtd. por recipiente"
+          ao campo. Para quem usa leitor de tela o resultado é ouvir "editar
+          texto" duas vezes seguidas, sem saber qual é qual, num formulário em
+          que trocar os dois valores estraga a conversão de caixa para unidade
+          do produto inteiro.
+
+          O par também aumenta a área de toque: tocar no rótulo passa a focar o
+          campo, o que num celular vale mais do que parece.
+        */}
         <div className="flex flex-col gap-1.5">
-          <Label>Qtd. por recipiente</Label>
+          <Label htmlFor="qtyPerRecipient">Qtd. por recipiente</Label>
           <Controller
             control={control}
             name="qtyPerRecipient"
             render={({ field }) => (
-              <QuantityInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+              <QuantityInput
+                id="qtyPerRecipient"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+              />
             )}
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Capacidade do saco</Label>
+          <Label htmlFor="sackCapacity">Capacidade do saco</Label>
           <Controller
             control={control}
             name="sackCapacity"
             render={({ field }) => (
-              <QuantityInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} />
+              <QuantityInput
+                id="sackCapacity"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+              />
             )}
           />
         </div>

@@ -308,3 +308,129 @@ casos falham), anel fino de antes (3), `icons/` fora do matcher do proxy (5),
 alcançável e declarada. Não garante *quando* o Google vai trocar o globo pelo
 ícone: isso depende de recrawl, e nenhum código aqui controla o calendário do
 rastreador.
+
+### Etapa 3 — os três tipos de teste que não existiam, e o que eles acharam (11/09)
+
+As devDependencies de teste eram exatamente duas (`vitest`, `@playwright/test`).
+Sem `jsdom` nem testing-library, **nenhum teste de componente era possível**;
+sem axe, **nenhuma verificação de acessibilidade**. Os dois passaram a existir.
+
+#### O que a primeira varredura encontrou
+
+Tudo abaixo estava publicado, e nada no CI podia ter apanhado:
+
+| Defeito | Alcance | Impacto |
+|---|---|---|
+| `maximumScale: 1` no viewport | **toda página** | zoom por pinça DESLIGADO (WCAG 1.4.4) |
+| `--warning` a 2,86:1 | 31 usos de `text-warning`, 7 selos, 9 StatCards | reprovava nos dois sentidos |
+| `bg-destructive/10` a 4,46:1 | selo de conta VENCIDA | reprovava por uma casa decimal |
+| rótulo solto do campo | 5 telas de formulário | `label`/`select-name`, impacto **crítico** |
+| botão só com ícone sem nome | compra | `button-name`, impacto **crítico** |
+| sem marco `<main>` | `/assinatura` e as 4 telas de autenticação | `landmark-one-main`, `region` |
+| `CardTitle` fixo em `<h3>` | 3 telas medidas | salto h1 → h3 |
+| `<nav>` sem rótulo | 3 navegações | leitor anuncia "navegação" sem distinguir |
+| `aria-current` ausente | todo o app | tela atual marcada **só por cor** |
+| sem link para pular a navegação | todo o app | 16 itens atravessados em cada tela |
+
+O mais amplo é o primeiro, e ele é instrutivo: `maximumScale: 1` costuma ser
+posto para impedir o iOS de dar zoom sozinho no campo focado. Só que a causa
+disso é fonte menor que 16px, e `Input`, `Select` e `Textarea` já usam
+`text-base`. Era pagar o preço sem ter a doença — e o preço recaía justamente
+sobre quem enxerga pouco, que é boa parte do público deste app.
+
+#### Medição, antes e depois
+
+Varredura do axe em 29 telas, com build de produção:
+
+| | antes | depois |
+|---|---|---|
+| telas com violação séria/crítica | 5 | **0** |
+| violações sérias/críticas | 10 | **0** |
+| telas com violação moderada | 4 | **0** |
+
+#### Contraste: a conta, não a impressão
+
+Os tokens foram convertidos de HSL para sRGB e a razão calculada pela fórmula
+da WCAG, compondo as transparências reais (`bg-destructive/10` sobre branco):
+
+| par | antes | depois |
+|---|---|---|
+| `text-warning` sobre o cartão | 2,86:1 | **5,20:1** |
+| branco sobre `bg-warning` | 2,86:1 | **5,20:1** |
+| `text-destructive` sobre `bg-destructive/10` | 4,46:1 | **5,13:1** |
+| branco sobre o botão destrutivo | 5,22:1 | **6,03:1** |
+
+A conta virou teste (`tests/unit/contraste-de-cor.test.ts`, 11 casos) que lê os
+tokens do próprio `globals.css`. É o único lugar onde isso é verificável sem
+depender de alguém ter aberto a tela certa: o axe só vê o par que está na tela
+naquele instante.
+
+**Dívida registrada, com número:** `--border`/`--input` rende 1,30:1 contra o
+branco, abaixo dos 3:1 da WCAG 1.4.11. **Não** foi corrigido, e o motivo é
+honesto — chegar a 3:1 exige um cinza médio em toda borda do app, o que é
+mudança de aparência do produto, não conserto de defeito, e a decisão é de quem
+é dono da marca. O teste trava o número atual nos dois sentidos: falha se
+alguém clarear ainda mais, e falha pedindo promoção se alguém corrigir.
+
+#### Lint de acessibilidade, medido antes de ligar
+
+`eslint-plugin-jsx-a11y` era transitivo do `eslint-config-next`, com 6 das 32
+regras ligadas. Passou a dependência direta. **Das 32 regras do conjunto
+recomendado, 30 já passavam limpas** — ligar em `error` foi o retrato, não uma
+aposta. Das duas que sobravam, ambas eram falso positivo de primitivo
+(`CardTitle` e `Label` recebem conteúdo e `htmlFor` por `{...props}`, e a regra
+não segue composição), desligadas linha a linha com o motivo escrito.
+
+`no-autofocus` ficou desligada com justificativa: são 19 usos, todos no
+primeiro campo de um formulário que a pessoa ABRIU — nenhum caso de roubar o
+foco em página de conteúdo, que é o dano que a regra existe para evitar. A
+mitigação entrou junto (título antes do formulário, link para pular a
+navegação).
+
+Uma armadilha registrada: o plugin **não** pode ser redeclarado, porque o
+`eslint-config-next` já o registra — responde `Cannot redefine plugin
+"jsx-a11y"`. Só as regras entram.
+
+#### Testes de componente
+
+`vitest.config.ts` passou a ter **dois projects**: `node` (as três travas de
+segurança, em série porque compartilha o Postgres) e `dom` (jsdom, paralelo,
+sem banco). O `tests/setup/dom.ts` traz a limpeza entre casos — sem ela cada
+`render` empilha no mesmo `document.body` e `getByRole` acha o botão do teste
+ANTERIOR, ficando verde sobre a árvore errada.
+
+Dois arquivos, 19 casos, nos componentes que o mapeamento apontou como os de
+maior consequência:
+
+- **`SeloDeVariacao`**: prende que **alta é vermelha e baixa é verde** — o
+  inverso do mercado financeiro, de propósito, porque para o comerciante a
+  cotação é o preço que ele PAGA. É o tipo de inversão que alguém "conserta"
+  numa tarde achando que é bug;
+- **`CurrencyInput`/`QuantityInput`**: o contrato de entrada de dinheiro e
+  quantidade de umas quinze telas.
+
+O segundo achou algo que eu supus errado: **não é máscara de centavos**.
+Digitar "1234" dá R$ 1.234,00, e não R$ 12,34 — os centavos só abrem na
+vírgula. Muito PDV usa a outra convenção, e a diferença é de cem vezes. O teste
+passou a prender o comportamento REAL, para que uma eventual mudança seja uma
+escolha e não um acidente num ajuste de `decimalScale`.
+
+#### Cobertura, e uma ressalva que o número exige
+
+| | linha de base (10/09) | agora |
+|---|---|---|
+| Statements | 40,87% | **44,73%** |
+| Lines | 41,43% | **45,46%** |
+| `.tsx` | 0,0% | 0,6% |
+
+O 0,6% de `.tsx` é honesto e **não** significa que o JSX está desverificado.
+São 158 testes E2E atravessando essas telas — mas eles rodam contra um servidor
+de produção já compilado, que o v8 do Vitest não instrumenta. O número de
+`.tsx` mede só o que o projeto `dom` alcança, e ele tem dois arquivos. A
+infraestrutura passou a existir e os primeiros testes estão escritos; cobrir os
+53 componentes é trabalho de mais de uma etapa.
+
+#### Verificação
+
+`lint` 0 avisos · `typecheck` limpo · **1513** unit + integração · **19**
+componente · **158** E2E (eram 123) · build exit 0.

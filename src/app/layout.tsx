@@ -64,7 +64,20 @@ export const metadata: Metadata = {
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  maximumScale: 1,
+  /*
+    SEM `maximumScale: 1`.
+
+    Ele estava aqui e desligava o zoom por pinça em TODAS as páginas — o axe
+    acusava `meta-viewport` em cada tela varrida, e é falha de WCAG 1.4.4:
+    quem enxerga pouco perde o único recurso que tem para ler a tela. O público
+    deste app é comerciante de box, boa parte com presbiopia, num celular
+    barato sob luz de galpão. É exatamente quem mais precisa de aproximar.
+
+    O motivo pelo qual se costuma travar a escala é outro: o iOS dá zoom
+    sozinho quando o campo tem fonte menor que 16px. Aqui esse problema já está
+    resolvido na raiz — `Input`, `Textarea` e `Select` usam `text-base`, que é
+    16px. Travar a escala era pagar o preço sem ter a doença.
+  */
   themeColor: "#1a7a3f",
   /**
    * `cover` faz o app instalado ocupar a tela INTEIRA do iPhone, inclusive sob a

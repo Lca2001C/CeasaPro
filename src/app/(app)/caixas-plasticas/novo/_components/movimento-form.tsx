@@ -102,8 +102,8 @@ export function MovimentoCaixaForm({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
-        <Label>Tipo de movimentação</Label>
-        <Select value={type} onChange={(e) => setType(e.target.value as Tipo)}>
+        <Label htmlFor="type">Tipo de movimentação</Label>
+        <Select id="type" value={type} onChange={(e) => setType(e.target.value as Tipo)}>
           {toOptions(CRATE_MOVEMENT_LABELS).map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
@@ -115,8 +115,9 @@ export function MovimentoCaixaForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label>Quantidade de caixas</Label>
+          <Label htmlFor="quantity">Quantidade de caixas</Label>
           <Input
+            id="quantity"
             type="number"
             inputMode="numeric"
             min={1}
@@ -125,20 +126,21 @@ export function MovimentoCaixaForm({
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Data</Label>
-          <Input type="date" value={movementDate} onChange={(e) => setMovementDate(e.target.value)} />
+          <Label htmlFor="movementDate">Data</Label>
+          <Input id="movementDate" type="date" value={movementDate} onChange={(e) => setMovementDate(e.target.value)} />
         </div>
       </div>
 
       {isEntrada && (
         <>
           <div className="flex flex-col gap-1.5">
-            <Label>Origem / fornecedor (opcional)</Label>
-            <Input value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
+            <Label htmlFor="supplierName">Origem / fornecedor (opcional)</Label>
+            <Input id="supplierName" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label>Caixas quebradas na chegada (opcional)</Label>
+            <Label htmlFor="brokenQty">Caixas quebradas na chegada (opcional)</Label>
             <Input
+              id="brokenQty"
               type="number"
               inputMode="numeric"
               min={0}
@@ -165,10 +167,11 @@ export function MovimentoCaixaForm({
 
       {(needsCustomer || isQuebra) && (
         <div className="flex flex-col gap-1.5">
-          <Label>
+          <Label htmlFor="customerName">
             {isQuebra ? "Cliente (se a caixa sumiu com um cliente — opcional)" : "Cliente"}
           </Label>
           <Input
+            id="customerName"
             value={customerName}
             onChange={(e) => setCustomerName(e.target.value)}
             list={LISTA_CLIENTES}
@@ -185,18 +188,18 @@ export function MovimentoCaixaForm({
 
       {(needsCleaner || isQuebra) && (
         <div className="flex flex-col gap-1.5">
-          <Label>
+          <Label htmlFor="cleanerName">
             {isQuebra
               ? "Higienizador (se a caixa sumiu na lavagem — opcional)"
               : "Higienizador"}
           </Label>
-          <Input value={cleanerName} onChange={(e) => setCleanerName(e.target.value)} />
+          <Input id="cleanerName" value={cleanerName} onChange={(e) => setCleanerName(e.target.value)} />
         </div>
       )}
 
       <div className="flex flex-col gap-1.5">
-        <Label>Observações (opcional)</Label>
-        <Input value={notes} onChange={(e) => setNotes(e.target.value)} />
+        <Label htmlFor="notes">Observações (opcional)</Label>
+        <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
       <div className="flex gap-2">

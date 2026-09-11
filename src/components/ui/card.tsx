@@ -29,9 +29,29 @@ function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement
   return <div className={cn("flex flex-col gap-1 p-4", className)} {...props} />;
 }
 
+/**
+ * Título do cartão.
+ *
+ * É `<h2>`, e não `<h3>`. O motivo é a ESTRUTURA das telas: quem emite o `<h1>`
+ * é o `PageHeader`, e os cartões são as seções imediatamente abaixo dele. Com
+ * `<h3>` o documento pulava de h1 para h3 — o axe acusava `heading-order` em
+ * `/configuracoes`, `/plano` e `/assinatura`, e quem navega por títulos (que é
+ * como leitor de tela percorre uma página densa) via um nível inteiro faltando.
+ *
+ * Cartão dentro de seção que já tenha um `<h2>` continua correto: dois h2
+ * seguidos não são um salto, ao contrário de h1 → h3.
+ */
 function CardTitle({ className, ...props }: React.HTMLAttributes<HTMLHeadingElement>) {
   return (
-    <h3 className={cn("font-semibold leading-tight tracking-tight", className)} {...props} />
+    /*
+      `heading-has-content` não consegue enxergar o conteúdo aqui: os filhos
+      chegam por `{...props}`, e a regra analisa o JSX sem seguir a composição.
+      É falso positivo de primitivo — quem chama sempre passa texto. Desligado
+      só nesta linha, e não no projeto, para que um título de verdade sem
+      conteúdo continue sendo apanhado em qualquer outro arquivo.
+    */
+    // eslint-disable-next-line jsx-a11y/heading-has-content
+    <h2 className={cn("font-semibold leading-tight tracking-tight", className)} {...props} />
   );
 }
 

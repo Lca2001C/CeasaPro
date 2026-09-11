@@ -76,7 +76,12 @@ export function SideNav({
     >
       <div className="sticky top-0 flex h-screen flex-col p-3">
         <div className="px-2 py-3 text-lg font-bold text-primary">CeasaPro</div>
-        <nav className="mt-2 flex flex-col gap-1 overflow-y-auto">
+        {/*
+          O rótulo distingue esta navegação das outras do documento. Sem ele o
+          leitor de tela anuncia só "navegação", e quem usa a lista de marcos
+          para se orientar não sabe em qual entrou.
+        */}
+        <nav aria-label="Menu principal" className="mt-2 flex flex-col gap-1 overflow-y-auto">
           {visible.map((item) => {
             const Icon = item.icon;
             const active = isActive(item.href);
@@ -84,6 +89,13 @@ export function SideNav({
               <Link
                 key={item.href}
                 href={item.href}
+                /*
+                  Até aqui a tela ATUAL era marcada só por cor de fundo. Cor
+                  sozinha não chega a quem usa leitor de tela, e não chega a
+                  quem não distingue as duas cores — a pessoa perde a única
+                  pista de onde está dentro do app.
+                */
+                aria-current={active ? "page" : undefined}
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
                   active

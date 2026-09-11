@@ -84,6 +84,14 @@ export function BottomNav({
     <nav
       // Âncora do tour guiado. A lateral tem a dela; o tour destaca a que
       // estiver visível (ver `alvoVisivel` em `components/tour/tour-guiado`).
+      /*
+        Mesmo rótulo da barra lateral, e de propósito: as duas são a MESMA
+        navegação em duas apresentações, e são excludentes por breakpoint
+        (`md:hidden` aqui, `hidden md:block` lá). Como `display: none` tira da
+        árvore de acessibilidade, nunca há duas ao mesmo tempo — e a pessoa
+        ouve o mesmo nome no celular e no computador.
+      */
+      aria-label="Menu principal"
       data-tour="nav-mobile"
       className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
     >
@@ -95,6 +103,9 @@ export function BottomNav({
             <Link
               key={item.href}
               href={item.href}
+              // Ver o mesmo comentário em `side-nav`: sem isto a tela atual é
+              // marcada só por cor.
+              aria-current={active ? "page" : undefined}
               className={cn(
                 "flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium",
                 active ? "text-primary" : "text-muted-foreground",

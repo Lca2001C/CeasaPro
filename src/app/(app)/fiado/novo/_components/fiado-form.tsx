@@ -139,11 +139,18 @@ export function FiadoForm({
       </div>
 
       <div className="flex flex-col gap-2">
+        {/*
+          Campos que se repetem por item: `id` colidiria entre as linhas, então
+          cada controle leva `aria-label` com o número do item. Sem isso, quem
+          usa leitor de tela ouve uma sequência de controles sem nome e não
+          distingue o preço do item 1 do preço do item 4.
+        */}
         <Label>Produtos vendidos</Label>
         {items.map((it, idx) => (
           <Card key={idx} className="flex flex-col gap-2 p-3">
             <div className="flex items-center gap-2">
               <Select
+                aria-label={`Produto do item ${idx + 1}`}
                 className="flex-1"
                 value={it.productId}
                 onChange={(e) => setItem(idx, { productId: e.target.value })}
@@ -160,7 +167,7 @@ export function FiadoForm({
                 size="icon"
                 onClick={() => setItems((s) => s.filter((_, i) => i !== idx))}
                 disabled={items.length === 1}
-                aria-label="Remover item"
+                aria-label={`Remover item ${idx + 1}`}
               >
                 <Trash2 className="size-4 text-destructive" />
               </Button>
@@ -169,6 +176,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Quantidade</span>
                 <QuantityInput
+                  aria-label={`Quantidade do item ${idx + 1}`}
                   value={it.quantity}
                   onChange={(v) => setItem(idx, { quantity: v ?? 0 })}
                 />
@@ -176,6 +184,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
+                  aria-label={`Preço unitário do item ${idx + 1}`}
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}
                 />
@@ -185,6 +194,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Vasilhame (opcional)</span>
                 <Select
+                  aria-label={`Vasilhame do item ${idx + 1}`}
                   value={it.recipientType}
                   onChange={(e) => setItem(idx, { recipientType: e.target.value })}
                 >
@@ -199,6 +209,7 @@ export function FiadoForm({
               <div>
                 <span className="text-xs text-muted-foreground">Vasilhames do item</span>
                 <Input
+                  aria-label={`Vasilhames do item ${idx + 1}`}
                   type="number"
                   inputMode="numeric"
                   min={0}

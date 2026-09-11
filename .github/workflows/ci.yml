@@ -97,6 +97,13 @@ jobs:
       - name: Testes de integração
         run: npm run test:integration
 
+      # Projeto `dom` do Vitest (jsdom + testing-library). Roda separado dos
+      # unitários porque tem ambiente e travas próprias — ver `vitest.config.ts`.
+      # É o tipo de teste que não existia no repositório: sem ele, toda regra de
+      # apresentação só era exercitada por E2E, que é caro e precisa de banco.
+      - name: Testes de componente
+        run: npm run test:component
+
       - name: Verificação pré-flight (env, banco, consistência do trial)
         run: npm run preflight
 

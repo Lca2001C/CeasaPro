@@ -29,7 +29,11 @@ export default async function AssinaturaPage() {
   const primeiraAtivacao = Boolean(sub && !sub.activatedAt);
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
+    // `main`, e não `div`: esta tela é alcançável com a conta BLOQUEADA, então
+    // fica fora do AppShell e não herda marco nenhum. O axe acusava
+    // `landmark-one-main` e `region` aqui — e esta é a tela por onde entra o
+    // pagamento, a última em que se quer alguém perdido.
+    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
       <div className="text-center">
         <h1 className="text-2xl font-bold text-primary">Assinatura</h1>
         {sub && (
@@ -110,6 +114,6 @@ export default async function AssinaturaPage() {
         </Button>
         <LogoutButton />
       </div>
-    </div>
+    </main>
   );
 }

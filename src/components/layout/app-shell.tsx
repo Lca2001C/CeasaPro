@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { BottomNav } from "./bottom-nav";
 import { BotaoTutorial } from "./botao-tutorial";
 import { SideNav } from "./side-nav";
+import { PularParaConteudo } from "./pular-para-conteudo";
 import { Button } from "@/components/ui/button";
 import { SupportButton } from "@/components/support-button";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
@@ -47,6 +48,11 @@ export function AppShell({
   const mostrarSuporte = !pathname.startsWith("/vendas/nova");
   return (
     <div className="flex min-h-screen">
+      {/*
+        Primeiro elemento focável do documento, antes de qualquer navegação —
+        é o que dá sentido a ele. Ver o comentário do componente.
+      */}
+      <PularParaConteudo />
       <SideNav
         modules={modules}
         companyName={companyName}
@@ -118,7 +124,16 @@ export function AppShell({
           recorte de baixo. Sem somar o mesmo `env()` aqui, o último cartão da
           lista ficaria escondido atrás da navegação no iPhone.
         */}
-        <main className="mx-auto w-full max-w-3xl flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:pb-8">
+        <main
+          id="conteudo"
+          // Alvo do `PularParaConteudo`. `tabIndex={-1}` é o que faz o foco
+          // realmente PARAR aqui: sem ele o navegador rola até a âncora mas
+          // deixa o foco no link, e o próximo Tab volta para o começo da
+          // navegação — o link pareceria funcionar para quem olha e não
+          // funcionaria para quem usa teclado.
+          tabIndex={-1}
+          className="mx-auto w-full max-w-3xl flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] outline-none md:pb-8"
+        >
           {children}
         </main>
 

@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { sair } from "@/lib/sair";
 import { AbrirAmbienteButton } from "./abrir-ambiente-button";
+import { PularParaConteudo } from "./pular-para-conteudo";
 
 const nav = [
   { href: "/admin", label: "Início" },
@@ -51,6 +52,7 @@ export function AdminShell({
 
   return (
     <div className="min-h-screen">
+      <PularParaConteudo />
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
           <span className="font-bold text-primary">CeasaPro · Painel SaaS</span>
@@ -91,11 +93,16 @@ export function AdminShell({
             </Button>
           </div>
         </div>
-        <nav className="mx-auto flex max-w-4xl gap-1 overflow-x-auto px-2 pb-2">
+        {/* Rótulo próprio: é outra navegação que não a do app do cliente. */}
+        <nav
+          aria-label="Seções do painel"
+          className="mx-auto flex max-w-4xl gap-1 overflow-x-auto px-2 pb-2"
+        >
           {nav.map((n) => (
             <Link
               key={n.href}
               href={n.href}
+              aria-current={active(n.href) ? "page" : undefined}
               className={cn(
                 "whitespace-nowrap rounded-md px-3 py-1.5 text-sm font-medium",
                 active(n.href) ? "bg-accent text-accent-foreground" : "text-muted-foreground",
@@ -106,7 +113,10 @@ export function AdminShell({
           ))}
         </nav>
       </header>
-      <main className="mx-auto max-w-4xl px-4 py-5">{children}</main>
+      {/* `tabIndex={-1}`: ver o mesmo ponto no AppShell. */}
+      <main id="conteudo" tabIndex={-1} className="mx-auto max-w-4xl px-4 py-5 outline-none">
+        {children}
+      </main>
     </div>
   );
 }

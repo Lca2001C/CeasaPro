@@ -112,16 +112,17 @@ export function CompraForm({
     <div className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
-          <Label>Data</Label>
+          <Label htmlFor="purchaseDate">Data</Label>
           <Input
+            id="purchaseDate"
             type="date"
             value={purchaseDate}
             onChange={(e) => setPurchaseDate(e.target.value)}
           />
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label>Fornecedor</Label>
-          <Select value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <Label htmlFor="supplierId">Fornecedor</Label>
+          <Select id="supplierId" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
             <option value="">— Sem fornecedor —</option>
             {fornecedores.map((f) => (
               <option key={f.id} value={f.id}>
@@ -133,11 +134,19 @@ export function CompraForm({
       </div>
 
       <div className="flex flex-col gap-2">
+        {/*
+          Daqui para baixo os campos se REPETEM por item, então `id` não serve:
+          dois itens dariam o mesmo id e o rótulo apontaria para o primeiro.
+          Cada controle leva um `aria-label` com o número do item — que é a
+          única forma de quem usa leitor de tela saber se está no preço do
+          item 1 ou do item 4 numa compra com uma dúzia de produtos.
+        */}
         <Label>Itens</Label>
         {items.map((it, idx) => (
           <Card key={idx} className="flex flex-col gap-2 p-3">
             <div className="flex items-center gap-2">
               <Select
+                aria-label={`Produto do item ${idx + 1}`}
                 className="flex-1"
                 value={it.productId}
                 onChange={(e) => setItem(idx, { productId: e.target.value })}
@@ -152,6 +161,10 @@ export function CompraForm({
                 type="button"
                 variant="ghost"
                 size="icon"
+                // Só o ícone da lixeira: sem nome acessível o axe acusava
+                // `button-name` (crítico), e o leitor de tela anunciava apenas
+                // "botão" — num controle que APAGA uma linha da compra.
+                aria-label={`Remover item ${idx + 1}`}
                 onClick={() => removeItem(idx)}
                 disabled={items.length === 1}
               >
@@ -162,6 +175,7 @@ export function CompraForm({
               <div>
                 <span className="text-xs text-muted-foreground">Quantidade</span>
                 <QuantityInput
+                  aria-label={`Quantidade do item ${idx + 1}`}
                   value={it.quantity}
                   onChange={(v) => setItem(idx, { quantity: v ?? 0 })}
                 />
@@ -169,6 +183,7 @@ export function CompraForm({
               <div>
                 <span className="text-xs text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
+                  aria-label={`Preço unitário do item ${idx + 1}`}
                   value={it.unitPrice}
                   onChange={(v) => setItem(idx, { unitPrice: v ?? 0 })}
                 />
@@ -186,8 +201,8 @@ export function CompraForm({
       </div>
 
       <div className="flex flex-col gap-1.5">
-        <Label>Frete</Label>
-        <CurrencyInput value={freight} onChange={(v) => setFreight(v ?? 0)} />
+        <Label htmlFor="freight">Frete</Label>
+        <CurrencyInput id="freight" value={freight} onChange={(v) => setFreight(v ?? 0)} />
         <span className="text-xs text-muted-foreground">
           O frete entra no custo de cada produto automaticamente, rateado pelo valor.
         </span>
