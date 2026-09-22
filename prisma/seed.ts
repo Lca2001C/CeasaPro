@@ -6,6 +6,7 @@ import {
   DEFAULT_PACKAGING_TYPES,
 } from "../src/lib/constants";
 import { TERMS_VERSION } from "../src/lib/legal";
+import { OPTIONAL_MODULE_KEYS } from "../src/lib/plan/modules";
 
 const prisma = new PrismaClient();
 
@@ -43,20 +44,29 @@ async function main() {
   //    Ter 2+ planos ativos habilita a troca de plano na tela "Meu plano".
   const plan = await prisma.plan.upsert({
     where: { slug: "padrao" },
-    update: { priceMonthly: new Prisma.Decimal("200.00") },
+    // Os módulos entram também no UPDATE: `planModules` é fail-closed desde a
+    // trava de entitlement, e um "padrão" semeado antes disso ficou gravado sem
+    // `features.modules` — ou seja, valendo como plano SEM nenhum opcional. Sem
+    // reescrever aqui, rodar o seed numa base antiga deixaria o plano mais caro
+    // entregando menos que o básico.
+    update: {
+      priceMonthly: new Prisma.Decimal("200.00"),
+      features: { modules: [...OPTIONAL_MODULE_KEYS] },
+    },
     create: {
       name: "Plano Padrão",
       slug: "padrao",
       priceMonthly: new Prisma.Decimal("200.00"),
       active: true,
-      // sem features.modules ⇒ todos os módulos opcionais liberados (retrocompat).
+      // Explícito: plano sem `features.modules` não libera opcional nenhum.
+      features: { modules: [...OPTIONAL_MODULE_KEYS] },
     },
   });
   console.log(`✔ Plano: ${plan.name} (R$ ${plan.priceMonthly})`);
 
   const planoBasico = await prisma.plan.upsert({
     where: { slug: "basico" },
-    update: { priceMonthly: new Prisma.Decimal("160.00") },
+    update: { priceMonthly: new Prisma.Decimal("160.00"), features: { modules: [] } },
     create: {
       name: "Plano Básico",
       slug: "basico",

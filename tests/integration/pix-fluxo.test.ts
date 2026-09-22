@@ -517,16 +517,28 @@ describe("Reconciliação com muitas cobranças aprovadas", () => {
       data: { createdAt: new Date(Date.now() - 60 * 60 * 1000) },
     });
 
-    // 200 aprovadas ANTERIORES a ela: é exatamente o teto do lote.
+    /*
+      200 aprovadas ANTERIORES a ela: é exatamente o teto do lote.
+
+      Cada uma leva um `tenantId` próprio, porque é assim na produção: o lote é
+      GLOBAL, e quem o enche são as outras empresas pagantes — é justamente por
+      isso que o problema aparece "a partir de ~100 clientes". Empilhar as 200 no
+      mesmo tenant era um atalho do teste, e hoje um atalho proibido: só pode
+      existir UMA cobrança aprovada por empresa/competência (`approvedKey`).
+
+      O `subscriptionId` continua sendo o real, então as linhas somem por cascata
+      com a empresa e `cleanupTenants` não precisa saber destes ids sintéticos.
+    */
     const antigas = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     await prisma.subscriptionPayment.createMany({
       data: Array.from({ length: 200 }, (_, i) => ({
         subscriptionId: sub.id,
-        tenantId,
+        tenantId: `${tenantId}-outra-empresa-${i}`,
         amount: 49.9,
         status: "APROVADO" as const,
         referenceMonth: cobranca.referenceMonth,
         mpPaymentId: `mp-antiga-${i}-${uniq()}`,
+        approvedKey: `${tenantId}-outra-empresa-${i}:${cobranca.referenceMonth}`,
         createdAt: antigas,
         paidAt: antigas,
       })),

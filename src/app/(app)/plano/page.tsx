@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Check, X, AlertTriangle, BadgeCheck } from "lucide-react";
+import { Check, X, AlertTriangle, BadgeCheck, CalendarClock } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { PlanoService } from "@/lib/services/plano.service";
 import { isOptionalModuleKey, OPTIONAL_MODULES } from "@/lib/plan/modules";
@@ -107,7 +107,27 @@ export default async function MeuPlanoPage({
         </CardContent>
       </Card>
 
-      {!view.cancelledAt && <TrocarPlano plans={availablePlans} />}
+      {/*
+        A troca agendada precisa aparecer ANTES da lista de planos. Ela é o
+        estado menos esperado desta tela: quem acabou de trocar volta aqui e vê o
+        plano ANTIGO em "Meu plano" — sem esta faixa, parece que a troca não foi
+        registrada e a pessoa tenta de novo.
+      */}
+      {view.pendingPlan && (
+        <Card className="flex items-start gap-2 border-info/40 bg-info/10 p-3">
+          <CalendarClock className="mt-0.5 size-5 shrink-0 text-info" />
+          <p className="text-sm [overflow-wrap:anywhere]">
+            Sua troca para o plano <b>{view.pendingPlan.name}</b> (
+            {formatBRL(view.pendingPlan.priceMonthly)}/mês) está agendada para{" "}
+            <b>{formatDate(view.pendingPlan.from)}</b>. Até lá vale o plano atual, que já
+            está pago neste mês.
+          </p>
+        </Card>
+      )}
+
+      {!view.cancelledAt && (
+        <TrocarPlano plans={availablePlans} pendingPlan={view.pendingPlan} />
+      )}
       <CancelarAssinatura
         cancelledAt={view.cancelledAt}
         currentPeriodEnd={view.currentPeriodEnd}

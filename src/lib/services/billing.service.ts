@@ -103,6 +103,40 @@ export function reversalSubscriptionStatus(mpStatus: string): SubscriptionStatus
   return mpStatus === "charged_back" ? "BLOQUEADO" : "SUSPENSO";
 }
 
+/**
+ * Chave que o banco usa para garantir **uma única cobrança APROVADA por
+ * competência** (`SubscriptionPayment.approvedKey`, `@unique`).
+ *
+ * Preenchida só enquanto a cobrança está aprovada; em qualquer outro status ela
+ * é `null`, e vários `null` não colidem em índice único no Postgres — então
+ * recusada, estornada e cancelada continuam podendo repetir à vontade no mesmo
+ * mês, que é o caso comum de quem tenta pagar três vezes até o cartão passar.
+ */
+function chaveDeAprovacao(
+  status: PaymentStatus,
+  tenantId: string,
+  referenceMonth: string,
+): string | null {
+  return status === "APROVADO" ? `${tenantId}:${referenceMonth}` : null;
+}
+
+/**
+ * O erro é a violação do índice único de `approvedKey` (P2002)?
+ *
+ * É o que sobra quando dois webhooks da mesma competência atravessam o
+ * `findFirst` ao mesmo tempo: um grava, o outro esbarra no banco. Reconhecer o
+ * caso é o que separa "segunda aprovação recusada, como projetado" de um erro de
+ * verdade — que precisa continuar subindo.
+ */
+function violouChaveDeAprovacao(e: unknown): boolean {
+  if (typeof e !== "object" || e === null) return false;
+  const err = e as { code?: unknown; meta?: { target?: unknown } };
+  if (err.code !== "P2002") return false;
+  const alvo = err.meta?.target;
+  const campos = Array.isArray(alvo) ? alvo.map(String) : [String(alvo ?? "")];
+  return campos.some((c) => c.includes("approvedKey"));
+}
+
 /** Mapeia a forma de pagamento do Mercado Pago para o enum `ChargeMethod`. */
 export function mapMpMethod(mp: Pick<MpPayment, "method" | "paymentTypeId">): ChargeMethod | null {
   switch (mp.paymentTypeId) {
@@ -215,6 +249,17 @@ async function prepareCharge(
     include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
   });
   if (!sub) throw new NotFoundError("Assinatura não encontrada");
+
+  // Troca de plano agendada que já venceu passa a valer AQUI, antes de o valor
+  // ser lido. O agendamento existe justamente porque a competência anterior
+  // estava paga; se a cobrança da competência nova saísse pelo plano antigo, o
+  // adiamento teria só empurrado o mesmo desconto para o mês seguinte.
+  if (await PlanoService.aplicarTrocaProgramada(sub, now)) {
+    sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { tenantId },
+      include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
+    });
+  }
 
   // A guarda de "mês já pago" vem ANTES da troca de plano: trocar primeiro
   // deixava o cliente com o plano novo e sem cobrança nenhuma — a exceção
@@ -392,6 +437,9 @@ export const BillingService = {
         // Sem isto ela ficaria CANCELADA com QR válido na tela, e o polling —
         // que procura cobrança PENDENTE — nunca confirmaria o pagamento.
         status: "PENDENTE",
+        // A chave de aprovação acompanha o status SEMPRE: linha pendente que
+        // continuasse segurando a chave bloquearia a aprovação seguinte do mês.
+        approvedKey: null,
         amount: charge.amount,
         qrCode: pix.qrCode,
         qrCodeBase64: pix.qrCodeBase64,
@@ -469,6 +517,7 @@ export const BillingService = {
         // Volta a PENDENTE para o status real ser reaplicado logo abaixo; sem
         // isto `applyPaymentStatus` veria o mesmo status e ignoraria a rodada.
         status: "PENDENTE",
+        approvedKey: null,
         amount: charge.amount,
         method: input.method,
         statusDetail: paid.statusDetail,
@@ -589,7 +638,46 @@ export const BillingService = {
     // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
     const isReversal = payment.status === "APROVADO";
 
-    const aplicado = await prisma.$transaction(async (tx) => {
+    const resultado = await prisma.$transaction(async (tx) => {
+      /*
+        Uma única cobrança APROVADA por competência.
+
+        Nada impedia duas: o PIX pago minutos depois de o cartão ter passado, o
+        mesmo QR quitado duas vezes, dois webhooks concorrentes de cobranças
+        distintas do mesmo mês. Cada aprovação empurrava `currentPeriodEnd` mais
+        um mês (o bloco abaixo soma a partir do vencimento vigente), então pagar
+        duas vezes em agosto comprava setembro sem cobrança — e, do outro lado da
+        moeda, estornar UMA delas suspendia a empresa que ainda tinha a outra paga.
+
+        A checagem vive DENTRO da transação, e o índice único de `approvedKey` é a
+        rede embaixo dela: entre o `findFirst` e o `updateMany` ainda cabe outro
+        webhook, e é o banco que decide quem chega primeiro.
+      */
+      if (newStatus === "APROVADO") {
+        const outraAprovada = await tx.subscriptionPayment.findFirst({
+          where: {
+            tenantId: payment.tenantId,
+            referenceMonth: payment.referenceMonth,
+            status: "APROVADO",
+            id: { not: payment.id },
+          },
+          select: { id: true, mpPaymentId: true },
+        });
+        if (outraAprovada) {
+          logger.error(
+            {
+              tenantId: payment.tenantId,
+              referenceMonth: payment.referenceMonth,
+              mpPaymentId: mp.id,
+              jaAprovado: outraAprovada.mpPaymentId,
+            },
+            "Segunda cobrança aprovada na mesma competência — mês NÃO creditado de novo. " +
+              "O valor entrou no Mercado Pago e precisa de devolução ou crédito manual.",
+          );
+          return { aplicado: false, bloqueou: false, duplicado: true };
+        }
+      }
+
       // Guarda contra corrida: só um webhook concorrente consegue a transição.
       const { count } = await tx.subscriptionPayment.updateMany({
         where: { id: payment.id, status: { not: newStatus } },
@@ -600,10 +688,12 @@ export const BillingService = {
           threeDsUrl: newStatus === "PENDENTE" ? payment.threeDsUrl : null,
           paidAt: newStatus === "APROVADO" ? (mp.paidAt ?? now) : payment.paidAt,
           method: payment.method ?? mapMpMethod(mp),
+          // Acompanha o status: sai de APROVADO, libera a competência.
+          approvedKey: chaveDeAprovacao(newStatus, payment.tenantId, payment.referenceMonth),
           rawPayload: mp as unknown as object,
         },
       });
-      if (count !== 1) return false;
+      if (count !== 1) return { aplicado: false, bloqueou: false, duplicado: false };
 
       if (newStatus === "APROVADO") {
         const sub = await tx.tenantSubscription.findUnique({
@@ -637,11 +727,67 @@ export const BillingService = {
         }
       }
 
+      let bloqueou = false;
       if (isReversal) {
+        /*
+          Estornar UMA cobrança não é estornar a competência.
+
+          Antes, qualquer reversão suspendia a empresa e revogava as sessões. Só
+          que a mesma competência pode ter mais de um pagamento aprovado por
+          razões legítimas — o cliente pagou no cartão, o cartão foi contestado, o
+          suporte gerou um PIX e ele foi quitado. Estornado o cartão, o mês
+          continuava pago e o acesso caía mesmo assim: a empresa era bloqueada
+          por um pagamento que ela tinha substituído, e só um humano no painel
+          reabria (a reversão grava `statusSource: MANUAL`, que trava o cron).
+
+          Com outro pagamento aprovado de pé, a reversão vira só o que ela é: uma
+          linha do extrato mudando de status. `currentPeriodEnd` fica, o acesso
+          fica, e a auditoria registra o caso para conferência.
+        */
+        const outraAprovada = await tx.subscriptionPayment.findFirst({
+          where: {
+            tenantId: payment.tenantId,
+            referenceMonth: payment.referenceMonth,
+            status: "APROVADO",
+            id: { not: payment.id },
+          },
+          select: { id: true, mpPaymentId: true },
+        });
+
         const sub = await tx.tenantSubscription.findUnique({
           where: { id: payment.subscriptionId },
         });
-        if (sub) {
+
+        if (outraAprovada) {
+          logger.warn(
+            {
+              tenantId: payment.tenantId,
+              referenceMonth: payment.referenceMonth,
+              revertido: mp.id,
+              mpStatus: mp.status,
+              aindaAprovado: outraAprovada.mpPaymentId,
+            },
+            "Pagamento revertido, mas a competência segue paga por outra cobrança — acesso mantido",
+          );
+          await audit(
+            {
+              tenantId: payment.tenantId,
+              action: "PAYMENT",
+              entity: "SubscriptionPayment",
+              entityId: payment.id,
+              oldData: { status: "APROVADO" },
+              newData: {
+                status: newStatus,
+                mpStatus: mp.status,
+                mpPaymentId: mp.id,
+                acessoMantido: true,
+                aindaAprovado: outraAprovada.mpPaymentId,
+              },
+            },
+            tx,
+          );
+        } else if (sub) {
+          bloqueou = true;
           const blockedStatus = reversalSubscriptionStatus(mp.status);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
@@ -685,12 +831,31 @@ export const BillingService = {
         },
         tx,
       );
-      return true;
-    });
+      return { aplicado: true, bloqueou, duplicado: false };
+    })
+      .catch((e: unknown) => {
+        // Entre o `findFirst` lá em cima e este `updateMany` ainda cabe outro
+        // webhook da mesma competência. Quando cabe, quem recusa a segunda
+        // aprovação é o índice único — e o resultado é o mesmo: o mês não é
+        // creditado duas vezes, e o log chama um humano para devolver o valor.
+        if (!violouChaveDeAprovacao(e)) throw e;
+        logger.error(
+          {
+            tenantId: payment.tenantId,
+            referenceMonth: payment.referenceMonth,
+            mpPaymentId: mp.id,
+          },
+          "Corrida entre dois pagamentos aprovados da mesma competência — o banco recusou " +
+            "o segundo. O valor entrou no Mercado Pago e precisa de devolução ou crédito manual.",
+        );
+        return { aplicado: false, bloqueou: false, duplicado: true };
+      });
 
-    if (!aplicado) return "ignorado";
+    if (!resultado.aplicado) return "ignorado";
 
-    if (isReversal) {
+    // Só revoga sessão quando a competência ficou de fato descoberta. Reversão
+    // com outro pagamento válido no mês não derruba ninguém.
+    if (resultado.bloqueou) {
       // Derruba as sessões abertas: o access token expira em minutos e o
       // refresh já não renova, então o acesso cai sem depender de novo login.
       await revokeAllForTenant(payment.tenantId);
@@ -927,8 +1092,14 @@ export const BillingService = {
     await sendEmail(owner.email, mail.subject, mail.html);
   },
 
-  /** Recalcula o status de todas as assinaturas (cron diário). */
-  async recomputeStatuses() {
+  /**
+   * Recalcula o status de todas as assinaturas e faz valer as trocas de plano
+   * agendadas que venceram (cron diário).
+   *
+   * As duas coisas juntas porque compartilham a varredura. A troca vem primeiro:
+   * ela muda `monthlyAmount`, e é esse valor que a cobrança do mês novo usa.
+   */
+  async recomputeStatuses(now = new Date()) {
     // Empresa excluída não tem status a recalcular: o trabalho era inútil e
     // era ele que transformava a assinatura órfã em VENCIDO/SUSPENSO,
     // alimentando o cartão "Inadimplentes" do painel do super-admin.
@@ -936,8 +1107,13 @@ export const BillingService = {
       where: { tenant: { deletedAt: null } },
     });
     let updated = 0;
+    let planosTrocados = 0;
     for (const sub of subs) {
-      const effective = computeStatus(sub);
+      // Sai na primeira linha quando não há agendamento: nenhuma consulta a mais
+      // para as assinaturas comuns, que são a esmagadora maioria.
+      if (await PlanoService.aplicarTrocaProgramada(sub, now)) planosTrocados++;
+
+      const effective = computeStatus(sub, now);
       if (effective !== sub.status) {
         await prisma.tenantSubscription.update({
           where: { id: sub.id },
@@ -946,7 +1122,7 @@ export const BillingService = {
         updated++;
       }
     }
-    return { total: subs.length, updated };
+    return { total: subs.length, updated, planosTrocados };
   },
 
   /**
@@ -989,6 +1165,11 @@ export const BillingService = {
           // de um episódio antigo (a action só chega aqui com acesso liberado).
           statusSource: "AUTO",
           statusReason: "Cancelamento pedido pelo dono da empresa",
+          // Quem cancelou não vai estrear plano novo no mês que vem. Deixar o
+          // agendamento de pé trocaria o plano (e o valor) de uma assinatura
+          // encerrada, sozinho, dias depois.
+          pendingPlanId: null,
+          pendingPlanFrom: null,
         },
       });
       await audit(

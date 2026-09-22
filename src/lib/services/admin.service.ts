@@ -17,10 +17,11 @@ import {
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
 import { ADMIN_PLAN_SLUG } from "./plano.service";
+import { ALL_OPTIONAL_KEYS, isOptionalModuleKey } from "@/lib/plan/modules";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { inicioDaJanelaOnline } from "@/lib/auth/presence";
 import { situacaoCobranca, type SituacaoCobrancaDetalhe } from "@/lib/billing/status";
-import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError, ValidationError } from "@/lib/http/app-error";
 import type { AdminCtx } from "@/lib/http/with-action";
 import type {
   NovaEmpresaInput,
@@ -28,6 +29,33 @@ import type {
   PlanoInput,
   PlanoUpdateInput,
 } from "@/lib/validations/admin";
+
+/**
+ * Lista de módulos de um plano — OBRIGATÓRIA ao criar e ao salvar.
+ *
+ * `planModules` passou a ser fail-closed: plano gravado sem `features.modules`
+ * deixa de liberar os opcionais, em vez de liberar todos. Isso fecha a brecha de
+ * receita, mas cria a simétrica do outro lado — um plano salvo por um caminho que
+ * esqueceu o campo entrega menos do que foi vendido, e o cliente descobre no
+ * suporte. O schema Zod já exige o array na tela; esta guarda cobre quem chama o
+ * serviço direto (script, migração de dados, teste) e faz a intenção ficar
+ * escrita: lista vazia é uma decisão legítima ("só o núcleo"), campo ausente não é.
+ */
+function modulosDoPlano(input: { modules?: unknown }): string[] {
+  const raw = input.modules;
+  if (!Array.isArray(raw)) {
+    throw new ValidationError("Informe os módulos incluídos no plano.", {
+      modules: "Escolha os módulos deste plano (pode ser nenhum, mas é preciso decidir).",
+    });
+  }
+  const invalido = raw.find((m) => typeof m !== "string" || !isOptionalModuleKey(m));
+  if (invalido !== undefined) {
+    throw new ValidationError("Módulo desconhecido no plano.", {
+      modules: `"${String(invalido)}" não é um módulo do catálogo.`,
+    });
+  }
+  return raw as string[];
+}
 
 function slugify(s: string): string {
   return s
@@ -248,7 +276,13 @@ export const AdminService = {
           slug: ADMIN_PLAN_SLUG,
           priceMonthly: 0,
           active: false,
-          features: {},
+          // Explícito desde que `planModules` virou fail-closed: `features: {}`
+          // significava "todos liberados" e passou a significar "nenhum". O
+          // super-admin recebe a lista completa pelo PAPEL (`build-session`), não
+          // por este plano — mas deixá-lo dizendo o contrário do que se quer é o
+          // tipo de detalhe que reaparece como bug quando alguém usar este plano
+          // para outra coisa.
+          features: { modules: [...ALL_OPTIONAL_KEYS] },
         },
       }));
 
@@ -431,6 +465,7 @@ export const AdminService = {
   },
 
   async createPlan(input: PlanoInput, ctx: AdminCtx) {
+    const modules = modulosDoPlano(input);
     let slug = slugify(input.name) || "plano";
     const clash = await prisma.plan.findUnique({ where: { slug } });
     if (clash) slug = `${slug}-${randomBytes(2).toString("hex")}`;
@@ -440,7 +475,7 @@ export const AdminService = {
         slug,
         priceMonthly: input.priceMonthly,
         active: input.active,
-        features: { modules: input.modules },
+        features: { modules },
       },
     });
     await audit({
@@ -456,6 +491,7 @@ export const AdminService = {
   },
 
   async updatePlan(input: PlanoUpdateInput, ctx: AdminCtx) {
+    const modules = modulosDoPlano(input);
     // Buscar antes: sem isto, id inexistente virava P2025 do Prisma e chegava
     // ao usuário como "erro inesperado" em vez de "plano não encontrado".
     const before = await prisma.plan.findUnique({ where: { id: input.id } });
@@ -472,7 +508,7 @@ export const AdminService = {
         name: input.name,
         priceMonthly: input.priceMonthly,
         active: input.active,
-        features: { modules: input.modules },
+        features: { modules },
       },
     });
     await audit({

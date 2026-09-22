@@ -24,7 +24,7 @@ Fonte única da verdade: [`src/lib/plan/modules.ts`](../src/lib/plan/modules.ts)
 
 No cadastro/edição do plano (super-admin, `/admin/planos`), marcam-se os módulos opcionais incluídos. Isso é gravado em `Plan.features` como `{ "modules": ["caixas", "higienizacao", ...] }`.
 
-**Retrocompatibilidade:** um plano **sem** `features.modules` definido é tratado como **todos os módulos liberados** — por isso planos antigos e a empresa demo não quebram.
+**Fail-closed:** um plano **sem** `features.modules` não libera módulo opcional nenhum. Era o contrário (ausência = todos liberados, para não quebrar planos anteriores ao catálogo), e a retrocompatibilidade virou o jeito mais barato de entregar o produto inteiro de graça — qualquer plano gravado sem o campo valia como plano completo, em silêncio, porque a tela mostra recurso liberado e nada indica que aquilo não foi vendido. `AdminService.createPlan`/`updatePlan` passaram a **exigir** a lista, então "sem campo" só existe em dado antigo. Lista vazia (`{ "modules": [] }`) continua sendo a forma de dizer "só o núcleo".
 
 ## Como o módulo chega até a empresa
 
@@ -52,11 +52,22 @@ Mostra ao dono:
 ### Troca de plano (autoritativa no servidor)
 
 A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de módulo) → `PlanoService.changePlan`, que aplica as regras **no servidor** (o cliente só envia o `planId` alvo):
-- só planos **existentes e ativos**; nunca o plano atual;
+- só planos **existentes e ativos**; nunca o plano atual; **nunca** o plano interno do ambiente do super-admin (`ADMIN_PLAN_SLUG`) — recusado pelo slug, não por `active`, porque ativá-lo é um clique e ele custa R$ 0 por 50 anos;
 - o **valor mensal vem sempre do plano** (nunca do cliente);
 - **não** altera status, vencimento nem `statusSource` (respeita eventual bloqueio manual do super-admin e o período já pago).
 
-A mudança vale **na hora** para o acesso aos módulos — a tela chama `/api/auth/refresh` após a troca, então o claim `modules` do token é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
+**Quando a troca vale.** Depende de a competência corrente já estar paga:
+
+| Competência corrente | O que acontece | Onde fica |
+|---|---|---|
+| em aberto (trial, vencida, primeira contratação) | vale **na hora**; o novo valor entra na próxima cobrança | `planId` / `monthlyAmount` |
+| **já paga** e período em curso | **agendada** para `currentPeriodEnd` | `pendingPlanId` / `pendingPlanFrom` |
+
+O agendamento existe porque a mensalidade compra o **mês**, e é o plano que decide quais módulos valem nesse mês. Com a troca valendo sempre na hora, quem pagasse o básico no dia 1º e subisse para o completo no dia 2 usava o mês todo pelo preço do básico — e repetindo a manobra nunca chegava a pagar o plano que usa. O downgrade é adiado pela razão simétrica: tirar na hora módulos recém-pagos seria receber o mês e entregar meio.
+
+A troca agendada passa a valer em `PlanoService.aplicarTrocaProgramada`, chamada de onde ela tem consequência e não pode esperar o cron da tarde: `buildAccessPayload` (o claim `modules` do token), `prepareCharge` (o valor que vai ao Mercado Pago), `getPlanoView` (a tela) e `recomputeStatuses` (o cron diário). Escolher de novo o plano vigente **desfaz** o agendamento, e há também a action `cancelarTrocaDePlano`.
+
+Quando a troca vale na hora, o acesso aos módulos acompanha: a tela chama `/api/auth/refresh` após a troca, o claim `modules` é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
 
 ### Escolha do plano no primeiro pagamento (`/assinatura`)
 

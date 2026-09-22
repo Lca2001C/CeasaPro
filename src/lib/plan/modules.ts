@@ -78,7 +78,24 @@ export function isOptionalModuleKey(v: string): v is OptionalModuleKey {
 
 /**
  * Lê os módulos habilitados a partir de `Plan.features`.
- * Retrocompatível: plano sem `features.modules` ⇒ TODOS os opcionais liberados.
+ *
+ * Fail-CLOSED: plano sem `features.modules` não libera módulo opcional nenhum.
+ *
+ * Era o contrário — ausência de lista significava "todos liberados", para os
+ * planos anteriores ao catálogo de módulos continuarem funcionando. O problema é
+ * que essa retrocompatibilidade nunca expirou e virou o caminho mais fácil de
+ * entregar o produto inteiro de graça: qualquer plano criado sem o campo (uma
+ * migração de dados, um `prisma.plan.create` num script, o plano interno do
+ * ambiente do super-admin, que nasce com `features: {}`) valia como plano
+ * completo — e o erro era SILENCIOSO, porque a tela mostra recurso liberado e
+ * nada indica que aquilo não foi vendido.
+ *
+ * É a mesma decisão que `isModuleEnabled` já tinha tomado para o claim do token:
+ * ausência de informação não é permissão. O preço é que um plano mal cadastrado
+ * entrega menos do que deveria — reclamação que chega ao suporte no primeiro dia
+ * e se conserta em `/admin/planos`, ao contrário da receita que se perde sem
+ * ninguém notar. `AdminService` agora exige a lista ao criar e ao salvar plano,
+ * então o caso "sem campo" só sobrevive em dado antigo.
  */
 export function planModules(features: unknown): OptionalModuleKey[] {
   if (features && typeof features === "object" && "modules" in features) {
@@ -87,7 +104,7 @@ export function planModules(features: unknown): OptionalModuleKey[] {
       return raw.filter((m): m is OptionalModuleKey => typeof m === "string" && isOptionalModuleKey(m));
     }
   }
-  return [...ALL_OPTIONAL_KEYS];
+  return [];
 }
 
 /** Mapeia um caminho a um módulo opcional (ou null se for núcleo). */

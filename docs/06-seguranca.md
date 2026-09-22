@@ -42,7 +42,7 @@ Detalhes que sustentam isso:
 
 ## Webhook de pagamento
 
-- O webhook do Mercado Pago valida a **assinatura HMAC** (`x-signature`) com `MERCADOPAGO_WEBHOOK_SECRET` (comparação `timingSafeEqual`) e recusa timestamps fora de uma janela de 5 min (**anti-replay**), busca o pagamento real na API (nunca confia no corpo) e é **idempotente** (chave única `mpPaymentId`). Estorno e chargeback bloqueiam a assinatura e **revogam as sessões ativas** da empresa. Ver [`src/lib/payments/mercadopago.ts`](../src/lib/payments/mercadopago.ts).
+- O webhook do Mercado Pago valida a **assinatura HMAC** (`x-signature`) com `MERCADOPAGO_WEBHOOK_SECRET` (comparação `timingSafeEqual`) e recusa timestamps fora de uma janela de 5 min (**anti-replay**), busca o pagamento real na API (nunca confia no corpo) e é **idempotente** (chave única `mpPaymentId`). Sem o segredo configurado, **recusa tudo, em qualquer ambiente** — havia um bypass por `NODE_ENV`, e preview da Vercel e staging valem "development" apontando para banco de verdade, então qualquer POST confirmava um pagamento. Estorno e chargeback bloqueiam a assinatura e **revogam as sessões ativas** da empresa, salvo quando sobra outra cobrança APROVADA da mesma competência — aí o mês segue pago e o acesso fica. Ver [`src/lib/payments/mercadopago.ts`](../src/lib/payments/mercadopago.ts).
 - O cron (`/api/cron/billing`) exige `Authorization: Bearer ${CRON_SECRET}`.
 
 ## Validação de entrada

@@ -9,10 +9,28 @@ import {
 import { ForbiddenError } from "@/lib/http/app-error";
 
 describe("planModules", () => {
-  it("plano sem features → todos os módulos (retrocompatível)", () => {
-    expect(planModules(null).sort()).toEqual([...ALL_OPTIONAL_KEYS].sort());
-    expect(planModules(undefined).sort()).toEqual([...ALL_OPTIONAL_KEYS].sort());
-    expect(planModules({}).sort()).toEqual([...ALL_OPTIONAL_KEYS].sort());
+  /*
+    Era o contrário: plano sem `features.modules` liberava TODOS os opcionais,
+    para os planos anteriores ao catálogo continuarem funcionando. A
+    retrocompatibilidade nunca expirou e virou o caminho mais barato de entregar
+    o produto inteiro de graça — bastava um plano criado sem o campo (uma
+    migração, um script, o plano interno do super-admin, que nascia com
+    `features: {}`) para ele valer como plano completo, em silêncio.
+
+    É a mesma regra que `isModuleEnabled` já aplicava ao claim do token: ausência
+    de informação não é permissão.
+  */
+  it("plano sem features NÃO libera módulo nenhum (fail-closed)", () => {
+    expect(planModules(null)).toEqual([]);
+    expect(planModules(undefined)).toEqual([]);
+    expect(planModules({})).toEqual([]);
+    expect(planModules({ modules: "todos" })).toEqual([]);
+  });
+
+  it("o plano completo continua liberando tudo — quando diz isso", () => {
+    expect(planModules({ modules: [...ALL_OPTIONAL_KEYS] }).sort()).toEqual(
+      [...ALL_OPTIONAL_KEYS].sort(),
+    );
   });
 
   it("lê a lista de módulos do features", () => {

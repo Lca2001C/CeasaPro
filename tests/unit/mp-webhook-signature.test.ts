@@ -235,17 +235,44 @@ describe("verifyWebhookSignature", () => {
     ).toBeNull();
   });
 
-  it("sem segredo: bloqueia em produção e libera em desenvolvimento", () => {
+  /*
+    Sem segredo, recusa — em QUALQUER ambiente.
+
+    Antes, fora de produção a verificação era pulada e a função devolvia o
+    `data.id` como se ele tivesse sido autenticado. `NODE_ENV` não é onde essa
+    decisão cabe: preview da Vercel, staging e qualquer execução que não seja
+    `next build` valem "development", e essas URLs são públicas e falam com um
+    banco de verdade. Quem achasse a rota confirmava a própria assinatura
+    postando um `data.id` — e o webhook é a ÚNICA autenticação que existe ali,
+    porque a rota está em PUBLIC_PREFIXES e o Mercado Pago chega sem cookie.
+  */
+  it("sem segredo: recusa em produção E fora dela (fail-closed)", () => {
     vi.stubEnv("MERCADOPAGO_WEBHOOK_SECRET", "");
 
-    vi.stubEnv("NODE_ENV", "production");
-    expect(
-      verifyWebhookSignature({ xSignature: null, xRequestId: null, dataId: DATA_ID, now }),
-    ).toBeNull();
+    for (const env of ["production", "development", "test"]) {
+      vi.stubEnv("NODE_ENV", env);
+      expect(
+        verifyWebhookSignature({ xSignature: null, xRequestId: null, dataId: DATA_ID, now }),
+        `NODE_ENV=${env} nao pode liberar`,
+      ).toBeNull();
+    }
+  });
 
+  it("sem segredo, nem uma assinatura BOA passa — não há com o que comparar", () => {
+    // O caso que o bypass escondia: em dev, um POST com assinatura qualquer (ou
+    // nenhuma) era aceito. Aqui a assinatura é legítima para o segredo de teste,
+    // e ainda assim tem de ser recusada — sem o segredo configurado o servidor
+    // não tem como distinguir o Mercado Pago de um estranho.
+    const assinaturaBoa = assinar(nowSeconds);
+    vi.stubEnv("MERCADOPAGO_WEBHOOK_SECRET", "");
     vi.stubEnv("NODE_ENV", "development");
     expect(
-      verifyWebhookSignature({ xSignature: null, xRequestId: null, dataId: DATA_ID, now }),
-    ).toBe(DATA_ID);
+      verifyWebhookSignature({
+        xSignature: assinaturaBoa,
+        xRequestId: REQUEST_ID,
+        dataId: DATA_ID,
+        now,
+      }),
+    ).toBeNull();
   });
 });

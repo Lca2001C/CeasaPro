@@ -36,6 +36,13 @@ import type { SignupInput } from "@/lib/validations/auth";
  *    e-mail descartável geraria acesso grátis ilimitado — e como não pedimos
  *    cartão, a confirmação é a única barreira de identidade que existe.
  *
+ *    Essa barreira depende de o endereço identificar uma CAIXA, não um texto.
+ *    Enquanto `emailEmUso` comparava string, `dono+1@gmail.com` e
+ *    `d.o.n.o@gmail.com` passavam como endereços novos, recebiam o link de
+ *    confirmação na caixa de sempre e rendiam mais 7 dias — sem precisar de
+ *    e-mail descartável nenhum, e quantas vezes o dono quisesse. A comparação
+ *    hoje é pela forma raiz (`src/lib/email-identity.ts`).
+ *
  * 2. **A resposta nunca revela se o e-mail já tem conta.** Dizer "e-mail já
  *    cadastrado" transformaria o formulário num verificador de quem é cliente do
  *    CeasaPro; o login e o "esqueci minha senha" já foram endurecidos contra

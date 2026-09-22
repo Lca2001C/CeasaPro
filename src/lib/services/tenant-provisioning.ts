@@ -1,5 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
+import { emailIdentity } from "@/lib/email-identity";
 import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
 
@@ -37,10 +38,26 @@ export function emailDeExcluido(userId: string, email: string): string {
   return `excluido-${userId}-${email}`;
 }
 
-/** Existe conta ATIVA (não excluída) com este e-mail? */
+/**
+ * Existe conta ATIVA (não excluída) com este e-mail?
+ *
+ * A pergunta é sobre a CAIXA DE ENTRADA, não sobre o texto do endereço.
+ * `dono@gmail.com`, `dono+teste@gmail.com` e `d.o.n.o@gmail.com` são o mesmo
+ * destino, e comparar como texto fazia dos apelidos do próprio provedor uma
+ * fábrica de testes grátis: cada variação recebia o link de confirmação na mesma
+ * caixa e ganhava mais 7 dias. `emailIdentity` é a forma raiz; `email` continua
+ * sendo o endereço digitado, porque é para ele que a mensagem vai.
+ *
+ * O `OR` com o endereço literal cobre as contas anteriores ao backfill da
+ * migration e qualquer linha gravada por um caminho que não passe por
+ * `provisionTenant` — sem ele, a checagem ficaria mais fraca do que era.
+ */
 export async function emailEmUso(email: string): Promise<boolean> {
   const existing = await prisma.user.findFirst({
-    where: { email, deletedAt: null },
+    where: {
+      deletedAt: null,
+      OR: [{ email }, { emailIdentity: emailIdentity(email) }],
+    },
     select: { id: true },
   });
   return existing !== null;
@@ -81,7 +98,12 @@ export async function liberarEmailDeContaExcluida(email: string): Promise<void> 
   if (!excluido) return;
   await prisma.user.update({
     where: { id: excluido.id },
-    data: { email: emailDeExcluido(excluido.id, excluido.email) },
+    data: {
+      email: emailDeExcluido(excluido.id, excluido.email),
+      // A identidade sai junto com o e-mail: ela é a chave de "já tem conta", e
+      // uma conta excluída não tem que segurar endereço nenhum.
+      emailIdentity: null,
+    },
   });
 }
 
@@ -147,6 +169,9 @@ export async function provisionTenant(
         create: {
           name: input.owner.name,
           email: input.owner.email,
+          // Carimbada na criação, nos DOIS caminhos (cadastro público e cadastro
+          // pelo admin): é o que `emailEmUso` consulta.
+          emailIdentity: emailIdentity(input.owner.email),
           passwordHash: input.owner.passwordHash,
           role: "OWNER",
           mustChangePassword: input.owner.mustChangePassword,

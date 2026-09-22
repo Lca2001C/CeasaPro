@@ -2,12 +2,12 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, ArrowLeftRight } from "lucide-react";
+import { Check, Loader2, ArrowLeftRight, CalendarClock, Undo2 } from "lucide-react";
 import { toast } from "sonner";
-import type { AvailablePlan } from "@/lib/services/plano.service";
-import { trocarPlano } from "@/actions/plano.actions";
+import type { AvailablePlan, PlanoView } from "@/lib/services/plano.service";
+import { trocarPlano, cancelarTrocaDePlano } from "@/actions/plano.actions";
 import { apiPost } from "@/lib/api-client";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -19,7 +19,14 @@ import {
   DialogFooter,
 } from "@/components/ui/dialog";
 
-export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
+export function TrocarPlano({
+  plans,
+  pendingPlan,
+}: {
+  plans: AvailablePlan[];
+  /** Troca já contratada que só passa a valer na próxima competência. */
+  pendingPlan: PlanoView["pendingPlan"];
+}) {
   const router = useRouter();
   const [selected, setSelected] = useState<AvailablePlan | null>(null);
   const [pending, start] = useTransition();
@@ -39,7 +46,30 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
       // Renova a sessão para os módulos do novo plano valerem na hora (claim do JWT).
       await apiPost("/api/auth/refresh", {});
       setSelected(null);
-      toast.success(`Plano alterado para ${alvo.name}.`);
+      // A mensagem tem de dizer a verdade: com o mês já pago o servidor AGENDA a
+      // troca em vez de aplicá-la, e anunciar "plano alterado" faria a pessoa
+      // procurar os módulos novos que ainda não valem.
+      if (res.data.scheduled) {
+        toast.success(
+          `Troca para ${alvo.name} agendada para ${
+            res.data.effectiveFrom ? formatDate(res.data.effectiveFrom) : "a próxima cobrança"
+          }.`,
+        );
+      } else {
+        toast.success(`Plano alterado para ${alvo.name}.`);
+      }
+      router.refresh();
+    });
+  }
+
+  function desfazerAgendamento() {
+    start(async () => {
+      const res = await cancelarTrocaDePlano({});
+      if (!res.ok) {
+        toast.error(res.error.message);
+        return;
+      }
+      toast.success("Troca de plano cancelada. Você segue no plano atual.");
       router.refresh();
     });
   }
@@ -50,6 +80,25 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
         <CardTitle className="text-base">Trocar de plano</CardTitle>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
+        {pendingPlan && (
+          <div className="flex flex-col gap-2 rounded-lg border border-info/40 bg-info/5 p-3 sm:flex-row sm:items-center sm:justify-between">
+            <p className="min-w-0 text-sm [overflow-wrap:anywhere]">
+              <CalendarClock className="mr-1 inline size-4 text-info" />
+              Agendado: <b>{pendingPlan.name}</b> a partir de{" "}
+              <b>{formatDate(pendingPlan.from)}</b>.
+            </p>
+            <Button
+              size="sm"
+              variant="outline"
+              className="shrink-0"
+              onClick={desfazerAgendamento}
+              disabled={pending}
+            >
+              <Undo2 className="size-4" /> Cancelar troca
+            </Button>
+          </div>
+        )}
+
         {outros.map((plan) => (
           <div
             key={plan.id}
@@ -73,8 +122,10 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
               variant="outline"
               className="shrink-0"
               onClick={() => setSelected(plan)}
+              disabled={pending || plan.id === pendingPlan?.id}
             >
-              <ArrowLeftRight className="size-4" /> Trocar para este
+              <ArrowLeftRight className="size-4" />
+              {plan.id === pendingPlan?.id ? "Já agendado" : "Trocar para este"}
             </Button>
           </div>
         ))}
@@ -84,10 +135,18 @@ export function TrocarPlano({ plans }: { plans: AvailablePlan[] }) {
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Trocar para o plano {selected?.name}?</DialogTitle>
+            {/*
+              Duas mensagens porque são duas regras diferentes, e a tela não sabe
+              qual vale: quem decide é o servidor, olhando se a competência já
+              está paga. Dizer só "vale imediatamente" seria mentir para metade
+              dos casos — e logo para a metade que envolve dinheiro já pago.
+            */}
             <DialogDescription>
-              A mudança vale imediatamente. O novo valor de{" "}
-              <b>{selected ? formatBRL(selected.priceMonthly) : ""}/mês</b> será cobrado na{" "}
-              próxima renovação — o período já pago não é alterado.
+              O novo valor de{" "}
+              <b>{selected ? formatBRL(selected.priceMonthly) : ""}/mês</b> passa a ser
+              cobrado na próxima mensalidade — não há cobrança proporcional. Se o mês
+              atual já estiver pago, a troca vale a partir da próxima cobrança; até lá
+              você segue no plano que pagou.
             </DialogDescription>
           </DialogHeader>
           <DialogFooter>

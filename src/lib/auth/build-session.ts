@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { computeStatus } from "@/lib/billing/status";
 import { planModules, ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
+import { PlanoService } from "@/lib/services/plano.service";
 import type { AccessPayload } from "./jwt";
 
 /**
@@ -46,8 +47,16 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
       });
     }
     subStatus = effective;
-    // `plan` é obrigatório por FK; o fallback cobre só leitura incompleta.
-    modules = sub.plan ? planModules(sub.plan.features) : [...ALL_OPTIONAL_KEYS];
+    // Troca de plano agendada que já venceu vale a partir de agora — e é AQUI
+    // que isso tem consequência, porque o claim `modules` deste token é o que
+    // libera ou barra o módulo pelas próximas horas. Esperar o cron da tarde
+    // deixaria o cliente pagando o plano novo e usando o antigo.
+    const vigente = await PlanoService.aplicarTrocaProgramada(sub);
+    const plan = vigente ?? sub.plan;
+    // `plan` é obrigatório por FK; o fallback cobre só leitura incompleta — e é
+    // fail-closed pela mesma razão que `planModules`: não saber qual plano a
+    // empresa tem nunca pode significar "tem todos".
+    modules = plan ? planModules(plan.features) : [];
   } else {
     // Empresa sem assinatura não deveria existir — `provisionTenant` sempre
     // cria uma. Se aparecer, é anomalia de dados: nenhum módulo pago, e o log

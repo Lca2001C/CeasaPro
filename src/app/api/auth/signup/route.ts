@@ -5,6 +5,7 @@ import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { hasConfiguredAppUrl } from "@/lib/app-url";
 import { SignupService } from "@/lib/services/signup.service";
+import { emailIdentity } from "@/lib/email-identity";
 import { errorResponse } from "@/lib/http/error-response";
 
 export const runtime = "nodejs";
@@ -44,8 +45,14 @@ export async function POST(req: Request) {
 
   // Dois limites: por IP (impede criação em massa de contas de teste) e por
   // e-mail (impede usar o formulário para inundar a caixa de uma pessoa).
+  //
+  // O limite de e-mail é pela IDENTIDADE, não pelo texto digitado. Com a chave
+  // literal, `dono+1@`, `dono+2@`, `dono+3@` ganhavam três baldes separados de 3
+  // tentativas cada — quem quisesse inundar a caixa de alguém (ou varrer
+  // cadastros) só precisava mudar a etiqueta, e o limite que existia para
+  // proteger aquela caixa não protegia nada.
   const byIp = await rateLimitDb(`signup:ip:${ip}`, { limit: 5, windowMs: 60 * 60 * 1000 });
-  const byEmail = await rateLimitDb(`signup:email:${input.email}`, {
+  const byEmail = await rateLimitDb(`signup:email:${emailIdentity(input.email)}`, {
     limit: 3,
     windowMs: 60 * 60 * 1000,
   });

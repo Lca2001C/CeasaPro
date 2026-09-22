@@ -602,15 +602,21 @@ export function verifyWebhookSignature(args: {
   dataIdAlt?: string | null;
   now?: Date;
 }): string | null {
-  const primeiroId = args.dataId ?? args.dataIdAlt ?? null;
   const secret = process.env.MERCADOPAGO_WEBHOOK_SECRET;
   if (!secret) {
-    if (process.env.NODE_ENV === "production") {
-      logger.error("MERCADOPAGO_WEBHOOK_SECRET ausente em produção — webhook rejeitado.");
-      return null;
-    }
-    logger.warn("MERCADOPAGO_WEBHOOK_SECRET ausente — pulando verificação (apenas dev).");
-    return primeiroId;
+    // Fail-CLOSED em QUALQUER ambiente. Antes, fora de produção a verificação
+    // era pulada e o id chegava autenticado sem que nada o tivesse autenticado.
+    // `NODE_ENV` não é onde se decide isso: em preview da Vercel, em staging e
+    // em qualquer build que não seja `next build` ele vale "development" — e
+    // essas URLs são públicas e apontam para um banco de verdade. Quem
+    // encontrasse a rota confirmava a própria assinatura postando um `data.id`.
+    // Webhook sem segredo é webhook desligado: a reconciliação do cron continua
+    // curando o que não entrar por aqui.
+    logger.error(
+      "MERCADOPAGO_WEBHOOK_SECRET ausente — webhook rejeitado. Sem o segredo não há " +
+        "como distinguir uma notificação do Mercado Pago de um POST qualquer.",
+    );
+    return null;
   }
 
   if (!args.xSignature) {

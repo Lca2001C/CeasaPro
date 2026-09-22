@@ -215,14 +215,14 @@ O núcleo do sistema (produtos, fornecedores, compras, vendas, fiado, estoque, d
 
 `src/lib/plan/modules.ts` é a fonte única da verdade — o catálogo é lido pelo token, pelo proxy, pela navegação, pelos guards de servidor, pelos relatórios e pelo painel do super-admin.
 
-Os módulos habilitados vêm de `Plan.features.modules` (JSON). Duas decisões de retrocompatibilidade importantes:
+Os módulos habilitados vêm de `Plan.features.modules` (JSON), e as duas ausências possíveis são **fail-closed**:
 
-- Plano **sem** a chave `features.modules` ⇒ **todos** os opcionais liberados (planos antigos não quebram).
-- Token legado **sem** o claim `modules` ⇒ tudo liberado (rollout suave, sem deslogar ninguém).
+- Plano **sem** a chave `features.modules` ⇒ **nenhum** opcional liberado. Era o contrário, por retrocompatibilidade, e a exceção virou o caminho mais barato de entregar o produto inteiro de graça — plano gravado sem o campo valia como completo sem que nada na tela denunciasse. `AdminService` exige a lista ao criar e ao salvar.
+- Token **sem** o claim `modules` ⇒ nada liberado. `build-session` emite a lista sempre, e o super-admin recebe a lista completa **explícita** pelo papel.
 
-Um `features: { modules: [] }` explícito, por outro lado, libera apenas o núcleo — é assim que o "Plano Básico" do seed é configurado.
+Um `features: { modules: [] }` explícito é a forma de dizer "só o núcleo" — é assim que o "Plano Básico" do seed é configurado.
 
-A tela `/plano` mostra o plano contratado, o consumo (produtos), os módulos incluídos e permite a troca de plano. `PlanoService.changePlan` recusa a troca apenas se o plano de destino estiver inativo ou já for o atual — não há limite de usuários por plano.
+A tela `/plano` mostra o plano contratado, o consumo (produtos), os módulos incluídos e permite a troca de plano. `PlanoService.changePlan` recusa plano inativo, o plano atual e o plano interno do ambiente do super-admin; com a competência do mês **já paga**, a troca é **agendada** para `currentPeriodEnd` em vez de aplicada (ver [Planos e módulos](05-planos-e-modulos.md)). Não há limite de usuários por plano.
 
 ---
 
@@ -625,7 +625,7 @@ Componentes de domínio específico (PDV, formulário de fiado, higienização) 
 | `financial-calc.test.ts` | Todas as fórmulas: frete rateado, CMV, lucro, margem, fiado, estoque, precisão decimal |
 | `billing-status.test.ts` | Ciclo ATIVO → VENCIDO → SUSPENSO, override manual, cancelamento, bloqueio |
 | `billing-trial.test.ts` | Teste grátis de 7 dias e bloqueio: ninguém acessa sem pagamento nem prazo válido |
-| `plan-modules.test.ts` | Gating de módulos, retrocompatibilidade, `ForbiddenError` |
+| `plan-modules.test.ts` | Gating de módulos (fail-closed: plano sem `features.modules` não libera nada), `ForbiddenError` |
 | `crate-balance.test.ts` | Saldos de caixas e validações do ledger |
 | `mp-webhook-signature.test.ts` | HMAC do webhook Mercado Pago |
 | `auth-validation.test.ts` | Normalização de e-mail e política de senha |

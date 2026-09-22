@@ -108,7 +108,7 @@ Arquivos: `src/lib/auth/` (`jwt.ts`, `password.ts`, `refresh.ts`, `cookies.ts`, 
 - Refresh opaco, hash SHA-256 em `refresh_tokens`, **rotação**, linhagem (`familyId`), janela de graça para abas concorrentes. Reuso de token revogado derruba a família.
 - Logout / troca de senha / exclusão / bloqueio incrementam `sessionEpoch` (user e/ou tenant) e revogam refresh — o access antigo para de valer **na escrita** mesmo antes de expirar.
 - Rate limit de auth no **Postgres** (`rate_limits`), compartilhado entre instâncias serverless.
-- Cadastro público `/cadastro` → e-mail de confirmação → `emailVerifiedAt` → **aí** começa o trial. Sem confirmar, a empresa fica `SUSPENSA`.
+- Cadastro público `/cadastro` → e-mail de confirmação → `emailVerifiedAt` → **aí** começa o trial. Sem confirmar, a empresa fica `SUSPENSA`. O "já tem conta?" é decidido pela **identidade** do e-mail (`src/lib/email-identity.ts` → `User.emailIdentity`), não pelo texto: `dono+1@gmail.com` e `d.o.n.o@gmail.com` caem na mesma caixa e não rendem um segundo trial. Só provedores de comportamento conhecido são normalizados — juntar demais recusaria cliente legítimo com uma resposta genérica que não explica nada.
 - Recuperar senha: token 1h; ao redefinir, revoga todas as sessões.
 - `mustChangePassword` força `/alterar-senha` (OWNER criado pelo admin).
 
@@ -138,8 +138,9 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 - Tela `/assinatura` acessível **mesmo bloqueado** (`BILLING_SAFE_PREFIXES`).
 - **PIX fora do Payment Brick** (o Brick pede e-mail para “enviar o código”; aqui o QR aparece na tela). Rota `POST /api/billing/checkout`.
 - Cartão: Brick (`creditCard`/`debitCard` — normalizar camelCase **e** snake_case). `POST /api/billing/checkout/card`. Tokenização no browser. 3DS `optional`. Débito exige CPF.
-- Confirmação **só** pelo webhook HMAC (`/api/webhooks/mercadopago`), idempotente por `mpPaymentId`. Não confiar no body: buscar o pagamento na API.
-- Estorno → `SUSPENSO`; chargeback → `BLOQUEADO`; revoga sessões da empresa.
+- Confirmação **só** pelo webhook HMAC (`/api/webhooks/mercadopago`), idempotente por `mpPaymentId`. Não confiar no body: buscar o pagamento na API. **Sem `MERCADOPAGO_WEBHOOK_SECRET` o webhook recusa tudo, em qualquer ambiente** — não há mais bypass por `NODE_ENV` (preview e staging são "development" com banco de verdade).
+- **Uma cobrança APROVADA por competência**, garantida pelo banco: `SubscriptionPayment.approvedKey` (`<tenantId>:<referenceMonth>`, `@unique`, nula fora de APROVADO). Sem ela, o segundo pagamento do mês creditava o mês de novo.
+- Estorno → `SUSPENSO`; chargeback → `BLOQUEADO`; revoga sessões da empresa — **só se não sobrar outro pagamento APROVADO da mesma competência**. Sobrando, o acesso fica e a reversão é só uma linha do extrato mudando de status.
 - **Uma cobrança viva por mês.** Troca de plano cancela QR antigo se o valor mudou.
 - Valor cobrado **sempre do plano no banco**, nunca do que o cliente enviou.
 - Cron `GET /api/cron/billing` (`CRON_SECRET`): reconcilia MP + recalcula status + lembrete 3 dias antes do vencimento (só quem já pagou, um e-mail por período).
@@ -155,9 +156,13 @@ Catálogo **único**: `src/lib/plan/modules.ts`.
 
 **Núcleo (sempre):** dashboard, produtos, fornecedores, compras, PDV/vendas, fiado, estoque, despesas, relatórios básicos, config, atividades, meu plano, assinatura.
 
-**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = todos liberados (retrocompat).
+**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = **nenhum** opcional liberado (fail-closed; `AdminService` exige a lista ao criar/salvar plano). `{ "modules": [] }` é como se diz "só o núcleo".
 
-Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403) → `module:` nos wrappers. Troca de plano: `PlanoService.changePlan` no servidor; depois `/api/auth/refresh` para reemitir o claim `modules`. Novo preço vale na **próxima** cobrança (sem pró-rata).
+Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403) → `module:` nos wrappers.
+
+**Troca de plano:** `PlanoService.changePlan` no servidor; depois `/api/auth/refresh` para reemitir o claim `modules`. Recusa o plano atual, plano inativo e o **plano interno do super-admin** (por slug, não por `active`). Novo preço vale na **próxima** cobrança (sem pró-rata).
+
+**Com a competência do mês já paga a troca é AGENDADA**, não aplicada: grava `pendingPlanId`/`pendingPlanFrom = currentPeriodEnd` e o plano vigente continua valendo até lá. A mensalidade compra o mês, e aplicar na hora entregava o plano caro ao preço do barato (ou tirava módulos já pagos, no downgrade). Quem faz valer é `aplicarTrocaProgramada`, chamada em `buildAccessPayload`, `prepareCharge`, `getPlanoView` e no cron.
 
 Não há limite de usuários/produtos por plano nesta versão.
 

@@ -83,6 +83,8 @@ model Plan {
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   subscriptions TenantSubscription[]
+  /// Assinaturas que trocaram para este plano com efeito só na próxima competência.
+  scheduledFor  TenantSubscription[] @relation("PlanoAgendado")
 
   @@map("plans")
 }
@@ -114,6 +116,11 @@ model User {
   /// SHA-256 do token de confirmação (o token cru só existe no link do e-mail).
   verifyTokenHash      String?
   verifyTokenExpiresAt DateTime?
+  /// Forma RAIZ do e-mail, sem os apelidos que o provedor entrega na MESMA caixa
+  /// (`+tag` do Gmail/Outlook, pontos do Gmail). É esta a chave que decide se um
+  /// endereço já tem conta; `email` continua guardando o que a pessoa digitou,
+  /// porque é para lá que a mensagem é entregue. Ver `src/lib/email-identity.ts`.
+  emailIdentity        String?
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   deletedAt            DateTime?
@@ -125,6 +132,7 @@ model User {
   @@index([tenantId])
   @@index([resetTokenHash])
   @@index([verifyTokenHash])
+  @@index([emailIdentity])
   @@map("users")
 }
 
@@ -561,14 +569,24 @@ model TenantSubscription {
   /// Tolerância em dias após o vencimento — só vale para quem já tem `activatedAt`.
   graceDays        Int                   @default(5)
   mpCustomerId     String?
+  /// Plano contratado enquanto a competência corrente JÁ ESTAVA PAGA. Não vale
+  /// agora: a empresa pagou o mês pelo plano antigo, e aplicar a troca na hora
+  /// entregaria os módulos do plano caro ao preço do barato (ou tiraria módulos
+  /// já pagos, no downgrade). Vira o plano vigente em `pendingPlanFrom`.
+  pendingPlanId    String?
+  /// Quando a troca agendada passa a valer — sempre o `currentPeriodEnd` do
+  /// momento da contratação, isto é, o primeiro instante da competência seguinte.
+  pendingPlanFrom  DateTime?
   cancelledAt      DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
   payments         SubscriptionPayment[]
   plan             Plan                  @relation(fields: [planId], references: [id])
+  pendingPlan      Plan?                 @relation("PlanoAgendado", fields: [pendingPlanId], references: [id])
   tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([status, currentPeriodEnd])
+  @@index([pendingPlanFrom])
   @@map("tenant_subscriptions")
 }
 
@@ -593,12 +611,22 @@ model SubscriptionPayment {
   periodStart    DateTime?
   periodEnd      DateTime?
   rawPayload     Json?
+  /// `<tenantId>:<referenceMonth>` ENQUANTO esta cobrança está APROVADA; `null`
+  /// em qualquer outro status. Sendo `@unique`, é o banco — e não a corrida
+  /// entre dois webhooks — que garante **uma única cobrança aprovada por
+  /// competência**: sem ela, dois pagamentos do mesmo mês creditavam o período
+  /// duas vezes, e a reversão de um deles cortava o acesso de quem ainda tinha
+  /// o outro pago. Vários `null` não colidem em índice único no Postgres, então
+  /// recusada/estornada/cancelada continuam podendo repetir à vontade.
+  /// Mantida por `BillingService.applyPaymentStatus` (`chaveDeAprovacao`).
+  approvedKey    String?            @unique
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   subscription   TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
   @@index([status])
+  @@index([tenantId, referenceMonth, status])
   @@map("subscription_payments")
 }
 

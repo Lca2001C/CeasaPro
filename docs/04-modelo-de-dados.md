@@ -43,19 +43,25 @@ Enum novo precisa de mapa em [`src/lib/labels.ts`](../src/lib/labels.ts) **ou** 
 Dados da empresa assinante. **Não** tem `tenantId` (é a própria empresa). Campos: `tradeName` (nome fantasia), `legalName`, `cnpj` (único), `phone`, `address`, `logoUrl`, `businessHours`, `status` (`TenantStatus`, default ACTIVE), `onboardingCompletedAt`. Relações: `users`, `subscription` (1‑1), e todos os dados operacionais.
 
 ### `plans` (plano comercial)
-`name`, `slug` (único), `priceMonthly` `Decimal(10,2)`, **`features` (Json)** — guarda os módulos incluídos no formato `{ "modules": ["caixas", ...] }` —, `active`.
+`name`, `slug` (único), `priceMonthly` `Decimal(10,2)`, **`features` (Json)** — guarda os módulos incluídos no formato `{ "modules": ["caixas", ...] }` —, `active`. A chave `modules` é **obrigatória** (`AdminService` recusa plano sem ela): a leitura é fail-closed, então plano sem o campo não libera opcional nenhum.
 
 ### `users`
-`tenantId` (**nulo** só para o SUPER_ADMIN), `name`, `email`, `passwordHash` (Argon2id), `role`, `active`, `mustChangePassword`, `lastLoginAt`, `resetTokenHash`, `resetTokenExpiresAt`. Único por `(tenantId, email)`.
+`tenantId` (**nulo** só para o SUPER_ADMIN), `name`, `email`, `emailIdentity`, `passwordHash` (Argon2id), `role`, `active`, `mustChangePassword`, `lastLoginAt`, `resetTokenHash`, `resetTokenExpiresAt`. Único por `(tenantId, email)`.
+
+`emailIdentity` é a forma **raiz** do endereço, sem os apelidos que o provedor entrega na mesma caixa (`+tag` do Gmail/Outlook, pontos do Gmail) — ver [`src/lib/email-identity.ts`](../src/lib/email-identity.ts). É ela que responde "este e-mail já tem conta?"; `email` continua guardando o endereço digitado, porque é para ele que a mensagem é entregue. Sem essa separação, cada variação do mesmo endereço rendia mais 7 dias de teste grátis.
 
 ### `refresh_tokens`
 Sessões: `userId`, `tokenHash` (único — guarda-se o hash, nunca o token), `expiresAt`, `revokedAt`, `userAgent`, `ip`.
 
 ### `tenant_subscriptions` (assinatura — 1 por empresa)
-`planId`, `status` (`SubscriptionStatus`), `statusSource` (AUTO/MANUAL — override do super-admin), `statusReason`, `monthlyAmount`, `startedAt`, `activatedAt` (data do 1º pagamento aprovado; nulo = nunca pagou, sem acesso), `currentPeriodEnd`, `graceDays` (tolerância pós-vencimento, só vale após a 1ª ativação), `mpCustomerId`, `cancelledAt`.
+`planId`, `status` (`SubscriptionStatus`), `statusSource` (AUTO/MANUAL — override do super-admin), `statusReason`, `monthlyAmount`, `startedAt`, `activatedAt` (data do 1º pagamento aprovado; nulo = nunca pagou, sem acesso), `currentPeriodEnd`, `graceDays` (tolerância pós-vencimento, só vale após a 1ª ativação), `mpCustomerId`, `cancelledAt`, `pendingPlanId`/`pendingPlanFrom`.
+
+O par `pendingPlan*` é a **troca de plano agendada**: quando o cliente troca de plano com a competência do mês já paga, o plano novo fica aqui e só vira `planId` em `pendingPlanFrom` (= o `currentPeriodEnd` daquele momento). Ver [Planos e módulos](05-planos-e-modulos.md).
 
 ### `subscription_payments` (cobranças de mensalidade — append-only)
-`subscriptionId`, `tenantId`, `amount`, `status` (`PaymentStatus`), `method`, `referenceMonth` ("2026-07"), `mpPaymentId` (único — idempotência do webhook), `mpPreferenceId`, `mpExternalRef`, `qrCode`, `qrCodeBase64`, `ticketUrl`, `paidAt`, `periodStart/End`, `rawPayload` (Json de auditoria).
+`subscriptionId`, `tenantId`, `amount`, `status` (`PaymentStatus`), `method`, `referenceMonth` ("2026-07"), `mpPaymentId` (único — idempotência do webhook), `approvedKey` (único), `mpPreferenceId`, `mpExternalRef`, `qrCode`, `qrCodeBase64`, `ticketUrl`, `paidAt`, `periodStart/End`, `rawPayload` (Json de auditoria).
+
+`approvedKey` vale `<tenantId>:<referenceMonth>` **enquanto** a cobrança está APROVADA e `null` em qualquer outro status. Sendo único, é o banco que garante **uma só cobrança aprovada por competência** — antes, o segundo pagamento do mesmo mês (o PIX quitado depois do cartão passar, o QR antigo pago no app do banco) creditava o mês de novo e comprava o seguinte sem cobrança. Vários `null` não colidem em índice único no Postgres, então recusada/estornada/cancelada continuam podendo repetir no mesmo mês.
 
 ## Operacionais (por empresa)
 
