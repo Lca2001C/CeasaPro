@@ -23,17 +23,11 @@ export interface AuditLogRow {
 
 const TAKE = 100;
 
+// Não existe mais `listForTenant`: a tela `/atividades` saiu, e a função ficou
+// sem chamador — com uma armadilha dentro: `tenantId` vazio caía no `clean()`,
+// sumia do filtro e devolvia a auditoria de TODAS as empresas. Uma lista por
+// empresa, se voltar, precisa recusar tenantId vazio antes de consultar.
 export const AuditLogService = {
-  async listForTenant(tenantId: string, filters: AuditLogFilters = {}) {
-    const rows = await prisma.auditLog.findMany({
-      where: buildWhere({ ...filters, tenantId }),
-      select: auditSelect,
-      orderBy: { createdAt: "desc" },
-      take: TAKE,
-    });
-    return rows.map((row) => ({ ...row, tenantName: null }));
-  },
-
   async listForAdmin(filters: AuditLogFilters = {}) {
     const rows = await prisma.auditLog.findMany({
       where: buildWhere(filters),

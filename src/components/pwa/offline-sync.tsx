@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { salvarSnapshot } from "@/lib/pwa/offline-store";
+import { CHAVE_ULTIMO_SYNC, salvarSnapshot } from "@/lib/pwa/offline-store";
 
 /**
  * Busca o snapshot de consulta offline e guarda no IndexedDB.
@@ -20,7 +20,6 @@ import { salvarSnapshot } from "@/lib/pwa/offline-store";
  * porque o snapshot é conveniência, não parte do fluxo.
  */
 
-const CHAVE_ULTIMO_SYNC = "pwa-last-snapshot-at";
 const INTERVALO_MINIMO_MS = 5 * 60 * 1000;
 
 function passouDoIntervalo(): boolean {

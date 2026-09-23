@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { PlanoService, ADMIN_PLAN_SLUG } from "@/lib/services/plano.service";
-import { BillingService } from "@/lib/services/billing.service";
+import { BillingService, valorDevido } from "@/lib/services/billing.service";
 import { AdminService } from "@/lib/services/admin.service";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { planModules } from "@/lib/plan/modules";
@@ -34,15 +34,17 @@ let completoId = "";
 let adminPlanId = "";
 
 /** Empresa ATIVA, com período pago em aberto e um dono. */
-async function empresaPagante(opts?: { periodEnd?: Date }): Promise<string> {
+async function empresaPagante(opts?: { periodEnd?: Date; semPagamento?: boolean }): Promise<string> {
   const tenantId = await createTestTenant("TROCA AGENDADA");
   await prisma.tenantSubscription.create({
     data: {
       tenantId,
       planId: basicoId,
-      status: "ATIVO",
+      // `semPagamento`: nunca pagou (trial) — não há período comprado a proteger.
+      status: opts?.semPagamento ? "TRIAL" : "ATIVO",
       monthlyAmount: 29.9,
-      activatedAt: new Date(),
+      activatedAt: opts?.semPagamento ? null : new Date(),
+      trialEndsAt: opts?.semPagamento ? new Date(Date.now() + 5 * 24 * 60 * 60 * 1000) : null,
       currentPeriodEnd: opts?.periodEnd ?? new Date(Date.now() + 20 * 24 * 60 * 60 * 1000),
       graceDays: 5,
     },
@@ -280,8 +282,8 @@ describe("Competência já paga: a troca é AGENDADA, não aplicada", () => {
 });
 
 describe("Competência em aberto: a troca vale na hora (como sempre valeu)", () => {
-  it("empresa que ainda não pagou o mês troca imediatamente", async () => {
-    const tenantId = await empresaPagante();
+  it("empresa que ainda não pagou (trial) troca imediatamente", async () => {
+    const tenantId = await empresaPagante({ semPagamento: true });
 
     const res = await PlanoService.changePlan(completoId, makeCtx(tenantId));
 
@@ -316,7 +318,7 @@ describe("Competência em aberto: a troca vale na hora (como sempre valeu)", () 
     });
     planIds.push(outro.id);
 
-    const tenantId = await empresaPagante();
+    const tenantId = await empresaPagante({ semPagamento: true });
     await prisma.tenantSubscription.update({
       where: { tenantId },
       data: { pendingPlanId: completoId, pendingPlanFrom: new Date(Date.now() + 86_400_000) },
@@ -332,7 +334,7 @@ describe("Competência em aberto: a troca vale na hora (como sempre valeu)", () 
   it("pedir o plano JÁ agendado com a competência aberta aplica na hora", async () => {
     // Recusar aqui prenderia o cliente esperando o cron por nada: o mês novo
     // está em aberto, então não há período pago a proteger.
-    const tenantId = await empresaPagante();
+    const tenantId = await empresaPagante({ semPagamento: true });
     await prisma.tenantSubscription.update({
       where: { tenantId },
       data: { pendingPlanId: completoId, pendingPlanFrom: new Date(Date.now() + 86_400_000) },
@@ -343,6 +345,33 @@ describe("Competência em aberto: a troca vale na hora (como sempre valeu)", () 
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
     expect(sub.planId).toBe(completoId);
     expect(sub.pendingPlanId).toBeNull();
+  });
+});
+
+describe("O período pago protege, não o mês do calendário", () => {
+  it("período pago correndo agenda a troca mesmo sem pagamento na competência corrente", async () => {
+    // A brecha: pagar o básico em 31/08 (período até 30/09) e subir em 01/09,
+    // quando setembro ainda não tem pagamento. Olhando só a competência, valia
+    // na hora e o mês inteiro do completo saía pelo preço do básico.
+    const tenantId = await empresaPagante();
+
+    const res = await PlanoService.changePlan(completoId, makeCtx(tenantId));
+    expect(res.scheduled).toBe(true);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(sub.planId).toBe(basicoId);
+    expect(sub.pendingPlanId).toBe(completoId);
+  });
+
+  it("a cobrança do período seguinte sai pelo preço do plano AGENDADO", async () => {
+    // Sem isto, pagar a renovação antes da virada comprava o mês do plano novo
+    // pelo preço do antigo: o agendamento só adiava o desconto.
+    const tenantId = await empresaPagante();
+    await PlanoService.changePlan(completoId, makeCtx(tenantId));
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { tenantId },
+      include: { pendingPlan: true },
+    });
+    expect(valorDevido(sub, new Date()).toString()).toBe("99.9");
   });
 });
 

@@ -17,18 +17,40 @@ export default async function ContaSuspensaPage() {
   // Três causas diferentes, três textos. Mandar "regularize seu pagamento" para
   // quem acabou de terminar o teste grátis (e nunca teve mensalidade) soa como
   // cobrança de uma dívida que não existe.
-  const sub = session.tenantId
-    ? await prisma.tenantSubscription.findUnique({
-        where: { tenantId: session.tenantId },
-        select: { activatedAt: true, trialEndsAt: true },
-      })
-    : null;
+  const [sub, tenant, user] = await Promise.all([
+    session.tenantId
+      ? prisma.tenantSubscription.findUnique({
+          where: { tenantId: session.tenantId },
+          select: { activatedAt: true, trialEndsAt: true, cancelledAt: true, statusSource: true },
+        })
+      : null,
+    session.tenantId
+      ? prisma.tenant.findUnique({ where: { id: session.tenantId }, select: { status: true } })
+      : null,
+    prisma.user.findUnique({ where: { id: session.sub }, select: { emailVerifiedAt: true } }),
+  ]);
   // A decisão sai das DATAS e mora em `motivoDoBloqueio`, com teste próprio.
-  const motivo = motivoDoBloqueio(sub);
+  const motivo = motivoDoBloqueio(sub, new Date(), tenant?.status === "ACTIVE");
   const testeAtivo = motivo === "teste_ativo";
   const nuncaAtivou = motivo !== "bloqueado";
+  // Cadastro público que não confirmou o e-mail: o teste de 7 dias AINDA está
+  // disponível. Mandar pagar a 1ª mensalidade tirava dele o teste que é dele —
+  // o e-mail de confirmação caiu no spam, ou o SMTP falhou. A recuperação de
+  // senha comprova a caixa do mesmo jeito e libera o teste (`consumeResetToken`).
+  const emailPendente = motivo === "nunca_ativou" && user?.emailVerifiedAt === null;
 
-  const conteudo = testeAtivo
+  const conteudo = emailPendente
+    ? {
+        titulo: "Confirme seu e-mail",
+        texto:
+          "Seu teste grátis de 7 dias começa quando você confirma o e-mail. Abra o link que " +
+          "enviamos no cadastro (confira também a caixa de spam). Não recebeu? Peça um link " +
+          "para criar uma senha nova: ele confirma o e-mail e libera o teste na hora.",
+        cta: "Receber um link por e-mail",
+        href: "/recuperar-senha",
+        documento: false,
+      }
+    : testeAtivo
     ? {
         titulo: "Seu teste grátis está ativo",
         texto:

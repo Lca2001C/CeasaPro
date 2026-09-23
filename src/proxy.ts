@@ -295,7 +295,11 @@ export async function proxy(req: NextRequest) {
   }
 
   // Bloqueio por assinatura (exceto rotas de regularizacao).
-  const billingSafe = BILLING_SAFE_PREFIXES.some((p) => pathname.startsWith(p));
+  // Com fronteira, como `isPublic`: `startsWith` puro liberaria para empresa
+  // bloqueada qualquer rota futura que só COMECE igual (`/conta-corrente`).
+  const billingSafe = BILLING_SAFE_PREFIXES.some(
+    (p) => pathname === p || pathname.startsWith(p + "/"),
+  );
   if (!billingSafe) {
     const decision = accessDecision(session.tenantStatus, session.subStatus);
     if (decision === "blocked") {

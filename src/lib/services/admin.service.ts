@@ -77,6 +77,22 @@ function slugify(s: string): string {
  */
 const NAO_E_AMBIENTE_ADMIN = { users: { none: { role: "SUPER_ADMIN" as const } } };
 
+/**
+ * O ambiente interno não é cliente: excluí-lo levava junto o PRÓPRIO usuário
+ * SUPER_ADMIN (a exclusão desativa todos os usuários da empresa), e bloqueá-lo
+ * derrubava as sessões do admin. A tela não lista o ambiente, mas a action
+ * aceita qualquer id — a recusa precisa morar aqui.
+ */
+async function recusarAmbienteAdmin(tenantId: string): Promise<void> {
+  const admin = await prisma.user.findFirst({
+    where: { tenantId, role: "SUPER_ADMIN" },
+    select: { id: true },
+  });
+  if (admin) {
+    throw new BusinessRuleError("O ambiente do administrador não pode ser alterado por aqui.");
+  }
+}
+
 // O slug do plano interno vem de `plano.service` — a vitrine pública e o
 // cadastro precisam do mesmo valor para não oferecê-lo a cliente.
 
@@ -341,6 +357,7 @@ export const AdminService = {
   async setTenantStatus(input: TenantStatusInput, ctx: AdminCtx) {
     const t = await prisma.tenant.findUnique({ where: { id: input.tenantId } });
     if (!t) throw new NotFoundError("Empresa não encontrada");
+    await recusarAmbienteAdmin(input.tenantId);
 
     await prisma.tenant.update({
       where: { id: input.tenantId },
@@ -376,6 +393,7 @@ export const AdminService = {
     const t = await prisma.tenant.findUnique({ where: { id } });
     if (!t) throw new NotFoundError("Empresa não encontrada");
     if (t.deletedAt) return { id }; // idempotente
+    await recusarAmbienteAdmin(id);
 
     const usuarios = await prisma.user.findMany({
       where: { tenantId: id, deletedAt: null },

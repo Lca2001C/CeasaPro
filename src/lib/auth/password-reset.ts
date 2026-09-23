@@ -1,5 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 import { revokeAllForUser } from "@/lib/auth/refresh";
+import { audit } from "@/lib/audit";
+import { trialEndFrom } from "@/lib/billing/status";
 import {
   createResetToken,
   hashResetToken,
@@ -81,20 +83,67 @@ export async function consumeResetToken(args: {
   rawToken: string;
   passwordHash: string;
 }): Promise<boolean> {
-  const result = await prisma.user.updateMany({
-    where: {
-      id: args.userId,
-      resetTokenHash: hashResetToken(args.rawToken),
-      resetTokenExpiresAt: { gt: new Date() },
-    },
-    data: {
-      passwordHash: args.passwordHash,
-      resetTokenHash: null,
-      resetTokenExpiresAt: null,
-      mustChangePassword: false,
-    },
+  const now = new Date();
+  const ok = await prisma.$transaction(async (tx) => {
+    const result = await tx.user.updateMany({
+      where: {
+        id: args.userId,
+        resetTokenHash: hashResetToken(args.rawToken),
+        resetTokenExpiresAt: { gt: now },
+      },
+      data: {
+        passwordHash: args.passwordHash,
+        resetTokenHash: null,
+        resetTokenExpiresAt: null,
+        mustChangePassword: false,
+      },
+    });
+    if (result.count === 0) return false;
+
+    // O link chegou na caixa: isso COMPROVA o e-mail tanto quanto o link de
+    // confirmação. Sem isto, quem não recebeu a confirmação (spam, SMTP fora)
+    // não tinha caminho para o teste grátis — `/conta/suspensa` o manda para cá.
+    // Só cadastro público pendente tem `emailVerifiedAt` nulo (a migration do
+    // trial preencheu a base; o admin cria já confirmado), e o filtro do trial
+    // é o mesmo de `SignupService.confirmEmail`: nunca concede duas vezes.
+    const user = await tx.user.findUniqueOrThrow({
+      where: { id: args.userId },
+      select: { emailVerifiedAt: true, tenantId: true, email: true },
+    });
+    if (user.emailVerifiedAt === null) {
+      await tx.user.update({
+        where: { id: args.userId },
+        data: { emailVerifiedAt: now, verifyTokenHash: null, verifyTokenExpiresAt: null },
+      });
+      if (user.tenantId) {
+        const trialEndsAt = trialEndFrom(now);
+        const concedido = await tx.tenantSubscription.updateMany({
+          where: { tenantId: user.tenantId, trialEndsAt: null, activatedAt: null },
+          data: { status: "TRIAL", trialEndsAt },
+        });
+        if (concedido.count > 0) {
+          await audit(
+            {
+              tenantId: user.tenantId,
+              userId: args.userId,
+              actorEmail: user.email,
+              action: "UPDATE",
+              entity: "TenantSubscription",
+              entityId: user.tenantId,
+              newData: {
+                status: "TRIAL",
+                trialEndsAt: trialEndsAt.toISOString(),
+                origem: "recuperar-senha",
+              },
+            },
+            tx,
+          );
+        }
+      }
+    }
+    return true;
   });
-  if (result.count === 0) return false;
+  if (!ok) return false;
   // Senha trocada => todo refresh token antigo morre (sessão roubada perde acesso).
   await revokeAllForUser(args.userId, "PASSWORD");
   return true;

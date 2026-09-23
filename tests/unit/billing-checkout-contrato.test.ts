@@ -118,7 +118,7 @@ describe("regras do cartão", () => {
   });
 
   it("recusa parcelamento fora da faixa", () => {
-    for (const n of [0, -1, 13, 1.5]) {
+    for (const n of [0, -1, 2, 12, 13, 1.5]) {
       expect(
         cardPaymentSchema.safeParse({ ...BASE_CARTAO, installments: n }).success,
         String(n),

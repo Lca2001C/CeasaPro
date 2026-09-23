@@ -297,6 +297,21 @@ describe("motivoDoBloqueio", () => {
     ).toBe("teste_terminou");
   });
 
+  it("cancelou durante o teste: terminou (não 'entre de novo')", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(5), cancelledAt: dias(-1) }, AGORA),
+    ).toBe("teste_terminou");
+  });
+
+  it("bloqueio manual durante o teste vence as datas", () => {
+    expect(
+      motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(5), statusSource: "MANUAL" }, AGORA),
+    ).toBe("bloqueado");
+    expect(motivoDoBloqueio({ activatedAt: null, trialEndsAt: dias(5) }, AGORA, false)).toBe(
+      "bloqueado",
+    );
+  });
+
   it("sem teste e sem pagamento: falta a primeira mensalidade", () => {
     expect(
       motivoDoBloqueio({ activatedAt: null, trialEndsAt: null }, AGORA),

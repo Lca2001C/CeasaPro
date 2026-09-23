@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useForm } from "react-hook-form";
@@ -11,6 +11,7 @@ import { loginSchema, type LoginInput } from "@/lib/validations/auth";
 import { apiPost } from "@/lib/api-client";
 import { safeRedirectPath } from "@/lib/safe-redirect";
 import { pedirPromptDeInstalacao } from "@/components/pwa/install-prompt";
+import { limparSnapshotNoLogout } from "@/lib/pwa/offline-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -28,6 +29,14 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
     handleSubmit,
     formState: { errors },
   } = useForm<LoginInput>({ resolver: zodResolver(loginSchema) });
+
+  // Quem está na tela de login não tem sessão: o snapshot de consulta offline
+  // que sobrou no aparelho é de alguém que saiu SEM tocar em "Sair" (sessão
+  // expirada, senha trocada em outro aparelho, empresa bloqueada) — ou de um
+  // sync que terminou depois do logout. O próximo a entrar não pode herdá-lo.
+  useEffect(() => {
+    void limparSnapshotNoLogout().catch(() => {});
+  }, []);
 
   async function onSubmit(values: LoginInput) {
     setLoading(true);
@@ -67,7 +76,10 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
           ou com e-mail
           <span className="h-px flex-1 bg-border" />
         </div>
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        {/* `method="post"`: tocar "Entrar" antes da hidratação (3G do CEASA, ou
+          nonce da CSP falhando) fazia o envio nativo por GET e punha a senha na
+          URL — histórico do aparelho e log da Vercel. Vale para os 5 forms de (auth). */}
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="email">E-mail</Label>
             <Input id="email" type="email" autoComplete="email" autoFocus {...register("email")} />

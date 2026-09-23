@@ -215,15 +215,33 @@ export const FiadoService = {
       where: { id },
       include: {
         payments: { select: { id: true } },
-        sale: { select: { id: true, plasticCrateQty: true, items: true } },
+        sale: {
+          select: {
+            id: true,
+            plasticCrateQty: true,
+            items: true,
+            payments: { select: { method: true } },
+          },
+        },
       },
     });
     if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
 
-    if (conta.payments.length > 0 || gt(conta.paidAmount, 0)) {
-      throw new BusinessRuleError(
+    const recusaPagamento = () =>
+      new BusinessRuleError(
         "Esta conta já tem pagamento registrado e não pode ser excluída — " +
           "apagá-la sumiria com dinheiro que entrou no caixa.",
+      );
+    if (conta.payments.length > 0 || gt(conta.paidAmount, 0)) throw recusaPagamento();
+
+    // Venda MISTA (parte no PIX/dinheiro/cartão, parte no fiado): excluir o
+    // fiado desfaz a venda inteira, e o que foi pago no balcão sumia do fluxo
+    // de caixa — que só conta venda não excluída. É o mesmo "sumir com dinheiro
+    // que entrou" da regra acima, por outra porta.
+    if (conta.sale?.payments.some((p) => p.method !== "FIADO")) {
+      throw new BusinessRuleError(
+        "Parte desta venda foi paga no balcão (PIX, dinheiro ou cartão). " +
+          "Excluir o fiado apagaria esse recebimento — cancele a venda pelo histórico de vendas.",
       );
     }
 
@@ -231,10 +249,14 @@ export const FiadoService = {
     const agora = new Date();
 
     await db.$transaction(async (tx) => {
-      await tx.creditAccount.update({
-        where: { id: conta.id },
+      // A checagem de pagamento acima roda FORA da transação: um pagamento que
+      // entrasse entre ela e aqui seria apagado junto. O filtro `paidAmount: 0`
+      // refaz a checagem de forma atômica, na própria escrita.
+      const { count } = await tx.creditAccount.updateMany({
+        where: { id: conta.id, paidAmount: 0 },
         data: { deletedAt: agora },
       });
+      if (count !== 1) throw recusaPagamento();
 
       if (conta.sale) {
         // Os movimentos de estoque e de caixas são APAGADOS, não compensados.

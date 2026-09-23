@@ -174,6 +174,73 @@ describe("Fluxo de redefinição de senha", () => {
     expect(await verifyPassword(row.passwordHash, SENHA_NOVA)).toBe(true);
   });
 
+  describe("vale como confirmação de e-mail", () => {
+    let planoId = "";
+    const extras: string[] = [];
+
+    beforeAll(async () => {
+      const plano = await prisma.plan.create({
+        data: { name: "Plano Reset", slug: `reset-${Date.now()}`, priceMonthly: 49, active: true },
+      });
+      planoId = plano.id;
+    });
+    afterAll(async () => {
+      await prisma.user.deleteMany({ where: { tenantId: { in: extras } } });
+      await cleanupTenants(extras);
+      await prisma.plan.deleteMany({ where: { id: planoId } });
+    });
+
+    async function contaSemPagamento(emailVerifiedAt: Date | null) {
+      const t = await createTestTenant("Reset Trial");
+      extras.push(t);
+      await prisma.tenantSubscription.create({
+        data: {
+          tenantId: t,
+          planId: planoId,
+          status: "SUSPENSO",
+          monthlyAmount: 49,
+          currentPeriodEnd: new Date(),
+          graceDays: 5,
+        },
+      });
+      const u = await prisma.user.create({
+        data: {
+          tenantId: t,
+          name: "Dono",
+          email: `reset-trial-${Date.now()}-${Math.random().toString(36).slice(2)}@teste.com`,
+          passwordHash: await hashPassword(SENHA_ANTIGA),
+          role: "OWNER",
+          emailVerifiedAt,
+        },
+      });
+      return { t, u };
+    }
+
+    it("cadastro público que nunca confirmou: confirma o e-mail e libera o teste", async () => {
+      const { t, u } = await contaSemPagamento(null);
+      const { raw } = await issueResetToken(u.id);
+      expect(
+        await consumeResetToken({ userId: u.id, rawToken: raw, passwordHash: await hashPassword(SENHA_NOVA) }),
+      ).toBe(true);
+
+      const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+      expect(depois.emailVerifiedAt).not.toBeNull();
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+      expect(sub.status).toBe("TRIAL");
+      expect(sub.trialEndsAt!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it("conta já confirmada (cadastrada pelo admin) não ganha teste grátis", async () => {
+      const { t, u } = await contaSemPagamento(new Date());
+      const { raw } = await issueResetToken(u.id);
+      await consumeResetToken({ userId: u.id, rawToken: raw, passwordHash: await hashPassword(SENHA_NOVA) });
+
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+      expect(sub.status).toBe("SUSPENSO");
+      expect(sub.trialEndsAt).toBeNull();
+    });
+  });
+
   it("token de formato inválido não vira consulta ao banco nem redefine senha", async () => {
     await issueResetToken(userId);
     expect(await findUserByResetToken("../../etc/passwd")).toBeNull();

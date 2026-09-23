@@ -99,7 +99,18 @@ export async function carregarSnapshot(): Promise<PwaSnapshot | null> {
  */
 export async function limparSnapshotNoLogout(): Promise<void> {
   await transacionar("readwrite", (loja) => loja.delete(CHAVE_UNICA));
+  // O debounce vai junto: sem isto, quem entra em seguida no mesmo aparelho
+  // herdava a marca "sincronizei há 2 min" e ficava até 5 min sem snapshot
+  // próprio — offline, a tela mostraria o da conta anterior.
+  try {
+    localStorage.removeItem(CHAVE_ULTIMO_SYNC);
+  } catch {
+    /* sem storage: nada a limpar */
+  }
 }
+
+/** Marca do último sync (debounce do `OfflineSync`). Mora aqui para o logout limpar. */
+export const CHAVE_ULTIMO_SYNC = "pwa-last-snapshot-at";
 
 /** Idade do snapshot em minutos, ou `null` se não houver data válida. */
 export function idadeEmMinutos(snapshot: PwaSnapshot | null): number | null {

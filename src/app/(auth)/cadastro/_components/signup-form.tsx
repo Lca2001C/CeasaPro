@@ -146,7 +146,7 @@ export function SignupForm({
           ou cadastre com e-mail
           <span className="h-px flex-1 bg-border" />
         </div>
-        <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+        <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <p className="text-sm text-muted-foreground">
             {trialDays} dias grátis para testar tudo. Não pedimos cartão de crédito. Os
             dados da sua empresa você preenche depois, quando quiser.

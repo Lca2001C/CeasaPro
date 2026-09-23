@@ -64,7 +64,9 @@ export async function POST(req: Request) {
 
       // Sem SMTP configurado (dev), sendEmail é no-op — o link vai para o log
       // para dar como testar o fluxo inteiro sem caixa de e-mail.
-      if (!isEmailConfigured()) {
+      // Nunca em produção: lá, SMTP mal configurado não pode virar um log com
+      // o link que toma a conta de qualquer usuário (inclusive o super-admin).
+      if (!isEmailConfigured() && process.env.NODE_ENV !== "production") {
         logger.info({ link }, "[DEV] Link de redefinição de senha");
       }
       if (process.env.NODE_ENV === "production" && !hasConfiguredAppUrl()) {

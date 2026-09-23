@@ -15,6 +15,7 @@ import {
 } from "@/lib/services/tenant-provisioning";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
 import type { GoogleProfile } from "@/lib/auth/google-oauth";
+import { emailIdentity } from "@/lib/email-identity";
 
 export type GoogleLoginResult =
   | { ok: true; userId: string; role: "OWNER" | "SUPER_ADMIN"; criado: boolean }
@@ -58,9 +59,19 @@ export async function resolverLoginGoogle(
     data: { googleSub: null },
   });
 
-  const porEmail = await prisma.user.findFirst({
-    where: { email: perfil.email, deletedAt: null },
-  });
+  // Texto exato primeiro; depois a IDENTIDADE do e-mail (`dono+box@gmail.com`
+  // e `dono@gmail.com` são a mesma caixa). Sem a segunda busca, quem se
+  // cadastrou com apelido e depois entrava pelo Google ganhava uma empresa
+  // nova, vazia, com mais 7 dias de teste — e achava que tinha perdido os dados.
+  // O Google comprovou a caixa, então vincular à conta existente é seguro.
+  const porEmail =
+    (await prisma.user.findFirst({
+      where: { email: perfil.email, deletedAt: null },
+    })) ??
+    (await prisma.user.findFirst({
+      where: { emailIdentity: emailIdentity(perfil.email), deletedAt: null },
+      orderBy: { createdAt: "asc" },
+    }));
   if (porEmail) {
     if (!porEmail.active) return { ok: false, code: "google-inativo" };
     if (porEmail.googleSub && porEmail.googleSub !== perfil.sub) {

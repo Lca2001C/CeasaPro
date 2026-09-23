@@ -867,6 +867,9 @@ model StockMovement {
 
   @@index([tenantId, productId, movedAt])
   @@index([tenantId, type])
+  // Detalhe da venda e exclusão de fiado buscam os movimentos pela ORIGEM;
+  // sem isto, varriam o livro-razão inteiro da empresa.
+  @@index([tenantId, sourceType, sourceId])
   @@map("stock_movements")
 }
 
@@ -1107,6 +1110,9 @@ model AuditLog {
 
   @@index([tenantId, entity, entityId])
   @@index([tenantId, createdAt])
+  // `/admin/auditoria` lista as últimas 100 de TODAS as empresas: sem índice
+  // que comece por `createdAt`, era scan completo com ordenação a cada visita.
+  @@index([createdAt])
   @@map("audit_logs")
 }
 

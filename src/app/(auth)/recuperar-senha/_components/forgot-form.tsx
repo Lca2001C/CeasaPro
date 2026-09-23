@@ -64,7 +64,7 @@ export function ForgotForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+    <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Informe o e-mail da conta. Enviaremos um link para você criar uma senha nova.
       </p>

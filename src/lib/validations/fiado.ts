@@ -3,7 +3,12 @@ import { vendaItemSchema } from "./venda";
 
 export const pagamentoFiadoSchema = z.object({
   accountId: z.string().min(1),
-  amount: z.number().positive("Informe o valor"),
+  // Dinheiro tem 2 casas. 10,005 sobre um saldo de 10,01 gravava 10,01 pago e
+  // deixava a conta EM_ABERTO com saldo zero para sempre.
+  amount: z
+    .number()
+    .positive("Informe o valor")
+    .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, "Use no máximo 2 casas decimais"),
   method: z.enum(["PIX", "DINHEIRO", "CARTAO"]),
 });
 export type PagamentoFiadoInput = z.infer<typeof pagamentoFiadoSchema>;

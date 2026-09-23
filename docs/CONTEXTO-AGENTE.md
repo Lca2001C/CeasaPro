@@ -92,6 +92,8 @@ Validação: **o mesmo schema Zod** em `src/lib/validations/` no cliente (RHF) e
 - create: `data.tenantId`
 - update/delete: `where.tenantId`
 
+Operação que a extensão não sabe escopar (`isKnownTenantOp`) **lança erro** num model de tenant — nega por padrão. Versão nova do Prisma com operação nova: classifique-a em `models-tenant.ts`.
+
 Lista de models: `src/lib/db/models-tenant.ts` (`TENANT_MODELS` / `SOFT_DELETE_MODELS`). **Ao criar model com `tenantId`, incluir nessa lista** e no cleanup de `tests/helpers/factory.ts`.
 
 Teste de segurança: `tests/integration/tenant-isolation.test.ts`.
@@ -154,7 +156,7 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 
 Catálogo **único**: `src/lib/plan/modules.ts`.
 
-**Núcleo (sempre):** dashboard, produtos, fornecedores, compras, PDV/vendas, fiado, estoque, despesas, relatórios básicos, config, atividades, meu plano, assinatura.
+**Núcleo (sempre):** dashboard, produtos, fornecedores, compras, PDV/vendas, fiado, estoque, despesas, relatórios básicos, config, meu plano, assinatura.
 
 **Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = **nenhum** opcional liberado (fail-closed; `AdminService` exige a lista ao criar/salvar plano). `{ "modules": [] }` é como se diz "só o núcleo".
 
@@ -246,9 +248,9 @@ CONAB/PROHORT é a de maior alavancagem (acenderia dezenas de praças), e **não
 
 Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`. Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos.
 
-### Atividades (`/atividades`)
+### Atividades (removida)
 
-Auditoria da empresa em linguagem simples.
+A tela `/atividades` saiu no commit `f644e78` e não existe mais. A auditoria continua sendo gravada (`audit()`), mas só o super-admin a lê, em `/admin/auditoria`. Se voltar uma lista por empresa, ela precisa recusar `tenantId` vazio antes de consultar — a versão antiga (`listForTenant`) devolvia a auditoria de todas as empresas nesse caso.
 
 ### Ajuda / tutorial
 
@@ -383,6 +385,7 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 | Auth, isolamento, webhook | [`06-seguranca.md`](06-seguranca.md) |
 | Dev local / convenções | [`07-instalacao-e-deploy.md`](07-instalacao-e-deploy.md), [`08-desenvolvimento.md`](08-desenvolvimento.md) |
 | Cotações: o que já mordeu | [`auditoria-2026-09-07.md`](auditoria-2026-09-07.md) |
+| Auditoria E2E + pendências | [`auditoria-2026-09-23.md`](auditoria-2026-09-23.md) |
 | Vercel + Neon | [`09-deploy-vercel.md`](09-deploy-vercel.md) |
 | PWA | [`10-pwa-evolucao.md`](10-pwa-evolucao.md) |
 | Next 16 (breaking) | `AGENTS.md` + `node_modules/next/dist/docs/` |

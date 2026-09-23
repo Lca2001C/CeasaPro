@@ -38,6 +38,29 @@ export function irComSessaoNova(destino: string): void {
  * `AdminShell`) — três cópias da mesma decisão de segurança é uma a mais do que
  * o necessário para uma delas divergir sem ninguém notar.
  */
+/**
+ * Desfaz a inscrição de push deste aparelho. Tudo em silêncio: sem service
+ * worker, sem inscrição ou sem rede, o `unsubscribe` local já basta — a linha
+ * do servidor sai sozinha no primeiro envio que voltar 410.
+ */
+async function cancelarPushDoAparelho(): Promise<void> {
+  try {
+    if (!("serviceWorker" in navigator)) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const inscricao = await reg?.pushManager?.getSubscription();
+    if (!inscricao) return;
+    await fetch("/api/pwa/push", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ endpoint: inscricao.endpoint }),
+      signal: AbortSignal.timeout(5_000),
+    }).catch(() => {});
+    await inscricao.unsubscribe();
+  } catch {
+    /* push é conveniência: nunca impede a saída */
+  }
+}
+
 /** O que aconteceu na saída — a mensagem existe só quando algo falhou. */
 export interface ResultadoSaida {
   ok: boolean;
@@ -54,9 +77,16 @@ export async function encerrarSessao(): Promise<ResultadoSaida> {
   // não mudava, nenhuma mensagem aparecia — e ele ia embora achando que saiu,
   // com o snapshot de consulta (estoque, nomes de clientes e quanto cada um
   // deve) ainda gravado no aparelho, legível em /consulta-offline sem sessão.
+  // O push vai ANTES do logout: o DELETE precisa da sessão para achar o dono.
+  // Sem isto o aparelho seguia recebendo o resumo diário da empresa que saiu
+  // — na tela de bloqueio, para quem pegasse o celular depois.
+  await cancelarPushDoAparelho();
+
   let servidorOk = true;
   try {
-    await fetch("/api/auth/logout", { method: "POST" });
+    // Com prazo: no sinal fraco do box o POST ficava pendurado, o botão não
+    // respondia e a pessoa desistia com os dados ainda no aparelho.
+    await fetch("/api/auth/logout", { method: "POST", signal: AbortSignal.timeout(10_000) });
   } catch {
     servidorOk = false;
   }

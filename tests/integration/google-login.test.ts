@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from "@/lib/auth/password";
 import { createRefreshToken } from "@/lib/auth/refresh";
 import { resolverLoginGoogle } from "@/lib/services/google-login.service";
 import { cleanupTenants } from "../helpers/factory";
+import { emailIdentity } from "@/lib/email-identity";
 import type { GoogleProfile } from "@/lib/auth/google-oauth";
 
 /**
@@ -108,6 +109,51 @@ describe("resolverLoginGoogle", () => {
     });
     const atualizado = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
     expect(atualizado.googleSub).toBe(p.sub);
+  });
+
+  it("apelido do mesmo Gmail entra na conta existente, sem empresa nem trial novo", async () => {
+    const tenant = await prisma.tenant.create({
+      data: {
+        tradeName: "Box Apelido",
+        status: "ACTIVE",
+        onboardingCompletedAt: new Date(),
+        subscription: {
+          create: {
+            planId: planoId,
+            status: "ATIVO",
+            monthlyAmount: 49,
+            activatedAt: new Date(),
+            currentPeriodEnd: new Date(Date.now() + 30 * 86400000),
+            graceDays: 5,
+          },
+        },
+      },
+    });
+    tenants.push(tenant.id);
+    const raiz = `dono${uniq()}`;
+    const apelido = `${raiz}+box@gmail.com`;
+    emails.push(apelido);
+    const user = await prisma.user.create({
+      data: {
+        tenantId: tenant.id,
+        name: "Dono",
+        email: apelido,
+        emailIdentity: emailIdentity(apelido),
+        passwordHash: await hashPassword("senha1234"),
+        role: "OWNER",
+        emailVerifiedAt: new Date(),
+      },
+    });
+    const p = perfil({ email: `${raiz}@gmail.com` });
+
+    const res = await resolverLoginGoogle(p, { ip: null });
+    expect(res).toEqual({ ok: true, userId: user.id, role: "OWNER", criado: false });
+    const mesmaCaixa = await prisma.user.count({
+      where: { emailIdentity: emailIdentity(apelido), deletedAt: null },
+    });
+    expect(mesmaCaixa).toBe(1);
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(depois.googleSub).toBe(p.sub);
   });
 
   it("reconhece a conta pelo googleSub mesmo se o nome no Google mudou", async () => {

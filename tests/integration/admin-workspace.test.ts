@@ -59,6 +59,21 @@ afterAll(async () => {
   await prisma.plan.deleteMany({ where: { id: { in: planos } } });});
 
 describe("Ambiente próprio do super-admin", () => {
+  it("não pode ser excluído nem bloqueado — levaria junto o login do admin", async () => {
+    const ctx = await superAdminCtx();
+    const { tenantId } = await AdminService.getOrCreateAdminWorkspace(ctx);
+    criados.push(tenantId);
+
+    await expect(AdminService.deleteTenant(tenantId, ctx)).rejects.toThrow(/ambiente do administrador/i);
+    await expect(
+      AdminService.setTenantStatus({ tenantId, status: "BLOCKED", reason: "teste" }, ctx),
+    ).rejects.toThrow(/ambiente do administrador/i);
+
+    const admin = await prisma.user.findUniqueOrThrow({ where: { id: ctx.userId } });
+    expect(admin.active).toBe(true);
+    expect(admin.deletedAt).toBeNull();
+  });
+
   it("provisiona o tenant, liga o usuário e deixa a assinatura sempre ativa", async () => {
     const ctx = await superAdminCtx();
     const { tenantId, criado } = await AdminService.getOrCreateAdminWorkspace(ctx);

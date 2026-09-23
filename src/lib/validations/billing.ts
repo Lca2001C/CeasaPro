@@ -48,7 +48,9 @@ export const cardPaymentSchema = z
     token: z.string().min(1),
     paymentMethodId: z.string().min(1),
     issuerId: z.string().min(1).optional(),
-    installments: z.number().int().positive().max(12).default(1),
+    // À vista: o Brick já trava em 1x (`maxInstallments: 1`), e o servidor
+    // precisa dizer o mesmo — uma chamada montada à mão parcelava a mensalidade.
+    installments: z.number().int().positive().max(1, "A mensalidade é cobrada à vista").default(1),
     payer: payerSchema,
     planId: z.string().min(1).optional(),
     acceptedTerms: acceptedTermsSchema,

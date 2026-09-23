@@ -64,7 +64,7 @@ export function ResetForm({ token, maskedEmail }: { token: string; maskedEmail: 
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+    <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
       <p className="text-sm text-muted-foreground">
         Definindo a nova senha da conta <strong className="text-foreground">{maskedEmail}</strong>.
       </p>

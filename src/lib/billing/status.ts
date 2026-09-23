@@ -162,12 +162,28 @@ export type MotivoBloqueio = "teste_ativo" | "teste_terminou" | "nunca_ativou" |
  * Mesma razão de `situacaoCobranca` existir: a classificação sai das datas.
  */
 export function motivoDoBloqueio(
-  sub: { activatedAt: Date | null; trialEndsAt: Date | null } | null | undefined,
+  sub:
+    | {
+        activatedAt: Date | null;
+        trialEndsAt: Date | null;
+        cancelledAt?: Date | null;
+        statusSource?: string | null;
+      }
+    | null
+    | undefined,
   now: Date = new Date(),
+  /** `tenant.status === "ACTIVE"`. Empresa bloqueada pelo admin não é "sessão velha". */
+  empresaAtiva: boolean = true,
 ): MotivoBloqueio {
   // Já pagou alguma vez: o bloqueio é de cobrança, não de ativação.
   if (!sub || sub.activatedAt !== null) return "bloqueado";
+  // Decisão humana (admin, estorno) vence as datas — como em `computeStatus`.
+  // Sem isto, o bloqueio durante o teste lia "seu teste está ativo, entre de
+  // novo", e entrar de novo devolvia a esta mesma tela: um laço sem saída.
+  if (!empresaAtiva || sub.statusSource === "MANUAL") return "bloqueado";
   if (sub.trialEndsAt === null) return "nunca_ativou";
+  // Cancelar durante o teste encerra na hora (Termos §5): é "terminou".
+  if (sub.cancelledAt) return "teste_terminou";
   return sub.trialEndsAt > now ? "teste_ativo" : "teste_terminou";
 }
 

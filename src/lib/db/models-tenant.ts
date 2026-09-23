@@ -72,10 +72,16 @@ const READ_OPS = new Set([
 const WHERE_WRITE_OPS = new Set([
   "update",
   "updateMany",
+  // Prisma 6.x: existe em todo model. Fora desta lista, passava pela extensão
+  // sem `where.tenantId` — e atualizava a tabela de TODAS as empresas.
+  "updateManyAndReturn",
   "delete",
   "deleteMany",
   "upsert",
 ]);
+
+/** Criações: a extensão carimba `data.tenantId` com o da sessão. */
+const CREATE_OPS = new Set(["create", "createMany", "createManyAndReturn"]);
 
 export function isReadOp(op: string) {
   return READ_OPS.has(op);
@@ -83,4 +89,18 @@ export function isReadOp(op: string) {
 
 export function isWhereWriteOp(op: string) {
   return WHERE_WRITE_OPS.has(op);
+}
+
+export function isCreateOp(op: string) {
+  return CREATE_OPS.has(op);
+}
+
+/**
+ * Toda operação que a extensão sabe escopar. Uma que não esteja aqui (uma
+ * versão nova do Prisma acrescenta de tempos em tempos) é RECUSADA num model
+ * de tenant: deixá-la passar crua é o vazamento silencioso que esta lista
+ * existe para impedir.
+ */
+export function isKnownTenantOp(op: string) {
+  return isReadOp(op) || isWhereWriteOp(op) || isCreateOp(op);
 }

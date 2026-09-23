@@ -61,7 +61,9 @@ export interface PwaSnapshot {
 export const GET = withTenantRoute({
   handler: async (_input, ctx): Promise<PwaSnapshot> => {
     const [resumo, avisos, estoque, fiado] = await Promise.all([
-      DashboardService.getSummary(ctx.tenantId),
+      // Com os módulos: sem eles `contasPagar` saía sem a higienização em
+      // aberto, e a consulta offline mostrava menos do que o Início.
+      DashboardService.getSummary(ctx.tenantId, ctx.session.modules),
       AvisosService.get(ctx.tenantId, ctx.session.modules),
       EstoqueService.getPositions(ctx.tenantId),
       FiadoService.listOpen(ctx.tenantId, "EM_ABERTO"),

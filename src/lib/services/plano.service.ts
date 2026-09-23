@@ -253,11 +253,17 @@ export const PlanoService = {
       }
       throw new BusinessRuleError("Este já é o seu plano atual.");
     }
-    // `currentPeriodEnd > now` junto com o pagamento aprovado: o que protege é o
-    // período comprado, não o pagamento em si. Competência paga cujo período já
-    // venceu não dá direito a nada, e adiar a troca ali deixaria o cliente preso
-    // ao plano antigo sem contrapartida.
-    const agendar = sub.currentPeriodEnd > now && (await competenciaJaPaga(ctx.tenantId, now));
+    // O que protege é o PERÍODO comprado, não o mês do calendário. Olhar só a
+    // competência corrente deixava a brecha que o agendamento existe para
+    // fechar: pagar o básico em 31/08 (período até 30/09), subir para o
+    // completo em 01/09 — setembro ainda sem pagamento, então valia na hora —
+    // usar o mês inteiro e descer de novo antes de pagar. `activatedAt` separa
+    // o período pago do trial e do vencimento que o admin grava na criação.
+    // Período já vencido não dá direito a nada: troca na hora, e a próxima
+    // cobrança sai pelo plano novo.
+    const agendar =
+      (sub.activatedAt !== null && sub.currentPeriodEnd > now) ||
+      (sub.currentPeriodEnd > now && (await competenciaJaPaga(ctx.tenantId, now)));
 
     // Pedir de novo o plano que já está agendado: é erro enquanto o mês pago
     // corre (não há nada a fazer além do que já foi feito), mas deixa de ser

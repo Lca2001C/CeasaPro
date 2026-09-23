@@ -11,6 +11,16 @@ const gw = vi.hoisted(() => ({
   nextThreeDs: null as { externalResourceUrl: string; creq: string } | null,
   paymentStatus: new Map<string, string>(), // mpPaymentId -> status no "MP"
   paymentType: new Map<string, string>(), // mpPaymentId -> payment_type_id no "MP"
+  // Simula a idempotência do MP para o MESMO token: toda chamada devolve este id.
+  cardIdFixo: null as string | null,
+  // Barreira opcional: a 1ª chamada espera a 2ª chegar; a 2ª espera `liberaSegunda`.
+  barreira: null as null | {
+    chegaram: number;
+    ambas: Promise<void>;
+    avisaAmbas: () => void;
+    segunda: Promise<void>;
+    liberaSegunda: () => void;
+  },
 }));
 
 vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
@@ -35,7 +45,16 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
     }),
     createCardPayment: vi.fn(async (args: { paymentTypeId: string }) => {
       gw.cardCalls += 1;
-      const id = `mpc-${gw.cardCalls}`;
+      const id = gw.cardIdFixo ?? `mpc-${gw.cardCalls}`;
+      const b = gw.barreira;
+      if (b) {
+        b.chegaram += 1;
+        if (b.chegaram === 1) await b.ambas;
+        else {
+          b.avisaAmbas();
+          await b.segunda;
+        }
+      }
       gw.paymentStatus.set(id, gw.nextThreeDs ? "pending" : gw.nextCardStatus);
       gw.paymentType.set(id, args.paymentTypeId);
       return {
@@ -355,6 +374,49 @@ describe("Cobrança com CARTÃO (Payment Brick)", () => {
       /já está paga/i,
     );
     await expect(BillingService.createCheckout(t)).rejects.toThrow(/já está paga/i);
+  });
+
+  it("dois cliques com o mesmo token não reabrem a cobrança aprovada nem creditam 2 meses", async () => {
+    const t = await createCardTenant();
+    gw.nextCardStatus = "approved";
+    gw.nextThreeDs = null;
+    gw.cardIdFixo = `mpc-dup-${t}`;
+    let avisaAmbas!: () => void;
+    let liberaSegunda!: () => void;
+    gw.barreira = {
+      chegaram: 0,
+      ambas: new Promise<void>((r) => (avisaAmbas = r)),
+      avisaAmbas: () => avisaAmbas(),
+      segunda: new Promise<void>((r) => (liberaSegunda = r)),
+      liberaSegunda: () => liberaSegunda(),
+    };
+    try {
+      // Os dois passam por `prepareCharge` antes de qualquer aprovação existir.
+      const r1 = BillingService.processCardPayment(t, creditoInput);
+      const r2 = BillingService.processCardPayment(t, creditoInput);
+      // Qualquer um dos dois pode chegar primeiro à barreira: espera o que termina.
+      const primeiro = await Promise.race([r1, r2]);
+      expect(primeiro.status).toBe("APROVADO");
+      const depoisDoPrimeiro = await prisma.tenantSubscription.findUniqueOrThrow({
+        where: { tenantId: t },
+      });
+
+      gw.barreira.liberaSegunda();
+      const [a, b] = await Promise.all([r1, r2]);
+      expect(a.status).toBe("APROVADO");
+      expect(b.status).toBe("APROVADO");
+
+      const linhas = await prisma.subscriptionPayment.findMany({ where: { tenantId: t } });
+      expect(linhas).toHaveLength(1);
+      expect(linhas[0]!.status).toBe("APROVADO");
+      const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: t } });
+      expect(sub.currentPeriodEnd.toISOString()).toBe(
+        depoisDoPrimeiro.currentPeriodEnd.toISOString(),
+      );
+    } finally {
+      gw.cardIdFixo = null;
+      gw.barreira = null;
+    }
   });
 });
 

@@ -117,6 +117,30 @@ afterAll(async () => {
   await prisma.plan.delete({ where: { id: planId } }).catch(() => {});
 });
 
+describe("Estorno de um mês ANTERIOR", () => {
+  it("tira só o período estornado — o mês pago depois continua contando", async () => {
+    const { tenantId } = await createTenantComSessao();
+    const antigoId = await pagarMensalidade(tenantId);
+    // Recua o primeiro pagamento para uma competência passada, liberando o mês
+    // corrente para um segundo pagamento (o cenário "agosto e setembro pagos").
+    await prisma.subscriptionPayment.update({
+      where: { mpPaymentId: antigoId },
+      data: { referenceMonth: "2000-01", approvedKey: `${tenantId}:2000-01` },
+    });
+    await pagarMensalidade(tenantId);
+    const antes = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+
+    gw.paymentStatus.set(antigoId, "refunded");
+    await BillingService.handleWebhook(antigoId);
+
+    const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    // Antes voltava para o início do mês estornado (≈ agora): o mês pago depois
+    // sumia junto. Agora sobra ~1 mês adiante.
+    expect(depois.currentPeriodEnd.getTime()).toBeLessThan(antes.currentPeriodEnd.getTime());
+    expect(depois.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now() + 25 * 86_400_000);
+  });
+});
+
 describe("Estorno (refunded)", () => {
   it("suspende a assinatura, reverte o período e revoga as sessões", async () => {
     const { tenantId, refreshToken } = await createTenantComSessao();

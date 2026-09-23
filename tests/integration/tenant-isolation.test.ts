@@ -60,6 +60,35 @@ describe("Isolamento por tenant", () => {
     expect(created.tenantId).toBe(tenantA);
   });
 
+  it("updateManyAndReturn também é escopado (não atualiza a vizinha)", async () => {
+    const res = await getTenantPrisma(tenantA).product.updateManyAndReturn({
+      where: { id: productBId },
+      data: { name: "HACKEADO" },
+    });
+    expect(res).toHaveLength(0);
+    const stillB = await getTenantPrisma(tenantB).product.findFirst({ where: { id: productBId } });
+    expect(stillB!.name).toBe("Produto B");
+  });
+
+  it("createManyAndReturn força o tenantId da sessão", async () => {
+    const criados = await getTenantPrisma(tenantA).product.createManyAndReturn({
+      data: [{ tenantId: tenantB, name: "Forjado em lote", saleUnit: "KG" }],
+    });
+    expect(criados.every((p) => p.tenantId === tenantA)).toBe(true);
+  });
+
+  it("update não move o registro de empresa pela relação `tenant`", async () => {
+    const p = await getTenantPrisma(tenantA).product.create({
+      data: { tenantId: tenantA, name: "Não muda de dono", saleUnit: "KG" },
+    });
+    await getTenantPrisma(tenantA).product.update({
+      where: { id: p.id },
+      data: { name: "Ainda de A", tenant: { connect: { id: tenantB } } },
+    });
+    const depois = await prisma.product.findUnique({ where: { id: p.id } });
+    expect(depois!.tenantId).toBe(tenantA);
+  });
+
   it("bloqueio de uma empresa por chargeback não afeta os dados da vizinha", async () => {
     // O bloqueio por reversão de pagamento acontece na assinatura, não nos
     // dados: o corte de acesso é do tenant bloqueado e nada vaza para o outro.

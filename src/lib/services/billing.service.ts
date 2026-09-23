@@ -1,6 +1,7 @@
 import type {
   ChargeMethod,
   PaymentStatus,
+  Prisma,
   SubscriptionPayment,
   SubscriptionStatus,
 } from "@prisma/client";
@@ -157,6 +158,82 @@ function isUsable(charge: SubscriptionPayment | null, now = new Date()): boolean
   return true;
 }
 
+/** Vencimento depois de estornar `payment`: tira só a duração do período dele. */
+function periodoSemOEstornado(
+  currentPeriodEnd: Date,
+  payment: { periodStart: Date | null; periodEnd: Date | null },
+): Date {
+  if (!payment.periodStart || !payment.periodEnd) return currentPeriodEnd;
+  const duracao = payment.periodEnd.getTime() - payment.periodStart.getTime();
+  return new Date(currentPeriodEnd.getTime() - duracao);
+}
+
+/**
+ * Valor que a PRÓXIMA aprovação compra.
+ *
+ * A aprovação soma um mês a partir de `currentPeriodEnd` (ou de agora, se já
+ * venceu). Com troca de plano agendada para esse instante, o período comprado
+ * é do plano NOVO — cobrar `monthlyAmount` (o do plano vigente) entregava o mês
+ * do plano caro pelo preço do barato: o agendamento só adiava o desconto.
+ * No downgrade, é o inverso: a pessoa pagaria o mês do básico pelo completo.
+ *
+ * Usado para gerar a cobrança E para conferir o valor que entrou — as duas
+ * pontas precisam concordar, senão o pagamento correto seria recusado.
+ */
+export function valorDevido(
+  sub: {
+    monthlyAmount: Decimal;
+    currentPeriodEnd: Date;
+    pendingPlanFrom: Date | null;
+    pendingPlan: { priceMonthly: Decimal } | null;
+  },
+  now: Date,
+): Decimal {
+  const inicio = sub.currentPeriodEnd > now ? sub.currentPeriodEnd : now;
+  if (sub.pendingPlan && sub.pendingPlanFrom && sub.pendingPlanFrom <= inicio) {
+    return money(sub.pendingPlan.priceMonthly);
+  }
+  return money(sub.monthlyAmount);
+}
+
+/**
+ * Estados de onde uma cobrança pode voltar a PENDENTE quando o Mercado Pago
+ * devolve o MESMO pagamento pela chave de idempotência. APROVADO e ESTORNADO
+ * ficam de fora: reabrir a aprovada fazia a rodada seguinte do webhook
+ * aprová-la DE NOVO — não havia "outra aprovada" (é a mesma linha) e cada
+ * aprovação empurra `currentPeriodEnd` mais um mês. Dois cliques em "Pagar"
+ * com o mesmo token compravam dois meses por uma cobrança.
+ */
+const REABRIVEIS: PaymentStatus[] = ["PENDENTE", "RECUSADO", "CANCELADO"];
+
+/**
+ * Grava a cobrança devolvida pelo Mercado Pago sem nunca reabrir uma linha que
+ * já tem dinheiro decidido. Substitui o `upsert`, que não sabe ser condicional:
+ * o `updateMany` com filtro de status é atômico na linha, e o índice único de
+ * `mpPaymentId` resolve a corrida entre dois `create`.
+ */
+async function gravarCobranca(
+  mpPaymentId: string,
+  create: Prisma.SubscriptionPaymentUncheckedCreateInput,
+  update: Prisma.SubscriptionPaymentUncheckedUpdateManyInput,
+): Promise<SubscriptionPayment> {
+  const reaberta = await prisma.subscriptionPayment.updateMany({
+    where: { mpPaymentId, status: { in: REABRIVEIS } },
+    data: { ...update, status: "PENDENTE", approvedKey: null },
+  });
+  if (reaberta.count === 0) {
+    const existente = await prisma.subscriptionPayment.findUnique({ where: { mpPaymentId } });
+    if (existente) return existente; // APROVADO/ESTORNADO: devolve como está
+    try {
+      return await prisma.subscriptionPayment.create({ data: create });
+    } catch (err) {
+      if ((err as { code?: unknown } | null)?.code !== "P2002") throw err;
+      // Outro pedido criou a mesma linha entre o `findUnique` e o `create`.
+    }
+  }
+  return prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId } });
+}
+
 /**
  * Converte a recusa da API do Mercado Pago em erro de negócio.
  *
@@ -292,10 +369,17 @@ async function prepareCharge(
 
   await registerTermsAcceptance(tenantId, ctx, now);
 
+  const pendingPlan = sub.pendingPlanId
+    ? await prisma.plan.findUnique({
+        where: { id: sub.pendingPlanId },
+        select: { priceMonthly: true },
+      })
+    : null;
+
   return {
     subscriptionId: sub.id,
     refMonth,
-    amount: money(sub.monthlyAmount),
+    amount: valorDevido({ ...sub, pendingPlan }, now),
     description: `CeasaPro - mensalidade ${refMonth} - ${sub.tenant.tradeName}`,
     payerEmail: sub.tenant.users[0]?.email ?? "sememail@ceasapro.com.br",
     payerName: sub.tenant.users[0]?.name ?? sub.tenant.tradeName,
@@ -408,16 +492,11 @@ export const BillingService = {
 
     // O Mercado Pago é idempotente pela chave `pix:<ref>:<valor>`: pedir de
     // novo dentro da validade da chave devolve a MESMA cobrança. Se ela já foi
-    // paga, devolvemos como está — reabrir uma cobrança quitada faria a tela
-    // pedir pagamento de novo.
-    const jaExiste = await prisma.subscriptionPayment.findUnique({
-      where: { mpPaymentId: pix.mpPaymentId },
-    });
-    if (jaExiste?.status === "APROVADO") return jaExiste;
-
-    return prisma.subscriptionPayment.upsert({
-      where: { mpPaymentId: pix.mpPaymentId },
-      create: {
+    // paga, `gravarCobranca` a devolve como está — reabrir uma cobrança quitada
+    // faria a tela pedir pagamento de novo (e o webhook creditar outro mês).
+    return gravarCobranca(
+      pix.mpPaymentId,
+      {
         subscriptionId: charge.subscriptionId,
         tenantId,
         amount: charge.amount,
@@ -431,22 +510,18 @@ export const BillingService = {
         ticketUrl: pix.ticketUrl,
         expiresAt: pix.expiresAt ?? expiresAt,
       },
-      update: {
-        // Volta a PENDENTE: a linha pode ter sido CANCELADA logo acima (a
-        // anterior do mês era esta mesma, devolvida pela idempotência do MP).
-        // Sem isto ela ficaria CANCELADA com QR válido na tela, e o polling —
-        // que procura cobrança PENDENTE — nunca confirmaria o pagamento.
-        status: "PENDENTE",
-        // A chave de aprovação acompanha o status SEMPRE: linha pendente que
-        // continuasse segurando a chave bloquearia a aprovação seguinte do mês.
-        approvedKey: null,
+      // Volta a PENDENTE (dentro de `gravarCobranca`): a linha pode ter sido
+      // CANCELADA logo acima (a anterior do mês era esta mesma, devolvida pela
+      // idempotência do MP). Sem isto ela ficaria CANCELADA com QR válido na
+      // tela, e o polling — que procura cobrança PENDENTE — nunca confirmaria.
+      {
         amount: charge.amount,
         qrCode: pix.qrCode,
         qrCodeBase64: pix.qrCodeBase64,
         ticketUrl: pix.ticketUrl,
         expiresAt: pix.expiresAt ?? expiresAt,
       },
-    });
+    );
   },
 
   /**
@@ -499,9 +574,13 @@ export const BillingService = {
     // Mercado Pago devolver o MESMO pagamento. Com `create`, essa segunda
     // tentativa batia no índice único de `mpPaymentId` e virava erro 500 — logo
     // depois de uma recusa, que é exatamente quando a pessoa tenta outra vez.
-    await prisma.subscriptionPayment.upsert({
-      where: { mpPaymentId: paid.mpPaymentId },
-      create: {
+    //
+    // Volta a PENDENTE (em `gravarCobranca`) para o status real ser reaplicado
+    // logo abaixo — mas nunca a partir de APROVADO/ESTORNADO: o segundo clique
+    // com o mesmo token recebe a cobrança já decidida, sem crédito novo.
+    await gravarCobranca(
+      paid.mpPaymentId,
+      {
         subscriptionId: charge.subscriptionId,
         tenantId,
         amount: charge.amount,
@@ -513,17 +592,13 @@ export const BillingService = {
         mpPaymentId: paid.mpPaymentId,
         mpExternalRef: externalRef,
       },
-      update: {
-        // Volta a PENDENTE para o status real ser reaplicado logo abaixo; sem
-        // isto `applyPaymentStatus` veria o mesmo status e ignoraria a rodada.
-        status: "PENDENTE",
-        approvedKey: null,
+      {
         amount: charge.amount,
         method: input.method,
         statusDetail: paid.statusDetail,
         threeDsUrl: paid.threeDs?.externalResourceUrl ?? null,
       },
-    });
+    );
 
     // Desafio 3DS: o pagamento só se resolve depois que o portador autenticar.
     if (paid.threeDs) {
@@ -617,15 +692,21 @@ export const BillingService = {
     if (newStatus === "APROVADO") {
       const cobrado = await prisma.tenantSubscription.findUnique({
         where: { id: payment.subscriptionId },
-        select: { monthlyAmount: true },
+        select: {
+          monthlyAmount: true,
+          currentPeriodEnd: true,
+          pendingPlanFrom: true,
+          pendingPlan: { select: { priceMonthly: true } },
+        },
       });
-      if (cobrado && !gte(money(mp.amount), cobrado.monthlyAmount)) {
+      const devido = cobrado ? valorDevido(cobrado, new Date()) : null;
+      if (devido && !gte(money(mp.amount), devido)) {
         logger.error(
           {
             mpPaymentId: mp.id,
             tenantId: payment.tenantId,
             pago: String(mp.amount),
-            devido: cobrado.monthlyAmount.toString(),
+            devido: devido.toString(),
           },
           "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
         );
@@ -798,8 +879,12 @@ export const BillingService = {
               // estorno. Um novo pagamento aprovado volta a fonte para AUTO.
               statusSource: "MANUAL",
               statusReason: `Pagamento ${mp.status} no Mercado Pago (${mp.id})`,
-              // O mês estornado deixa de valer: o período volta ao que era antes.
-              currentPeriodEnd: payment.periodStart ?? sub.currentPeriodEnd,
+              // O mês estornado deixa de valer — só ELE. Voltar para
+              // `payment.periodStart` apagava junto os meses pagos DEPOIS dele:
+              // estornar agosto com setembro já quitado devolvia o vencimento a
+              // 10/08. Descontar a duração do período estornado dá o mesmo
+              // resultado quando ele é o último, e o certo quando não é.
+              currentPeriodEnd: periodoSemOEstornado(sub.currentPeriodEnd, payment),
             },
           });
           await audit(

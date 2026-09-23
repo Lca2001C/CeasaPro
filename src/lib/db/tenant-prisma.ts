@@ -4,6 +4,7 @@ import {
   SOFT_DELETE_MODELS,
   isReadOp,
   isWhereWriteOp,
+  isKnownTenantOp,
 } from "./models-tenant";
 
 /**
@@ -16,14 +17,34 @@ import {
  * Assim é impossível esquecer o filtro de tenant → fecha vazamento cross-tenant.
  * Usa `extendedWhereUnique` (GA no Prisma 5+/6): permite combinar id + tenantId em update/delete/findUnique.
  */
-/** Devolve o payload sem `tenantId`, sem mutar o objeto de quem chamou. */
+/**
+ * Devolve o payload sem `tenantId` nem a relação `tenant` (um
+ * `tenant: { connect: { id } }` move o registro tanto quanto o escalar), sem
+ * mutar o objeto de quem chamou.
+ */
 function semTenantId(payload: unknown): unknown {
-  if (!payload || typeof payload !== "object" || !("tenantId" in payload)) {
+  if (
+    !payload ||
+    typeof payload !== "object" ||
+    (!("tenantId" in payload) && !("tenant" in payload))
+  ) {
     return payload;
   }
   const copia = { ...(payload as Record<string, unknown>) };
   delete copia.tenantId;
+  delete copia.tenant;
   return copia;
+}
+
+/** `createMany`/`createManyAndReturn` aceitam objeto único ou lista. */
+function carimbaTenant(data: unknown, tenantId: string): unknown {
+  return Array.isArray(data)
+    ? data.map((d: Record<string, unknown>) => ({ ...semTenantIdObj(d), tenantId }))
+    : { ...semTenantIdObj(data), tenantId };
+}
+
+function semTenantIdObj(payload: unknown): Record<string, unknown> {
+  return (semTenantId(payload ?? {}) ?? {}) as Record<string, unknown>;
 }
 
 export function getTenantPrisma(tenantId: string) {
@@ -38,6 +59,13 @@ export function getTenantPrisma(tenantId: string) {
         async $allOperations({ model, operation, args, query }: any) {
           if (!TENANT_MODELS.has(model)) {
             return query(args);
+          }
+          if (!isKnownTenantOp(operation)) {
+            // Nega por padrão: operação sem regra de escopo não roda num model
+            // de empresa (ver `isKnownTenantOp`).
+            throw new Error(
+              `getTenantPrisma: operação "${operation}" em ${model} não é escopada por tenant`,
+            );
           }
           const softDelete = SOFT_DELETE_MODELS.has(model);
 
@@ -58,7 +86,11 @@ export function getTenantPrisma(tenantId: string) {
           // é de outro, não impede entregar o próprio. Hoje nenhum serviço
           // espalha entrada do usuário em `data`, então isto fecha a porta
           // antes de alguém abrir: vale por construção, não por disciplina.
-          if (operation === "update" || operation === "updateMany") {
+          if (
+            operation === "update" ||
+            operation === "updateMany" ||
+            operation === "updateManyAndReturn"
+          ) {
             args.data = semTenantId(args.data);
           }
           if (operation === "upsert") {
@@ -66,18 +98,15 @@ export function getTenantPrisma(tenantId: string) {
           }
 
           if (operation === "create") {
-            args.data = { ...(args.data ?? {}), tenantId };
+            args.data = { ...semTenantIdObj(args.data), tenantId };
           }
 
-          if (operation === "createMany") {
-            const data = args.data;
-            args.data = Array.isArray(data)
-              ? data.map((d: Record<string, unknown>) => ({ ...d, tenantId }))
-              : { ...data, tenantId };
+          if (operation === "createMany" || operation === "createManyAndReturn") {
+            args.data = carimbaTenant(args.data, tenantId);
           }
 
           if (operation === "upsert") {
-            args.create = { ...(args.create ?? {}), tenantId };
+            args.create = { ...semTenantIdObj(args.create), tenantId };
           }
 
           return query(args);

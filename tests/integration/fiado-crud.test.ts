@@ -154,6 +154,27 @@ describe("Exclusão de lançamento de fiado", () => {
     expect(baixas).toBe(0);
   });
 
+  it("RECUSA excluir o fiado de venda mista — o PIX recebido sumiria do caixa", async () => {
+    const sale = await VendasService.registrarVenda(
+      {
+        customerName: `Cliente ${uniq()}`,
+        paymentMethod: "FIADO",
+        payments: [
+          { method: "PIX", amount: 40 },
+          { method: "FIADO", amount: 60 },
+        ],
+        saleDate: new Date().toISOString(),
+        items: [{ productId: produtoId, quantity: 50, unitPrice: 2 }],
+      },
+      ctx,
+    );
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: sale.id } });
+
+    await expect(FiadoService.remove(conta.id, ctx)).rejects.toThrow(/balcão/i);
+    const venda = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } });
+    expect(venda.deletedAt).toBeNull();
+  });
+
   it("RECUSA excluir conta que já recebeu pagamento", async () => {
     const { conta } = await vendaFiada({ qtd: 50, preco: 2 });
     await FiadoService.registrarPagamento(

@@ -28,16 +28,25 @@ export async function POST(req: Request) {
   // origem falhar (proxy mal configurado, cadeia de headers inesperada), a conta
   // alvo continua protegida contra tentativa distribuída. O limite por e-mail é
   // folgado para que trancar a conta de alguém de fora exija esforço sustentado.
+  //
+  // O terceiro, só por IP, fecha o "password spraying": uma senha comum
+  // testada contra milhares de e-mails, um por vez, nunca estourava os outros
+  // dois — e cada tentativa custa um Argon2 de ~19 MB. Folgado porque o CEASA
+  // tem muitos boxes atrás do mesmo Wi-Fi, e não é liberado no acerto (quem
+  // espalha tentativas pode ter UMA conta válida para zerar a janela). Com IP
+  // desconhecido fica de fora: todo mundo cairia no mesmo balde.
   const rateKeyIp = `login:${ip}:${email}`;
   const rateKeyEmail = `login:email:${email}`;
   const janela = 15 * 60 * 1000;
-  const [rlIp, rlEmail] = await Promise.all([
+  const [rlIp, rlEmail, rlSoIp] = await Promise.all([
     rateLimitDb(rateKeyIp, { limit: 5, windowMs: janela }),
     rateLimitDb(rateKeyEmail, { limit: 20, windowMs: janela }),
+    ip === "unknown"
+      ? Promise.resolve(null)
+      : rateLimitDb(`login:ip:${ip}`, { limit: 60, windowMs: janela }),
   ]);
-  if (!rlIp.ok || !rlEmail.ok) {
-    return respostaDeLimite(rlIp.ok ? rlEmail : rlIp);
-  }
+  const estourou = [rlIp, rlEmail, rlSoIp].find((r) => r && !r.ok);
+  if (estourou) return respostaDeLimite(estourou);
 
   const user = await prisma.user.findFirst({
     where: { email, active: true, deletedAt: null },
