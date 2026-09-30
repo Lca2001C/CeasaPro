@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { assertSessaoValida } from "@/lib/auth/revogacao";
+import { sessaoAindaValida } from "@/lib/auth/revogacao";
+import { rotaDeSessaoRevogada } from "@/lib/auth/renovacao";
 import { prisma } from "@/lib/db/prisma";
 import { accessDecision, billingNotice } from "@/lib/billing/status";
 import { formatDate } from "@/lib/format";
@@ -17,7 +18,11 @@ export default async function AppLayout({
   const session = await getSession();
   if (!session) redirect("/login");
   if (session.mustChangePassword) redirect("/alterar-senha");
-  await assertSessaoValida(session);
+  // Sessão revogada (senha trocada, empresa bloqueada, usuário desativado) com o
+  // JWT ainda vivo: redireciona, NÃO lança. Exceção aqui não tem boundary que a
+  // pegue (o `error.tsx` do grupo não cobre o próprio layout) e o proxy devolve
+  // o `/login` para cá enquanto o access cookie existir. Ver `sessaoAindaValida`.
+  if (!(await sessaoAindaValida(session))) redirect(rotaDeSessaoRevogada("/dashboard"));
   // Assinatura bloqueada não lê dado da empresa.
   //
   // Isto ESPELHA o proxy, que já decide o mesmo — e é justamente esse o ponto:

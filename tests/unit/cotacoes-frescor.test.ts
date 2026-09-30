@@ -3,6 +3,7 @@ import {
   DIAS_ATE_DEFASAGEM,
   explicacaoDaCadencia,
   explicacaoSemBoletim,
+  frescorAlarma,
   frescorDoBoletim,
   rotuloDeFrescor,
 } from "@/lib/cotacoes/frescor";
@@ -177,5 +178,34 @@ describe("rotuloDeFrescor", () => {
     expect(rotuloDeFrescor(frescorDoBoletim(dia("2026-09-07"), AGORA))).toMatch(/3 dias/);
     expect(rotuloDeFrescor(frescorDoBoletim(dia("2026-09-01"), AGORA))).toMatch(/sem boletim novo/i);
     expect(rotuloDeFrescor(frescorDoBoletim(null, AGORA))).toMatch(/sem boletim/i);
+  });
+});
+
+describe("frescorAlarma — um critério só para tela e alarme", () => {
+  /**
+   * A tela do super-admin usava `nivel !== "atual"` e pintava de amarelo a
+   * CEAGESP e Juiz de Fora na cadência normal (2 a 3 boletins por semana),
+   * enquanto `verificarDefasagem` só alarma em "defasado"/"ausente".
+   */
+  it("atrasado dentro do teto da central NÃO alarma", () => {
+    // Boletim de segunda lido na quinta, teto 5 (CEAGESP): 3 dias.
+    const f = frescorDoBoletim(dia("2026-09-07"), AGORA, 5);
+    expect(f.nivel).toBe("atrasado");
+    expect(frescorAlarma(f)).toBe(false);
+  });
+
+  it("atual não alarma; defasado e ausente alarmam", () => {
+    expect(frescorAlarma(frescorDoBoletim(dia("2026-09-09"), AGORA, 5))).toBe(false);
+    expect(frescorAlarma(frescorDoBoletim(dia("2026-08-01"), AGORA, 5))).toBe(true);
+    expect(frescorAlarma(frescorDoBoletim(null, AGORA, 5))).toBe(true);
+  });
+});
+
+describe("tela do super-admin usa o mesmo critério do alarme", () => {
+  it("/admin/cotacoes decide 'precisa de atenção' com frescorAlarma", async () => {
+    const { readFileSync } = await import("node:fs");
+    const pagina = readFileSync("src/app/(admin)/admin/cotacoes/page.tsx", "utf8");
+    expect(pagina).toMatch(/frescorAlarma\(/);
+    expect(pagina).not.toMatch(/\.nivel !== "atual"/);
   });
 });

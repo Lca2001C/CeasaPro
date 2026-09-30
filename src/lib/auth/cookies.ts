@@ -73,6 +73,12 @@ export async function marcarTentativaDeRenovacao() {
   });
 }
 
+/** A marca de `marcarTentativaDeRenovacao` ainda está de pé (renovou há < 30 s)? */
+export async function renovouAgoraHaPouco(): Promise<boolean> {
+  const c = await cookies();
+  return Boolean(c.get(COOKIE_TENTATIVA_RENOVACAO)?.value);
+}
+
 export async function clearAuthCookies() {
   const [c, base] = await Promise.all([cookies(), cookieBase()]);
   c.set(ACCESS_COOKIE, "", { ...base, maxAge: 0 });

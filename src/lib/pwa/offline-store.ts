@@ -1,4 +1,4 @@
-import type { PwaSnapshot } from "@/app/api/pwa/snapshot/route";
+import { avaliarSnapshot, type PwaSnapshot } from "@/lib/pwa/snapshot";
 
 /**
  * Snapshot de consulta offline, guardado em IndexedDB.
@@ -83,10 +83,33 @@ export async function salvarSnapshot(snapshot: PwaSnapshot): Promise<boolean> {
   return r !== null;
 }
 
-/** Snapshot guardado, ou `null` se não houver (estado normal, não erro). */
+/**
+ * Snapshot guardado, ou `null` se não houver (estado normal, não erro).
+ *
+ * Só devolve snapshot da versão de formato que ESTE código conhece
+ * (`avaliarSnapshot`). O registro atravessa deploys: renderizar um formato
+ * diferente foi o que quebrou a consulta antiga quando `avisos[].total` passou a
+ * aceitar `null`. Formato velho ou corrompido é apagado — e a marca do debounce
+ * vai junto, senão o próximo Início esperaria até 5 min para gravar um novo.
+ * Formato mais NOVO (esta tela é a velha) é só ignorado: a tela nova vai ler.
+ */
 export async function carregarSnapshot(): Promise<PwaSnapshot | null> {
-  const r = await transacionar<PwaSnapshot>("readonly", (loja) => loja.get(CHAVE_UNICA));
-  return r ?? null;
+  const bruto = await transacionar<unknown>("readonly", (loja) => loja.get(CHAVE_UNICA));
+  if (bruto === null) return null;
+  const avaliacao = avaliarSnapshot(bruto);
+  if (avaliacao.estado === "ok") return avaliacao.snapshot;
+  if (avaliacao.estado !== "futuro") await descartarSnapshot();
+  return null;
+}
+
+/** Apaga o registro e a marca do debounce. Base do logout e do descarte por versão. */
+async function descartarSnapshot(): Promise<void> {
+  await transacionar("readwrite", (loja) => loja.delete(CHAVE_UNICA));
+  try {
+    localStorage.removeItem(CHAVE_ULTIMO_SYNC);
+  } catch {
+    /* sem storage: nada a limpar */
+  }
 }
 
 /**
@@ -98,15 +121,10 @@ export async function carregarSnapshot(): Promise<PwaSnapshot | null> {
  * inclusive sem sessão, porque a tela offline lê do IndexedDB e não do servidor.
  */
 export async function limparSnapshotNoLogout(): Promise<void> {
-  await transacionar("readwrite", (loja) => loja.delete(CHAVE_UNICA));
-  // O debounce vai junto: sem isto, quem entra em seguida no mesmo aparelho
-  // herdava a marca "sincronizei há 2 min" e ficava até 5 min sem snapshot
-  // próprio — offline, a tela mostraria o da conta anterior.
-  try {
-    localStorage.removeItem(CHAVE_ULTIMO_SYNC);
-  } catch {
-    /* sem storage: nada a limpar */
-  }
+  // O debounce vai junto (`descartarSnapshot`): sem isto, quem entra em seguida
+  // no mesmo aparelho herdava a marca "sincronizei há 2 min" e ficava até 5 min
+  // sem snapshot próprio — offline, a tela mostraria o da conta anterior.
+  await descartarSnapshot();
 }
 
 /** Marca do último sync (debounce do `OfflineSync`). Mora aqui para o logout limpar. */

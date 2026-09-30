@@ -1,7 +1,7 @@
 import { after } from "next/server";
 import { hashPassword } from "@/lib/auth/password";
 import { resetSchema } from "@/lib/validations/auth";
-import { audit } from "@/lib/audit";
+import { errorResponse } from "@/lib/http/error-response";
 import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
@@ -31,8 +31,20 @@ function invalidToken() {
  * O token é de uso único: `consumeResetToken` só grava se o hash ainda estiver
  * na linha, então um segundo POST com o mesmo link recebe INVALID_TOKEN.
  * Trocar a senha derruba todas as sessões (refresh tokens revogados).
+ *
+ * Falha inesperada (banco fora, Argon2 sem memória) sai no envelope padrão de
+ * `errorResponse` — o formulário mostra a mensagem com a referência do log, em
+ * vez de um 500 cru que ele não sabe ler.
  */
 export async function POST(req: Request) {
+  try {
+    return await redefinir(req);
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+async function redefinir(req: Request): Promise<Response> {
   const ip = (await clientIp()) ?? "unknown";
   const rl = await rateLimitDb(`reset:${ip}`, { limit: 10, windowMs: 15 * 60 * 1000 });
   if (!rl.ok) {
@@ -62,20 +74,12 @@ export async function POST(req: Request) {
     userId: user.id,
     rawToken: parsed.data.token,
     passwordHash,
+    // A auditoria `PASSWORD_RESET` é gravada lá dentro, na mesma transação da
+    // senha e da revogação.
+    ip,
   });
   // Perdeu a corrida (o link já tinha sido usado ou expirou entre a checagem e a gravação).
   if (!applied) return invalidToken();
-
-  await audit({
-    tenantId: user.tenantId,
-    userId: user.id,
-    actorEmail: user.email,
-    action: "PASSWORD_RESET",
-    entity: "User",
-    entityId: user.id,
-    newData: { passwordReset: true, sessionsRevoked: true },
-    ip,
-  });
 
   // Aviso de segurança — não pode atrasar a resposta nem falhar a troca.
   after(async () => {

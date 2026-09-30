@@ -36,5 +36,7 @@ export const compraSchema = z.object({
    * quem também controla a saída de caixa.
    */
   lancarFreteComoDespesa: z.boolean().optional(),
+  /** Uma por compra digitada: o reenvio devolve a compra já gravada. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type CompraInput = z.infer<typeof compraSchema>;

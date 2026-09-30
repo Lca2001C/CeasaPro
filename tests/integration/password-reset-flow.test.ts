@@ -250,3 +250,60 @@ describe("Fluxo de redefinição de senha", () => {
     expect(row.resetTokenHash).not.toBeNull(); // o token legítimo continua de pé
   });
 });
+
+describe("regra 5: senha, revogação e auditoria num commit só", () => {
+  it("a redefinição sobe o epoch, revoga por PASSWORD e audita — tudo junto", async () => {
+    await abrirSessao();
+    const antes = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const { raw } = await issueResetToken(userId);
+
+    expect(
+      await consumeResetToken({
+        userId,
+        rawToken: raw,
+        passwordHash: await hashPassword(SENHA_NOVA),
+        ip: "10.0.0.1",
+      }),
+    ).toBe(true);
+
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    // O epoch derruba os ACCESS tokens já emitidos, não só os refresh.
+    expect(depois.sessionEpoch).toBe(antes.sessionEpoch + 1);
+    const revogadas = await prisma.refreshToken.findMany({ where: { userId } });
+    expect(revogadas.every((t) => t.revokedReason === "PASSWORD")).toBe(true);
+
+    const registro = await prisma.auditLog.findFirst({
+      where: { userId, action: "PASSWORD_RESET" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(registro).toMatchObject({ entity: "User", entityId: userId, ip: "10.0.0.1" });
+  });
+
+  it("se QUALQUER escrita da transação falha, nada fica: senha, token e sessões intactos", async () => {
+    /*
+      O defeito era a revogação rodar DEPOIS do commit da senha: um soluço do
+      banco entre as duas deixava a senha nova gravada e os refresh tokens
+      antigos vivos. Aqui a última escrita (a auditoria) falha de verdade no
+      Postgres — texto com byte nulo é recusado — e a transação inteira volta.
+    */
+    await abrirSessao();
+    const antes = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const { raw } = await issueResetToken(userId);
+
+    await expect(
+      consumeResetToken({
+        userId,
+        rawToken: raw,
+        passwordHash: await hashPassword(SENHA_NOVA),
+        ip: "1.2.3.4\u0000",
+      }),
+    ).rejects.toThrow();
+
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    expect(await verifyPassword(depois.passwordHash, SENHA_ANTIGA)).toBe(true);
+    expect(depois.sessionEpoch).toBe(antes.sessionEpoch);
+    expect(await sessoesAtivas()).toBe(1);
+    // O link continua valendo: a pessoa pode tentar de novo.
+    expect(await findUserByResetToken(raw)).toMatchObject({ id: userId });
+  });
+});

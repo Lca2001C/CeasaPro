@@ -15,11 +15,19 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { QuantityInput } from "@/components/forms/quantity-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 interface Props {
   initial?: ProdutoInput & { id: string };
+  /**
+   * O produto já tem compra, venda ou movimento de estoque. A unidade de venda
+   * fica travada: todo lançamento lê a unidade do produto vivo, e trocá-la
+   * relê o histórico inteiro na unidade nova (o servidor recusa).
+   */
+  temHistorico?: boolean;
 }
 
-export function ProdutoForm({ initial }: Props) {
+export function ProdutoForm({ initial, temHistorico = false }: Props) {
+  const unidadeTravada = Boolean(initial) && temHistorico;
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const {
@@ -35,8 +43,8 @@ export function ProdutoForm({ initial }: Props) {
   async function onSubmit(values: ProdutoInput) {
     setSaving(true);
     const res = initial
-      ? await atualizarProduto({ ...values, id: initial.id })
-      : await criarProduto(values);
+      ? await chamarAction(() => atualizarProduto({ ...values, id: initial.id }))
+      : await chamarAction(() => criarProduto(values));
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Produto atualizado" : "Produto cadastrado");
@@ -56,13 +64,41 @@ export function ProdutoForm({ initial }: Props) {
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="saleUnit">Unidade de venda</Label>
-        <Select id="saleUnit" {...register("saleUnit")}>
-          {toOptions(SALE_UNIT_LABELS).map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        {unidadeTravada ? (
+          <>
+            {/*
+              O select desabilitado é só para mostrar; o valor vai pelo campo
+              oculto. Campo `disabled` registrado no react-hook-form é enviado
+              como `undefined`, e o schema recusaria o formulário inteiro.
+            */}
+            <Select
+              id="saleUnit"
+              disabled
+              defaultValue={initial!.saleUnit}
+              aria-describedby="saleUnit-travada"
+            >
+              {toOptions(SALE_UNIT_LABELS).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+            <input type="hidden" {...register("saleUnit")} />
+            <span id="saleUnit-travada" className="text-xs text-muted-foreground">
+              Este produto já tem compras, vendas ou estoque lançados, e a unidade não pode
+              mudar — o histórico passaria a ser lido na unidade nova. Para vender em outra
+              unidade, cadastre um produto novo.
+            </span>
+          </>
+        ) : (
+          <Select id="saleUnit" {...register("saleUnit")}>
+            {toOptions(SALE_UNIT_LABELS).map((o) => (
+              <option key={o.value} value={o.value}>
+                {o.label}
+              </option>
+            ))}
+          </Select>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">

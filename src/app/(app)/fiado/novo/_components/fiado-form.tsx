@@ -69,6 +69,10 @@ export function FiadoForm({
     if (!customerName.trim()) return toast.error("Informe o cliente.");
     if (items.some((i) => !i.productId || i.quantity <= 0))
       return toast.error("Preencha os itens corretamente.");
+    // A linha nasce com preço 0 e esquecer o preço é o erro comum. O servidor
+    // também recusa, mas aqui a mensagem aparece antes de qualquer envio.
+    if (items.some((i) => !(i.unitPrice > 0)))
+      return toast.error("Informe o preço de todos os itens.");
 
     const caixas = usaCaixaPlastica ? parseInt(plasticCrateQty, 10) || 0 : 0;
     if (usaCaixaPlastica && caixas <= 0)
@@ -96,7 +100,11 @@ export function FiadoForm({
       router.push("/fiado");
       router.refresh();
     } else {
-      toast.error(res.error.message);
+      // Falha de schema chega como "Dados inválidos", com o motivo em `fields`.
+      const motivo = res.error.fields
+        ? Object.values(res.error.fields).find((m) => typeof m === "string" && m.trim())
+        : undefined;
+      toast.error(motivo ?? res.error.message);
     }
   }
 

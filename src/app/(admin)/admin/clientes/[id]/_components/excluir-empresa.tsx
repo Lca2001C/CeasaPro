@@ -6,6 +6,7 @@ import { Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { excluirEmpresa } from "@/actions/admin.actions";
 import { Button } from "@/components/ui/button";
+import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
   DialogContent,
@@ -28,7 +29,7 @@ export function ExcluirEmpresa({
 
   function confirmar() {
     start(async () => {
-      const res = await excluirEmpresa(tenantId);
+      const res = await chamarAction(() => excluirEmpresa(tenantId));
       if (res.ok) {
         toast.success("Empresa excluída.");
         // O detalhe deixa de existir (getTenant passa a 404) — volta para a lista.

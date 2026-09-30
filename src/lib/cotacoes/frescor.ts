@@ -88,6 +88,19 @@ export function frescorDoBoletim(
 }
 
 /**
+ * Este frescor é motivo de alarme?
+ *
+ * UM critério, usado pelo alarme (`verificarDefasagem`) e pela tela do
+ * super-admin. "atrasado" é a cadência normal de quem publica 2 a 3 vezes por
+ * semana — o teto por central existe justamente para isso não parecer problema —,
+ * e tela e alarme discordando é o jeito mais rápido de os dois deixarem de ser
+ * lidos.
+ */
+export function frescorAlarma(f: Frescor): boolean {
+  return f.nivel === "defasado" || f.nivel === "ausente";
+}
+
+/**
  * A frase que explica a idade do dado, abaixo da data do boletim.
  *
  * Ela precisa depender de a central ter busca automática, e isso não é detalhe

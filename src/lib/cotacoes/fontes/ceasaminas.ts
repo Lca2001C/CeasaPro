@@ -103,7 +103,7 @@ export const ceasaminas: FonteDeCotacao = {
   chave: "ceasaminas",
 
   /** Uma requisição só: POST direto no boletim. Ver comentário abaixo. */
-  async buscar({ sourceParams, data }: ParametrosDeBusca): Promise<ResultadoDaFonte> {
+  async buscar({ sourceParams, data, prazo }: ParametrosDeBusca): Promise<ResultadoDaFonte> {
     const mercado = mercadoDe(sourceParams);
     if (!mercado) {
       return {
@@ -141,9 +141,16 @@ export const ceasaminas: FonteDeCotacao = {
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       },
       { fonte: "ceasaminas", mercado },
+      { prazo },
     );
     if (!resposta.ok) {
-      return { ok: false, linhas: [], httpStatus: resposta.status, erro: resposta.erro };
+      return {
+        ok: false,
+        linhas: [],
+        httpStatus: resposta.status,
+        erro: resposta.erro,
+        semTempo: resposta.semTempo,
+      };
     }
 
     // `parseBoletim` e não `this.parse`: desestruturar a fonte
@@ -217,6 +224,31 @@ function parseBoletim(corpo: string): ResultadoDaFonte {
         maximo,
         referencia: Math.round(referencia * 100) / 100,
       });
+    }
+
+    /*
+      Grade com produtos e nenhum preço legível NÃO é dia sem boletim.
+
+      O dia vazio de verdade (fixture `ceasaminas-vazio`) não tem campo
+      `id_sc_field_` nenhum. Linhas de produto sem preço aproveitável — ou campos
+      da grade sem o `prdnom` — é o ScriptCase tendo renomeado coluna. Devolver
+      vazio aqui faria o importador recuar a semana inteira e gravar VAZIO, sem
+      aviso de falha e sem conferir o fingerprint: o alarme mentindo, igual ao
+      caso que o adaptador da CEAGESP já trata.
+    */
+    if (linhas.length === 0 && porCampo.prdnom.size > 0) {
+      return {
+        ok: false,
+        linhas: [],
+        erro: `formato mudou: a grade veio com ${porCampo.prdnom.size} produto(s) e nenhum preço legível`,
+      };
+    }
+    if (porCampo.prdnom.size === 0 && /id_sc_field_[a-z0-9]+_\d+/i.test(corpo)) {
+      return {
+        ok: false,
+        linhas: [],
+        erro: "formato mudou: a grade tem campos, mas nenhum com o nome do produto (prdnom)",
+      };
     }
 
     return {

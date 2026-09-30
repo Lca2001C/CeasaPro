@@ -10,6 +10,7 @@ const ZERO: SaldoRow = {
   entrada_limpa: 0,
   entrada_suja: 0,
   entrada_quebrada: 0,
+  entrada_quebrada_suja: 0,
   saida: 0,
   retorno: 0,
   saida_hig: 0,
@@ -40,8 +41,10 @@ const saldo = (patch: Partial<CrateSaldo>): CrateSaldo => ({
 });
 
 describe("computeCrateSaldo — potes do estoque de caixas", () => {
-  it("entrada limpa alimenta as limpas", () => {
-    const s = computeCrateSaldo(row({ entrada_limpa: 100, entrada_quebrada: 5 }));
+  it("entrada limpa alimenta as limpas, menos as que chegaram quebradas", () => {
+    // `quantity` da ENTRADA é o TOTAL recebido: 105 com 5 quebradas = 100 boas.
+    // Somar as 105 em limpas contava as 5 duas vezes (limpas E perdidas).
+    const s = computeCrateSaldo(row({ entrada_limpa: 105, entrada_quebrada: 5 }));
     expect(s).toEqual({
       limpas: 100,
       sujas: 0,
@@ -50,6 +53,16 @@ describe("computeCrateSaldo — potes do estoque de caixas", () => {
       perdidas: 5,
       vazias: 100,
     });
+  });
+
+  it("quebradas de entrada SUJA saem das sujas", () => {
+    const s = computeCrateSaldo(
+      row({ entrada_limpa: 50, entrada_suja: 20, entrada_quebrada: 7, entrada_quebrada_suja: 3 }),
+    );
+    expect(s.limpas).toBe(46); // 50 − 4 quebradas limpas
+    expect(s.sujas).toBe(17); // 20 − 3 quebradas sujas
+    expect(s.perdidas).toBe(7);
+    expect(s.limpas + s.sujas + s.perdidas).toBe(70); // nenhuma caixa contada duas vezes
   });
 
   it("saída tira das limpas e coloca com o cliente", () => {
@@ -100,8 +113,9 @@ describe("computeCrateSaldo — potes do estoque de caixas", () => {
 
   /**
    * Compatibilidade: registros antigos não têm dirty/cleanerName nem os tipos novos.
-   * Nesse cenário `limpas + sujas` precisa reproduzir a fórmula antiga de `vazias`:
-   *   ENTRADA − SAIDA + RETORNO − QUEBRA(sem cliente)
+   * Nesse cenário `limpas + sujas` precisa reproduzir a fórmula de `vazias` de
+   * docs/03-funcionalidades.md:
+   *   ENTRADA − SAIDA + RETORNO − QUEBRA(sem cliente) − quebradas na chegada
    */
   it("reproduz o 'vazias' antigo para dados legados", () => {
     const legado = row({
@@ -113,7 +127,7 @@ describe("computeCrateSaldo — potes do estoque de caixas", () => {
       quebra_cliente: 5,
     });
     const s = computeCrateSaldo(legado);
-    const vaziasAntigo = 250 - 90 + 40 - 6;
+    const vaziasAntigo = 250 - 90 + 40 - 6 - 7;
     expect(s.vazias).toBe(vaziasAntigo);
     expect(s.limpas + s.sujas).toBe(vaziasAntigo);
     expect(s.comClientes).toBe(90 - 40 - 5);

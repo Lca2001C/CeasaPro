@@ -149,14 +149,16 @@ describe("Gerar cobrança PIX", () => {
     const { tenantId, ctx } = await novoCliente();
     await prisma.tenant.update({
       where: { id: tenantId },
-      data: { cnpj: "12345678000199" },
+      // CNPJ com DV válido: com DV errado o documento deixa de ir ao Mercado Pago
+      // (`identificacaoDoPagador`, coberto em tests/unit/pix-pagador-cnpj.test.ts).
+      data: { cnpj: "12345678000195" },
     });
     await BillingService.createCheckout(tenantId, { method: "PIX", acceptedTerms: true }, ctx);
 
     const payload = gw.ultimoPayload!;
     expect(payload.payerEmail).toMatch(/@/);
     expect(payload.payerName).toBe("Maria da Silva");
-    expect(payload.payerIdentification).toEqual({ type: "CNPJ", number: "12345678000199" });
+    expect(payload.payerIdentification).toEqual({ type: "CNPJ", number: "12345678000195" });
     // Validade no futuro — o MP recusa cobrança já vencida.
     expect((payload.expiresAt as Date).getTime()).toBeGreaterThan(Date.now());
   });

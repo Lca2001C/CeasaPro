@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
@@ -111,7 +112,23 @@ export async function rotateRefreshToken(
 
     const idade = Date.now() - existing.revokedAt.getTime();
     if (idade <= GRACA_MS && existing.graceUses < GRACA_MAX_USOS) {
+      // Família já derrubada (troca de senha, admin, empresa, reuso, logout):
+      // a graça NÃO ressuscita a sessão. Sem isto, o token ROTATED de menos de
+      // 30 s — que as revogações em massa não tocam, porque só revogam
+      // `revokedAt: null` — emitia um refresh novo e vivo depois de a senha ter
+      // sido trocada, e o access sairia válido com o epoch já incrementado.
+      if (await familiaDerrubada(existing.familyId)) return { tipo: "invalido" };
+
       const novo = await emitirNaFamilia(existing.userId, existing.familyId, meta);
+
+      // Confere de novo DEPOIS de criar: uma revogação que commitou entre a
+      // checagem acima e o create não enxergou o token novo. Se ela veio depois
+      // do create, já o revogou junto (é `revokedAt: null` do mesmo usuário).
+      if (await familiaDerrubada(existing.familyId)) {
+        await revokeRefreshToken(novo, "REUSE");
+        return { tipo: "invalido" };
+      }
+
       await prisma.refreshToken.update({
         where: { id: existing.id },
         // `revokedAt` fica como está — de propósito. Ver o detalhe 1 acima.
@@ -147,6 +164,25 @@ export async function rotateRefreshToken(
     data: { replacedById: criado.id },
   });
   return { tipo: "ok", userId: existing.userId, newToken: newRaw };
+}
+
+/**
+ * A linhagem tem algum token revogado por motivo que não é rotação?
+ *
+ * Rotação é o único motivo que deixa a família viva. Qualquer outro (LOGOUT,
+ * ADMIN, PASSWORD, TENANT, REUSE — ou nulo, de linha antiga) significa que
+ * alguém encerrou esta sessão, e a janela de graça não pode desfazer isso.
+ */
+async function familiaDerrubada(familyId: string): Promise<boolean> {
+  const encerrado = await prisma.refreshToken.findFirst({
+    where: {
+      familyId,
+      revokedAt: { not: null },
+      OR: [{ revokedReason: null }, { revokedReason: { not: "ROTATED" } }],
+    },
+    select: { id: true },
+  });
+  return encerrado !== null;
 }
 
 async function emitirNaFamilia(
@@ -264,34 +300,45 @@ export async function revokeRefreshToken(
 export async function revokeAllForUser(
   userId: string,
   motivo: MotivoRevogacao = "ADMIN",
+  /**
+   * Transação de quem chama: a revogação entra no MESMO commit da alteração
+   * que a motivou (e da auditoria dela). Sem `tx`, abre a própria.
+   */
+  tx?: Prisma.TransactionClient,
 ): Promise<void> {
-  await prisma.$transaction([
-    prisma.refreshToken.updateMany({
+  const executar = async (db: Prisma.TransactionClient) => {
+    await db.refreshToken.updateMany({
       where: { userId, revokedAt: null },
       data: { revokedAt: new Date(), revokedReason: motivo },
-    }),
-    prisma.user.update({
+    });
+    await db.user.update({
       where: { id: userId },
       data: { sessionEpoch: { increment: 1 } },
-    }),
-  ]);
+    });
+  };
+  if (tx) await executar(tx);
+  else await prisma.$transaction(executar);
 }
 
 /** Revoga todas as sessões de uma empresa (bloqueio imediato pelo super-admin). */
 export async function revokeAllForTenant(
   tenantId: string,
   motivo: MotivoRevogacao = "TENANT",
+  /** Ver `revokeAllForUser`. */
+  tx?: Prisma.TransactionClient,
 ): Promise<void> {
-  await prisma.$transaction([
-    prisma.refreshToken.updateMany({
+  const executar = async (db: Prisma.TransactionClient) => {
+    await db.refreshToken.updateMany({
       where: { user: { tenantId }, revokedAt: null },
       data: { revokedAt: new Date(), revokedReason: motivo },
-    }),
-    prisma.tenant.update({
+    });
+    await db.tenant.update({
       where: { id: tenantId },
       data: { sessionEpoch: { increment: 1 } },
-    }),
-  ]);
+    });
+  };
+  if (tx) await executar(tx);
+  else await prisma.$transaction(executar);
 }
 
 /**

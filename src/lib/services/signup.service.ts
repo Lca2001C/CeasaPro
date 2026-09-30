@@ -252,8 +252,12 @@ export const SignupService = {
    * link dentro da validade pode confirmar o e-mail. É aceitável porque é tudo
    * que o token autoriza — não dá acesso à conta, não define senha, e o trial
    * já foi concedido de qualquer forma.
+   *
+   * `trialEndsAt: null` = e-mail confirmado SEM teste: a empresa já pagou (quem
+   * entra sem confirmar pode pagar em /assinatura) e o teste não se aplica mais.
+   * A tela não pode prometer "seus 7 dias começaram" nesse caso.
    */
-  async confirmEmail(rawToken: string): Promise<{ email: string; trialEndsAt: Date }> {
+  async confirmEmail(rawToken: string): Promise<{ email: string; trialEndsAt: Date | null }> {
     if (!looksLikeVerifyToken(rawToken)) {
       throw new BusinessRuleError("Link inválido ou expirado.", "TOKEN_INVALIDO");
     }
@@ -266,12 +270,26 @@ export const SignupService = {
         tenantId: true,
         verifyTokenExpiresAt: true,
         emailVerifiedAt: true,
-        tenant: { select: { subscription: { select: { trialEndsAt: true } } } },
+        tenant: {
+          select: { subscription: { select: { trialEndsAt: true, activatedAt: true } } },
+        },
       },
     });
 
     if (!user || !user.tenantId) {
       throw new BusinessRuleError("Link inválido ou expirado.", "TOKEN_INVALIDO");
+    }
+
+    const jaConcedido = user.tenant?.subscription?.trialEndsAt ?? null;
+    const jaAtivada = Boolean(user.tenant?.subscription?.activatedAt);
+
+    // Conta JÁ confirmada e sem nada a conceder: reabrir um link velho (o
+    // e-mail continua na caixa, e é por ele que muita gente "entra") é só
+    // leitura. Antes a checagem de validade vinha primeiro, e quem confirmou no
+    // dia 1 e abriu o link no dia 3 recebia OUTRO e-mail de confirmação e
+    // "Esse link expirou" — como se a conta não estivesse confirmada.
+    if (user.emailVerifiedAt && (jaConcedido || jaAtivada)) {
+      return { email: user.email, trialEndsAt: jaConcedido };
     }
     if (!user.verifyTokenExpiresAt || user.verifyTokenExpiresAt < new Date()) {
       // Link expirado era BECO SEM SAÍDA, e a mensagem mandava fazer algo
@@ -329,7 +347,6 @@ export const SignupService = {
     }
 
     const tenantId = user.tenantId;
-    const jaConcedido = user.tenant?.subscription?.trialEndsAt ?? null;
 
     // Já confirmado antes (robô de e-mail, ou a pessoa reabriu o link): devolve o
     // mesmo teste, sem estender nada.
@@ -340,17 +357,29 @@ export const SignupService = {
     const now = new Date();
     const trialEndsAt = trialEndFrom(now);
 
-    await prisma.$transaction(async (tx) => {
+    const concedido = await prisma.$transaction(async (tx) => {
       await tx.user.update({
         where: { id: user.id },
         data: { emailVerifiedAt: user.emailVerifiedAt ?? now },
       });
       // `trialEndsAt: null` no filtro fecha a corrida entre duas confirmações
       // simultâneas: a segunda não encontra linha e não sobrescreve a primeira.
-      await tx.tenantSubscription.updateMany({
+      // `activatedAt: null` deixa de fora quem já pagou.
+      const { count } = await tx.tenantSubscription.updateMany({
         where: { tenantId, trialEndsAt: null, activatedAt: null },
         data: { status: "TRIAL", trialEndsAt },
       });
+      if (count === 0) {
+        // Nada foi concedido: ou a outra confirmação simultânea ganhou (e o
+        // teste é o dela), ou a empresa já pagou. Auditar "TRIAL" aqui
+        // registraria um teste que não existe — e devolver hoje+7 fazia a tela
+        // prometer dias de teste a quem está no período pago.
+        const atual = await tx.tenantSubscription.findUnique({
+          where: { tenantId },
+          select: { trialEndsAt: true },
+        });
+        return atual?.trialEndsAt ?? null;
+      }
       await audit(
         {
           tenantId,
@@ -363,11 +392,15 @@ export const SignupService = {
         },
         tx,
       );
+      return trialEndsAt;
     });
 
-    logger.info({ tenantId, trialEndsAt }, "E-mail confirmado — teste grátis liberado");
+    logger.info(
+      { tenantId, trialEndsAt: concedido },
+      concedido ? "E-mail confirmado — teste grátis liberado" : "E-mail confirmado — sem teste",
+    );
 
-    return { email: user.email, trialEndsAt };
+    return { email: user.email, trialEndsAt: concedido };
   },
 };
 

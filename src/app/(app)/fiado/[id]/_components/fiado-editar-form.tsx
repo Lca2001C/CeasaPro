@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { PhoneInput } from "@/components/forms/phone-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -28,7 +29,7 @@ export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
 
   async function onSubmit(values: FiadoUpdateInput) {
     setSaving(true);
-    const res = await atualizarFiado({ ...values, id: initial.id });
+    const res = await chamarAction(() => atualizarFiado({ ...values, id: initial.id }));
     setSaving(false);
     if (res.ok) {
       toast.success("Conta atualizada");

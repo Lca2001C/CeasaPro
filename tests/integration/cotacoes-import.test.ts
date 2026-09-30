@@ -171,3 +171,60 @@ describe("situacaoDasCentrais", () => {
     }
   });
 });
+
+describe("embalagem do boletim digitado (#57)", () => {
+  /**
+   * `lerCsvDeCotacoes` normaliza a embalagem ("Kg" → "KG"), mas o histórico já
+   * gravado pode ter a grafia antiga. Como a chave e o vínculo comparam o texto
+   * exato, gravar "KG" ao lado do "Kg" antigo partiria a série. O boletim
+   * digitado herda a grafia que a praça já tem; sem histórico, fica a canônica.
+   */
+  const PRACA = `EMB${uniq().slice(0, 5)}`.toUpperCase();
+  const slug = `pepino-emb-${uniq()}`;
+  const nome = slug.replace(/-/g, " ").toUpperCase();
+
+  beforeAll(async () => {
+    await prisma.ceasaCentral.create({
+      data: { code: PRACA, name: "Praca Embalagem", city: "X", uf: "MG", sourceKey: "manual" },
+    });
+    slugsCriados.push(slug);
+  });
+  afterAll(async () => {
+    await prisma.ceasaQuote.deleteMany({ where: { centralCode: PRACA } });
+    await prisma.ceasaImportRun.deleteMany({ where: { centralCode: PRACA } });
+    await prisma.ceasaCentral.deleteMany({ where: { code: PRACA } });
+  });
+
+  const gravarCsv = (texto: string, data: string) =>
+    CotacoesImportService.gravar({
+      centralCode: PRACA,
+      quoteDate: parseFormDateTz(data),
+      linhas: lerCsvDeCotacoes(texto).linhas,
+      sourceKey: "manual",
+    });
+
+  it("sem histórico, grava a forma canônica", async () => {
+    await gravarCsv(`${nome};  cx 20   kg ;1;2;3`, "2026-09-01");
+    const q = await prisma.ceasaQuote.findFirstOrThrow({ where: { centralCode: PRACA } });
+    expect(q.unit).toBe("CX 20 KG");
+  });
+
+  it("com histórico em outra grafia, herda a grafia gravada — a série não parte", async () => {
+    // Dado antigo, gravado antes da normalização (linha crua, sem o CSV).
+    await CotacoesImportService.gravar({
+      centralCode: PRACA,
+      quoteDate: parseFormDateTz("2026-09-02"),
+      linhas: [{ produto: nome, unidade: "Kg", minimo: 4, comum: 5, maximo: 6, referencia: 5 }],
+      sourceKey: "manual",
+    });
+    await gravarCsv(`${nome};KG;4;5,50;6`, "2026-09-03");
+    await gravarCsv(`${nome};kg;4;5,70;6`, "2026-09-04");
+
+    const units = await prisma.ceasaQuote.findMany({
+      where: { centralCode: PRACA, quoteDate: { gte: new Date(Date.UTC(2026, 8, 2)) } },
+      select: { unit: true },
+      distinct: ["unit"],
+    });
+    expect(units.map((u) => u.unit)).toEqual(["Kg"]);
+  });
+});

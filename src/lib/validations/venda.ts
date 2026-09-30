@@ -8,6 +8,7 @@ import {
   TOLERANCIA_CENTAVOS_BIG,
   totalDaVendaCents,
 } from "@/lib/venda/total";
+import { parseFormDateTz } from "@/lib/tz";
 
 export const paymentMethodEnum = z.enum(["PIX", "DINHEIRO", "CARTAO", "FIADO"]);
 
@@ -46,6 +47,30 @@ export const TOLERANCIA_CENTAVOS = 0.01;
  */
 const TROCO_MAXIMO_CENTS = 50_000n;
 
+/**
+ * Data opcional vinda do formulário: vazia/nula, ou uma data que EXISTE.
+ *
+ * `z.string()` puro aceitava "2026-02-31", que o serviço gravava como 03/03, e
+ * "31/12/2026", que estourava no Prisma como 500. A regra é a de
+ * `parseFormDateTz` (a mesma função que o serviço usa para gravar), então o
+ * schema e o serviço não têm como discordar — e a recusa volta como 400 com o
+ * campo marcado, e não como erro genérico.
+ */
+export function dataDoFormularioValida(v: string): boolean {
+  try {
+    parseFormDateTz(v);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export const dataOpcionalSchema = z
+  .string()
+  .nullable()
+  .optional()
+  .refine((v) => !v || dataDoFormularioValida(v), "Data inválida. Use o seletor de data.");
+
 const vendaBase = z.object({
   customerName: z.string().trim().max(120).nullable().optional(),
   customerPhone: z.string().trim().max(20).nullable().optional(),
@@ -55,8 +80,8 @@ const vendaBase = z.object({
    * Omitido (ou com uma parcela só) = venda de forma única, como sempre foi.
    */
   payments: z.array(vendaPagamentoSchema).max(4, "No máximo 4 formas de pagamento").optional(),
-  saleDate: z.string().nullable().optional(),
-  dueDate: z.string().nullable().optional(),
+  saleDate: dataOpcionalSchema,
+  dueDate: dataOpcionalSchema,
   /** Caixas plásticas que saíram na venda. Se omitido, soma os itens PLASTICA. */
   plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").optional(),
   /** Desconto sobre o total da venda (os descontos por item ficam na linha). */
@@ -94,9 +119,10 @@ export type VendaInput = z.infer<typeof vendaBase>;
  * Caixas plásticas da venda: o valor informado ou a soma dos itens em caixa
  * plástica.
  *
- * Mora aqui, e não no serviço, porque a validação PRECISA da mesma resposta:
+ * A conferência "caixa exige cliente" e a gravação PRECISAM da mesma resposta:
  * enquanto o refine olhava só o campo cru e o serviço resolvia a quantidade,
- * os dois discordavam sobre quantas caixas saíram.
+ * os dois discordavam sobre quantas caixas saíram. Hoje as duas rodam no
+ * serviço, depois de resolver o módulo de caixas.
  *
  * `0` conta como "não informado". Antes o teste era `!== undefined`, e o PDV
  * mandava `plasticCrateQty: 0` SEMPRE que o checkbox estava desmarcado — então
@@ -148,16 +174,12 @@ export const vendaSchema = vendaBase
     message: "Informe o cliente para venda fiada",
     path: ["customerName"],
   })
-  // Caixa plástica exige cliente — e a conta é a RESOLVIDA, não o campo cru.
-  // Sem isto, um POST com `recipientType: "PLASTICA"` e `crateQty` nos itens,
-  // mas sem `plasticCrateQty` e sem `customerName`, gravava um movimento de
-  // SAÍDA com cliente nulo: as caixas saíam do box e nenhum RETORNO conseguia
-  // devolvê-las, porque devolução exige o nome de quem levou. Ficavam presas
-  // para sempre.
-  .refine((v) => resolvePlasticCrateQty(v) === 0 || Boolean(v.customerName?.trim()), {
-    message: "Informe o cliente para controlar as caixas plásticas",
-    path: ["customerName"],
-  })
+  // "Caixa plástica exige cliente" NÃO mora aqui, e sim em
+  // `VendasService.gravarVenda`. A regra só vale para empresa COM o módulo de
+  // caixas — sem ele o serviço zera as caixas e não grava movimento nenhum —, e
+  // o schema não conhece `session.modules`. Enquanto era um refine, a venda de
+  // balcão sem cliente com o vasilhame "Plástica" marcado no item era barrada
+  // justamente na empresa que não controla caixa.
   // Fiado em qualquer PARCELA também exige cliente: a parte fiada vira conta a
   // receber, e conta a receber sem nome não é cobrável.
   .refine(

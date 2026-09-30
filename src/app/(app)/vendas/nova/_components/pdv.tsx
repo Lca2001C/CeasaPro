@@ -38,6 +38,16 @@ import {
   TOLERANCIA_CENTAVOS_BIG,
 } from "@/lib/venda/total";
 import { useOnline } from "@/lib/pwa/use-online";
+import {
+  caixasPlasticasDaVenda,
+  descontoMaximoDoItemCents,
+  mensagemDoErro,
+  normalizarBusca,
+  somarQuantidade,
+  subtrairQuantidade,
+  trocoOuFalta,
+  trocoPassaDoTeto,
+} from "./pdv-regras";
 import { cn } from "@/lib/cn";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -103,16 +113,12 @@ const PAYMENTS = [
   { value: "FIADO", label: "Fiado" },
 ] as const;
 
-/**
- * Arredondamento de QUANTIDADE (±1 nos botões, resumo pós-venda).
- *
- * Dinheiro não passa mais por aqui: os totais vêm de `lib/venda/total`, o mesmo
- * contrato que a validação e o serviço executam. Somar reais em ponto flutuante
- * nesta tela era o que fazia o PDV mostrar R$ 2,23 numa venda gravada como
- * R$ 2,24.
+/*
+ * Nem dinheiro nem quantidade passam por ponto flutuante nesta tela: os totais
+ * vêm de `lib/venda/total` (o contrato que a validação e o serviço executam) e
+ * as somas de quantidade de `./pdv-regras`, em milésimos inteiros. O antigo
+ * `arredonda` de 2 casas cortava a terceira casa do quilo (2,345 + 1,25 = 3,6).
  */
-const arredonda = (v: number) => Math.round(v * 100) / 100;
-
 export function Pdv({
   produtos,
   caixasLimpas,
@@ -244,8 +250,8 @@ export function Pdv({
    * digitação em quase toda venda.
    */
   const filtered = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (q) return produtos.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 12);
+    const q = normalizarBusca(search);
+    if (q) return produtos.filter((p) => normalizarBusca(p.name).includes(q)).slice(0, 12);
     const topo = maisVendidos
       .map((id) => produtos.find((p) => p.id === id))
       .filter((p): p is Produto => Boolean(p));
@@ -319,7 +325,19 @@ export function Pdv({
   const temDinheiro = emEspecieCents > 0n;
   const trocoCents = recebido != null ? paraCentavos(recebido) - emEspecieCents : 0n;
   const troco = trocoCents > 0n ? centsParaNumero(trocoCents) : 0;
-  const exigeCliente = parteFiada > 0 || (caixasHabilitado && usaCaixaPlastica);
+  // A caixa "Cliente pagou com" usa a MESMA régua: a parte em dinheiro. Ela
+  // comparava com o total, e na venda mista mostrava "Falta" onde havia troco.
+  const trocoDaCaixa =
+    recebido != null && recebido > 0 ? trocoOuFalta(recebido, emEspecieCents) : null;
+
+  // Caixas plásticas como o SERVIDOR as resolve: o número do checkbox ou, sem
+  // ele, a soma das linhas com vasilhame "Caixa plástica". Olhar só o checkbox
+  // deixava passar a venda que o servidor recusa por falta de cliente. Sem o
+  // módulo de caixas o servidor descarta as caixas, e a regra não vale.
+  const caixasDoCheckbox = caixasHabilitado && usaCaixaPlastica ? parseInt(crateQty, 10) || 0 : 0;
+  const caixasResolvidas = caixasHabilitado ? caixasPlasticasDaVenda(caixasDoCheckbox, cart) : 0;
+  const exigeCliente =
+    parteFiada > 0 || (caixasHabilitado && usaCaixaPlastica) || caixasResolvidas > 0;
 
   // ── Carrinho ──────────────────────────────────────────────────────────
   function addProduct(p: Produto) {
@@ -328,7 +346,7 @@ export function Pdv({
       const found = c.find((i) => i.productId === p.id);
       if (found) {
         return c.map((i) =>
-          i.productId === p.id ? { ...i, quantity: arredonda(i.quantity + qtd) } : i,
+          i.productId === p.id ? { ...i, quantity: somarQuantidade(i.quantity, qtd) } : i,
         );
       }
       return [...c, novoItem(p, qtd, precoSugerido(p.id))];
@@ -345,8 +363,21 @@ export function Pdv({
 
   function repetirUltimaVenda() {
     if (!ultimaVenda || ultimaVenda.itens.length === 0) return;
+    // Só o que ainda está à venda: produto inativado ou excluído depois da
+    // última venda faria o servidor recusar tudo com um erro que não diz qual
+    // item é — com o cliente esperando no balcão.
+    const ativos = new Set(produtos.map((p) => p.id));
+    const disponiveis = ultimaVenda.itens.filter((i) => ativos.has(i.productId));
+    const foraDeVenda = ultimaVenda.itens
+      .filter((i) => !ativos.has(i.productId))
+      .map((i) => i.name)
+      .join(", ");
+    if (disponiveis.length === 0) {
+      toast.error(`Nenhum produto da última venda está mais ativo (${foraDeVenda}).`);
+      return;
+    }
     setCart(
-      ultimaVenda.itens.map((i) => ({
+      disponiveis.map((i) => ({
         productId: i.productId,
         name: i.name,
         saleUnit: i.saleUnit,
@@ -360,7 +391,13 @@ export function Pdv({
       })),
     );
     if (ultimaVenda.customerName) setCustomer(ultimaVenda.customerName);
-    toast.success("Carrinho preenchido com a última venda. Confira os preços.");
+    if (foraDeVenda) {
+      toast.warning(
+        `Carrinho preenchido com a última venda, sem ${foraDeVenda} (não está mais ativo). Confira os preços.`,
+      );
+    } else {
+      toast.success("Carrinho preenchido com a última venda. Confira os preços.");
+    }
   }
 
   // ── Pagamento dividido ────────────────────────────────────────────────
@@ -391,11 +428,15 @@ export function Pdv({
   function validar(): string | null {
     if (cart.length === 0) return "Adicione ao menos um produto.";
     if (cart.some((i) => i.quantity <= 0)) return "Quantidade inválida.";
-    if (cart.some((i) => i.discountAmount > i.quantity * i.unitPrice))
+    if (cart.some((i) => paraCentavos(i.discountAmount || 0) > descontoMaximoDoItemCents(i)))
       return "O desconto de um item passou do valor dele.";
     if (paraCentavos(descontoVenda) > semDescontoDaVenda.totalCents + TOLERANCIA_CENTAVOS_BIG)
       return "O desconto não pode passar do total da venda.";
     if (dividido && parcelas.length === 0) return "Informe as formas de pagamento.";
+    // O servidor exige valor POSITIVO em cada forma; "Adicionar forma" com o
+    // total já fechado cria uma de R$ 0,00.
+    if (dividido && parcelas.some((p) => paraCentavos(p.amount || 0) <= 0n))
+      return "Informe o valor de cada forma de pagamento (ou remova a que ficou zerada).";
     if (!parcelasValidas)
       return `As formas de pagamento somam ${formatBRL(somaParcelas)} e o total é ${formatBRL(total)}.`;
     if (parteFiada > 0 && !customer.trim())
@@ -405,10 +446,21 @@ export function Pdv({
       if (caixas <= 0) return "Informe a quantidade de caixas plásticas.";
       if (!customer.trim()) return "Informe o cliente para controlar as caixas plásticas.";
     }
+    // Vasilhame "Caixa plástica" na linha, sem o checkbox: o servidor soma as
+    // linhas e exige cliente do mesmo jeito.
+    if (caixasResolvidas > 0 && !customer.trim())
+      return "Informe o cliente para controlar as caixas plásticas.";
     if (temDinheiro && recebido != null && recebido > 0 && paraCentavos(recebido) < emEspecieCents)
       return dividido
         ? `O valor recebido é menor que a parte em dinheiro (${formatBRL(parteEmDinheiro)}).`
         : "O valor recebido é menor que o total da venda.";
+    if (
+      temDinheiro &&
+      recebido != null &&
+      recebido > 0 &&
+      trocoPassaDoTeto(paraCentavos(recebido), emEspecieCents)
+    )
+      return "O valor recebido parece digitado errado: o troco ficaria alto demais.";
     return null;
   }
 
@@ -436,7 +488,7 @@ export function Pdv({
       return;
     }
 
-    const caixas = caixasHabilitado && usaCaixaPlastica ? parseInt(crateQty, 10) || 0 : 0;
+    const caixas = caixasDoCheckbox;
 
     setSaving(true);
     // Uma chave por CARRINHO, criada no primeiro envio e mantida enquanto este
@@ -477,7 +529,8 @@ export function Pdv({
       // operador vai corrigir o mesmo carrinho e tentar de novo. Se por acaso a
       // venda tiver sido gravada e só a resposta ter se perdido, a repetição
       // com a mesma chave devolve a venda original em vez de criar outra.
-      toast.error(res.error.message);
+      // Falha de schema vem como "Dados inválidos", com o motivo em `fields`.
+      toast.error(mensagemDoErro(res.error));
       return;
     }
 
@@ -490,6 +543,7 @@ export function Pdv({
       // pode ser outra. Melhor levar o operador para a venda de verdade.
       toast.success("Esta venda já havia sido registrada — nada foi duplicado.");
       setCart([]);
+      setJaTentouFinalizar(false);
       router.push(`/vendas/${res.data.id}`);
       return;
     }
@@ -512,11 +566,14 @@ export function Pdv({
       baixas: cart.map((i) => ({
         nome: i.name,
         antes: saldoDe(i.productId),
-        depois: arredonda(saldoDe(i.productId) - i.quantity),
+        depois: subtrairQuantidade(saldoDe(i.productId), i.quantity),
       })),
     });
 
     setCart([]);
+    // Venda nova começa sem aviso vermelho: a tentativa era do carrinho que
+    // acabou de ser gravado.
+    setJaTentouFinalizar(false);
     setCustomer("");
     setPhone("");
     setDueDate("");
@@ -590,7 +647,14 @@ export function Pdv({
           </CardContent>
         </Card>
 
-        <Button size="lg" className="h-14 w-full text-base" onClick={() => setResumo(null)}>
+        <Button
+          size="lg"
+          className="h-14 w-full text-base"
+          onClick={() => {
+            setResumo(null);
+            setJaTentouFinalizar(false);
+          }}
+        >
           <ShoppingCart className="size-5" /> Próxima venda
         </Button>
 
@@ -644,6 +708,8 @@ export function Pdv({
           value={customer}
           onChange={(e) => setCustomer(e.target.value)}
           list={LISTA_CLIENTES}
+          // O servidor recusa nome acima de 120 caracteres.
+          maxLength={120}
         />
         {clientesFrequentes.length > 0 && !customer && (
           <div className="flex flex-wrap gap-1.5">
@@ -766,9 +832,12 @@ export function Pdv({
         </Card>
       ) : (
         <div className="flex flex-col gap-2">
-          {cart.map((i) => {
-            const bruto = i.quantity * (i.unitPrice || 0);
-            const liquido = Math.max(0, bruto - (i.discountAmount || 0));
+          {cart.map((i, idx) => {
+            // Mesmo contrato do rodapé e do servidor: em float, 2,010 × 1,50
+            // aparecia R$ 3,01 na linha e era cobrado R$ 3,02.
+            const bruto = centsParaNumero(semDescontoDaVenda.brutosCents[idx] ?? 0n);
+            const liquidoCents = semDescontoDaVenda.lineTotalsCents[idx] ?? 0n;
+            const liquido = centsParaNumero(liquidoCents > 0n ? liquidoCents : 0n);
             const aberto = detalheAberto === i.productId;
             return (
               <Card key={i.productId} className="p-3">
@@ -820,7 +889,7 @@ export function Pdv({
                           // indistinguíveis, e "−" no último item é o gesto
                           // natural de quem quer tirar o produto.
                           onClick={() => {
-                            const nova = arredonda(i.quantity - 1);
+                            const nova = subtrairQuantidade(i.quantity, 1);
                             if (nova <= 0) removeItem(i.productId);
                             else updateItem(i.productId, { quantity: nova });
                           }}
@@ -847,7 +916,7 @@ export function Pdv({
                           className="size-11 shrink-0"
                           aria-label="Aumentar quantidade"
                           onClick={() =>
-                            updateItem(i.productId, { quantity: arredonda(i.quantity + 1) })
+                            updateItem(i.productId, { quantity: somarQuantidade(i.quantity, 1) })
                           }
                         >
                           <Plus className="size-4" />
@@ -933,11 +1002,16 @@ export function Pdv({
                         aria-label={`Vasilhame de ${i.name}`}
                       >
                         <option value="">— Nenhum —</option>
-                        {toOptions(RECIPIENT_TYPE_LABELS).map((o) => (
-                          <option key={o.value} value={o.value}>
-                            {o.label}
-                          </option>
-                        ))}
+                        {/* Sem o módulo de caixas, "Caixa plástica" não é opção:
+                            o servidor descartaria as caixas e mesmo assim
+                            exigiria cliente para elas. */}
+                        {toOptions(RECIPIENT_TYPE_LABELS)
+                          .filter((o) => caixasHabilitado || o.value !== "PLASTICA")
+                          .map((o) => (
+                            <option key={o.value} value={o.value}>
+                              {o.label}
+                            </option>
+                          ))}
                       </Select>
                     </div>
                     <div className="flex flex-col gap-1">
@@ -963,7 +1037,13 @@ export function Pdv({
                         value={i.discountAmount}
                         onChange={(v) =>
                           updateItem(i.productId, {
-                            discountAmount: Math.min(v ?? 0, arredonda(bruto)),
+                            // Trava no bruto exato truncado — o mesmo teto do
+                            // `validar()`. Arredondado, 7,035 virava 7,04 e a
+                            // própria tela recusava o desconto que acabou de pôr.
+                            discountAmount: Math.min(
+                              v ?? 0,
+                              centsParaNumero(descontoMaximoDoItemCents(i)),
+                            ),
                           })
                         }
                       />
@@ -1049,7 +1129,13 @@ export function Pdv({
                       step="any"
                       aria-label="Percentual de desconto"
                       value={descontoPercentual ?? ""}
-                      onChange={(e) => setDescontoPercentual(Number(e.target.value) || 0)}
+                      // Entre 0 e 100: `min`/`max` do campo não impedem digitar
+                      // "-5", e desconto negativo o servidor recusa.
+                      onChange={(e) =>
+                        setDescontoPercentual(
+                          Math.min(100, Math.max(0, Number(e.target.value) || 0)),
+                        )
+                      }
                     />
                   )}
                 </div>
@@ -1058,6 +1144,7 @@ export function Pdv({
                 <span className="text-[11px] text-muted-foreground">Motivo (opcional)</span>
                 <Input
                   placeholder="Ex.: cliente antigo, mercadoria madura"
+                  maxLength={200}
                   value={descontoMotivo}
                   onChange={(e) => setDescontoMotivo(e.target.value)}
                 />
@@ -1177,25 +1264,32 @@ export function Pdv({
       {temDinheiro && cart.length > 0 && (
         <div className="flex flex-col gap-2 rounded-lg border p-3">
           <div className="flex items-center justify-between text-sm">
-            <span className="text-muted-foreground">Total da venda</span>
-            <span className="font-semibold tabular-nums">{formatBRL(total)}</span>
+            <span className="text-muted-foreground">
+              {dividido ? "Parte em dinheiro" : "Total da venda"}
+            </span>
+            <span className="font-semibold tabular-nums">
+              {formatBRL(dividido ? parteEmDinheiro : total)}
+            </span>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="pdv-recebido">Cliente pagou com</Label>
             <CurrencyInput id="pdv-recebido" value={recebido} onChange={setRecebido} />
           </div>
-          {recebido != null && recebido > 0 && (
+          {trocoDaCaixa && (
             <div
+              data-testid="pdv-troco"
               className={cn(
                 "flex items-center justify-between rounded-md p-2 text-base",
-                recebido < total
+                trocoDaCaixa.tipo === "falta"
                   ? "border border-destructive/40 bg-destructive/10 text-destructive"
                   : "border border-success/40 bg-success/10",
               )}
             >
-              <span className="font-medium">{recebido < total ? "Falta" : "Troco"}</span>
+              <span className="font-medium">
+                {trocoDaCaixa.tipo === "falta" ? "Falta" : "Troco"}
+              </span>
               <span className="font-bold tabular-nums">
-                {formatBRL(recebido < total ? total - recebido : troco)}
+                {formatBRL(centsParaNumero(trocoDaCaixa.cents))}
               </span>
             </div>
           )}

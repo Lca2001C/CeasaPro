@@ -28,6 +28,12 @@ describe("subscriptionDueSoonEmail", () => {
     expect(subject).not.toContain("1 dias");
   });
 
+  it('vencimento no mesmo dia diz "hoje", não "amanhã"', () => {
+    const { subject, html } = subscriptionDueSoonEmail({ ...base, daysAhead: 0 });
+    expect(subject).toContain("vence hoje");
+    expect(html).not.toContain("amanhã");
+  });
+
   it("sem tolerância, não promete prazo extra", () => {
     const { html } = subscriptionDueSoonEmail({ ...base, graceDays: 0 });
     expect(html).not.toContain("tolerância");

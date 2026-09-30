@@ -1,7 +1,11 @@
 import Link from "next/link";
 import { Building2, ShieldCheck } from "lucide-react";
 import { requireSuperAdmin } from "@/lib/auth/session";
-import { AdminService } from "@/lib/services/admin.service";
+import {
+  AdminService,
+  RECORTES_USUARIOS,
+  type RecorteUsuarios,
+} from "@/lib/services/admin.service";
 import { JANELA_ONLINE_MINUTOS } from "@/lib/auth/presence";
 import type { SituacaoCobrancaDetalhe } from "@/lib/billing/status";
 import { formatDateTime } from "@/lib/format";
@@ -80,33 +84,19 @@ export default async function AdminUsuariosPage({
   /**
    * A LISTA é truncada; os CONTADORES não.
    *
-   * O filtro continua sendo aplicado em memória de propósito: se entrasse no
-   * SQL, clicar em "Sem acesso" faria os cartões contarem apenas os sem
-   * acesso e o painel se contradiria. O que mudou é a origem dos números —
-   * eles vêm do conjunto inteiro (`totais`), e não das linhas exibidas.
-   * Contando sobre a lista, um cartão como "Sem acesso" marcava 0 justamente
-   * porque os desativados eram os cortados pelo `take`.
+   * O recorte (filtro) é aplicado pelo serviço sobre TODOS os usuários, antes
+   * do corte em 200 — e só na lista: os cartões continuam contando o conjunto
+   * inteiro (`totais`), para o painel não se contradizer ao trocar de filtro.
+   * Filtrar aqui, em memória, a lista já cortada fazia "Sem acesso" responder
+   * "nenhum usuário" enquanto o cartão marcava N: os desativados ficam no fim
+   * da ordenação e eram justamente os cortados.
    */
-  const { usuarios: todos, totais } = await AdminService.listUsers({ busca });
+  const recorte = (RECORTES_USUARIOS as readonly string[]).includes(filtro ?? "")
+    ? (filtro as RecorteUsuarios)
+    : undefined;
+  const { usuarios, totais } = await AdminService.listUsers({ busca, recorte });
 
   const { online, emTeste, emDia, inadimplentes, semAcesso } = totais;
-
-  const usuarios = todos.filter((u) => {
-    switch (filtro) {
-      case "ONLINE":
-        return u.online;
-      case "TESTE":
-        return u.cobranca?.situacao === "em_teste";
-      case "EM_DIA":
-        return u.cobranca?.situacao === "em_dia";
-      case "INADIMPLENTES":
-        return u.cobranca?.situacao === "inadimplente";
-      case "INATIVOS":
-        return !u.active;
-      default:
-        return true;
-    }
-  });
 
   const linkFiltro = (chave?: string) => {
     const p = new URLSearchParams();
@@ -175,6 +165,16 @@ export default async function AdminUsuariosPage({
           </Button>
         ))}
       </div>
+
+      {totais.truncado && (
+        <p
+          role="status"
+          className="mb-3 rounded-md border border-warning/40 bg-warning/10 p-3 text-sm"
+        >
+          Mostrando {usuarios.length} de {totais.noRecorte} usuários. Use a busca por
+          nome ou e-mail para encontrar quem não apareceu.
+        </p>
+      )}
 
       {usuarios.length === 0 ? (
         <EmptyState

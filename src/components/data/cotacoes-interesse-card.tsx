@@ -83,7 +83,9 @@ export function CotacoesInteresseCard({
         <div className="flex flex-col gap-1">
           {visiveis.map((i) => (
             <Link
-              key={`${i.ceasaProductId}-${i.unit}`}
+              // O produto entra na chave: dois produtos no mesmo item do
+              // boletim são dois itens (ver `getInteresses`).
+              key={`${i.ceasaProductId}-${i.unit}-${i.meuProdutoId ?? ""}`}
               href={`/cotacoes/produto/${i.ceasaProductId}?u=${encodeURIComponent(i.unit)}`}
               className="flex items-center justify-between gap-2 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50"
             >

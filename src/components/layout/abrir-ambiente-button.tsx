@@ -7,6 +7,7 @@ import { abrirMeuAmbiente } from "@/actions/admin.actions";
 import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { irComSessaoNova } from "@/lib/session-nav";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /**
  * Leva o super-admin do painel da plataforma para o sistema em si.
@@ -22,7 +23,7 @@ export function AbrirAmbienteButton() {
 
   function abrir() {
     start(async () => {
-      const res = await abrirMeuAmbiente();
+      const res = await chamarAction(() => abrirMeuAmbiente());
       if (!res.ok) {
         toast.error(res.error.message);
         return;

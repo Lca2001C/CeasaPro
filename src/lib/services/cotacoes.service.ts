@@ -10,6 +10,10 @@ import {
   sugerirUnidade,
 } from "@/lib/cotacoes/embalagem";
 import { variacaoPercentual } from "@/lib/cotacoes/variacao";
+import { APP_TIME_ZONE, addDaysTz, startOfDayTz } from "@/lib/tz";
+
+/** Janela das compras que entram em "comprei acima do boletim". */
+const JANELA_DE_COMPRAS_DIAS = 30;
 import { toNumber } from "@/lib/money";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
 import type { TenantCtx } from "@/lib/http/with-action";
@@ -140,6 +144,18 @@ export interface PainelDeCotacoes {
     ceasaProductName: string;
     unit: string | null;
   }[];
+  /**
+   * Vínculos cujo preço saiu no boletim, mas na linha de outro produto da
+   * empresa (dois produtos no mesmo item). Ver `vinculosNaMesmaCotacao`.
+   */
+  vinculosNaMesmaCotacao: {
+    produtoId: string;
+    produtoNome: string;
+    ceasaProductName: string;
+    unit: string | null;
+    /** O produto que ficou com a linha da grade. */
+    junto: string | null;
+  }[];
 }
 
 /**
@@ -245,6 +261,7 @@ export const CotacoesService = {
         semVinculoComNomeIdentico: 0,
         temVinculo: false,
         vinculosSemCotacao: [],
+        vinculosNaMesmaCotacao: [],
       };
     }
     const { sourceKey, ...dadosDaCentral } = bruta;
@@ -287,6 +304,7 @@ export const CotacoesService = {
         semVinculoComNomeIdentico: 0,
         temVinculo: vinculos.length > 0,
         vinculosSemCotacao: [],
+        vinculosNaMesmaCotacao: [],
       };
     }
 
@@ -369,6 +387,7 @@ export const CotacoesService = {
       semVinculoComNomeIdentico: comNomeIdentico(sem, rows),
       temVinculo: vinculos.length > 0,
       vinculosSemCotacao: vinculosSemCotacao(vinculos, rows),
+      vinculosNaMesmaCotacao: vinculosNaMesmaCotacao(vinculos, rows),
       linhas: rows.map((r) => {
         // A série deste produto NESTA embalagem. A unidade entra na chave
         // porque o boletim cota a mesma fruta em caixa e em quilo com preços de
@@ -600,57 +619,116 @@ export const CotacoesService = {
    * a qualquer transporte, e todo produto de todo cliente apareceria "acima" —
    * um viés constante e invisível.
    */
-  async comprasAcimaDoBoletim(tenantId: string): Promise<ComparacaoComOBoletim> {
+  async comprasAcimaDoBoletim(
+    tenantId: string,
+    agora: Date = new Date(),
+  ): Promise<ComparacaoComOBoletim> {
     const contexto = await centralESerie(tenantId);
     if (!contexto) return { comparados: 0, elegiveis: 0, acima: [] };
 
+    // Só compra RECENTE: "foi comprado acima do boletim" no Início fala do que
+    // o cliente está pagando agora, não de uma compra de meses atrás.
+    const desde = startOfDayTz(addDaysTz(agora, -JANELA_DE_COMPRAS_DIAS));
+
+    /*
+      A compra é comparada com o boletim VIGENTE NA DATA DELA.
+
+      A versão anterior juntava dois LATERAL independentes: a última compra de
+      qualquer data e o boletim mais recente. Uma compra de março a R$ 60 (com o
+      boletim do dia a R$ 70) aparecia em setembro como "+33% acima" do boletim
+      de R$ 45 — a compra boa lida como ruim. E o inverso: compra de hoje contra
+      boletim de semanas atrás numa praça manual parada.
+
+      Então: primeiro a compra; depois o dia de boletim mais recente ATÉ a data
+      civil dela (fuso do app — `purchaseDate` é instante) e não mais velho que o
+      teto de frescor da praça (`maxDiasSemBoletim`). Sem boletim nessa janela, o
+      produto fica fora — nem comparado, nem elegível.
+
+      E TODAS as embalagens daquele dia vêm, não só uma: com vínculo em
+      "qualquer embalagem", escolher o KG no SQL descartava o produto vendido por
+      caixa mesmo com `CX 20 KG` no mesmo boletim. A escolha é feita abaixo, com
+      a mesma regra da tela de vínculo (`sugerirUnidade`).
+    */
     const rows = await prisma.$queryRaw<
       {
         produtoId: string;
         produtoNome: string;
         saleUnit: SaleUnit;
+        qtyPerRecipient: Prisma.Decimal | string | null;
+        vinculoUnit: string | null;
         unit: string;
         refPrice: Prisma.Decimal | string;
         pago: Prisma.Decimal | string;
       }[]
     >`
-      SELECT p.id            AS "produtoId",
-             p.name          AS "produtoNome",
-             p."saleUnit"    AS "saleUnit",
-             q.unit          AS unit,
-             q."refPrice"    AS "refPrice",
-             lp."unitPrice"  AS pago
+      SELECT p.id                AS "produtoId",
+             p.name              AS "produtoNome",
+             p."saleUnit"        AS "saleUnit",
+             p."qtyPerRecipient" AS "qtyPerRecipient",
+             l.unit              AS "vinculoUnit",
+             q.unit              AS unit,
+             q."refPrice"        AS "refPrice",
+             lp."unitPrice"      AS pago
       FROM tenant_ceasa_links l
       JOIN ceasa_products cp
         ON cp.id = l."ceasaProductId" AND cp.serie = ${contexto.serie}::"CeasaSerie"
       JOIN products p
         ON p.id = l."productId" AND p."deletedAt" IS NULL AND p.active = true
       JOIN LATERAL (
-        SELECT q2.unit, q2."refPrice"
-        FROM ceasa_quotes q2
-        WHERE q2."centralCode" = ${contexto.centralCode}
-          AND q2."ceasaProductId" = cp.id
-          AND (l.unit IS NULL OR q2.unit = l.unit)
-        ORDER BY q2."quoteDate" DESC, (q2.unit = 'KG') DESC, q2.unit ASC
-        LIMIT 1
-      ) q ON true
-      JOIN LATERAL (
-        SELECT pi."unitPrice"
+        SELECT pi."unitPrice",
+               (pu."purchaseDate" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE})::date AS dia
         FROM purchase_items pi
         JOIN purchases pu ON pu.id = pi."purchaseId"
         WHERE pi."tenantId" = ${tenantId}
           AND pi."productId" = p.id
           AND pu."deletedAt" IS NULL
+          AND pu."purchaseDate" >= ${desde}
         ORDER BY pu."purchaseDate" DESC, pi."createdAt" DESC
         LIMIT 1
       ) lp ON true
+      JOIN LATERAL (
+        SELECT MAX(q2."quoteDate") AS dia
+        FROM ceasa_quotes q2
+        WHERE q2."centralCode" = ${contexto.centralCode}
+          AND q2."ceasaProductId" = cp.id
+          AND (l.unit IS NULL OR q2.unit = l.unit)
+          AND q2."refPrice" > 0
+          AND q2."quoteDate" <= lp.dia
+          AND q2."quoteDate" >= lp.dia - (
+            SELECT c."maxDiasSemBoletim" FROM ceasa_centrals c WHERE c.code = ${contexto.centralCode}
+          )
+      ) qd ON qd.dia IS NOT NULL
+      JOIN ceasa_quotes q
+        ON q."centralCode" = ${contexto.centralCode}
+       AND q."ceasaProductId" = cp.id
+       AND q."quoteDate" = qd.dia
+       AND (l.unit IS NULL OR q.unit = l.unit)
+       AND q."refPrice" > 0
       WHERE l."tenantId" = ${tenantId}
+      ORDER BY p.id, q.unit
     `;
+
+    // Uma entrada por produto: as linhas vêm uma por embalagem do boletim.
+    const porProduto = new Map<string, typeof rows>();
+    for (const r of rows) porProduto.set(r.produtoId, [...(porProduto.get(r.produtoId) ?? []), r]);
 
     const acima: ComparacaoComOBoletim["acima"] = [];
     let comparados = 0;
-    for (const r of rows) {
-      if (!embalagemCasaComVenda(r.unit, r.saleUnit)) continue;
+    for (const linhas of porProduto.values()) {
+      const primeira = linhas[0]!;
+      // Vínculo com embalagem escolhida já chega filtrado a ela. "Qualquer
+      // embalagem": a que casa com a unidade de venda, preferindo o peso do
+      // cadastro — mesma regra da tela de vínculo.
+      const escolhida =
+        primeira.vinculoUnit !== null
+          ? primeira.unit
+          : sugerirUnidade(
+              primeira.saleUnit,
+              linhas.map((l) => l.unit),
+              primeira.qtyPerRecipient as Prisma.Decimal | null,
+            );
+      const r = linhas.find((l) => l.unit === escolhida);
+      if (!r || !embalagemCasaComVenda(r.unit, r.saleUnit)) continue;
       comparados += 1;
       const diferenca = variacaoPercentual(r.pago as Prisma.Decimal, r.refPrice as Prisma.Decimal);
       if (diferenca === null || diferenca <= 0) continue;
@@ -664,7 +742,7 @@ export const CotacoesService = {
       });
     }
     acima.sort((a, b) => b.diferenca - a.diferenca);
-    return { comparados, elegiveis: rows.length, acima };
+    return { comparados, elegiveis: porProduto.size, acima };
   },
 
   async escolherCentral(input: { centralCode: string | null }, ctx: TenantCtx) {
@@ -1224,6 +1302,47 @@ function vinculosSemCotacao(
       ceasaProductName: v.ceasaProductName,
       unit: v.unit,
     }));
+}
+
+/**
+ * Vínculos cujo preço SAIU no boletim, mas na linha de OUTRO produto da empresa.
+ *
+ * O LATERAL de `getPainel` escolhe UM vínculo por linha do boletim (sem isso a
+ * linha se multiplicaria). Quando "Tomate caixa" e "Tomate kg" apontam para o
+ * mesmo item — o que o schema permite, o lote pré-marca "qualquer embalagem" e
+ * a troca de praça zera a embalagem de todos —, o segundo não ganhava linha
+ * nenhuma, não estava em `semVinculo` (tem vínculo) nem em `vinculosSemCotacao`
+ * (o item saiu no boletim): sumia da tela sem uma palavra, que é exatamente o
+ * desfecho que `vinculosSemCotacao` existe para impedir.
+ *
+ * `junto` é o produto que ficou com a linha, para a tela dizer onde o preço está.
+ */
+function vinculosNaMesmaCotacao(
+  vinculos: VinculoDaEmpresa[],
+  rows: { ceasaProductId: string; unit: string; meuProdutoId: string | null; meuProdutoNome: string | null }[],
+) {
+  const comLinha = new Set(rows.map((r) => r.meuProdutoId).filter((id): id is string => !!id));
+  const semLinha = new Set(
+    vinculosSemCotacao(vinculos, rows).map((v) => v.produtoId),
+  );
+
+  return vinculos
+    .filter((v) => !comLinha.has(v.produtoId) && !semLinha.has(v.produtoId))
+    .map((v) => {
+      const linha = rows.find(
+        (r) =>
+          r.ceasaProductId === v.ceasaProductId &&
+          (v.unit === null || r.unit === v.unit) &&
+          r.meuProdutoNome !== null,
+      );
+      return {
+        produtoId: v.produtoId,
+        produtoNome: v.produtoNome,
+        ceasaProductName: v.ceasaProductName,
+        unit: v.unit,
+        junto: linha?.meuProdutoNome ?? null,
+      };
+    });
 }
 
 function dec(v: Prisma.Decimal | string | null): Prisma.Decimal | null {

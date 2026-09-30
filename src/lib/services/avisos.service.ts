@@ -70,7 +70,7 @@ export const AvisosService = {
     const [fiadoVenc, despVenc, despAVencer, higPend] = await Promise.all([
       db.creditAccount.findMany({
         where: { status: "EM_ABERTO", dueDate: { lt: hoje } },
-        select: { totalAmount: true, paidAmount: true },
+        select: { customerName: true, totalAmount: true, paidAmount: true },
       }),
       // findMany em vez de aggregate: o id é o que permite linkar direto na
       // despesa quando existe apenas uma vencida.
@@ -101,12 +101,20 @@ export const AvisosService = {
         fiadoVenc.reduce((a, c) => a.plus(c.totalAmount), new Prisma.Decimal(0)),
         fiadoVenc.reduce((a, c) => a.plus(c.paidAmount), new Prisma.Decimal(0)),
       );
+      // CLIENTES distintos, não contas: o fiado tem uma `CreditAccount` por
+      // entrega, e um cliente com 3 entregas vencidas aparecia como "3
+      // cliente(s)" — o dono procurava três devedores na lista. O nome é a
+      // identidade do cliente no fiado (não há cadastro de cliente); a caixa e
+      // os espaços nas pontas não fazem outra pessoa.
+      const clientes = new Set(
+        fiadoVenc.map((c) => c.customerName.trim().toLocaleLowerCase("pt-BR")),
+      ).size;
       avisos.push({
         tipo: "fiado_vencido",
-        count: fiadoVenc.length,
+        count: clientes,
         total,
         href: "/fiado",
-        label: `${fiadoVenc.length} cliente(s) com fiado vencido`,
+        label: `${clientes} cliente(s) com fiado vencido`,
       });
     }
 

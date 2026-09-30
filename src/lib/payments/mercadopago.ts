@@ -90,7 +90,16 @@ function parseCauses(raw: unknown): MpErrorCause[] {
  * corpo — só código e descrição) e relança como `MercadoPagoApiError`, para
  * que a camada de serviço decida a mensagem que o usuário vê.
  */
-async function mpCall<T>(operation: string, fn: () => Promise<T>): Promise<T> {
+async function mpCall<T>(
+  operation: string,
+  fn: () => Promise<T>,
+  /**
+   * Nível do log da falha. `warn` é para chamadas de melhor esforço, em que a
+   * recusa é um desfecho esperado (cancelar um PIX que já expirou ou já foi
+   * pago) e não merece o mesmo alarme de uma cobrança que não saiu.
+   */
+  nivel: "error" | "warn" = "error",
+): Promise<T> {
   try {
     return await fn();
   } catch (e) {
@@ -106,13 +115,13 @@ async function mpCall<T>(operation: string, fn: () => Promise<T>): Promise<T> {
         (typeof raw.message === "string" && raw.message) ||
         (typeof raw.error === "string" && raw.error) ||
         "Falha na comunicação com o Mercado Pago";
-      logger.error(
+      logger[nivel](
         { operation, status, causes, mpError: describeError(e) },
         "Mercado Pago recusou a requisição",
       );
       throw new MercadoPagoApiError(operation, status, causes, message);
     }
-    logger.error({ operation, err: describeError(e) }, "Falha ao chamar o Mercado Pago");
+    logger[nivel]({ operation, err: describeError(e) }, "Falha ao chamar o Mercado Pago");
     throw e;
   }
 }
@@ -284,6 +293,13 @@ export async function createPixPayment(args: {
   payerIdentification?: { type: string; number: string } | null;
   externalReference: string;
   expiresAt: Date;
+  /**
+   * Entra na chave de idempotência. Só para quando a chave normal devolveu uma
+   * cobrança MORTA (cancelada/recusada): sem isto, voltar ao plano de antes
+   * reapresentava o QR que acabamos de cancelar no gateway — e a tela mostraria
+   * um código que o banco recusa.
+   */
+  idempotencySalt?: string;
 }): Promise<PixCharge> {
   const client = paymentClient();
   const { firstName, lastName } = splitNome(args.payerName);
@@ -312,7 +328,9 @@ export async function createPixPayment(args: {
       }),
     },
     requestOptions: {
-      idempotencyKey: `pix:${args.externalReference}:${args.amount.toFixed(2)}`,
+      idempotencyKey:
+        `pix:${args.externalReference}:${args.amount.toFixed(2)}` +
+        (args.idempotencySalt ? `:${args.idempotencySalt}` : ""),
     },
   }));
   const tx = res.point_of_interaction?.transaction_data;
@@ -509,10 +527,20 @@ export async function createCardPayment(args: {
   };
 }
 
-/** Busca um pagamento no Mercado Pago (fonte da verdade do status). */
-export async function getPayment(id: string) {
+/**
+ * Busca um pagamento no Mercado Pago (fonte da verdade do status).
+ *
+ * `timeoutMs` é para quem tem prazo (a reconciliação do cron): sem ele uma
+ * resposta pendurada segurava o lote além do orçamento da rota.
+ */
+export async function getPayment(id: string, opts?: { timeoutMs?: number }) {
   const client = paymentClient();
-  const res = await mpCall("getPayment", () => client.get({ id }));
+  const res = await mpCall("getPayment", () =>
+    client.get({
+      id,
+      ...(opts?.timeoutMs ? { requestOptions: { timeout: opts.timeoutMs } } : {}),
+    }),
+  );
   return {
     id: String(res.id),
     status: String(res.status ?? ""),
@@ -526,6 +554,31 @@ export async function getPayment(id: string) {
 }
 
 export type MpPayment = Awaited<ReturnType<typeof getPayment>>;
+
+/** Prazo do cancelamento: ele roda no meio de um pedido do cliente. */
+const CANCEL_TIMEOUT_MS = 5_000;
+
+/**
+ * Cancela no Mercado Pago uma cobrança ainda NÃO aprovada
+ * (`PUT /v1/payments/{id}` com `status: "cancelled"`).
+ *
+ * Existe porque cancelar só no nosso banco não tirava o QR de circulação: o
+ * copia-e-cola substituído (troca de plano, cartão no lugar do PIX, assinatura
+ * cancelada) continuava pagável por 48 h no app do banco do cliente.
+ *
+ * Lança como qualquer chamada ao gateway — quem chama decide se é de melhor
+ * esforço (ver `cancelarNoGateway`). A recusa é logada como `warn`: o desfecho
+ * comum é o pagamento já ter expirado ou sido pago, e aí não há o que cancelar.
+ */
+export async function cancelPayment(id: string): Promise<{ id: string; status: string }> {
+  const client = paymentClient();
+  const res = await mpCall(
+    "cancelPayment",
+    () => client.cancel({ id, requestOptions: { timeout: CANCEL_TIMEOUT_MS } }),
+    "warn",
+  );
+  return { id: String(res.id ?? id), status: String(res.status ?? "") };
+}
 
 /** `x-signature` separado em partes. */
 function parseXSignature(header: string): { ts?: string; v1?: string } {

@@ -26,8 +26,21 @@ const securityHeaders = [
     : []),
 ];
 
+// Versão do service worker: um valor por BUILD, registrado como `/sw.js?v=...`
+// (ver `src/lib/pwa/sw-version.ts`). Na Vercel, o id da implantação — único por
+// deploy, inclusive num redeploy do mesmo commit que só trocou variável
+// `NEXT_PUBLIC_*` (e portanto os chunks). Fora dela, o commit; sem nenhum dos dois
+// (build local), a hora do build. Gravado de volta em `process.env` para que o
+// config, se for relido por outro processo do mesmo build, dê o MESMO valor.
+process.env.CEASAPRO_SW_VERSION ||=
+  process.env.VERCEL_DEPLOYMENT_ID ||
+  process.env.VERCEL_GIT_COMMIT_SHA ||
+  `local-${Date.now().toString(36)}`;
+
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Substituído pelo literal no bundle; só `pwa-register.tsx` lê.
+  env: { CEASAPRO_SW_VERSION: process.env.CEASAPRO_SW_VERSION },
   // Next 16 bloqueia por padrão o acesso a recursos de DEV (_next/*, incluindo o
   // WebSocket do HMR e os chunks de JS) vindo de origem != localhost. Ao acessar o
   // dev server por IP da LAN (ex.: celular/outro PC em http://192.168.x.x:3000) sem
@@ -44,9 +57,15 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // O service worker nunca deve ser cacheado — assim novas versões propagam na hora.
+      // A regra casa pelo caminho, então vale também para `/sw.js?v=<build>`.
+      // `Service-Worker-Allowed: /` fixa o escopo máximo na raiz, o mesmo do
+      // `register(..., { scope: "/" })`.
       {
         source: "/sw.js",
-        headers: [{ key: "Cache-Control", value: "no-cache, no-store, must-revalidate" }],
+        headers: [
+          { key: "Cache-Control", value: "no-cache, no-store, must-revalidate" },
+          { key: "Service-Worker-Allowed", value: "/" },
+        ],
       },
     ];
   },

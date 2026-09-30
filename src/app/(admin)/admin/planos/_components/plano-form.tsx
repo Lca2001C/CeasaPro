@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { CurrencyInput } from "@/components/forms/currency-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 interface Props {
   initial?: PlanoInput & { id: string };
   onDone?: () => void;
@@ -42,8 +43,8 @@ export function PlanoForm({ initial, onDone }: Props) {
   async function onSubmit(values: PlanoInput) {
     setSaving(true);
     const res = initial
-      ? await atualizarPlano({ ...values, id: initial.id })
-      : await criarPlano(values);
+      ? await chamarAction(() => atualizarPlano({ ...values, id: initial.id }))
+      : await chamarAction(() => criarPlano(values));
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Plano atualizado" : "Plano criado");

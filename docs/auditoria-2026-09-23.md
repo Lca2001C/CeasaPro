@@ -108,6 +108,8 @@ Migration `20260923142829_indices_auditoria_e_origem_estoque` (só `CREATE INDEX
 
 ## 2. Pendente (confirmado, não corrigido nesta rodada)
 
+> **Atualização 2026-09-30:** todos os itens abaixo foram corrigidos, exceto a mensagem do 401 do Mercado Pago, mantida por decisão deliberada. Detalhes em [auditoria-2026-09-30.md §4](auditoria-2026-09-30.md#4-pendências-das-duas-rodadas--resolvidas-em-2026-09-30).
+
 Ordenado por prioridade. São mudanças maiores, dependem de sandbox do Mercado Pago ou pedem decisão de produto.
 
 | Sev. | Achado | Onde | Por que ficou |

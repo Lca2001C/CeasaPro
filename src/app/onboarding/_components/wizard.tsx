@@ -15,6 +15,7 @@ import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 /** Empresa → fornecedor → produto. */
 const TOTAL_PASSOS = 3;
 
@@ -63,11 +64,11 @@ export function OnboardingWizard({
       "não mexer" (`tests/integration/config-empresa-parcial.test.ts`). Este
       passo manda o que edita, e o resto fica intocado por construção.
     */
-    const res = await salvarEmpresa({
+    const res = await chamarAction(() => salvarEmpresa({
       tradeName: tradeName.trim(),
       phone: phone || null,
       address: address || null,
-    });
+    }));
     setBusy(false);
     if (res.ok) setStep(2);
     else toast.error(res.error.message);
@@ -76,13 +77,13 @@ export function OnboardingWizard({
   async function saveSupplier(skip = false) {
     if (skip || !supplierName.trim()) return setStep(3);
     setBusy(true);
-    const res = await criarFornecedor({
+    const res = await chamarAction(() => criarFornecedor({
       name: supplierName.trim(),
       active: true,
       phone: null,
       address: null,
       notes: null,
-    });
+    }));
     setBusy(false);
     if (res.ok) setStep(3);
     else toast.error(res.error.message);
@@ -91,14 +92,14 @@ export function OnboardingWizard({
   async function saveProduct(skip = false) {
     if (skip || !productName.trim()) return finish();
     setBusy(true);
-    const res = await criarProduto({
+    const res = await chamarAction(() => criarProduto({
       name: productName.trim(),
       saleUnit: saleUnit as "CAIXA",
       active: true,
       qtyPerRecipient: null,
       recipientType: null,
       sackCapacity: null,
-    });
+    }));
     setBusy(false);
     if (res.ok) finish();
     else toast.error(res.error.message);
@@ -106,7 +107,7 @@ export function OnboardingWizard({
 
   async function finish() {
     setBusy(true);
-    const res = await concluirOnboarding();
+    const res = await chamarAction(() => concluirOnboarding());
     setBusy(false);
     if (res.ok) {
       toast.success("Tudo pronto! Bem-vindo ao CeasaPro.");

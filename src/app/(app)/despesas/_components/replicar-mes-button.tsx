@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { CopyPlus, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { replicarMesDeDespesas } from "@/actions/despesas.actions";
+import { mensagemReplicacao } from "@/lib/despesas/replicacao";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -32,12 +33,7 @@ export function ReplicarMesButton({ mesOrigem }: { mesOrigem: string }) {
     start(async () => {
       const res = await replicarMesDeDespesas({ origem: mesOrigem });
       if (res.ok) {
-        const { criadas, encontradas } = res.data;
-        toast.success(
-          criadas > 0
-            ? `${criadas} conta(s) copiada(s) para o mês seguinte`
-            : `Nada a copiar: as ${encontradas} conta(s) de ${mesOrigem} já foram replicadas`,
-        );
+        toast.success(mensagemReplicacao(res.data, mesOrigem));
         setOpen(false);
         router.refresh();
       } else {

@@ -20,6 +20,39 @@ describe("FinancialCalc", () => {
     expect(shares.map((s) => s.toString())).toEqual(["10", "30"]);
   });
 
+  // Consignação/bonificação: todas as linhas a R$ 0. Antes cada item recebia
+  // R$ 0 de frete e o caminhão sumia do custo do estoque e do CMV.
+  it("ratearFrete com compra de valor zero rateia pela quantidade", () => {
+    const shares = FinancialCalc.ratearFrete([0, 0], 200, [30, 10]);
+    expect(shares.map((s) => s.toString())).toEqual(["150", "50"]);
+  });
+
+  it("ratearFrete com valor zero e sem quantidades divide em partes iguais", () => {
+    const shares = FinancialCalc.ratearFrete([0, 0, 0, 0], 100);
+    expect(shares.map((s) => s.toString())).toEqual(["25", "25", "25", "25"]);
+  });
+
+  it("ratearFrete: as partes SEMPRE somam o frete (resíduo do arredondamento)", () => {
+    // 0,10 em três linhas iguais: 0,03 × 3 = 0,09 — faltava um centavo.
+    const a = FinancialCalc.ratearFrete([10, 10, 10], "0.10");
+    expect(a.reduce((s, x) => s.plus(x), a[0]!.minus(a[0]!)).toString()).toBe("0.1");
+    // 0,20 em três: 0,07 × 3 = 0,21 — sobrava um centavo.
+    const b = FinancialCalc.ratearFrete([10, 10, 10], "0.20");
+    expect(b.reduce((s, x) => s.plus(x), b[0]!.minus(b[0]!)).toString()).toBe("0.2");
+  });
+
+  it("ratearFrete nunca joga o resíduo numa linha de parte zero (frete negativo)", () => {
+    // A linha bonificada (R$ 0) fica com R$ 0; o ajuste vai para a de maior parte.
+    const shares = FinancialCalc.ratearFrete([10, 10, 10, 0], "0.20");
+    expect(shares[3]!.toString()).toBe("0");
+    expect(shares.every((s) => !s.isNegative())).toBe(true);
+    expect(shares.reduce((s, x) => s.plus(x), shares[0]!.minus(shares[0]!)).toString()).toBe("0.2");
+  });
+
+  it("ratearFrete sem frete devolve zeros", () => {
+    expect(FinancialCalc.ratearFrete([10, 20], 0).map((s) => s.toString())).toEqual(["0", "0"]);
+  });
+
   it("valorTotalVenda = qtd * valor", () => {
     expect(FinancialCalc.valorTotalVenda(3, "4.99").toString()).toBe("14.97");
   });

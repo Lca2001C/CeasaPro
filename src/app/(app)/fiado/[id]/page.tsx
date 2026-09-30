@@ -111,13 +111,41 @@ export default async function FiadoDetailPage({
                   </TableRow>
                 ))}
               </TableBody>
+              {/* O rodapé fecha com os itens logo acima: total da VENDA, e não
+                  só a parte fiada. Numa venda mista (parte paga no balcão) ou
+                  com desconto na venda, "Total da compra" com o valor da conta
+                  ficava abaixo de itens que somavam outro número. */}
               <TableFooter>
+                {Number(conta.descontoDaVenda ?? 0) > 0 && (
+                  <TableRow>
+                    <TableCell colSpan={3}>Desconto na venda</TableCell>
+                    <TableCell className="text-right tabular-nums">
+                      − {formatBRL(conta.descontoDaVenda ?? 0)}
+                    </TableCell>
+                  </TableRow>
+                )}
                 <TableRow>
                   <TableCell colSpan={3}>Total da compra</TableCell>
                   <TableCell className="text-right tabular-nums">
-                    {formatBRL(conta.totalAmount)}
+                    {formatBRL(conta.totalDaVenda)}
                   </TableCell>
                 </TableRow>
+                {Number(conta.pagoNoBalcao) > 0 && (
+                  <>
+                    <TableRow>
+                      <TableCell colSpan={3}>Pago no balcão</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatBRL(conta.pagoNoBalcao)}
+                      </TableCell>
+                    </TableRow>
+                    <TableRow>
+                      <TableCell colSpan={3}>Ficou no fiado</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatBRL(conta.totalAmount)}
+                      </TableCell>
+                    </TableRow>
+                  </>
+                )}
               </TableFooter>
             </Table>
           )}

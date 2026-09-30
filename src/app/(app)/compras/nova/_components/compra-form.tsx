@@ -1,7 +1,7 @@
 "use client";
 
 import { isoDateTz } from "@/lib/tz";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -31,9 +31,16 @@ export function CompraForm({
   fornecedores,
   ultimosPagos = {},
   boletim = {},
+  caixasHabilitado = false,
 }: {
   produtos: Option[];
   fornecedores: Option[];
+  /**
+   * O plano inclui o módulo `caixas`? Sem ele o bloco "chegou em caixa
+   * plástica" nem aparece — o servidor ignoraria as caixas de qualquer jeito.
+   * Nasce `false` (fail-closed, como `isModuleEnabled`).
+   */
+  caixasHabilitado?: boolean;
   /** Último preço NEGOCIADO por produto (sem frete) — ver `ultimosPrecosPagos`. */
   ultimosPagos?: Record<string, { unitPrice: number; purchaseDate: string | Date }>;
   /** Boletim do produto vinculado. Vazio quando o plano não inclui Cotações. */
@@ -49,6 +56,15 @@ export function CompraForm({
     { productId: produtos[0]?.id ?? "", quantity: 1, unitPrice: 0 },
   ]);
   const [saving, setSaving] = useState(false);
+  // Trava SÍNCRONA contra toque duplo em "Salvar compra". `saving` sozinho não
+  // basta: ele só desabilita o botão no próximo render, e dois toques no mesmo
+  // instante disparavam dois POST. Cada POST é uma compra nova — duas ENTRADAs
+  // de estoque, duas entradas de caixas e duas despesas de frete (a trava por
+  // `purchaseId` da despesa não pega, porque são compras diferentes).
+  const enviando = useRef(false);
+  // Uma chave por compra digitada: se o envio sair duas vezes (toque duplo,
+  // retentativa depois de timeout), o servidor devolve a compra já gravada.
+  const chaveDaCompra = useRef<string | null>(null);
   const [veioEmCaixa, setVeioEmCaixa] = useState(false);
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
@@ -69,6 +85,7 @@ export function CompraForm({
   }
 
   async function submit() {
+    if (enviando.current) return;
     if (produtos.length === 0) return toast.error("Cadastre um produto primeiro.");
     if (items.some((i) => !i.productId || i.quantity <= 0))
       return toast.error("Preencha os itens corretamente.");
@@ -80,8 +97,11 @@ export function CompraForm({
     if (quebradas > caixas)
       return toast.error("As caixas quebradas não podem passar do total recebido.");
 
+    enviando.current = true;
     setSaving(true);
+    chaveDaCompra.current ??= crypto.randomUUID();
     const res = await apiPost<{ id: string }>("/api/compras", {
+      idempotencyKey: chaveDaCompra.current,
       supplierId: supplierId || null,
       purchaseDate,
       freight: freight || 0,
@@ -95,8 +115,11 @@ export function CompraForm({
         unitPrice: i.unitPrice || 0,
       })),
     });
-    setSaving(false);
     if (res.ok) {
+      // No sucesso o botão CONTINUA travado. A ida para /compras é uma
+      // transição do App Router: esta tela segue na frente, clicável, até a
+      // página nova (force-dynamic) chegar — no 4G do CEASA, segundos. Era
+      // `setSaving(false)` antes do `push`, e o segundo toque gravava outra compra.
       toast.success(
         caixas > 0
           ? `Compra registrada. Estoque atualizado e ${caixas} caixa(s) na entrada.`
@@ -104,6 +127,8 @@ export function CompraForm({
       );
       router.push("/compras");
     } else {
+      enviando.current = false;
+      setSaving(false);
       toast.error(res.error.message);
     }
   }
@@ -228,55 +253,57 @@ export function CompraForm({
 
       {/* Caixas plásticas que vieram junto: registrar aqui evita o segundo
           lançamento em outra tela — que era esquecido e fazia o saldo de
-          caixas divergir do que existe no box. */}
-      <div className="flex flex-col gap-2 rounded-lg border p-3">
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input
-            type="checkbox"
-            className="size-4"
-            checked={veioEmCaixa}
-            onChange={(e) => setVeioEmCaixa(e.target.checked)}
-          />
-          Chegou em caixa plástica
-        </label>
-        {veioEmCaixa && (
-          <div className="flex flex-col gap-2">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="caixas-recebidas">Quantas caixas</Label>
-                <Input
-                  id="caixas-recebidas"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  value={caixasRecebidas}
-                  onChange={(e) => setCaixasRecebidas(e.target.value)}
-                />
+          caixas divergir do que existe no box. Só com o módulo de caixas. */}
+      {caixasHabilitado && (
+        <div className="flex flex-col gap-2 rounded-lg border p-3">
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              className="size-4"
+              checked={veioEmCaixa}
+              onChange={(e) => setVeioEmCaixa(e.target.checked)}
+            />
+            Chegou em caixa plástica
+          </label>
+          {veioEmCaixa && (
+            <div className="flex flex-col gap-2">
+              <div className="grid grid-cols-2 gap-2">
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="caixas-recebidas">Quantas caixas</Label>
+                  <Input
+                    id="caixas-recebidas"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    value={caixasRecebidas}
+                    onChange={(e) => setCaixasRecebidas(e.target.value)}
+                  />
+                </div>
+                <div className="flex flex-col gap-1.5">
+                  <Label htmlFor="caixas-quebradas">Quebradas na chegada</Label>
+                  <Input
+                    id="caixas-quebradas"
+                    type="number"
+                    inputMode="numeric"
+                    min={0}
+                    value={caixasQuebradas}
+                    onChange={(e) => setCaixasQuebradas(e.target.value)}
+                  />
+                </div>
               </div>
-              <div className="flex flex-col gap-1.5">
-                <Label htmlFor="caixas-quebradas">Quebradas na chegada</Label>
-                <Input
-                  id="caixas-quebradas"
-                  type="number"
-                  inputMode="numeric"
-                  min={0}
-                  value={caixasQuebradas}
-                  onChange={(e) => setCaixasQuebradas(e.target.value)}
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="size-4"
+                  checked={caixasSujas}
+                  onChange={(e) => setCaixasSujas(e.target.checked)}
                 />
-              </div>
+                Chegaram sujas (vão para a fila de higienização)
+              </label>
             </div>
-            <label className="flex items-center gap-2 text-sm">
-              <input
-                type="checkbox"
-                className="size-4"
-                checked={caixasSujas}
-                onChange={(e) => setCaixasSujas(e.target.checked)}
-              />
-              Chegaram sujas (vão para a fila de higienização)
-            </label>
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      )}
 
       <Card className="p-3">
         <div className="flex justify-between text-sm text-muted-foreground">

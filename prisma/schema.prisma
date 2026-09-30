@@ -620,6 +620,20 @@ model SubscriptionPayment {
   /// recusada/estornada/cancelada continuam podendo repetir à vontade.
   /// Mantida por `BillingService.applyPaymentStatus` (`chaveDeAprovacao`).
   approvedKey    String?            @unique
+  /// Última vez que a reconciliação diária consultou esta cobrança no Mercado
+  /// Pago. É a ROTAÇÃO do lote: `BillingService.reconcilePendingPayments` lê
+  /// primeiro as nunca conferidas (`NULL`) e depois as conferidas há mais tempo,
+  /// então um lote cortado pelo orçamento de tempo não deixa sempre as mesmas de
+  /// fora — o que ficou hoje é o primeiro da fila amanhã.
+  lastReconciledAt DateTime?
+  /// O Mercado Pago APROVOU esta cobrança, mas ela NÃO comprou mês nenhum:
+  /// entrou menos que a mensalidade devida, ou a competência já tinha outra
+  /// aprovada. O dinheiro está no gateway e precisa de um humano (crédito ou
+  /// devolução) — a marca é o que faz o aviso ao super-admin sair UMA vez, em
+  /// vez de a reconciliação repeti-lo todo dia. `null` = nada pendente.
+  uncreditedAt     DateTime?
+  /// Por que não creditou: `VALOR_MENOR` ou `DUPLICADO`.
+  uncreditedReason String?
   createdAt      DateTime           @default(now())
   updatedAt      DateTime           @updatedAt
   subscription   TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
@@ -627,6 +641,7 @@ model SubscriptionPayment {
   @@index([tenantId, createdAt])
   @@index([status])
   @@index([tenantId, referenceMonth, status])
+  @@index([status, lastReconciledAt])
   @@map("subscription_payments")
 }
 
@@ -679,6 +694,11 @@ model Purchase {
   freight      Decimal        @default(0) @db.Decimal(14, 2)
   totalAmount  Decimal        @db.Decimal(14, 2)
   notes        String?
+  /// Chave gerada pelo formulário, uma por compra digitada. Com o índice único
+  /// abaixo, o segundo envio da mesma compra (toque duplo, retentativa depois
+  /// de timeout) devolve a primeira em vez de dar entrada no estoque de novo.
+  /// Nula nas compras antigas — vários NULL não colidem no índice.
+  idempotencyKey String?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?
@@ -687,6 +707,7 @@ model Purchase {
   supplier     Supplier?      @relation(fields: [supplierId], references: [id])
   tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, purchaseDate])
   @@index([tenantId, supplierId])
   @@map("purchases")
@@ -1165,6 +1186,15 @@ enum AdminNotificationKind {
   /// conta própria — e um envio que fica dias parado é pior que não ter o
   /// recurso: o cliente fez a parte dele e o preço continua não aparecendo.
   COTACOES_ENVIO_CLIENTE
+  /// Pagamento aprovado no Mercado Pago que NÃO foi creditado (valor menor que
+  /// a mensalidade devida, ou segunda aprovação da mesma competência). O
+  /// dinheiro entrou; alguém precisa creditar ou devolver.
+  PAGAMENTO_NAO_CREDITADO
+  /// Empresa BLOQUEADA à mão (chargeback, super-admin) voltou a ATIVO sozinha
+  /// porque um pagamento novo foi aprovado. O comportamento é deliberado — quem
+  /// paga volta a usar —, mas o bloqueio era uma decisão humana e quem a tomou
+  /// precisa saber que ela foi desfeita.
+  BLOQUEIO_DESFEITO_POR_PAGAMENTO
 }
 
 /// Desfecho de uma tentativa de importar boletim.

@@ -27,7 +27,7 @@ export default async function NovaVendaPage({
     precosDaCompra,
     maisVendidos,
     clientesConhecidos,
-    posicoes,
+    saldoPorProduto,
     ultimaVenda,
     ultimosPagos,
     boletim,
@@ -41,7 +41,8 @@ export default async function NovaVendaPage({
     VendasService.precosSugeridosDaCompra(tenantId),
     VendasService.maisVendidos(tenantId),
     VendasService.clientesConhecidos(tenantId),
-    EstoqueService.getPositions(tenantId),
+    // Só o saldo: o custo médio (janela sobre o livro-razão) não aparece aqui.
+    EstoqueService.getQuantidades(tenantId),
     VendasService.ultimaVenda(tenantId),
     ComprasService.ultimosPrecosPagos(tenantId),
     // Mesma regra do saldo de caixas acima: quem não contratou Cotações não paga
@@ -55,7 +56,7 @@ export default async function NovaVendaPage({
   // O saldo vai como número simples: o PDV só precisa comparar e mostrar, e
   // Decimal não atravessa a fronteira Server → Client component.
   const estoquePorProduto: Record<string, number> = {};
-  for (const p of posicoes) estoquePorProduto[p.productId] = Number(p.quantity);
+  for (const p of produtos) estoquePorProduto[p.id] = saldoPorProduto[p.id] ?? 0;
 
   const ativos = produtos
     .filter((p) => p.active)

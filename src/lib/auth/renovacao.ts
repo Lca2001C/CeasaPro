@@ -80,3 +80,40 @@ export function ehNavegacaoDeTopo(cabecalhos: {
 }): boolean {
   return cabecalhos.get("sec-fetch-mode") === "navigate";
 }
+
+/**
+ * Marca, na URL da renovação, que quem mandou para cá foi um LAYOUT que achou a
+ * sessão revogada — não o proxy.
+ *
+ * A diferença importa para a trava anti-laço. O proxy só desvia quando NÃO há
+ * `cp_renov`; o layout desvia com o access cookie ainda válido, e não tem como
+ * olhar a marca antes. Se a renovação der certo e o layout recusar de novo (só
+ * numa corrida com outra revogação), a segunda passada chega aqui com
+ * `cp_renov` já gravado — e aí a rota desiste, apaga os cookies e manda para o
+ * login. Sem o parâmetro essa regra valeria para TODA chamada, e o botão
+ * "Entrar no CeasaPro" de `/conta/suspensa` (que também aponta para a
+ * renovação) deslogaria quem o apertasse até 30 s depois de uma renovação.
+ */
+export const PARAM_SESSAO_REVOGADA = "revogada";
+
+/**
+ * Para onde o layout manda uma sessão que o banco já revogou.
+ *
+ * É a própria rota de renovação, e isso não é atalho: ela já sabe tentar o
+ * refresh token (que quase sempre morreu junto, porque `revokeAllForUser` e
+ * `revokeAllForTenant` revogam os dois) e, não dando, APAGAR os cookies antes de
+ * mandar ao `/login`. Apagar é o que desfaz o laço — com o access cookie vivo, o
+ * proxy devolveria o `/login` para a home, e a home para o layout que recusa.
+ *
+ * Empresa bloqueada chega a `/conta/suspensa` pelo caminho normal: o login novo
+ * emite o token com o status atual, e o proxy desvia a partir dele.
+ */
+export function rotaDeSessaoRevogada(destino: string): string {
+  const q = new URLSearchParams({ next: destinoSeguro(destino), [PARAM_SESSAO_REVOGADA]: "1" });
+  return `/api/auth/renovar?${q.toString()}`;
+}
+
+/** A requisição à renovação veio de um layout que recusou a sessão? */
+export function veioDeSessaoRevogada(params: URLSearchParams): boolean {
+  return params.get(PARAM_SESSAO_REVOGADA) === "1";
+}

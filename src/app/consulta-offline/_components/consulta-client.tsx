@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { CloudOff, RefreshCw, WifiOff } from "lucide-react";
-import type { PwaSnapshot } from "@/app/api/pwa/snapshot/route";
+import type { PwaSnapshot } from "@/lib/pwa/snapshot";
 import { carregarSnapshot, idadeEmMinutos } from "@/lib/pwa/offline-store";
 import { useOnline } from "@/lib/pwa/use-online";
 import { valorExibivel } from "@/lib/format";
@@ -25,11 +25,20 @@ import { Button } from "@/components/ui/button";
 // `valorExibivel` pelo mesmo motivo do `StatCard`: o `toLocaleString` separa
 // "R$" do número com NBSP, que proíbe quebra, então valor comprido estoura a
 // caixa; e o negativo com hífen deixa o sinal órfão numa linha só dele.
-const brl = (v: number) =>
-  valorExibivel(v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }));
+//
+// Aceita `null`/`undefined` e devolve "—": o snapshot vem do aparelho e pode ter
+// sido gravado por outro build. A versão de formato (`avaliarSnapshot`) já barra
+// o registro estranho antes daqui; isto é a segunda rede, para um campo faltando
+// virar um traço na tela em vez de derrubar a consulta inteira.
+const brl = (v: number | null | undefined) =>
+  typeof v === "number" && Number.isFinite(v)
+    ? valorExibivel(v.toLocaleString("pt-BR", { style: "currency", currency: "BRL" }))
+    : "—";
 
-const qtd = (v: number) =>
-  v.toLocaleString("pt-BR", { maximumFractionDigits: 3 });
+const qtd = (v: number | null | undefined) =>
+  typeof v === "number" && Number.isFinite(v)
+    ? v.toLocaleString("pt-BR", { maximumFractionDigits: 3 })
+    : "—";
 
 function descreverIdade(minutos: number): string {
   if (minutos < 1) return "agora mesmo";
@@ -165,8 +174,10 @@ export function ConsultaOfflineClient() {
                   {/* `min-w-0`: sem ele o rótulo não encolhe abaixo da palavra
                       mais longa e empurra o valor para fora do cartão. */}
                   <span className="min-w-0">{a.label}</span>
-                  {/* Ver `Aviso.total`: nulo é "não é dinheiro", e não zero. */}
-                  {a.total !== null && (
+                  {/* Ver `Aviso.total`: nulo é "não é dinheiro", e não zero.
+                      `typeof`, e não `!== null`: ausente (`undefined`) também
+                      não é valor. */}
+                  {typeof a.total === "number" && (
                     <span className="shrink-0 font-medium tabular-nums">{brl(a.total)}</span>
                   )}
                 </div>
@@ -217,7 +228,7 @@ export function ConsultaOfflineClient() {
               <div key={p.productId} className="flex items-center justify-between gap-3 py-2.5">
                 <span className="min-w-0 truncate">{p.name}</span>
                 <span className="shrink-0 tabular-nums text-muted-foreground">
-                  {qtd(p.quantity)} {p.saleUnit.toLowerCase()}
+                  {qtd(p.quantity)} {p.saleUnit?.toLowerCase() ?? ""}
                 </span>
               </div>
             ))}

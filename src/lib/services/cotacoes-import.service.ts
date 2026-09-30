@@ -3,13 +3,15 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import { slugProduto } from "@/lib/cotacoes/nome";
-import { frescorDoBoletim } from "@/lib/cotacoes/frescor";
+import { frescorAlarma, frescorDoBoletim } from "@/lib/cotacoes/frescor";
 import { civilParts } from "@/lib/tz";
 import { fontePara, type FonteDeCotacao } from "@/lib/cotacoes/fontes";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { NotFoundError } from "@/lib/http/app-error";
 import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
+import { normalizarEmbalagem } from "@/lib/cotacoes/embalagem";
+import { audit } from "@/lib/audit";
 
 // Reexportada para não quebrar quem já a importava daqui. A definição saiu
 // deste arquivo e mora em `lib/cotacoes/serie.ts` — o comentário lá explica
@@ -40,16 +42,48 @@ const PAUSA_ENTRE_CENTRAIS_MS = 2_000;
  * meio de uma gravação.
  */
 const ORCAMENTO_PADRAO_MS = 40_000;
+/**
+ * Quanto do orçamento fica reservado para GRAVAR depois da última resposta.
+ *
+ * O prazo repassado às fontes é o do orçamento menos isto: uma resposta que
+ * chega no último segundo de rede ainda precisa virar INSERT e `CeasaImportRun`
+ * antes de a rota responder.
+ */
+const RESERVA_PARA_GRAVAR_MS = 3_000;
+/**
+ * Abaixo disto de sobra não se começa central nova.
+ *
+ * É a reserva de gravação mais o mínimo de uma tentativa de rede — começar com
+ * menos seria abrir uma busca que o próprio prazo abortaria na hora.
+ */
+const MINIMO_PARA_COMECAR_CENTRAL_MS = 5_000;
 
 const dormir = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** O texto da run de uma central interrompida pelo prazo. A tela do admin o mostra. */
+const ERRO_INTERROMPIDA =
+  "Interrompida: o prazo da execução acabou antes de a fonte responder. Fica para a próxima execução.";
 
 export interface ResultadoDaImportacao {
-  status: "OK" | "VAZIO" | "FALHA" | "SEM_FONTE";
+  /**
+   * `SEM_TEMPO`: a central começou e o prazo da execução acabou no meio. Não é
+   * quebra da fonte — não avisa falha —, mas fica registrada como tentativa que
+   * não terminou, e a defasagem cobre o caso de isso se repetir.
+   */
+  status: "OK" | "VAZIO" | "FALHA" | "SEM_FONTE" | "SEM_TEMPO";
   centralCode: string;
   cotacoesGravadas: number;
   quoteDate?: Date;
   erro?: string;
+  /** Datas anteriores que estavam faltando e foram completadas nesta execução. */
+  diasCompletados?: number;
+}
+
+/** Quem fez a ação de super-admin — vai para a auditoria. */
+export interface AutorDaAcao {
+  userId?: string | null;
+  email?: string | null;
+  ip?: string | null;
 }
 
 /**
@@ -173,15 +207,50 @@ export const CotacoesImportService = {
     });
     const idPorSlug = new Map(todos.map((p) => [p.slug, p.id]));
 
+    /*
+      Boletim DIGITADO (manual / cliente) herda a grafia da embalagem que a praça
+      já tem gravada.
+
+      `lerCsvDeCotacoes` agora normaliza a embalagem (maiúsculas, espaço único),
+      mas o histórico gravado antes disso pode ter "Kg". A chave da cotação e o
+      vínculo do cliente comparam o texto EXATO, então gravar "KG" ao lado do
+      "Kg" antigo partiria a série em duas — variação recomeçando do zero,
+      vínculo e alerta deixando de casar. Reusar a grafia existente mantém a
+      série inteira sem mexer em dado já gravado (§15). Fonte automática fica de
+      fora: ela escreve sempre igual, e a consulta seria custo sem efeito.
+    */
+    const grafiaExistente = new Map<string, string>();
+    if (fontePara(sourceKey) === null && idPorSlug.size > 0) {
+      const existentes = await prisma.ceasaQuote.groupBy({
+        by: ["ceasaProductId", "unit"],
+        where: { centralCode, ceasaProductId: { in: [...idPorSlug.values()] } },
+        _max: { quoteDate: true },
+      });
+      // A mais recente vence, se o histórico já tiver as duas grafias.
+      existentes.sort(
+        (a, b) => (a._max.quoteDate?.getTime() ?? 0) - (b._max.quoteDate?.getTime() ?? 0),
+      );
+      for (const e of existentes) {
+        grafiaExistente.set(`${e.ceasaProductId}|${normalizarEmbalagem(e.unit)}`, e.unit);
+      }
+    }
+
+    // Deduplica de novo pela chave FINAL (id + embalagem gravada): duas grafias
+    // que viram a mesma estourariam o ON CONFLICT no mesmo INSERT.
+    const porChaveFinal = new Map<string, { id: string; unit: string; linha: LinhaDeCotacao }>();
+    for (const { slug, linha } of itens) {
+      const id = idPorSlug.get(slug);
+      if (!id) continue;
+      const unit =
+        grafiaExistente.get(`${id}|${normalizarEmbalagem(linha.unidade)}`) ?? linha.unidade;
+      porChaveFinal.set(`${id}|${unit}`, { id, unit, linha });
+    }
+
     const agora = new Date();
-    const valores = itens
-      .map(({ slug, linha }) => {
-        const id = idPorSlug.get(slug);
-        if (!id) return null;
-        return Prisma.sql`(${centralCode}, ${id}, ${data}, ${linha.unidade},
-          ${linha.minimo}, ${linha.comum}, ${linha.maximo}, ${linha.referencia}, ${agora})`;
-      })
-      .filter((v): v is Prisma.Sql => v !== null);
+    const valores = [...porChaveFinal.values()].map(
+      ({ id, unit, linha }) => Prisma.sql`(${centralCode}, ${id}, ${data}, ${unit},
+          ${linha.minimo}, ${linha.comum}, ${linha.maximo}, ${linha.referencia}, ${agora})`,
+    );
 
     // Um único INSERT para o boletim inteiro. `ON CONFLICT` mantém a
     // idempotência: reimportar o mesmo dia corrige em vez de duplicar.
@@ -229,10 +298,21 @@ export const CotacoesImportService = {
    * sozinho: o dado errado era o preço oficial daquela praça para todos os
    * clientes dela, indefinidamente, e a única saída era SQL na produção.
    *
-   * Só o super-admin chega aqui. Apaga as cotações daquele dia e as execuções de
-   * importação daquele dia — as duas, porque deixar a run para trás faria
-   * `/admin/cotacoes` continuar afirmando "importado com sucesso" para um dia que
-   * não tem mais preço nenhum.
+   * Só o super-admin chega aqui. Apaga as cotações daquele dia e DEIXA RASTRO:
+   *
+   *  - as execuções de importação daquele dia NÃO são apagadas. Elas são o
+   *    único registro de onde o dado veio (fonte, linhas, fingerprint), e
+   *    apagá-las junto deixava a ação destrutiva sem registro nenhum;
+   *  - em vez disso, grava-se uma execução NOVA, `VAZIO`, dizendo que o boletim
+   *    foi apagado e por quem. Como `/admin/cotacoes` mostra a execução mais
+   *    recente, a tela deixa de afirmar "importado" para um dia sem preço — que
+   *    era o motivo de a versão anterior apagar a run;
+   *  - `audit()` do super-admin, na MESMA transação do delete (§3.5): a tabela é
+   *    lida por todos os clientes da praça, e "quem apagou?" precisa de resposta.
+   *
+   * Transação interativa, e ela funciona aqui: `publicar`/`recusar` de
+   * `cotacoes-envio.service.ts` já a usam. A ressalva do pgbouncer em `gravar` é
+   * sobre o lote grande, não sobre três escritas.
    *
    * NÃO apaga `ceasa_products`: o catálogo é global e compartilhado entre praças
    * e datas, então remover um produto por causa de um boletim ruim derrubaria os
@@ -240,26 +320,67 @@ export const CotacoesImportService = {
    * boletim fica no catálogo sem cotação, que é inerte — `getTelaDeVinculo` só
    * oferece o que a praça de fato cota.
    */
-  async apagarBoletim(centralCode: string, quoteDate: Date) {
+  async apagarBoletim(centralCode: string, quoteDate: Date, autor: AutorDaAcao = {}) {
     // A data chega da tela como início do dia no fuso do app; a coluna é
     // `@db.Date`, e é assim que `gravar` normaliza. Sem isto, um fuso negativo
     // apagaria o dia errado.
     const dia = new Date(
       Date.UTC(quoteDate.getUTCFullYear(), quoteDate.getUTCMonth(), quoteDate.getUTCDate()),
     );
+    // `toISOString` e não `isoDateTz`: a coluna é DATE em meia-noite UTC, e
+    // convertê-la para o fuso do app devolveria o dia anterior.
+    const diaIso = dia.toISOString().slice(0, 10);
 
-    const cotacoes = await prisma.ceasaQuote.deleteMany({
-      where: { centralCode, quoteDate: dia },
-    });
-    const execucoes = await prisma.ceasaImportRun.deleteMany({
-      where: { centralCode, quoteDate: dia },
+    const r = await prisma.$transaction(async (tx) => {
+      const execucoesDoDia = await tx.ceasaImportRun.findMany({
+        where: { centralCode, quoteDate: dia },
+        select: { id: true, sourceKey: true, status: true, rowsUpserted: true },
+      });
+      const cotacoes = await tx.ceasaQuote.deleteMany({
+        where: { centralCode, quoteDate: dia },
+      });
+      if (cotacoes.count === 0) return { cotacoesApagadas: 0, registroId: null };
+
+      const quem = autor.email ?? "super-admin";
+      const registro = await tx.ceasaImportRun.create({
+        data: {
+          centralCode,
+          sourceKey: "apagado",
+          quoteDate: dia,
+          status: "VAZIO",
+          error: `Boletim de ${diaIso.split("-").reverse().join("/")} apagado por ${quem} (${cotacoes.count} cotações).`.slice(0, 500),
+          finishedAt: new Date(),
+        },
+        select: { id: true },
+      });
+      await audit(
+        {
+          // Tabela global: não há empresa dona do dado. A auditoria global do
+          // super-admin (`/admin/auditoria`) é onde isto aparece.
+          tenantId: null,
+          userId: autor.userId ?? null,
+          actorEmail: autor.email ?? null,
+          action: "DELETE",
+          entity: "CeasaQuote",
+          entityId: `${centralCode}:${diaIso}`,
+          oldData: {
+            central: centralCode,
+            data: diaIso,
+            cotacoes: cotacoes.count,
+            execucoes: execucoesDoDia,
+          },
+          ip: autor.ip ?? null,
+        },
+        tx,
+      );
+      return { cotacoesApagadas: cotacoes.count, registroId: registro.id };
     });
 
     logger.warn(
-      { centralCode, quoteDate: dia.toISOString().slice(0, 10), cotacoes: cotacoes.count },
+      { centralCode, quoteDate: diaIso, cotacoes: r.cotacoesApagadas, por: autor.email ?? null },
       "Boletim de cotações APAGADO",
     );
-    return { cotacoesApagadas: cotacoes.count, execucoesApagadas: execucoes.count };
+    return r;
   },
 
   /**
@@ -273,12 +394,20 @@ export const CotacoesImportService = {
    * feriado emendado ou o boletim do dia ainda não publicado deixariam a tela
    * vazia mesmo havendo dado de dois dias atrás. A tela mostra a data do que
    * veio, então recuar não engana ninguém.
+   *
+   * **Prazo.** Com `prazo` (epoch ms), nenhum dia de recuo começa depois dele e
+   * toda requisição da fonte o respeita. Interrompida pelo prazo, a central fica
+   * registrada como tentativa que não terminou (`SEM_TEMPO`), sem aviso de falha.
+   *
+   * **Lacunas.** Depois de gravar o dia mais recente, completa os dias entre ele
+   * e o último boletim já gravado da central — ver `completarLacunas`.
    */
   async importarCentral(
     centralCode: string,
-    opts: { agora?: Date; fonteInjetada?: FonteDeCotacao } = {},
+    opts: { agora?: Date; fonteInjetada?: FonteDeCotacao; prazo?: number } = {},
   ): Promise<ResultadoDaImportacao> {
     const agora = opts.agora ?? new Date();
+    const prazo = opts.prazo;
     const central = await prisma.ceasaCentral.findUnique({
       where: { code: centralCode },
       select: { code: true, name: true, sourceKey: true, sourceParams: true, active: true },
@@ -292,17 +421,25 @@ export const CotacoesImportService = {
       return { status: "SEM_FONTE", centralCode, cotacoesGravadas: 0 };
     }
 
+    // O dia é o BRASILEIRO, não o do servidor. O cron roda em UTC; entre 21h e
+    // meia-noite no Brasil o "hoje" em UTC já é amanhã, e a primeira tentativa
+    // pediria à fonte um boletim do futuro — gastando uma requisição e
+    // recuando um dia a menos do que devia.
+    const hoje = civilParts(agora);
+    const diaDoRecuo = (recuo: number) =>
+      new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - recuo));
+
     let ultimoErro: string | undefined;
     for (let recuo = 0; recuo < MAX_DIAS_DE_RECUO; recuo++) {
-      // O dia é o BRASILEIRO, não o do servidor. O cron roda em UTC; entre 21h e
-      // meia-noite no Brasil o "hoje" em UTC já é amanhã, e a primeira tentativa
-      // pediria à fonte um boletim do futuro — gastando uma requisição e
-      // recuando um dia a menos do que devia.
-      const hoje = civilParts(agora);
-      const dia = new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - recuo));
-      const r = await fonte.buscar({ sourceParams: central.sourceParams, data: dia });
+      const dia = diaDoRecuo(recuo);
+      if (prazo !== undefined && Date.now() >= prazo) {
+        return interrompida(central.code, fonte.chave, dia);
+      }
+      const r = await fonte.buscar({ sourceParams: central.sourceParams, data: dia, prazo });
 
       if (!r.ok) {
+        // Prazo da execução, não quebra da fonte: registra e segue sem alarme.
+        if (r.semTempo) return interrompida(central.code, fonte.chave, dia);
         ultimoErro = r.erro ?? "falha desconhecida";
         await registrarFalha(central.code, fonte.chave, dia, ultimoErro, r.httpStatus);
         await avisarFalha(central.name, ultimoErro);
@@ -321,11 +458,20 @@ export const CotacoesImportService = {
 
       await conferirFingerprint(central, fonte.chave, r.fingerprint ?? null, gravado.runId);
 
+      const lacunas = await this.completarLacunas({
+        central,
+        fonte,
+        maisRecente: gravado.quoteDate,
+        limite: diaDoRecuo(MAX_DIAS_DE_RECUO - 1),
+        prazo,
+      });
+
       return {
         status: "OK",
         centralCode,
-        cotacoesGravadas: gravado.cotacoesGravadas,
+        cotacoesGravadas: gravado.cotacoesGravadas + lacunas.cotacoesGravadas,
         quoteDate: gravado.quoteDate,
+        diasCompletados: lacunas.dias,
       };
     }
 
@@ -343,6 +489,71 @@ export const CotacoesImportService = {
   },
 
   /**
+   * Completa os dias entre o boletim mais recente e o último já gravado.
+   *
+   * O recuo de `importarCentral` para na PRIMEIRA data com dado. Isso deixava
+   * buraco quando a praça publica depois do cron: o boletim de terça sai às 15h
+   * (a terça regrava o de segunda), e na quarta às 13:30 o de quarta já saiu —
+   * o recuo acha quarta, para, e a terça nunca é pedida. O histórico e a
+   * variação "desde o último boletim" passavam a pular um pregão calados.
+   *
+   * Só olha para trás até o último boletim já gravado da central (exclusive) e
+   * nunca além da janela do recuo. Central sem histórico não tem lacuna a
+   * completar. No caso comum — praça diária, gravada ontem — não faz requisição
+   * nenhuma. Tarefa acessória: falha ou falta de prazo aqui só interrompe o
+   * completar, e o dia principal, já gravado, continua OK.
+   */
+  async completarLacunas(p: {
+    central: { code: string; name: string; sourceParams: Prisma.JsonValue | null };
+    fonte: FonteDeCotacao;
+    maisRecente: Date;
+    /** Dia mais antigo que pode ser pedido (o fim da janela do recuo). */
+    limite: Date;
+    prazo?: number;
+  }): Promise<{ dias: number; cotacoesGravadas: number }> {
+    const anterior = await prisma.ceasaQuote.aggregate({
+      where: { centralCode: p.central.code, quoteDate: { lt: p.maisRecente } },
+      _max: { quoteDate: true },
+    });
+    const ultimoGravado = anterior._max.quoteDate;
+    if (!ultimoGravado) return { dias: 0, cotacoesGravadas: 0 };
+
+    const UM_DIA = 86_400_000;
+    let dias = 0;
+    let cotacoesGravadas = 0;
+    for (
+      let t = p.maisRecente.getTime() - UM_DIA;
+      t > ultimoGravado.getTime() && t >= p.limite.getTime();
+      t -= UM_DIA
+    ) {
+      if (p.prazo !== undefined && Date.now() >= p.prazo) break;
+      const dia = new Date(t);
+      const r = await p.fonte.buscar({ sourceParams: p.central.sourceParams, data: dia, prazo: p.prazo });
+      if (!r.ok) {
+        logger.warn(
+          { centralCode: p.central.code, dia: dia.toISOString().slice(0, 10), err: r.erro },
+          "Completar lacuna de boletim interrompido",
+        );
+        break;
+      }
+      if (r.vazio) continue;
+      const g = await this.gravar({
+        centralCode: p.central.code,
+        quoteDate: dia,
+        linhas: r.linhas,
+        sourceKey: p.fonte.chave,
+        fingerprint: r.fingerprint ?? null,
+      });
+      dias += 1;
+      cotacoesGravadas += g.cotacoesGravadas;
+    }
+    if (dias > 0) {
+      logger.info({ centralCode: p.central.code, dias }, "Lacunas de boletim completadas");
+    }
+    return { dias, cotacoesGravadas };
+  },
+
+  /**
    * Importa só as centrais que ALGUM cliente realmente usa.
    *
    * Não se martela um site público por dado que ninguém lê, e assim o orçamento
@@ -356,6 +567,22 @@ export const CotacoesImportService = {
   ) {
     const inicio = Date.now();
     const orcamento = opts.orcamentoMs ?? ORCAMENTO_PADRAO_MS;
+    /*
+      Prazo ABSOLUTO, e não só a conferência na partida de cada central.
+
+      A versão anterior olhava o relógio apenas no topo do laço. Uma fonte
+      pendurada custa 12 s + 1 s + 12 s por requisição (e a CEASAMINAS ainda
+      recua até 7 dias), então uma central começada com 10 s de sobra terminava
+      muito depois do orçamento — e a rota tem só 15 s de folga até o
+      `maxDuration`. A plataforma matava a função, a run da central não era
+      gravada e `verificarDefasagem`, que roda depois da importação, não rodava:
+      o alarme desligado justo durante a queda da fonte.
+
+      Agora o prazo desce até `buscarHtml`, que encurta o tempo limite de cada
+      tentativa para caber nele, com reserva para gravar o que chegou.
+    */
+    const prazo = inicio + orcamento;
+    const prazoDeRede = prazo - RESERVA_PARA_GRAVAR_MS;
 
     const emUso = await prisma.tenant.findMany({
       where: { deletedAt: null, ceasaCentralCode: { not: null } },
@@ -418,7 +645,8 @@ export const CotacoesImportService = {
 
         O boletim é diário: adiar uma central em algumas horas não custa nada.
       */
-      if (Date.now() - inicio > orcamento) {
+      const pausa = i > 0 ? PAUSA_ENTRE_CENTRAIS_MS : 0;
+      if (prazo - Date.now() < pausa + MINIMO_PARA_COMECAR_CENTRAL_MS) {
         puladasPorTempo = fila.length - i;
         logger.warn(
           { restantes: puladasPorTempo, decorridoMs: Date.now() - inicio },
@@ -426,9 +654,15 @@ export const CotacoesImportService = {
         );
         break;
       }
-      if (i > 0) await dormir(PAUSA_ENTRE_CENTRAIS_MS);
+      if (pausa > 0) await dormir(pausa);
       try {
-        resultados.push(await this.importarCentral(c.code, opts));
+        resultados.push(
+          await this.importarCentral(c.code, {
+            agora: opts.agora,
+            fonteInjetada: opts.fonteInjetada,
+            prazo: prazoDeRede,
+          }),
+        );
       } catch (e) {
         // Uma central quebrada não pode derrubar as outras.
         const erro = e instanceof Error ? e.message : String(e);
@@ -478,7 +712,7 @@ export const CotacoesImportService = {
       // O limiar é o DA CENTRAL: as unidades que publicam 2 a 3 vezes por semana
       // ficariam permanentemente defasadas sob um número único.
       const f = frescorDoBoletim(porCentral.get(c.code) ?? null, agora, c.maxDiasSemBoletim);
-      if (f.nivel === "defasado" || f.nivel === "ausente") {
+      if (frescorAlarma(f)) {
         defasadas.push({ code: c.code, name: c.name, dias: f.dias });
       }
     }
@@ -597,6 +831,33 @@ async function registrarFalha(
     },
   });
   logger.error({ centralCode, sourceKey, err: erro }, "Falha ao importar boletim");
+}
+
+/**
+ * A central que o prazo da execução interrompeu.
+ *
+ * Fica registrada — sem isto a tela do admin mostraria a tentativa de ontem como
+ * se fosse a de hoje —, mas SEM `avisarFalha`: não há evidência de quebra da
+ * fonte, só de que não deu tempo. Se isso se repetir, quem acusa é
+ * `verificarDefasagem`, que agora sempre chega a rodar.
+ */
+async function interrompida(
+  centralCode: string,
+  sourceKey: string,
+  quoteDate: Date,
+): Promise<ResultadoDaImportacao> {
+  await prisma.ceasaImportRun.create({
+    data: {
+      centralCode,
+      sourceKey,
+      quoteDate,
+      status: "FALHA",
+      error: ERRO_INTERROMPIDA,
+      finishedAt: new Date(),
+    },
+  });
+  logger.warn({ centralCode, sourceKey }, "Importação de central interrompida pelo prazo");
+  return { status: "SEM_TEMPO", centralCode, cotacoesGravadas: 0, erro: ERRO_INTERROMPIDA };
 }
 
 /**

@@ -10,8 +10,11 @@
  * handler de multipart, e um `<textarea>` atravessa o caminho que já existe
  * (action + Zod + JSON) sem inventar infraestrutura para isso.
  *
- * Sem imports: é função pura, testada sozinha.
+ * Função pura, testada sozinha. O único import é a normalização de embalagem,
+ * também pura, para o CSV gravar a embalagem na mesma forma que os raspadores.
  */
+
+import { normalizarEmbalagem } from "./embalagem";
 
 export interface LinhaDeCotacao {
   produto: string;
@@ -35,16 +38,32 @@ export interface ResultadoDoCsv {
  * "1.234,56" e "1234.56" precisam funcionar os dois: quem copia da planilha traz
  * vírgula, quem exporta de sistema traz ponto. A regra é: se tem vírgula, ela é
  * o decimal e o ponto é milhar.
+ *
+ * Devolve `"naoPositivo"` para zero e negativo, separado de `null` (célula
+ * vazia ou ilegível), porque a linha precisa dizer POR QUE foi recusada.
  */
-function numero(bruto: string): number | null {
+function numero(bruto: string): number | null | "naoPositivo" {
   const limpo = bruto.trim().replace(/[R$\s]/g, "");
   if (!limpo) return null;
   const normalizado = limpo.includes(",")
     ? limpo.replace(/\./g, "").replace(",", ".")
     : limpo;
   const n = Number(normalizado);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  if (!Number.isFinite(n)) return null;
+  /*
+    Zero NÃO é preço.
+
+    Planilha de praça manual escreve "0,00" para item sem comercialização. Aceito
+    como número, um comum 0 virava a referência (o `??` só cai para a faixa em
+    `null`) e anulava mínimo e máximo: a tela mostrava R$ 0,00 com "−100%", o
+    alerta de piso disparava "caiu 100% (R$ 0,00)" e o comparativo punha a praça
+    como a mais barata.
+  */
+  return n > 0 ? n : "naoPositivo";
 }
+
+export const MOTIVO_PRECO_NAO_POSITIVO =
+  "preço zero ou negativo não é cotação (deixe a célula vazia se o item não foi comercializado)";
 
 /**
  * `produto;unidade;minimo;comum;maximo`
@@ -73,9 +92,14 @@ export function lerCsvDeCotacoes(texto: string): ResultadoDoCsv {
       continue;
     }
 
-    const minimo = numero(min ?? "");
-    const medio = numero(comum ?? "");
-    const maximo = numero(max ?? "");
+    const brutos = [numero(min ?? ""), numero(comum ?? ""), numero(max ?? "")];
+    const teveNaoPositivo = brutos.includes("naoPositivo");
+    // Zero/negativo conta como célula vazia: um comum 0 com a faixa preenchida
+    // cai para o meio da faixa, em vez de zerar a referência.
+    const [minimo, medio, maximo] = brutos.map((b) => (b === "naoPositivo" ? null : b)) as (
+      | number
+      | null
+    )[];
 
     // O preço de referência é o COMUM quando existe; senão o meio da faixa;
     // senão o único que veio. Uma linha sem preço nenhum não é cotação.
@@ -83,13 +107,17 @@ export function lerCsvDeCotacoes(texto: string): ResultadoDoCsv {
       medio ??
       (minimo !== null && maximo !== null ? (minimo + maximo) / 2 : (minimo ?? maximo));
     if (referencia === null) {
-      erros.push({ linha: i + 1, motivo: "sem preço" });
+      erros.push({
+        linha: i + 1,
+        motivo: teveNaoPositivo ? MOTIVO_PRECO_NAO_POSITIVO : "sem preço",
+      });
       continue;
     }
 
     linhas.push({
       produto,
-      unidade: unidade ?? "",
+      // Mesma forma que os raspadores gravam — ver `normalizarEmbalagem`.
+      unidade: normalizarEmbalagem(unidade),
       minimo,
       comum: medio,
       maximo,

@@ -28,15 +28,52 @@ export const FinancialCalc = {
 
   /**
    * Rateia um frete total entre itens, proporcional ao valor de cada linha.
-   * Retorna o frete atribuído a cada item, na mesma ordem.
+   * Retorna o frete atribuído a cada item, na mesma ordem. A soma das partes é
+   * SEMPRE o frete informado.
+   *
+   * Duas correções:
+   *
+   * - **Compra de valor zero** (consignação, bonificação, preço acertado
+   *   depois): com todas as linhas a R$ 0 não há valor para ratear, e cada item
+   *   recebia R$ 0 de frete — a compra ficava com `totalAmount` de R$ 200 e
+   *   nenhum centavo no custo do estoque nem no CMV. Agora o rateio cai para a
+   *   QUANTIDADE de cada linha (`quantidades`), ou partes iguais sem ela.
+   * - **Resíduo do arredondamento**: cada parte é arredondada a centavos, e a
+   *   soma podia ficar um centavo acima ou abaixo do frete (R$ 0,10 em três
+   *   linhas iguais dava 0,03 × 3 = 0,09). O resíduo vai para a linha de MAIOR
+   *   parte — nunca para uma linha de parte zero, que ficaria com frete
+   *   negativo.
    */
-  ratearFrete(lineTotals: Numeric[], freteTotal: Numeric): Prisma.Decimal[] {
-    const total = add(...lineTotals);
+  ratearFrete(
+    lineTotals: Numeric[],
+    freteTotal: Numeric,
+    quantidades?: Numeric[],
+  ): Prisma.Decimal[] {
     const frete = toDecimal(freteTotal);
-    if (total.isZero() || frete.isZero()) {
+    if (lineTotals.length === 0 || frete.isZero()) {
       return lineTotals.map(() => new Prisma.Decimal(0));
     }
-    return lineTotals.map((lt) => money(mul(frete, div(lt, total))));
+
+    // Base do rateio: valor da linha; sem valor, a quantidade; sem ela, 1 a 1.
+    let pesos = lineTotals.map((lt) => toDecimal(lt));
+    if (add(...pesos).isZero()) {
+      pesos =
+        quantidades && quantidades.length === lineTotals.length && !add(...quantidades).isZero()
+          ? quantidades.map((q) => toDecimal(q))
+          : lineTotals.map(() => new Prisma.Decimal(1));
+    }
+    const base = add(...pesos);
+
+    const partes = pesos.map((p) => money(mul(frete, div(p, base))));
+    const residuo = sub(money(frete), add(...partes));
+    if (!residuo.isZero()) {
+      let maior = 0;
+      partes.forEach((p, i) => {
+        if (p.greaterThan(partes[maior]!)) maior = i;
+      });
+      partes[maior] = money(partes[maior]!.plus(residuo));
+    }
+    return partes;
   },
 
   /** Preço de venda sugerido a partir do custo e de uma margem alvo (fração, ex.: 0.30 = 30%). */
@@ -47,6 +84,45 @@ export const FinancialCalc = {
   /** Total de uma venda: quantidade * valor unitário. */
   valorTotalVenda(quantidade: Numeric, valorUnitario: Numeric) {
     return money(mul(quantidade, valorUnitario));
+  },
+
+  /**
+   * Receita LÍQUIDA de cada linha de uma venda: o desconto da VENDA
+   * (`Sale.discountAmount`) rateado entre as linhas, proporcional ao
+   * `lineTotal` de cada uma.
+   *
+   * `lineTotal` já é líquido do desconto da LINHA, mas o desconto da venda só
+   * existe no total (`totalAmount = Σ lineTotal − desconto da venda`). Somar
+   * `lineTotal` cru por produto dava receita e lucro por produto maiores que o
+   * total vendido — "Lucro por produto" nunca fechava com o relatório de
+   * vendas, e a venda que deu prejuízo depois do desconto não aparecia em
+   * "Com prejuízo".
+   *
+   * Recebe o `totalAmount` gravado (e não o desconto) de propósito: ele já traz
+   * o piso em zero, e a soma das partes é SEMPRE esse total — o resíduo de
+   * arredondamento vai para a linha de maior valor, como no rateio do frete.
+   * Sem desconto (total ≥ soma das linhas), as linhas voltam como estão.
+   */
+  receitaLiquidaPorLinha(lineTotals: Numeric[], totalVenda: Numeric): Prisma.Decimal[] {
+    const linhas = lineTotals.map((lt) => toDecimal(lt));
+    const soma = add(...linhas);
+    const total = toDecimal(totalVenda);
+    if (linhas.length === 0) return [];
+    if (total.greaterThanOrEqualTo(soma)) return linhas.map((l) => money(l));
+    if (total.lessThanOrEqualTo(0) || soma.isZero()) {
+      return linhas.map(() => new Prisma.Decimal(0));
+    }
+
+    const partes = linhas.map((l) => money(div(mul(l, total), soma)));
+    const residuo = sub(money(total), add(...partes));
+    if (!residuo.isZero()) {
+      let maior = 0;
+      partes.forEach((p, i) => {
+        if (p.greaterThan(partes[maior]!)) maior = i;
+      });
+      partes[maior] = money(partes[maior]!.plus(residuo));
+    }
+    return partes;
   },
 
   /** Lucro bruto = total vendido - custo dos produtos vendidos (CMV). */

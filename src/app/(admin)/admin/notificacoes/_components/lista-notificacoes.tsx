@@ -13,6 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /**
  * Caixa de entrada do super-admin.
@@ -44,7 +45,7 @@ export function ListaNotificacoes({
 
   function marcarUma(id: string, depois?: string | null) {
     start(async () => {
-      const res = await marcarNotificacaoLida(id);
+      const res = await chamarAction(() => marcarNotificacaoLida(id));
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -58,7 +59,7 @@ export function ListaNotificacoes({
 
   function marcarTodas() {
     start(async () => {
-      const res = await marcarTodasNotificacoesLidas();
+      const res = await chamarAction(() => marcarTodasNotificacoesLidas());
       if (!res.ok) {
         toast.error(res.error.message);
         return;

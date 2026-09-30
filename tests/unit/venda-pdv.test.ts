@@ -5,6 +5,11 @@ import {
   vendaSchema,
   type VendaInput,
 } from "@/lib/validations/venda";
+import {
+  devolucaoCaixasSchema,
+  fiadoManualSchema,
+  fiadoUpdateSchema,
+} from "@/lib/validations/fiado";
 import { formaPredominante, resolvePlasticCrateQty } from "@/lib/services/vendas.service";
 
 const item = (patch: Partial<VendaInput["items"][number]> = {}) => ({
@@ -71,8 +76,11 @@ describe("validação da venda", () => {
     ).toBe(true);
   });
 
-  it("caixa plástica exige cliente", () => {
-    expect(vendaSchema.safeParse(venda({ plasticCrateQty: 3 })).success).toBe(false);
+  // "Caixa plástica exige cliente" depende do módulo de caixas, que o schema
+  // não conhece: a regra mora em `VendasService.gravarVenda` e é coberta em
+  // tests/integration/venda-pdv-fluxo.test.ts.
+  it("caixa plástica sem cliente não é decidida pelo schema", () => {
+    expect(vendaSchema.safeParse(venda({ plasticCrateQty: 3 })).success).toBe(true);
   });
 
   it("as formas de pagamento têm de fechar com o total", () => {
@@ -235,13 +243,15 @@ describe("caixas plasticas informadas por item (regressao)", () => {
     ).toBe(3);
   });
 
-  // Sem cliente, nenhum RETORNO consegue devolver as caixas: a devolucao exige
-  // o nome de quem levou. Ficariam presas para sempre.
-  it("caixa por item sem cliente e recusada", () => {
+  // "Caixa exige cliente" saiu do schema e foi para o servico, que sabe se a
+  // empresa tem o modulo de caixas: o refine barrava a venda de balcao de quem
+  // nem controla caixa. A recusa (com o modulo ligado) e a passagem (sem ele)
+  // estao em tests/integration/venda-pdv-fluxo.test.ts.
+  it("caixa por item sem cliente nao e barrada pelo schema (o servico decide)", () => {
     const r = vendaSchema.safeParse(
       venda({ paymentMethod: "DINHEIRO", items: itensComCaixa as never, customerName: null }),
     );
-    expect(r.success).toBe(false);
+    expect(r.success).toBe(true);
   });
 
   it("caixa por item com cliente passa", () => {
@@ -326,5 +336,71 @@ describe("tolerancia das parcelas medida em centavos", () => {
       }),
     );
     expect(r.success).toBe(false);
+  });
+});
+
+describe("datas da venda e do fiado: so data que existe (regressao)", () => {
+  // `z.string()` puro aceitava "2026-02-31", que o servico gravava como 03/03,
+  // e "31/12/2026", que estourava no Prisma como 500.
+  it("vendaSchema recusa saleDate e dueDate impossiveis ou em outro formato", () => {
+    for (const d of ["2026-02-31", "2026-04-31", "31/12/2026"]) {
+      expect(vendaSchema.safeParse(venda({ saleDate: d })).success).toBe(false);
+      expect(vendaSchema.safeParse(venda({ dueDate: d })).success).toBe(false);
+    }
+  });
+
+  it("vendaSchema aceita data real, vazia ou ausente", () => {
+    expect(vendaSchema.safeParse(venda({ saleDate: "2028-02-29" })).success).toBe(true);
+    expect(vendaSchema.safeParse(venda({ dueDate: null })).success).toBe(true);
+    expect(vendaSchema.safeParse(venda({ dueDate: "" })).success).toBe(true);
+    expect(vendaSchema.safeParse(venda()).success).toBe(true);
+  });
+
+  const fiado = (patch: Record<string, unknown> = {}) => ({
+    customerName: "Joao",
+    saleDate: "2026-09-10",
+    items: [{ productId: "p1", quantity: 1, unitPrice: 10 }],
+    ...patch,
+  });
+
+  it("fiadoManualSchema recusa data impossivel na venda e no vencimento", () => {
+    expect(fiadoManualSchema.safeParse(fiado()).success).toBe(true);
+    expect(fiadoManualSchema.safeParse(fiado({ saleDate: "2026-02-31" })).success).toBe(false);
+    expect(fiadoManualSchema.safeParse(fiado({ dueDate: "2026-04-31" })).success).toBe(false);
+    expect(fiadoUpdateSchema.safeParse({ id: "x", dueDate: "2026-02-30" }).success).toBe(false);
+    expect(
+      devolucaoCaixasSchema.safeParse({ accountId: "x", quantity: 1, movementDate: "10/09/2026" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+describe("fiado manual exige preco em todo item (regressao)", () => {
+  // O formulario abre a linha com preco 0. Com tudo zerado, a venda, a baixa de
+  // estoque e as caixas eram gravadas e a tela respondia erro; cada nova
+  // tentativa baixava o estoque de novo.
+  const fiado = (items: { productId: string; quantity: number; unitPrice: number }[]) => ({
+    customerName: "Joao",
+    saleDate: "2026-09-10",
+    items,
+  });
+
+  it("recusa item com preco zero, sozinho ou entre outros", () => {
+    const r = fiadoManualSchema.safeParse(fiado([{ productId: "p1", quantity: 1, unitPrice: 0 }]));
+    expect(r.success).toBe(false);
+    expect(
+      fiadoManualSchema.safeParse(
+        fiado([
+          { productId: "p1", quantity: 1, unitPrice: 10 },
+          { productId: "p2", quantity: 1, unitPrice: 0 },
+        ]),
+      ).success,
+    ).toBe(false);
+  });
+
+  it("aceita quando todos os itens tem preco", () => {
+    expect(
+      fiadoManualSchema.safeParse(fiado([{ productId: "p1", quantity: 1, unitPrice: 0.5 }])).success,
+    ).toBe(true);
   });
 });

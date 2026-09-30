@@ -10,6 +10,7 @@ import { DespesasService } from "./despesas.service";
 import type { CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz } from "@/lib/tz";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 export const ComprasService = {
   async list(tenantId: string) {
@@ -61,12 +62,36 @@ export const ComprasService = {
     return mapa;
   },
 
+  /** Compra já gravada com esta chave (o `include` casa com o da transação). */
+  async porChaveDeIdempotencia(tenantId: string, chave: string) {
+    return getTenantPrisma(tenantId).purchase.findFirst({
+      where: { idempotencyKey: chave },
+      include: { items: true },
+    });
+  },
+
   async registrarCompra(input: CompraInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
+
+    // Mesmo molde de `VendasService.registrarVenda`. O toque duplo em "Salvar
+    // compra" (ou a retentativa depois de um timeout em que o servidor gravou)
+    // dava entrada no estoque, nas caixas e no frete DUAS vezes. O atalho pega
+    // a retentativa depois da primeira; o índice único pega a corrida.
+    if (input.idempotencyKey) {
+      const jaExiste = await this.porChaveDeIdempotencia(ctx.tenantId, input.idempotencyKey);
+      if (jaExiste) return jaExiste;
+    }
+
     const productIds = [...new Set(input.items.map((i) => i.productId))];
 
-    const caixasRecebidas = input.caixasRecebidas ?? 0;
-    const caixasQuebradas = input.caixasQuebradas ?? 0;
+    // Sem o módulo `caixas`, a compra não mexe no livro-razão de caixas — o
+    // mesmo gate da venda (`registrarVenda`). A tela esconde o bloco "chegou
+    // em caixa plástica" nesse caso; aqui é a barreira de verdade, contra
+    // POST montado à mão ou tela velha aberta antes de o plano mudar. Zerar em
+    // vez de recusar: a compra em si é legítima, só o controle não é do plano.
+    const caixasHabilitado = isModuleEnabled(ctx.session.modules, "caixas");
+    const caixasRecebidas = caixasHabilitado ? (input.caixasRecebidas ?? 0) : 0;
+    const caixasQuebradas = caixasHabilitado ? (input.caixasQuebradas ?? 0) : 0;
     if (caixasQuebradas > caixasRecebidas) {
       throw new BusinessRuleError(
         "As caixas quebradas não podem passar do total de caixas recebidas.",
@@ -82,7 +107,13 @@ export const ComprasService = {
       : null;
 
     const lineTotals = input.items.map((i) => mul(i.quantity, i.unitPrice));
-    const freightShares = FinancialCalc.ratearFrete(lineTotals, input.freight);
+    // As quantidades vão junto para a compra de valor zero (consignação,
+    // bonificação): sem valor para ratear, o frete era descartado do custo.
+    const freightShares = FinancialCalc.ratearFrete(
+      lineTotals,
+      input.freight,
+      input.items.map((i) => i.quantity),
+    );
     const totalAmount = money(add(...lineTotals, input.freight));
 
     const itemsData = input.items.map((i, idx) => ({
@@ -97,7 +128,7 @@ export const ComprasService = {
       suggestedSalePrice: i.suggestedSalePrice ?? null,
     }));
 
-    return db.$transaction(async (tx) => {
+    const gravar = () => db.$transaction(async (tx) => {
       if (input.supplierId) {
         const supplier = await tx.supplier.findFirst({
           where: { id: input.supplierId, active: true },
@@ -122,6 +153,7 @@ export const ComprasService = {
           freight: input.freight,
           totalAmount,
           notes: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
           items: { create: itemsData },
         },
         include: { items: true },
@@ -176,8 +208,30 @@ export const ComprasService = {
 
       return purchase;
     });
+
+    try {
+      return await gravar();
+    } catch (e) {
+      // Dois envios simultâneos com a mesma chave: o segundo INSERT espera o
+      // primeiro commitar e esbarra no índice único. Só ESSA colisão vira
+      // "já gravada" — outra unicidade qualquer continua sendo erro.
+      if (input.idempotencyKey && ehConflitoDeIdempotencia(e)) {
+        const existente = await this.porChaveDeIdempotencia(ctx.tenantId, input.idempotencyKey);
+        if (existente) return existente;
+      }
+      throw e;
+    }
   },
 };
+
+/** O P2002 é o do índice `(tenantId, idempotencyKey)` de `purchases`? */
+function ehConflitoDeIdempotencia(e: unknown): boolean {
+  const err = e as { code?: unknown; meta?: { target?: unknown } } | null;
+  if (err?.code !== "P2002") return false;
+  const alvo = err.meta?.target;
+  if (typeof alvo === "string") return alvo === "purchases_tenantId_idempotencyKey_key";
+  return Array.isArray(alvo) && alvo.map(String).includes("idempotencyKey");
+}
 
 /**
  * Compra + frete lançado como despesa operacional.

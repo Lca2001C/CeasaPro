@@ -11,6 +11,7 @@ import {
   loginComErroGoogle,
   trocarCodigoPorPerfil,
 } from "@/lib/auth/google-oauth";
+import { describeError, logger } from "@/lib/logger";
 
 export const runtime = "nodejs";
 
@@ -18,11 +19,31 @@ export const runtime = "nodejs";
  * Volta do Google. Sem JavaScript: valida o `state`, troca o code, abre a sessão
  * e redireciona. Qualquer falha cai no login com uma mensagem genérica — o
  * detalhe (code inválido, e-mail sem verificação) não deve virar oráculo.
+ *
+ * "Qualquer falha" inclui as que LANÇAM: rede caindo no meio da troca do code
+ * com o Google (`fetch` rejeita), banco fora ao vincular a conta. Sem o
+ * try/catch isso chegava ao navegador como um 500 cru, numa aba que a pessoa
+ * abriu clicando num botão da tela de login — sem caminho de volta.
  */
 export async function GET(req: NextRequest) {
   const origin = req.nextUrl.origin;
   const redirectLogin = (path: string) => Response.redirect(new URL(path, origin));
 
+  try {
+    return await concluir(req, redirectLogin);
+  } catch (e) {
+    logger.error({ err: describeError(e) }, "Falha no retorno do login com Google");
+    // O cookie de state é de uso único; se a falha veio antes de apagá-lo, apaga
+    // agora. Melhor esforço: o destino é o mesmo login de qualquer jeito.
+    await clearGoogleOAuthCookie().catch(() => undefined);
+    return redirectLogin(loginComErroGoogle("google-falhou"));
+  }
+}
+
+async function concluir(
+  req: NextRequest,
+  redirectLogin: (path: string) => Response,
+): Promise<Response> {
   const errorParam = req.nextUrl.searchParams.get("error");
   if (errorParam) {
     await clearGoogleOAuthCookie();

@@ -56,7 +56,10 @@ type CrateTxClient = {
 interface SaldoRow {
   entrada_limpa: number;
   entrada_suja: number;
+  /** Todas as quebradas na chegada (limpas + sujas) — vão para `perdidas`. */
   entrada_quebrada: number;
+  /** A parte de `entrada_quebrada` que chegou em ENTRADA suja. */
+  entrada_quebrada_suja: number;
   saida: number;
   retorno: number;
   saida_hig: number;
@@ -72,6 +75,7 @@ const ZERO_ROW: SaldoRow = {
   entrada_limpa: 0,
   entrada_suja: 0,
   entrada_quebrada: 0,
+  entrada_quebrada_suja: 0,
   saida: 0,
   retorno: 0,
   saida_hig: 0,
@@ -196,14 +200,18 @@ export function assertCrateMovement(
 
 /**
  * Caixas plásticas — livro-razão (append-only). Saldos são DERIVADOS:
- *   limpas         = ENTRADA(limpa) + RETORNO_HIGIENIZACAO − SAIDA − QUEBRA(limpa, no estoque)
- *   sujas          = ENTRADA(suja)  + RETORNO             − SAIDA_HIGIENIZACAO − QUEBRA(suja, no estoque)
+ *   limpas         = ENTRADA(limpa) − quebradas na chegada(limpa) + RETORNO_HIGIENIZACAO − SAIDA − QUEBRA(limpa, no estoque)
+ *   sujas          = ENTRADA(suja)  − quebradas na chegada(suja)  + RETORNO − SAIDA_HIGIENIZACAO − QUEBRA(suja, no estoque)
  *   emHigienizacao = SAIDA_HIGIENIZACAO − RETORNO_HIGIENIZACAO − QUEBRA(no higienizador)
  *   comClientes    = SAIDA − RETORNO − QUEBRA(com cliente)
  *   perdidas       = QUEBRA(todas) + ENTRADA.brokenQty
  *   vazias         = limpas + sujas
  * Para dados anteriores à higienização integrada (dirty=false, cleanerName=null),
- * `limpas + sujas` reproduz exatamente a fórmula antiga de `vazias`.
+ * `limpas + sujas` reproduz a fórmula de `vazias` de docs/03-funcionalidades.md.
+ *
+ * `ENTRADA.quantity` é o TOTAL que chegou, quebradas incluídas — é o que a
+ * compra e o formulário manual dizem ("Quantas caixas" + "Quebradas na
+ * chegada", com quebradas ≤ total). As quebradas saem do pote em que entraram.
  */
 /**
  * Serializa as escritas de caixa desta empresa, pela duração da transação.
@@ -222,7 +230,10 @@ export function assertCrateMovement(
  *
  * O `1` é o domínio "caixas plásticas" dentro do namespace da empresa.
  */
-async function travarCaixasDaEmpresa(tx: CrateTxClient, tenantId: string): Promise<void> {
+async function travarCaixasDaEmpresa(
+  tx: Pick<CrateTxClient, "$executeRaw">,
+  tenantId: string,
+): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), 1)`;
 }
 
@@ -233,6 +244,7 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
       COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS entrada_limpa,
       COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::int AS entrada_suja,
       COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada_suja,
       COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::int AS saida,
       COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::int AS retorno,
       COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS saida_hig,
@@ -248,7 +260,34 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
   return computeCrateSaldo(rows[0] ?? ZERO_ROW);
 }
 
+/**
+ * Movimento que mexe no pote "com o higienizador".
+ *
+ * Só nasce pelo lote de higienização (`HigienizacaoService`), sempre ligado a
+ * ele por `crateCleaningId`. Solto, o pote global andava sem o lote saber: uma
+ * perda de 3 lançada em "Registrar perda" com o nome do higienizador tirava 3
+ * de `emHigienizacao`, o lote continuava cobrando essas 3 e a perda pelo
+ * próprio lote passava a ser recusada ("Há apenas 0 caixa(s) no
+ * higienizador") — o lote ficava ENVIADO para sempre.
+ */
+function mexeNoHigienizador(input: MovimentoCaixaInterno): boolean {
+  if (input.type === "SAIDA_HIGIENIZACAO" || input.type === "RETORNO_HIGIENIZACAO") return true;
+  return input.type === "QUEBRA" && !input.customerName && Boolean(input.cleanerName);
+}
+
 export const CaixasService = {
+  /**
+   * Toma o lock de caixas da empresa numa transação já aberta, sem ler saldo.
+   *
+   * Para quem precisa serializar uma decisão ANTES de ler os próprios dados: o
+   * lote de higienização trava aqui e só então lê devolvidas/perdidas. Sem
+   * isso, duas operações do mesmo lote liam o mesmo "pendentes", as duas
+   * passavam e o lote resolvia mais caixas do que saíram.
+   */
+  async travarInTx(tx: Pick<CrateTxClient, "$executeRaw">, tenantId: string): Promise<void> {
+    await travarCaixasDaEmpresa(tx, tenantId);
+  },
+
   async getSaldo(tenantId: string): Promise<CrateSaldo> {
     return lerSaldoCom(prisma, tenantId);
   },
@@ -264,6 +303,25 @@ export const CaixasService = {
   async getSaldoInTx(tx: CrateTxClient, tenantId: string): Promise<CrateSaldo> {
     await travarCaixasDaEmpresa(tx, tenantId);
     return lerSaldoCom(tx, tenantId);
+  },
+
+  /**
+   * Caixas com UM cliente, lidas dentro da transação e depois do lock.
+   *
+   * É a mesma conta que `registrarInTx` usa para recusar um RETORNO/ESTORNO
+   * acima do que o cliente tem — exportada para quem precisa DECIDIR a
+   * quantidade antes de gravar. O cancelamento de venda decidia pelo saldo
+   * global (`comClientes`): João levou 8, devolveu 5, outros 30 estavam na rua;
+   * o estorno tentava 8, `registrarInTx` recusava ("João está com 3") e a venda
+   * não podia mais ser cancelada.
+   */
+  async saldoDoClienteInTx(
+    tx: CrateTxClient,
+    tenantId: string,
+    customerName: string,
+  ): Promise<number> {
+    await travarCaixasDaEmpresa(tx, tenantId);
+    return saldoDoClienteInTx(tx, tenantId, customerName);
   },
 
 
@@ -336,6 +394,17 @@ export const CaixasService = {
     input: MovimentoCaixaInterno & CrateMovementLink,
     ctx: TenantCtx,
   ) {
+    if (mexeNoHigienizador(input) && !input.crateCleaningId) {
+      throw new BusinessRuleError(
+        "Caixa enviada, devolvida ou perdida no higienizador se registra no próprio " +
+          "envio, em Higienização.",
+      );
+    }
+    if (input.type === "ENTRADA" && (input.brokenQty ?? 0) > input.quantity) {
+      throw new BusinessRuleError(
+        "As caixas quebradas não podem passar do total de caixas recebidas.",
+      );
+    }
     await travarCaixasDaEmpresa(tx, ctx.tenantId);
     const saldo = await lerSaldoCom(tx, ctx.tenantId);
     // Lido dentro da transação: vê os movimentos que ela mesma acabou de
@@ -427,9 +496,21 @@ async function saldoDoClienteInTx(
 export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
   // O estorno de venda desfaz uma SAIDA: a caixa volta para as limpas (nunca
   // chegou a sair do box) e deixa de estar com o cliente.
+  //
+  // As quebradas na chegada saem do pote em que entraram: `ENTRADA.quantity` é
+  // o total recebido. Sem descontá-las, uma compra de 30 com 4 quebradas dava
+  // 30 limpas E 4 perdidas — 34 caixas de 30 — e a SAIDA de 30 passava com só
+  // 26 boas no box.
+  const quebradaNaChegadaLimpa = r.entrada_quebrada - r.entrada_quebrada_suja;
   const limpas =
-    r.entrada_limpa + r.retorno_hig + r.estorno_saida - r.saida - r.quebra_limpa;
-  const sujas = r.entrada_suja + r.retorno - r.saida_hig - r.quebra_suja;
+    r.entrada_limpa -
+    quebradaNaChegadaLimpa +
+    r.retorno_hig +
+    r.estorno_saida -
+    r.saida -
+    r.quebra_limpa;
+  const sujas =
+    r.entrada_suja - r.entrada_quebrada_suja + r.retorno - r.saida_hig - r.quebra_suja;
   const quebraTotal =
     r.quebra_cliente + r.quebra_higienizador + r.quebra_limpa + r.quebra_suja;
   return {

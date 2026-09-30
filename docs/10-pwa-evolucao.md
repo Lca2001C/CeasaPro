@@ -285,9 +285,44 @@ Sem medição não há como saber se a evolução funcionou. O que acompanhar:
   HTML de /offline e /consulta-offline no install e cacheia o que eles referenciam em
   /_next/static (os nomes levam hash do build, então não há lista a manter). Guardar
   só o HTML deixava a página abrir offline e travar em "Carregando…".
-- **Ao trocar a versão do cache no `sw.js`**, o SW antigo continua ativo até todas as
-  abas fecharem. `skipWaiting` + `clients.claim` (já usados) encurtam isso, mas não
-  eliminam a janela.
+- **O service worker é versionado por build, pelo endereço.** O `public/sw.js` tem
+  bytes fixos, e o navegador só troca o SW quando os bytes ou o endereço mudam — até
+  a v6 nenhum deploy o trocava, e o precache de /offline e /consulta-offline ficava
+  congelado no build da primeira instalação (a consulta antiga quebrava com
+  `avisos[].total = null`), enquanto o cache de `/_next/static` acumulava os chunks
+  de todos os deploys. Agora:
+  - `next.config.ts` fixa `CEASAPRO_SW_VERSION` no build: `VERCEL_DEPLOYMENT_ID`
+    (único por deploy, inclusive redeploy do mesmo commit), senão
+    `VERCEL_GIT_COMMIT_SHA`, senão `local-<hora do build>`. Definir
+    `CEASAPRO_SW_VERSION` no ambiente do build sobrepõe os três.
+  - `pwa-register.tsx` registra `/sw.js?v=<versão>` (`src/lib/pwa/sw-version.ts`).
+    Endereço novo = install novo, que refaz o precache das páginas de fallback num
+    cache com o nome do build (`ceasapro-static-v7-<versão>`).
+  - O activate apaga todo cache `ceasapro-*` que não seja o do build atual — é assim
+    que os chunks de deploys passados saem do aparelho.
+  - Em `npm run dev` nada disso roda: o SW é desregistrado e os caches, apagados.
+  - O cabeçalho `Cache-Control: no-store` de `/sw.js` casa pelo caminho, então vale
+    com o `?v=`. `Service-Worker-Allowed: /` acompanha o `scope: "/"` do registro.
+  - Não troque o endereço do SW por outro mecanismo sem manter o `?v=`: o SW lê a
+    versão de `self.location` para nomear o cache.
+- **Estratégia por tipo de requisição:** navegação é rede primeiro, com fallback
+  para /consulta-offline ou /offline, e o HTML **nunca** é guardado; `/_next/static`
+  é cache-first (nome com hash, cache do build); `/icons/*` é stale-while-revalidate
+  (nome sem hash — cache-first prendia o ícone antigo para sempre); API e o resto
+  vão sempre à rede, sem cache. Travado em `tests/unit/pwa-service-worker.test.ts`,
+  que executa o `sw.js` real num sandbox.
+- **O snapshot offline tem versão de formato** (`schemaVersion`,
+  `src/lib/pwa/snapshot.ts`). Ele atravessa deploys no aparelho, e a tela que o lê
+  pode ser de outro build. `carregarSnapshot` só devolve a versão que o código
+  conhece: formato antigo ou corrompido é apagado (com a marca do debounce, para o
+  próximo Início regravar na hora); formato mais novo é ignorado sem apagar. O SW
+  só manda para /consulta-offline quando o snapshot é da versão que ela lê
+  (`SNAPSHOT_SCHEMA` em `sw.js`, duplicado de propósito e conferido no teste).
+  **Suba a versão** em toda mudança que um leitor antigo leria errado (campo
+  removido, renomeado, tipo novo — inclusive passar a aceitar `null`).
+- **Ao trocar o SW**, o antigo continua ativo até o novo instalar. `skipWaiting` +
+  `clients.claim` (já usados) encurtam isso; o novo instala na primeira página
+  aberta com rede depois do deploy.
 - **Barra fixa nova exige recuo de área segura.** Com `viewport-fit=cover` (Fase 4) o
   app encosta na borda física da tela do iPhone. Qualquer elemento novo com `fixed`
   ancorado embaixo precisa de `pb-[env(safe-area-inset-bottom)]`, e ancorado em cima,
@@ -367,8 +402,9 @@ inicial), que depende do navegador considerar o site instalável.
       **nada foi registrado**.
 - [ ] Voltar a ter rede e conferir que o Início traz números atualizados.
 - [ ] Sair (logout) e abrir /consulta-offline: deve dizer que não há dados salvos.
-- [ ] Trocar a versão do cache do `sw.js` exige fechar todas as abas para o SW novo
-      assumir; conferir que a v6 está ativa em DevTools › Application › Service Workers.
+- [ ] Depois de um deploy, abrir o app com rede: em DevTools › Application › Service
+      Workers o script ativo deve ser `/sw.js?v=<id do deploy novo>`, e em Cache
+      Storage deve restar só `ceasapro-static-v7-<mesmo id>`.
 
 ---
 

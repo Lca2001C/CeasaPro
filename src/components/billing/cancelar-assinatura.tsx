@@ -6,6 +6,7 @@ import { Ban, Loader2, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 import { cancelarAssinatura, reativarAssinatura } from "@/actions/plano.actions";
 import { apiPost } from "@/lib/api-client";
+import { chamarAction } from "@/lib/http/chamar-action";
 import { formatDate } from "@/lib/format";
 import { irComSessaoNova } from "@/lib/session-nav";
 import { Button } from "@/components/ui/button";
@@ -48,7 +49,7 @@ export function CancelarAssinatura({
 
   function confirmarCancelamento() {
     start(async () => {
-      const res = await cancelarAssinatura();
+      const res = await chamarAction(() => cancelarAssinatura());
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -69,7 +70,7 @@ export function CancelarAssinatura({
 
   function desfazer() {
     start(async () => {
-      const res = await reativarAssinatura();
+      const res = await chamarAction(() => reativarAssinatura());
       if (!res.ok) {
         toast.error(res.error.message);
         return;

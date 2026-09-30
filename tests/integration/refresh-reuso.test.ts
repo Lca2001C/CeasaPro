@@ -4,6 +4,8 @@ import {
   createRefreshToken,
   rotateRefreshToken,
   revokeRefreshToken,
+  revokeAllForUser,
+  revokeAllForTenant,
   hashToken,
 } from "@/lib/auth/refresh";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
@@ -159,5 +161,66 @@ describe("ninguém legítimo é derrubado", () => {
     await rotateRefreshToken(original);
     const excedente = await rotateRefreshToken(original);
     expect(excedente.tipo).toBe("reuso");
+  });
+});
+
+/**
+ * A janela de graça não pode ressuscitar sessão encerrada.
+ *
+ * As revogações em massa só tocam `revokedAt: null`, então o token já ROTATED
+ * continuava com esse motivo — e, com menos de 30 s, a graça emitia um refresh
+ * novo e vivo DEPOIS da troca de senha (ou do reuso detectado). O atacante que
+ * rotacionava a cada ~25 s seguia logado para sempre.
+ */
+describe("graça depois de a família cair", () => {
+  it("troca de senha: o token recém-rotacionado não gera sessão nova", async () => {
+    const t1 = await createRefreshToken(userId);
+    expect((await rotateRefreshToken(t1)).tipo).toBe("ok");
+
+    await revokeAllForUser(userId, "PASSWORD");
+
+    expect((await rotateRefreshToken(t1)).tipo).toBe("invalido");
+    const familyId = (
+      await prisma.refreshToken.findFirstOrThrow({ where: { tokenHash: hashToken(t1) } })
+    ).familyId;
+    expect(await prisma.refreshToken.count({ where: { familyId, revokedAt: null } })).toBe(0);
+  });
+
+  it("bloqueio da empresa: idem", async () => {
+    const { tenantId } = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const t1 = await createRefreshToken(userId);
+    expect((await rotateRefreshToken(t1)).tipo).toBe("ok");
+
+    await revokeAllForTenant(tenantId!);
+
+    expect((await rotateRefreshToken(t1)).tipo).toBe("invalido");
+  });
+
+  it("logout no aparelho: a outra aba com o token antigo não reabre a sessão", async () => {
+    const t1 = await createRefreshToken(userId);
+    const r = await rotateRefreshToken(t1);
+    const t2 = r.tipo === "ok" ? r.newToken : "";
+    await revokeRefreshToken(t2, "LOGOUT");
+
+    expect((await rotateRefreshToken(t1)).tipo).toBe("invalido");
+  });
+
+  it("reuso detectado: um token irmão ainda na graça não gera sucessor", async () => {
+    // Duas rotações na mesma família: A (antiga, fora da graça) e B (recente).
+    const a = await createRefreshToken(userId);
+    const ra = await rotateRefreshToken(a);
+    const b = ra.tipo === "ok" ? ra.newToken : "";
+    expect((await rotateRefreshToken(b)).tipo).toBe("ok");
+    await envelheceRevogacao(a);
+
+    expect((await rotateRefreshToken(a)).tipo).toBe("reuso");
+    // B foi rotacionado há segundos: antes, a graça devolvia token vivo aqui.
+    expect((await rotateRefreshToken(b)).tipo).toBe("invalido");
+  });
+
+  it("sem revogação, a corrida legítima continua funcionando", async () => {
+    const t1 = await createRefreshToken(userId);
+    expect((await rotateRefreshToken(t1)).tipo).toBe("ok");
+    expect((await rotateRefreshToken(t1)).tipo).toBe("corrida");
   });
 });

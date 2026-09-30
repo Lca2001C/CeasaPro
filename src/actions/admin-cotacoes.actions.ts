@@ -7,6 +7,7 @@ import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
 import { lerCsvDeCotacoes } from "@/lib/cotacoes/csv";
 import { endOfDayTz, parseFormDateTz, parseIsoDateTz } from "@/lib/tz";
 import { BusinessRuleError } from "@/lib/http/app-error";
+import { audit } from "@/lib/audit";
 
 const importarSchema = z.object({
   centralCode: z.string().trim().min(1, "Escolha a central").max(20),
@@ -39,7 +40,7 @@ const importarSchema = z.object({
  */
 export const importarBoletimManual = withAdminAction({
   schema: importarSchema,
-  handler: async (input) => {
+  handler: async (input, ctx) => {
     const { linhas, erros } = lerCsvDeCotacoes(input.texto);
     if (linhas.length === 0) {
       throw new BusinessRuleError(
@@ -56,6 +57,32 @@ export const importarBoletimManual = withAdminAction({
       quoteDate: parseFormDateTz(input.quoteDate),
       linhas,
       sourceKey: "manual",
+    });
+
+    /*
+      Quem colou o boletim fica registrado.
+
+      `ceasa_quotes` é lida por todos os clientes da praça, e `gravar` sobrescreve
+      o dia: "de onde veio este preço?" precisa responder também QUEM. Fora de
+      transação porque `gravar` é deliberadamente sem transação interativa (lote
+      grande atrás do pgbouncer — ver o comentário lá); `audit` sem `tx` é
+      best-effort e não desfaz a gravação se falhar.
+    */
+    await audit({
+      tenantId: null,
+      userId: ctx.userId,
+      actorEmail: ctx.session.email,
+      action: "CREATE",
+      entity: "CeasaImportRun",
+      entityId: r.runId,
+      newData: {
+        central: input.centralCode,
+        data: r.quoteDate.toISOString().slice(0, 10),
+        cotacoesGravadas: r.cotacoesGravadas,
+        produtosNovos: r.produtosNovos,
+        ignoradas: erros.length,
+      },
+      ip: ctx.ip,
     });
 
     return { ...r, ignoradas: erros.length, primeirosErros: erros.slice(0, 5) };
@@ -102,6 +129,11 @@ export const apagarBoletim = withAdminAction({
       .trim()
       .refine((v) => parseIsoDateTz(v) !== null, "Data inválida (use o seletor de data)"),
   }),
-  handler: (input) =>
-    CotacoesImportService.apagarBoletim(input.centralCode, parseFormDateTz(input.quoteDate)),
+  // O autor vai para a auditoria, na mesma transação do delete.
+  handler: (input, ctx) =>
+    CotacoesImportService.apagarBoletim(input.centralCode, parseFormDateTz(input.quoteDate), {
+      userId: ctx.userId,
+      email: ctx.session.email,
+      ip: ctx.ip,
+    }),
 });

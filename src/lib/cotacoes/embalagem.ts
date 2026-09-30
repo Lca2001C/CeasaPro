@@ -33,6 +33,24 @@ import type { SaleUnit } from "@prisma/client";
  */
 
 /**
+ * A forma CANÔNICA de uma embalagem digitada: maiúsculas, espaço único, sem
+ * sobra nas pontas. É a forma que os raspadores já produzem (as fontes publicam
+ * em maiúsculas e `textoLimpo` colapsa espaço), e é o que o resto deste arquivo
+ * já faz antes de comparar (`toUpperCase` em `pesoEmKg`/`embalagemCasaComVenda`).
+ *
+ * Existe porque a CHAVE da cotação — `(central, data, produto, unit)` — compara
+ * o texto exato: "Kg" e "KG" colados em dois boletins de uma praça manual viravam
+ * duas séries, e o vínculo gravado numa deixava de casar com a outra.
+ *
+ * `''` continua `''`: é uma embalagem real ("o boletim não trouxe a coluna"), e
+ * não pode virar `null` — ver o comentário de `CeasaQuote.unit` no schema.
+ * Aplicada só a ENTRADA nova (`lerCsvDeCotacoes`), nunca a dado já gravado.
+ */
+export function normalizarEmbalagem(unit: string | null | undefined): string {
+  return (unit ?? "").trim().replace(/\s+/g, " ").toUpperCase();
+}
+
+/**
  * O que a embalagem pesa, em quilos. `null` quando o boletim não declarou.
  *
  * Só reconhece o peso quando ele está no FIM do texto, seguido de `KG`: é assim

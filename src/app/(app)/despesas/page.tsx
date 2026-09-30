@@ -7,9 +7,9 @@ import {
   DespesasService,
   DESPESAS_POR_PAGINA,
   mesAnterior,
+  periodoDaUrl,
 } from "@/lib/services/despesas.service";
 import { formatBRL, formatQty } from "@/lib/format";
-import { addDaysTz, isoDateTz, startOfDayTz } from "@/lib/tz";
 import { toDecimal } from "@/lib/money";
 import { cn } from "@/lib/cn";
 import type { DespesaFiltro } from "@/lib/validations/despesa";
@@ -112,29 +112,27 @@ export default async function DespesasPage({
   const { tenantId, session } = await requireTenant();
   const agora = new Date();
 
-  // "Vence nos próximos N dias": atalho vindo dos avisos, traduzido em período.
-  const proximosDias = Number(sp.proximos) || 0;
-  const janelaProximos =
-    proximosDias > 0
-      ? { de: isoDateTz(startOfDayTz(agora)), ate: isoDateTz(addDaysTz(agora, proximosDias)) }
-      : null;
+  // "Vence nos próximos N dias" (atalho vindo dos avisos) ou o período escolhido
+  // no filtro. Validados: data inválida ou `proximos` absurdo na URL são
+  // ignorados, em vez de derrubarem a tela com 500.
+  const periodo = periodoDaUrl(sp, agora);
 
   const campoData =
     sp.campo === "paidDate" || sp.campo === "createdAt" || sp.campo === "dueDate"
       ? sp.campo
-      : janelaProximos
+      : periodo.proximos
         ? ("dueDate" as const)
         : undefined;
 
   const filtro: DespesaFiltro = {
     status: aba === "TODAS" || aba === "VENCIDAS" ? undefined : aba,
     vencidas: aba === "VENCIDAS" ? true : undefined,
-    q: sp.q?.trim() || undefined,
+    q: (typeof sp.q === "string" && sp.q.trim()) || undefined,
     type: sp.type === "FIXA" || sp.type === "VARIAVEL" ? sp.type : undefined,
     categoryId: sp.categoria || undefined,
     dateField: campoData,
-    from: janelaProximos?.de ?? sp.de ?? undefined,
-    to: janelaProximos?.ate ?? sp.ate ?? undefined,
+    from: periodo.from,
+    to: periodo.to,
   };
 
   const skip = (pagina - 1) * DESPESAS_POR_PAGINA;

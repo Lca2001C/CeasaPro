@@ -3,6 +3,7 @@ import { withTenantRoute } from "@/lib/http/with-route";
 import { NotFoundError } from "@/lib/http/app-error";
 import { requireModule } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
+import { isoDateTz } from "@/lib/tz";
 import { buildReport } from "@/lib/reports/report.service";
 import { toExcel } from "@/lib/reports/excel.exporter";
 import { toPdf } from "@/lib/reports/pdf.exporter";
@@ -43,13 +44,16 @@ export const GET = withTenantRoute({
       tenantId: ctx.tenantId,
       from: period.from,
       to: period.to,
+      toVencimento: period.toVencimento,
       dateField: input.campo,
       agruparPorCategoria: input.agrupar === "categoria",
     });
     const isPdf = input.format === "pdf";
     const buffer = isPdf ? await toPdf(result) : await toExcel(result);
     const extension = isPdf ? "pdf" : "xlsx";
-    const fileName = `${kind.toLowerCase()}-${period.from.toISOString().slice(0, 10)}.${extension}`;
+    // Dia civil do início do período — e o período é sempre válido: data
+    // impossível no filtro cai no preset padrão em `resolvePeriod` (era 500).
+    const fileName = `${kind.toLowerCase()}-${isoDateTz(period.from)}.${extension}`;
     const format: ReportFormat = isPdf ? "PDF" : "EXCEL";
     const contentType = isPdf
       ? "application/pdf"

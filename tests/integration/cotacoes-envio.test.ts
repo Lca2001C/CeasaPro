@@ -73,6 +73,10 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await cleanupTenants(tenants);
+  // Auditoria global (sem tenant) do apagar: não cai pelo cleanup de tenants.
+  await prisma.auditLog.deleteMany({
+    where: { entity: "CeasaQuote", entityId: { startsWith: `${MANUAL}:` } },
+  });
   await prisma.ceasaQuote.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
   await prisma.ceasaImportRun.deleteMany({ where: { centralCode: { in: centraisCriadas } } });
   await prisma.ceasaProduct.deleteMany({ where: { quotes: { none: {} }, links: { none: {} } } });
@@ -238,23 +242,57 @@ describe("apagar boletim publicado", () => {
    * dela até chegar um com data POSTERIOR — e numa praça manual isso não chega
    * sozinho. A única saída era SQL na produção.
    */
-  it("apaga as cotações do dia e a execução que as gravou", async () => {
+  it("apaga as cotações do dia, mantém o rastro e audita quem apagou", async () => {
     const antes = await prisma.ceasaQuote.count({
       where: { centralCode: MANUAL, quoteDate: DIA },
     });
     expect(antes).toBeGreaterThan(0);
+    const runsAntes = await prisma.ceasaImportRun.findMany({
+      where: { centralCode: MANUAL, quoteDate: DIA },
+      select: { id: true },
+    });
+    expect(runsAntes.length).toBeGreaterThan(0);
 
-    const r = await CotacoesImportService.apagarBoletim(MANUAL, DIA);
+    const admin = makeAdminCtx();
+    const r = await CotacoesImportService.apagarBoletim(MANUAL, DIA, {
+      userId: admin.userId,
+      email: admin.session.email,
+      ip: "10.0.0.1",
+    });
     expect(r.cotacoesApagadas).toBe(antes);
 
     expect(
       await prisma.ceasaQuote.count({ where: { centralCode: MANUAL, quoteDate: DIA } }),
     ).toBe(0);
-    // A execução sai junto: deixá-la faria `/admin/cotacoes` seguir afirmando
-    // "importado com sucesso" para um dia que não tem mais preço nenhum.
-    expect(
-      await prisma.ceasaImportRun.count({ where: { centralCode: MANUAL, quoteDate: DIA } }),
-    ).toBe(0);
+
+    // A execução que gravou o dia NÃO some: é o único registro de onde o dado
+    // veio. Apagá-la junto deixava a ação destrutiva sem rastro nenhum.
+    const runsDepois = await prisma.ceasaImportRun.findMany({
+      where: { centralCode: MANUAL, quoteDate: DIA },
+      orderBy: { startedAt: "desc" },
+    });
+    for (const run of runsAntes) expect(runsDepois.map((x) => x.id)).toContain(run.id);
+
+    // E a tela do admin, que mostra a execução MAIS RECENTE, passa a dizer que o
+    // boletim foi apagado — não "importado" para um dia sem preço.
+    const situacao = (await CotacoesImportService.situacaoDasCentrais()).find(
+      (c) => c.code === MANUAL,
+    )!;
+    expect(situacao.ultimaExecucao?.status).toBe("VAZIO");
+    expect(situacao.ultimaExecucao?.error).toMatch(/apagado por admin@ceasapro\.com\.br/);
+
+    // Auditoria global, com autor, IP e contagem.
+    const log = await prisma.auditLog.findFirstOrThrow({
+      where: { entity: "CeasaQuote", entityId: { startsWith: `${MANUAL}:` } },
+    });
+    expect(log).toMatchObject({
+      action: "DELETE",
+      tenantId: null,
+      userId: admin.userId,
+      actorEmail: admin.session.email,
+      ip: "10.0.0.1",
+    });
+    expect((log.oldData as { cotacoes: number }).cotacoes).toBe(antes);
   });
 
   it("NÃO apaga o catálogo de produtos, que é global e compartilhado", async () => {
@@ -264,8 +302,12 @@ describe("apagar boletim publicado", () => {
     expect(sobrou).toBeGreaterThan(0);
   });
 
-  it("apagar dia sem boletim não é erro, é zero", async () => {
-    const r = await CotacoesImportService.apagarBoletim(MANUAL, new Date(Date.UTC(2020, 0, 1)));
+  it("apagar dia sem boletim não é erro, é zero — e não suja o histórico", async () => {
+    const vazio = new Date(Date.UTC(2020, 0, 1));
+    const r = await CotacoesImportService.apagarBoletim(MANUAL, vazio);
     expect(r.cotacoesApagadas).toBe(0);
+    expect(
+      await prisma.ceasaImportRun.count({ where: { centralCode: MANUAL, quoteDate: vazio } }),
+    ).toBe(0);
   });
 });

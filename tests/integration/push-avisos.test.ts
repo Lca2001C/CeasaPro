@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
+import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { PushAvisosService } from "@/lib/services/push-avisos.service";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
@@ -40,6 +41,8 @@ interface Cenario {
   subStatus?: "ATIVO" | "SUSPENSO" | "VENCIDO" | "TRIAL";
   /** Inscrições de push a criar. `0` = ninguém inscrito. */
   aparelhos?: number;
+  /** Campos extras da assinatura (datas, cancelamento, troca agendada). */
+  assinatura?: Partial<Prisma.TenantSubscriptionUncheckedCreateInput>;
 }
 
 async function empresa(c: Cenario): Promise<{ tenantId: string; userId: string }> {
@@ -59,6 +62,7 @@ async function empresa(c: Cenario): Promise<{ tenantId: string; userId: string }
       activatedAt: new Date("2026-01-10T00:00:00Z"),
       currentPeriodEnd: dias(20),
       graceDays: 5,
+      ...c.assinatura,
     },
   });
 
@@ -295,5 +299,169 @@ describe("PushAvisosService.enviarAvisosDiarios", () => {
 
     // Varrer a base para calcular avisos que ninguém receberia é custo puro.
     expect(enviosPara(userId)).toHaveLength(0);
+  });
+});
+
+/**
+ * Status RECALCULADO, não o gravado.
+ *
+ * O status no banco só é recalculado pelo cron de billing (13:30); este roda às
+ * 06:30. Teste grátis que acabou de madrugada ainda estava TRIAL no banco,
+ * recebia o resumo, e o toque caía em /conta/suspensa.
+ */
+describe("Bloqueio decidido pelas datas, como no login", () => {
+  it("teste grátis vencido (gravado ainda TRIAL) não recebe", async () => {
+    const { tenantId, userId } = await empresa({
+      comAviso: true,
+      subStatus: "TRIAL",
+      assinatura: { activatedAt: null, trialEndsAt: dias(-0.3) },
+    });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(0);
+    expect(await marcasDeDedupe(tenantId)).toBe(0);
+  });
+
+  it("teste grátis ainda valendo recebe", async () => {
+    const { userId } = await empresa({
+      comAviso: true,
+      subStatus: "TRIAL",
+      assinatura: { activatedAt: null, trialEndsAt: dias(3) },
+    });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(1);
+  });
+
+  it("cancelou e o mês pago acabou de madrugada (gravado ainda ATIVO) não recebe", async () => {
+    const { userId } = await empresa({
+      comAviso: true,
+      subStatus: "ATIVO",
+      assinatura: { cancelledAt: dias(-20), currentPeriodEnd: dias(-0.2) },
+    });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(0);
+  });
+
+  it("VENCIDO além da tolerância (gravado ainda VENCIDO) não recebe", async () => {
+    const { userId } = await empresa({
+      comAviso: true,
+      subStatus: "VENCIDO",
+      assinatura: { currentPeriodEnd: dias(-6), graceDays: 5 },
+    });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(0);
+  });
+});
+
+describe("Troca de plano agendada que já venceu", () => {
+  let comHig = "";
+  let semHig = "";
+
+  beforeAll(async () => {
+    comHig = (
+      await prisma.plan.create({
+        data: {
+          name: "Com hig",
+          slug: `push-hig-${uniq()}`,
+          priceMonthly: 99,
+          active: true,
+          features: { modules: ["higienizacao"] },
+        },
+      })
+    ).id;
+    semHig = (
+      await prisma.plan.create({
+        data: {
+          name: "Sem hig",
+          slug: `push-nohig-${uniq()}`,
+          priceMonthly: 49,
+          active: true,
+          features: { modules: [] },
+        },
+      })
+    ).id;
+  });
+
+  afterAll(async () => {
+    const ids = [comHig, semHig];
+    await prisma.tenantSubscription.deleteMany({
+      where: { OR: [{ planId: { in: ids } }, { pendingPlanId: { in: ids } }] },
+    });
+    await prisma.plan.deleteMany({ where: { id: { in: ids } } });
+  });
+
+  async function comHigienizacaoPendente(tenantId: string) {
+    await prisma.crateCleaning.create({
+      data: {
+        tenantId,
+        cleanerName: "Lavador",
+        sentDate: dias(-2),
+        sentQty: 10,
+        unitPrice: 2,
+        totalAmount: 20,
+      },
+    });
+  }
+
+  it("módulo que o downgrade já tirou não vira notificação", async () => {
+    const { tenantId, userId } = await empresa({
+      comAviso: false,
+      assinatura: { planId: comHig, pendingPlanId: semHig, pendingPlanFrom: dias(-0.1) },
+    });
+    await comHigienizacaoPendente(tenantId);
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    // O único aviso seria "Higienização a pagar", e o toque cairia no paywall.
+    expect(enviosPara(userId)).toHaveLength(0);
+  });
+
+  it("antes da data da troca, o plano vigente ainda vale", async () => {
+    const { tenantId, userId } = await empresa({
+      comAviso: false,
+      assinatura: { planId: comHig, pendingPlanId: semHig, pendingPlanFrom: dias(5) },
+    });
+    await comHigienizacaoPendente(tenantId);
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(enviosPara(userId)).toHaveLength(1);
+  });
+});
+
+describe("Execuções sobrepostas do cron", () => {
+  it("duas rodadas ao mesmo tempo mandam UMA notificação", async () => {
+    const { tenantId, userId } = await empresa({ comAviso: true });
+    // Envio lento: é nesse intervalo que a segunda rodada passava pela checagem.
+    push.enviar.mockImplementation(
+      () => new Promise((r) => setTimeout(() => r(aceitou), 150)),
+    );
+
+    await Promise.all([
+      PushAvisosService.enviarAvisosDiarios(),
+      PushAvisosService.enviarAvisosDiarios(),
+    ]);
+
+    expect(enviosPara(userId)).toHaveLength(1);
+    expect(await marcasDeDedupe(tenantId)).toBe(1);
+  });
+
+  it("exceção no envio libera a reserva", async () => {
+    const { tenantId, userId } = await empresa({ comAviso: true });
+    push.enviar.mockImplementation(async (id: string) => {
+      if (id === userId) throw new Error("rede caiu");
+      return aceitou;
+    });
+
+    await PushAvisosService.enviarAvisosDiarios();
+
+    expect(await marcasDeDedupe(tenantId)).toBe(0);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { lerCsvDeCotacoes } from "@/lib/cotacoes/csv";
+import { lerCsvDeCotacoes, MOTIVO_PRECO_NAO_POSITIVO } from "@/lib/cotacoes/csv";
 
 /**
  * O boletim colado é a escotilha do módulo: é o que mantém as cotações de pé no
@@ -85,10 +85,50 @@ describe("lerCsvDeCotacoes", () => {
     expect(linhas[0]!.unidade).toBe("");
   });
 
-  it("preço negativo não é preço", () => {
+  it("preço negativo não é preço — e o motivo diz por quê", () => {
     const { linhas, erros } = lerCsvDeCotacoes("TOMATE;CX;-5;;");
     expect(linhas).toEqual([]);
-    expect(erros[0]!.motivo).toBe("sem preço");
+    expect(erros[0]!.motivo).toBe(MOTIVO_PRECO_NAO_POSITIVO);
+  });
+
+  /**
+   * Zero não é preço.
+   *
+   * "0,00" é como a planilha de praça manual escreve item sem comercialização.
+   * Aceito, virava R$ 0,00 na tela com "−100%", o alerta de piso disparava
+   * "caiu 100% (R$ 0,00)" e a praça aparecia como a mais barata no comparativo.
+   */
+  it("linha toda zerada é recusada com motivo claro", () => {
+    const { linhas, erros } = lerCsvDeCotacoes("ALFACE;DZ;0,00;0,00;0,00");
+    expect(linhas).toEqual([]);
+    expect(erros).toEqual([{ linha: 1, motivo: MOTIVO_PRECO_NAO_POSITIVO }]);
+  });
+
+  it("comum zerado com a faixa preenchida cai para o meio da faixa — não zera", () => {
+    const { linhas, erros } = lerCsvDeCotacoes("TOMATE;KG;4,00;0,00;5,00");
+    expect(erros).toEqual([]);
+    expect(linhas[0]).toMatchObject({ minimo: 4, comum: null, maximo: 5, referencia: 4.5 });
+  });
+
+  it("mínimo zerado não entra na faixa: usa o que é preço", () => {
+    const { linhas } = lerCsvDeCotacoes("TOMATE;KG;0;;5,00");
+    expect(linhas[0]).toMatchObject({ minimo: null, maximo: 5, referencia: 5 });
+  });
+
+  /**
+   * A embalagem é parte da CHAVE da cotação e é comparada por texto exato:
+   * "Kg" num boletim e "KG" no seguinte viravam duas séries, e o vínculo
+   * gravado numa deixava de casar com a outra.
+   */
+  it("normaliza a embalagem como os raspadores gravam", () => {
+    const { linhas } = lerCsvDeCotacoes(
+      ["TOMATE;Kg;1;2;3", "BATATA;  cx   20  kg ;1;2;3", "ALHO; kg ;1;2;3"].join("\n"),
+    );
+    expect(linhas.map((l) => l.unidade)).toEqual(["KG", "CX 20 KG", "KG"]);
+  });
+
+  it("embalagem vazia continua '' depois de normalizar (não vira null)", () => {
+    expect(lerCsvDeCotacoes("TOMATE;   ;1;2;3").linhas[0]!.unidade).toBe("");
   });
 
   it("texto vazio não quebra", () => {

@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import type { ActionResult } from "@/lib/http/action-result";
+import { chamarAction } from "@/lib/http/chamar-action";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -31,7 +32,9 @@ export function DeleteButton({ action, id, entityLabel, onDeleted }: Props) {
 
   function confirm() {
     start(async () => {
-      const res = await action(id);
+      // Falha de rede não pode subir para o error boundary (ver `chamarAction`):
+      // o diálogo fica aberto e o toast pede para conferir.
+      const res = await chamarAction(() => action(id));
       if (res.ok) {
         toast.success("Excluído com sucesso");
         setOpen(false);

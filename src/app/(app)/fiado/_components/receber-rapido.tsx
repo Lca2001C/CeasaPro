@@ -82,7 +82,17 @@ export function ReceberRapido({
         <span className="hidden sm:inline">Receber</span>
       </Button>
 
-      <Dialog open={aberto} onOpenChange={(o) => !o && setAberto(false)}>
+      {/* No celular este componente mora DENTRO do `<Link>` do card. O diálogo
+          vai para um portal no DOM, mas os eventos sintéticos do React sobem
+          pela árvore de COMPONENTES — portal incluído. Sem esta barreira, tocar
+          no valor, na forma, em Cancelar ou em Confirmar chegava ao onClick do
+          Link, que navegava para o detalhe no meio do recebimento.
+          Só `stopPropagation`: `preventDefault` quebraria o select do próprio
+          diálogo. */}
+      {/* `role="presentation"`: o span não é um controle — só barra a subida
+          do clique; os controles de verdade estão dentro do diálogo. */}
+      <span role="presentation" className="contents" onClick={(e) => e.stopPropagation()}>
+        <Dialog open={aberto} onOpenChange={(o) => !o && setAberto(false)}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle>Receber de {customerName}</DialogTitle>
@@ -123,7 +133,8 @@ export function ReceberRapido({
             </Button>
           </DialogFooter>
         </DialogContent>
-      </Dialog>
+        </Dialog>
+      </span>
     </>
   );
 }

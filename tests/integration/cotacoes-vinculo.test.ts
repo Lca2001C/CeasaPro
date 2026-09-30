@@ -3,6 +3,8 @@ import { prisma } from "@/lib/db/prisma";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { slugProduto } from "@/lib/cotacoes/nome";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
+import { CotacoesAlertasService } from "@/lib/services/cotacoes-alertas.service";
+import { addDaysTz, civilParts } from "@/lib/tz";
 
 /**
  * O módulo de cotações é quase todo dado PÚBLICO — o boletim da central é o
@@ -658,5 +660,178 @@ describe("central da empresa", () => {
     await expect(
       CotacoesService.escolherCentral({ centralCode: "NAOEXISTE" }, makeCtx(tenantA)),
     ).rejects.toThrow(/não encontrada/i);
+  });
+});
+
+describe("dois produtos no MESMO item do boletim (#54)", () => {
+  /**
+   * "Tomate caixa" e "Tomate kg", ambos em "qualquer embalagem". O LATERAL da
+   * grade escolhe um vínculo por linha, então o segundo não ganhava linha, não
+   * estava em `semVinculo` nem em `vinculosSemCotacao` — sumia da tela calado.
+   * No Início, o Map por item sobrescrevia um com o outro.
+   */
+  let empresa = "";
+  let item = "";
+  let primeiro = "";
+  let segundo = "";
+
+  beforeAll(async () => {
+    item = await criarProdutoDoBoletim(`TOMATE DUPLO ${uniq()}`);
+    await cotar(item, "KG", "4.00");
+    await cotar(item, "CX 20 KG", "80.00");
+    empresa = await createTestTenant(`Empresa Dois Tomates ${uniq()}`);
+    tenants.push(empresa);
+    await prisma.tenant.update({ where: { id: empresa }, data: { ceasaCentralCode: CENTRAL } });
+    const a = await prisma.product.create({
+      data: { tenantId: empresa, name: "Tomate caixa", saleUnit: "CAIXA" },
+    });
+    primeiro = a.id;
+    await CotacoesService.vincular({ productId: a.id, ceasaProductId: item }, makeCtx(empresa));
+    const b = await prisma.product.create({
+      data: { tenantId: empresa, name: "Tomate kg", saleUnit: "KG" },
+    });
+    segundo = b.id;
+    await CotacoesService.vincular({ productId: b.id, ceasaProductId: item }, makeCtx(empresa));
+  });
+
+  it("a tela nomeia o produto que não ganhou linha, e diz onde está o preço", async () => {
+    const painel = await CotacoesService.getPainel(empresa);
+    const doItem = painel.linhas.filter((l) => l.ceasaProductId === item);
+    // A grade continua com uma linha por embalagem (sem duplicar)...
+    expect(doItem).toHaveLength(2);
+    expect(new Set(doItem.map((l) => l.meuProdutoId))).toEqual(new Set([primeiro]));
+    // ...e o segundo produto aparece, nomeado, em vez de sumir.
+    const encoberto = painel.vinculosNaMesmaCotacao.find((v) => v.produtoId === segundo);
+    expect(encoberto).toMatchObject({ produtoNome: "Tomate kg", junto: "Tomate caixa" });
+    expect(painel.vinculosSemCotacao.map((v) => v.produtoId)).not.toContain(segundo);
+    expect(painel.vinculosNaMesmaCotacao.map((v) => v.produtoId)).not.toContain(primeiro);
+  });
+
+  it("o Início enxerga os DOIS produtos, e o alerta da linha não sai duplicado", async () => {
+    await prisma.tenantCeasaAlerta.create({
+      data: { tenantId: empresa, ceasaProductId: item, unit: "KG", variacaoMinima: "10" },
+    });
+    const interesses = await CotacoesAlertasService.getInteresses(empresa);
+    expect(interesses).not.toBeNull();
+    const ids = new Set(interesses!.itens.map((i) => i.meuProdutoId));
+    expect(ids.has(primeiro)).toBe(true);
+    expect(ids.has(segundo)).toBe(true);
+
+    const noKg = interesses!.itens.filter((i) => i.ceasaProductId === item && i.unit === "KG");
+    expect(noKg).toHaveLength(2);
+    expect(noKg.filter((i) => i.alerta !== null)).toHaveLength(1);
+  });
+});
+
+describe("comprei acima do boletim (#55, #58)", () => {
+  const PRACA = `CMP${uniq().slice(0, 5)}`.toUpperCase();
+  let empresa = "";
+  let tomate = "";
+  let cebola = "";
+  let alho = "";
+  let meuTomate = "";
+
+  const agora = new Date();
+  const civil = (d: Date) => {
+    const c = civilParts(d);
+    return new Date(Date.UTC(c.year, c.month - 1, c.day));
+  };
+  const haDias = (n: number) => addDaysTz(agora, -n);
+
+  async function cotarEm(ceasaProductId: string, unit: string, refPrice: string, dia: Date) {
+    await prisma.ceasaQuote.create({
+      data: { centralCode: PRACA, ceasaProductId, quoteDate: civil(dia), unit, refPrice },
+    });
+  }
+  async function comprar(productId: string, unitPrice: string, quando: Date) {
+    const pu = await prisma.purchase.create({
+      data: { tenantId: empresa, purchaseDate: quando, totalAmount: unitPrice },
+    });
+    await prisma.purchaseItem.create({
+      data: {
+        tenantId: empresa,
+        purchaseId: pu.id,
+        productId,
+        quantity: "1",
+        unitPrice,
+        unitCost: unitPrice,
+        lineTotal: unitPrice,
+      },
+    });
+  }
+
+  beforeAll(async () => {
+    centraisCriadas.push(PRACA);
+    await prisma.ceasaCentral.create({
+      data: { code: PRACA, name: "Praca Compras", city: "X", uf: "MG", sourceKey: "manual" },
+    });
+    empresa = await createTestTenant(`Empresa Compras ${uniq()}`);
+    tenants.push(empresa);
+    await prisma.tenant.update({ where: { id: empresa }, data: { ceasaCentralCode: PRACA } });
+
+    tomate = await criarProdutoDoBoletim(`TOMATE COMPRA ${uniq()}`);
+    cebola = await criarProdutoDoBoletim(`CEBOLA COMPRA ${uniq()}`);
+    alho = await criarProdutoDoBoletim(`ALHO COMPRA ${uniq()}`);
+
+    // Tomate: há 20 dias a caixa estava a 70; hoje está a 45. O quilo sai
+    // junto nos dois dias — e é o que a consulta antiga preferia.
+    await cotarEm(tomate, "CX 20 KG", "70.00", haDias(20));
+    await cotarEm(tomate, "KG", "3.50", haDias(20));
+    await cotarEm(tomate, "CX 20 KG", "45.00", agora);
+    await cotarEm(tomate, "KG", "2.25", agora);
+    // Cebola: o único boletim é de 20 dias atrás — velho demais para a compra de hoje.
+    await cotarEm(cebola, "SC 20 KG", "50.00", haDias(20));
+    // Alho: boletim de hoje, mas a compra é de 40 dias atrás (fora da janela).
+    await cotarEm(alho, "CX 10 KG", "100.00", agora);
+
+    const t = await prisma.product.create({
+      data: { tenantId: empresa, name: "Tomate", saleUnit: "CAIXA", qtyPerRecipient: "20" },
+    });
+    meuTomate = t.id;
+    const c = await prisma.product.create({
+      data: { tenantId: empresa, name: "Cebola", saleUnit: "SACO" },
+    });
+    const a = await prisma.product.create({
+      data: { tenantId: empresa, name: "Alho", saleUnit: "CAIXA" },
+    });
+    // Todos em "qualquer embalagem".
+    await prisma.tenantCeasaLink.createMany({
+      data: [
+        { tenantId: empresa, productId: t.id, ceasaProductId: tomate, unit: null },
+        { tenantId: empresa, productId: c.id, ceasaProductId: cebola, unit: null },
+        { tenantId: empresa, productId: a.id, ceasaProductId: alho, unit: null },
+      ],
+    });
+
+    await comprar(t.id, "60.00", haDias(20)); // abaixo do boletim DO DIA (70)
+    await comprar(c.id, "80.00", agora); // sem boletim vigente
+    await comprar(a.id, "150.00", haDias(40)); // compra antiga
+  });
+
+  it("compara com o boletim vigente NA DATA da compra, não com o de hoje", async () => {
+    const r = await CotacoesService.comprasAcimaDoBoletim(empresa, agora);
+    // Contra o boletim de hoje (45) a compra de 60 pareceria "+33% acima".
+    expect(r.acima.map((x) => x.produtoId)).not.toContain(meuTomate);
+  });
+
+  it("vínculo em qualquer embalagem de produto vendido por caixa usa a CAIXA, não o quilo", async () => {
+    const r = await CotacoesService.comprasAcimaDoBoletim(empresa, agora);
+    // Tomate é comparado (a caixa do mesmo boletim casa); preferir o KG o tirava.
+    expect(r.comparados).toBe(1);
+  });
+
+  it("boletim velho demais e compra fora da janela ficam fora do denominador", async () => {
+    const r = await CotacoesService.comprasAcimaDoBoletim(empresa, agora);
+    expect(r.elegiveis).toBe(1);
+  });
+
+  it("compra acima do boletim do próprio dia é apontada", async () => {
+    await comprar(meuTomate, "50.00", agora); // hoje o boletim da caixa é 45
+    const r = await CotacoesService.comprasAcimaDoBoletim(empresa, agora);
+    const t = r.acima.find((x) => x.produtoId === meuTomate)!;
+    expect(t).toBeDefined();
+    expect(t.unit).toBe("CX 20 KG");
+    expect(t.refPrice).toBe(45);
+    expect(t.diferenca).toBeCloseTo(11.11, 1);
   });
 });

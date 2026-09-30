@@ -169,6 +169,34 @@ describe("desconto maior que a venda não vira total negativo", () => {
   });
 });
 
+describe("desconto do item igual ao bruto ARREDONDADO (regressão)", () => {
+  // 1,25 kg × R$ 3,50 = 4,375 (tela: R$ 4,38). O refine aceita desconto até o
+  // bruto arredondado, e a linha exata dava 4,375 − 4,38 = −0,005, arredondado
+  // para −1 centavo: um sale_item de R$ −0,01 era gravado.
+  it("a linha zera, não vira receita negativa", () => {
+    const t = calcularTotaisVenda({
+      items: [
+        { quantity: 1.25, unitPrice: 3.5, discountAmount: 4.38 },
+        { quantity: 1, unitPrice: 10 },
+      ],
+    });
+    expect(t.lineTotalsCents).toEqual([0n, 1000n]);
+    expect(t.totalCents).toBe(1000n);
+    // O bruto continua o da mercadoria: o desconto não some do subtotal.
+    expect(t.brutosCents).toEqual([438n, 1000n]);
+  });
+
+  it("sozinho no carrinho, a linha zerada não parece 'desconto maior que a venda'", () => {
+    const t = calcularTotaisVenda({
+      items: [{ quantity: 1.25, unitPrice: 3.5, discountAmount: 4.38 }],
+    });
+    const somaLinhas = t.lineTotalsCents.reduce((a, l) => a + l, 0n);
+    // É esta comparação que o serviço faz antes de gravar.
+    expect(t.descontoVendaCents > somaLinhas).toBe(false);
+    expect(t.totalCents).toBe(0n);
+  });
+});
+
 describe("parte paga em dinheiro", () => {
   const items = [{ quantity: 1, unitPrice: 100 }];
 

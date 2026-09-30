@@ -36,9 +36,54 @@ import type { Session } from "./session";
  * como duas consultas sem o preview `relationJoins`.
  */
 export async function assertSessaoValida(session: Session): Promise<void> {
-  const linhas = await prisma.$queryRaw<
-    { ue: number; ativo: boolean; excluido: Date | null; te: number | null }[]
-  >`
+  if (!(await sessaoAindaValida(session))) throw new UnauthorizedError();
+}
+
+/** O que `sessaoAindaValida` lê do banco: o usuário e o epoch da empresa dele. */
+export type EstadoDaSessaoNoBanco = {
+  ue: number;
+  ativo: boolean;
+  excluido: Date | null;
+  te: number | null;
+};
+
+/**
+ * A decisão, sem banco: o token (`sev`/`tev`) ainda confere com o estado atual?
+ *
+ * Separada para ser testada sozinha e para que os dois consumidores — os
+ * wrappers, que LANÇAM (o erro vira 401 no envelope), e os layouts de grupo,
+ * que REDIRECIONAM — usem exatamente a mesma regra.
+ */
+export function sessaoConfere(
+  session: Pick<Session, "sev" | "tev">,
+  atual: EstadoDaSessaoNoBanco | undefined,
+): boolean {
+  if (!atual || !atual.ativo || atual.excluido) return false;
+  // Token sem os claims (emitido antes desta mudança) é tratado como epoch 0 —
+  // o mesmo valor que as colunas recebem por default. Continua válido até
+  // vencer, e o primeiro incremento o invalida.
+  if ((session.sev ?? 0) !== atual.ue) return false;
+  if (atual.te !== null && (session.tev ?? 0) !== atual.te) return false;
+  return true;
+}
+
+/**
+ * Versão que NÃO lança — para os layouts `(app)` e `(admin)`.
+ *
+ * Com `assertSessaoValida` no layout, a sessão revogada virava exceção, e o
+ * `error.tsx` de um grupo não cobre o PRÓPRIO layout: caía no `global-error`,
+ * cujo "Tentar de novo" falha igual. Ir ao `/login` também não saía do lugar,
+ * porque o proxy vê o access cookie ainda válido e manda de volta à home. Por
+ * até 15 minutos (o TTL do access) a pessoa ficava sem saída.
+ *
+ * Com o booleano, o layout redireciona para `rotaDeSessaoRevogada` (em
+ * `renovacao.ts`), que tenta renovar e, não dando, APAGA os cookies — é o
+ * apagar que quebra o laço com o proxy.
+ *
+ * Falha de BANCO continua lançando: aí o "Tentar de novo" é a resposta certa.
+ */
+export async function sessaoAindaValida(session: Session): Promise<boolean> {
+  const linhas = await prisma.$queryRaw<EstadoDaSessaoNoBanco[]>`
     SELECT u."sessionEpoch" AS ue,
            u.active         AS ativo,
            u."deletedAt"    AS excluido,
@@ -47,13 +92,5 @@ export async function assertSessaoValida(session: Session): Promise<void> {
     LEFT JOIN tenants t ON t.id = u."tenantId"
     WHERE u.id = ${session.sub}
   `;
-
-  const atual = linhas[0];
-  if (!atual || !atual.ativo || atual.excluido) throw new UnauthorizedError();
-
-  // Token sem os claims (emitido antes desta mudança) é tratado como epoch 0 —
-  // o mesmo valor que as colunas recebem por default. Continua válido até
-  // vencer, e o primeiro incremento o invalida.
-  if ((session.sev ?? 0) !== atual.ue) throw new UnauthorizedError();
-  if (atual.te !== null && (session.tev ?? 0) !== atual.te) throw new UnauthorizedError();
+  return sessaoConfere(session, linhas[0]);
 }

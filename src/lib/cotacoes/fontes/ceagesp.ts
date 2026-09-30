@@ -593,7 +593,11 @@ function vale(
  * o boletim anterior à vista (com o selo de idade que a tela já mostra) e acende
  * o alarme.
  */
-async function buscarBoletim({ sourceParams, data }: ParametrosDeBusca): Promise<ResultadoDaFonte> {
+async function buscarBoletim({
+  sourceParams,
+  data,
+  prazo,
+}: ParametrosDeBusca): Promise<ResultadoDaFonte> {
   if (!(data instanceof Date) || Number.isNaN(data.getTime())) {
     return { ok: false, linhas: [], erro: "data inválida" };
   }
@@ -628,9 +632,18 @@ async function buscarBoletim({ sourceParams, data }: ParametrosDeBusca): Promise
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
       },
       { fonte: "ceagesp", grupo, data: dataIso },
+      // Uma categoria pendurada não pode consumir o prazo das outras centrais:
+      // o dia pode ter até ~10 requisições, e cada uma respeita o mesmo prazo.
+      { prazo },
     );
     if (!resposta.ok) {
-      return { ok: false, linhas: [], httpStatus: resposta.status, erro: `${grupo}: ${resposta.erro}` };
+      return {
+        ok: false,
+        linhas: [],
+        httpStatus: resposta.status,
+        erro: `${grupo}: ${resposta.erro}`,
+        semTempo: resposta.semTempo,
+      };
     }
     ultimoStatus = resposta.status;
 

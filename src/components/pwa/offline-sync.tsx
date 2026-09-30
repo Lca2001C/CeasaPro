@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { CHAVE_ULTIMO_SYNC, salvarSnapshot } from "@/lib/pwa/offline-store";
+import { avaliarSnapshot } from "@/lib/pwa/snapshot";
 
 /**
  * Busca o snapshot de consulta offline e guarda no IndexedDB.
@@ -61,7 +62,12 @@ export function OfflineSync() {
         if (!res.ok) return;
         const corpo = (await res.json()) as { ok?: boolean; data?: unknown };
         if (!corpo?.ok || !corpo.data) return;
-        const guardou = await salvarSnapshot(corpo.data as never);
+        // Guarda só o formato que a tela deste build sabe ler. Resposta de um
+        // servidor mais novo que esta aba (deploy no meio do uso) fica de fora:
+        // o próximo Início, já no build novo, grava.
+        const avaliacao = avaliarSnapshot(corpo.data);
+        if (avaliacao.estado !== "ok") return;
+        const guardou = await salvarSnapshot(avaliacao.snapshot);
         // Só marca o debounce se realmente guardou: se o armazenamento recusou,
         // a próxima visita deve tentar de novo em vez de esperar 5 minutos.
         if (guardou) marcarSync();

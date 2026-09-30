@@ -14,6 +14,7 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PhoneInput } from "@/components/forms/phone-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 interface Props {
   initial?: FornecedorInput & { id: string };
 }
@@ -31,11 +32,16 @@ export function FornecedorForm({ initial }: Props) {
     defaultValues: initial ?? { name: "", active: true },
   });
 
+  // Campo acima do limite reprovava no cliente sem nenhum aviso.
+  function onInvalid() {
+    toast.error("Confira os campos destacados antes de salvar.");
+  }
+
   async function onSubmit(values: FornecedorInput) {
     setSaving(true);
     const res = initial
-      ? await atualizarFornecedor({ ...values, id: initial.id })
-      : await criarFornecedor(values);
+      ? await chamarAction(() => atualizarFornecedor({ ...values, id: initial.id }))
+      : await chamarAction(() => criarFornecedor(values));
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Fornecedor atualizado" : "Fornecedor cadastrado");
@@ -46,7 +52,7 @@ export function FornecedorForm({ initial }: Props) {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit(onSubmit, onInvalid)} className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="name">Nome</Label>
         <Input id="name" autoFocus {...register("name")} />
@@ -62,16 +68,21 @@ export function FornecedorForm({ initial }: Props) {
             <PhoneInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} id="phone" />
           )}
         />
+        {errors.phone && <span className="text-xs text-destructive">{errors.phone.message}</span>}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="address">Endereço</Label>
         <Input id="address" {...register("address")} />
+        {errors.address && (
+          <span className="text-xs text-destructive">{errors.address.message}</span>
+        )}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="notes">Observações</Label>
         <Textarea id="notes" {...register("notes")} />
+        {errors.notes && <span className="text-xs text-destructive">{errors.notes.message}</span>}
       </div>
 
       <label className="flex items-center gap-2 text-sm">

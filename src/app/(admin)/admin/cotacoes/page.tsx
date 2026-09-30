@@ -2,7 +2,7 @@ import { AlertTriangle } from "lucide-react";
 import { requireSuperAdmin } from "@/lib/auth/session";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
-import { frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
+import { frescorAlarma, frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
 import { CEASA_IMPORT_STATUS_LABELS } from "@/lib/labels";
 import { formatDateOnly, formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
@@ -56,9 +56,17 @@ export default async function AdminCotacoesPage() {
     A manual com cliente não é ignorada: ela ganha um estado PRÓPRIO
     ("depende de envio manual"), que é informação e não alarme falso.
   */
+  /*
+    E o critério é o MESMO do alarme: só "defasado" ou "ausente".
+
+    "atrasado" (1 < dias ≤ teto da central) é a cadência normal das praças que
+    publicam 2 a 3 vezes por semana — é para isso que o teto é por central. A
+    versão anterior usava `!== "atual"` e pintava de amarelo a CEAGESP e Juiz de
+    Fora em 4 de 7 dias, enquanto `verificarDefasagem` (com razão) ficava calado.
+  */
   const precisaAtencao = (c: (typeof centrais)[number]) =>
     c.sourceKey !== "manual" &&
-    frescorDoBoletim(c.ultimoBoletim, agora, c.maxDiasSemBoletim).nivel !== "atual";
+    frescorAlarma(frescorDoBoletim(c.ultimoBoletim, agora, c.maxDiasSemBoletim));
   const problemas = comCliente.filter(precisaAtencao);
 
   return (

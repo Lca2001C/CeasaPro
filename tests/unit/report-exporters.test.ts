@@ -62,24 +62,71 @@ describe("toExcel", () => {
       expect.arrayContaining(["Cliente", "Qtd", "Total"]),
     );
 
-    // Primeira linha de dados, já formatada em pt-BR.
+    // Primeira linha de dados: dinheiro e quantidade como NÚMERO, com o
+    // formato na célula — o contador precisa conseguir usar SOMA.
     expect(ws!.getRow(6).getCell(1).value).toBe("Mercadinho A");
-    expect(String(ws!.getRow(6).getCell(3).value)).toContain("1.234,56");
+    expect(ws!.getRow(6).getCell(2).value).toBe(12.5);
+    expect(ws!.getRow(6).getCell(3).value).toBe(1234.56);
+    expect(ws!.getRow(6).getCell(3).numFmt).toContain("#,##0.00");
 
     // Totais na última linha usada.
     expect(ws!.getRow(ws!.rowCount).getCell(1).value).toBe("TOTAL");
+    expect(ws!.getRow(ws!.rowCount).getCell(3).value).toBe(1244.56);
   });
 
-  it("a fórmula chega neutralizada ao arquivo, não só à função", async () => {
+  it("a fórmula chega neutralizada ao arquivo, sem apóstrofo visível", async () => {
     const buf = await toExcel(relatorio);
     const wb = new ExcelJS.Workbook();
     await wb.xlsx.load(buf as unknown as ArrayBuffer);
     const ws = wb.getWorksheet("Relatório")!;
 
     const celula = ws.getRow(7).getCell(1);
-    expect(String(celula.value).startsWith("'=")).toBe(true);
-    // E não virou fórmula de planilha.
+    // O valor é o texto original, como STRING — o apóstrofo gravado no
+    // conteúdo aparecia na planilha.
+    expect(celula.value).toBe('=HYPERLINK("http://mal","clique")');
+    expect(celula.type).toBe(ExcelJS.ValueType.String);
+    // Formato "Texto": não vira fórmula nem quando alguém reedita a célula.
+    expect(celula.numFmt).toBe("@");
     expect(celula.formula).toBeUndefined();
+  });
+
+  it("negativo, vazio e data saem como número, vazio e data — sem \"'-\"", async () => {
+    const { Prisma } = await import("@prisma/client");
+    const buf = await toExcel({
+      ...relatorio,
+      columns: [
+        { key: "dia", label: "Dia", format: "date" },
+        { key: "cliente", label: "Cliente" },
+        { key: "resultado", label: "Resultado", align: "right", format: "money" },
+        { key: "qtd", label: "Qtd", align: "right", format: "int" },
+      ],
+      rows: [
+        {
+          // 22h30 em São Paulo = 01h30 UTC do dia seguinte: a planilha tem de
+          // mostrar o dia BRASILEIRO, como a tela e o PDF.
+          dia: new Date("2026-09-11T01:30:00.000Z"),
+          cliente: null,
+          resultado: new Prisma.Decimal("-12.00"),
+          qtd: 3,
+        },
+      ],
+      totals: { dia: "TOTAL", resultado: new Prisma.Decimal("-12.00") },
+    });
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    const ws = wb.getWorksheet("Relatório")!;
+    const linha = ws.getRow(6);
+
+    const dia = linha.getCell(1).value as Date;
+    expect(dia).toBeInstanceOf(Date);
+    expect(dia.toISOString().slice(0, 10)).toBe("2026-09-10");
+    expect(linha.getCell(1).numFmt).toBe("dd/mm/yyyy");
+    expect(linha.getCell(2).value).toBeNull();
+    expect(linha.getCell(3).value).toBe(-12);
+    expect(linha.getCell(4).value).toBe(3);
+    // Rótulo numa coluna de data cai para texto.
+    expect(ws.getRow(7).getCell(1).value).toBe("TOTAL");
+    expect(ws.getRow(7).getCell(3).value).toBe(-12);
   });
 
   it("relatório sem linhas ainda gera arquivo válido", async () => {

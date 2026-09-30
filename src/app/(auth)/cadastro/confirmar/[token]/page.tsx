@@ -38,12 +38,15 @@ export default async function ConfirmarPage({
 }) {
   const { token } = await params;
 
+  let confirmado = false;
   let trialEndsAt: Date | null = null;
   let erro: string | null = null;
   let codigo: string | null = null;
 
   try {
     const res = await SignupService.confirmEmail(token);
+    confirmado = true;
+    // `null`: confirmado, mas a empresa já pagou — não há teste a anunciar.
     trialEndsAt = res.trialEndsAt;
   } catch (e) {
     if (e instanceof AppError) {
@@ -61,18 +64,26 @@ export default async function ConfirmarPage({
   return (
     <Card>
       <CardContent className="pt-6">
-        {trialEndsAt ? (
+        {confirmado ? (
           <div className="flex flex-col items-center gap-4 text-center">
             <CheckCircle2 className="size-8 text-primary" />
             <div className="flex flex-col gap-1">
               <p className="font-medium">E-mail confirmado!</p>
-              <p className="text-sm text-muted-foreground">
-                Seus {TRIAL_DAYS} dias de teste começaram. Você tem acesso completo até{" "}
-                <strong className="text-foreground">{dataBR(trialEndsAt)}</strong>.
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Sem cobrança automática: nada acontece se você não contratar.
-              </p>
+              {trialEndsAt ? (
+                <>
+                  <p className="text-sm text-muted-foreground">
+                    Seus {TRIAL_DAYS} dias de teste começaram. Você tem acesso completo até{" "}
+                    <strong className="text-foreground">{dataBR(trialEndsAt)}</strong>.
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Sem cobrança automática: nada acontece se você não contratar.
+                  </p>
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">
+                  Sua assinatura já está ativa. É só entrar e continuar usando.
+                </p>
+              )}
             </div>
             <Button asChild size="lg" className="w-full">
               {/*

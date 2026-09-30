@@ -6,7 +6,7 @@ import { CaixasService } from "@/lib/services/caixas.service";
 import { ComprasService } from "@/lib/services/compras.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { FiadoService } from "@/lib/services/fiado.service";
-import { isoDateTz } from "@/lib/tz";
+import { addDaysTz, isoDateTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 
 /**
@@ -254,9 +254,10 @@ describe("Cancelamento de venda", () => {
 
   it("recusa fora da janela de 24h", async () => {
     const s = await venda();
+    // A janela conta do REGISTRO (`createdAt`), não da data escolhida.
     await prisma.sale.update({
       where: { id: s.id },
-      data: { saleDate: new Date(Date.now() - 48 * 3600_000) },
+      data: { createdAt: new Date(Date.now() - 48 * 3600_000) },
     });
     await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/24h/);
   });
@@ -279,6 +280,28 @@ describe("Cancelamento de venda", () => {
     expect(saldo.sujas).toBe(4);
     expect(saldo.limpas).toBe(46);
     expect(saldo.vazias).toBe(50);
+  });
+
+  it("limita o estorno pelo saldo DO CLIENTE, com outros clientes segurando caixas", async () => {
+    // O teste acima só cobre João sozinho na rua. Com outro freguês segurando
+    // 30, o saldo global (33) cobria as 8 da venda; o estorno tentava 8,
+    // `registrarInTx` recusava ("João está com 3") e a venda não cancelava.
+    await venda({ customerName: "Maria", plasticCrateQty: 30 });
+    const s = await venda({ customerName: "João", plasticCrateQty: 8 });
+    await CaixasService.registrar(
+      { type: "RETORNO", quantity: 5, customerName: "João", movementDate: hoje },
+      ctx,
+    );
+
+    const r = await VendasService.cancelarVenda({ id: s.id }, ctx);
+    expect(r.caixasEstornadas).toBe(3);
+    expect(r.caixasNaoEstornadas).toBe(5);
+
+    const porCliente = await CaixasService.saldoPorCliente(tenantId);
+    expect(porCliente.get("João")).toBeUndefined(); // zerado
+    expect(porCliente.get("Maria")).toBe(30); // intocada
+    const saldo = await CaixasService.getSaldo(tenantId);
+    expect(saldo.comClientes).toBe(30);
   });
 });
 
@@ -696,5 +719,203 @@ describe("Corrida no saldo de caixas plasticas (regressao)", () => {
     expect(depois.limpas).toBe(20);
     expect(depois.comClientes).toBe(30);
     expect(depois.limpas).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe("Fiado de R$ 0,00 (regressao)", () => {
+  // Com total zero nenhuma conta a receber nascia, mas a venda, a baixa de
+  // estoque e a saida de caixas eram gravadas mesmo assim. O fiado manual
+  // respondia erro depois do commit e cada nova tentativa baixava o estoque de
+  // novo; no PDV a venda "fiada" nao aparecia na lista do fiado.
+  it("e recusado antes de gravar qualquer coisa, mesmo com preco zero confirmado", async () => {
+    await expect(
+      venda({
+        customerName: "Joao",
+        paymentMethod: "FIADO",
+        permitirPrecoZero: true,
+        plasticCrateQty: 3,
+        items: [{ productId, quantity: 4, unitPrice: 0 }],
+      }),
+    ).rejects.toThrow(/R\$ 0,00/);
+
+    expect(await prisma.sale.count({ where: { tenantId } })).toBe(0);
+    expect(await prisma.stockMovement.count({ where: { tenantId, type: "SAIDA" } })).toBe(0);
+    expect(await prisma.plasticCrateMovement.count({ where: { tenantId, type: "SAIDA" } })).toBe(0);
+  });
+
+  it("venda a vista com preco zero confirmado continua passando", async () => {
+    const s = await venda({
+      permitirPrecoZero: true,
+      items: [{ productId, quantity: 1, unitPrice: 0 }],
+    });
+    expect(s.totalAmount.toString()).toBe("0");
+  });
+});
+
+describe("Caixa plastica exige cliente so COM o modulo (regressao)", () => {
+  // O refine do schema nao conhecia o modulo e barrava a venda de balcao sem
+  // cliente com o vasilhame "Plastica" marcado no item, na empresa que nem
+  // controla caixa. A regra foi para o servico, depois de resolver o modulo.
+  const itemPlastico = () => ({
+    productId,
+    quantity: 1,
+    unitPrice: 5,
+    recipientType: "PLASTICA" as const,
+    crateQty: 8,
+  });
+
+  it("sem o modulo, a venda de balcao sem cliente passa e nao gera movimento", async () => {
+    const semCaixas = makeCtx(tenantId);
+    semCaixas.session.modules = ["higienizacao"];
+    const s = await VendasService.registrarVenda(
+      { paymentMethod: "DINHEIRO", items: [itemPlastico()] },
+      semCaixas,
+    );
+    expect(s.plasticCrateQty).toBe(0);
+    expect(await prisma.plasticCrateMovement.count({ where: { tenantId, saleId: s.id } })).toBe(0);
+  });
+
+  it("com o modulo, caixa sem cliente e recusada antes de gravar", async () => {
+    await expect(venda({ items: [itemPlastico()] })).rejects.toMatchObject({
+      code: "VALIDATION",
+      fields: { customerName: expect.stringMatching(/cliente/i) },
+    });
+    expect(await prisma.sale.count({ where: { tenantId } })).toBe(0);
+  });
+});
+
+describe("Cancelar venda fiada que acabou de receber (regressao)", () => {
+  // A checagem "sem recebimento" roda FORA da transacao. Um pagamento que
+  // entrasse entre ela e a escrita era apagado junto com a conta, e o
+  // CreditPayment ficava orfao somando no fluxo de caixa.
+  it("a conta com valor pago nao e apagada, e nada do cancelamento fica gravado", async () => {
+    const s = await venda({ customerName: "Joao", paymentMethod: "FIADO" });
+    // Simula o pagamento que chega depois da leitura: o valor ja esta na conta,
+    // mas a leitura de fora da transacao nao viu o extrato.
+    await prisma.creditAccount.updateMany({ where: { saleId: s.id }, data: { paidAmount: 10 } });
+
+    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/pagamento/i);
+
+    const depois = await prisma.sale.findUniqueOrThrow({ where: { id: s.id } });
+    expect(depois.cancelledAt).toBeNull();
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: s.id } });
+    expect(conta.deletedAt).toBeNull();
+    expect(
+      await prisma.stockMovement.count({ where: { tenantId, sourceType: "SALE_CANCELLED" } }),
+    ).toBe(0);
+  });
+});
+
+describe("Retentativa que esperou o lock da primeira (regressao)", () => {
+  // A primeira requisicao passa do tempo-limite do PDV mas faz commit; a
+  // retentativa com a mesma chave nao a acha no atalho e espera no FOR UPDATE.
+  // Quando o lock solta, o saldo ja foi baixado: sem a releitura da chave
+  // dentro da transacao, ela respondia "Estoque insuficiente" para uma venda
+  // que existe. Chamar `gravarVenda` direto e exatamente esse caminho.
+  it("devolve a venda ja gravada em vez de 'Estoque insuficiente'", async () => {
+    const input = {
+      paymentMethod: "DINHEIRO" as const,
+      idempotencyKey: globalThis.crypto.randomUUID(),
+      items: [{ productId, quantity: 100, unitPrice: 5 }], // leva o estoque inteiro
+    };
+
+    const primeira = await VendasService.registrarVenda(input, ctx);
+    const segunda = await VendasService.gravarVenda(getTenantPrisma(tenantId), input, ctx);
+
+    expect(segunda.id).toBe(primeira.id);
+    expect(segunda.jaRegistrada).toBe(true);
+    expect(primeira.jaRegistrada).toBe(false);
+    expect(await prisma.sale.count({ where: { tenantId } })).toBe(1);
+    expect(await prisma.stockMovement.count({ where: { tenantId, type: "SAIDA" } })).toBe(1);
+  });
+});
+
+describe("Cabecalho do historico (regressao)", () => {
+  it("'Ver canceladas' mostra a cancelada na lista mas nao a soma no faturamento", async () => {
+    await venda(); // R$ 50
+    const cancelada = await venda({ items: [{ productId, quantity: 20, unitPrice: 5 }] }); // R$ 100
+    await VendasService.cancelarVenda({ id: cancelada.id }, ctx);
+
+    const filtro = { preset: "todas" as const, incluirCanceladas: true };
+    expect(await VendasService.count(tenantId, filtro)).toBe(2);
+    const t = await VendasService.totaisDoFiltro(tenantId, filtro);
+    expect(t.quantidade).toBe(1);
+    expect(Number(t.total)).toBe(50);
+  });
+
+  it("filtro por forma acha a venda mista pela parcela e soma so a parte daquela forma", async () => {
+    // R$ 30 PIX + R$ 20 dinheiro: a predominante gravada e PIX.
+    const mista = await venda({
+      paymentMethod: "PIX",
+      payments: [
+        { method: "PIX", amount: 30 },
+        { method: "DINHEIRO", amount: 20 },
+      ],
+    });
+    expect(mista.paymentMethod).toBe("PIX");
+    const dinheiro = await venda(); // R$ 50 em dinheiro
+
+    const lista = await VendasService.list(tenantId, { preset: "todas", paymentMethod: "DINHEIRO" });
+    expect(lista.map((v) => v.id).sort()).toEqual([mista.id, dinheiro.id].sort());
+
+    const tDinheiro = await VendasService.totaisDoFiltro(tenantId, {
+      preset: "todas",
+      paymentMethod: "DINHEIRO",
+    });
+    expect(tDinheiro.quantidade).toBe(2);
+    expect(Number(tDinheiro.total)).toBe(70); // 20 da mista + 50
+
+    const tPix = await VendasService.totaisDoFiltro(tenantId, {
+      preset: "todas",
+      paymentMethod: "PIX",
+    });
+    expect(tPix.quantidade).toBe(1);
+    expect(Number(tPix.total)).toBe(30);
+  });
+
+  it("venda antiga sem parcelas continua filtrada e somada pela coluna", async () => {
+    const antiga = await venda({ paymentMethod: "PIX" }); // R$ 50
+    await prisma.salePayment.deleteMany({ where: { saleId: antiga.id } });
+
+    const lista = await VendasService.list(tenantId, { preset: "todas", paymentMethod: "PIX" });
+    expect(lista.map((v) => v.id)).toEqual([antiga.id]);
+    const t = await VendasService.totaisDoFiltro(tenantId, {
+      preset: "todas",
+      paymentMethod: "PIX",
+    });
+    expect(Number(t.total)).toBe(50);
+  });
+
+  it("parcela de venda excluida pelo fiado nao soma no filtro", async () => {
+    const s = await venda({ customerName: "Ana", paymentMethod: "FIADO" });
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: s.id } });
+    await FiadoService.remove(conta.id, ctx);
+
+    const t = await VendasService.totaisDoFiltro(tenantId, {
+      preset: "todas",
+      paymentMethod: "FIADO",
+    });
+    expect(t.quantidade).toBe(0);
+    expect(Number(t.total)).toBe(0);
+  });
+});
+
+describe("Janela de cancelamento conta do registro (regressao)", () => {
+  // O fiado manual grava `saleDate` como a meia-noite do dia escolhido: um
+  // lancamento com a data de ontem ja nascia sem poder cancelar.
+  it("venda lancada agora com a data de ontem ainda pode ser cancelada", async () => {
+    const ontem = isoDateTz(addDaysTz(new Date(), -1));
+    const s = await venda({ saleDate: ontem });
+    expect(isoDateTz(s.saleDate)).toBe(ontem);
+    expect(VendasService.podeCancelar(s)).toBe(true);
+    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).resolves.toMatchObject({
+      id: s.id,
+    });
+  });
+
+  it("data futura nao estende a janela", async () => {
+    const s = await venda({ saleDate: isoDateTz(addDaysTz(new Date(), 5)) });
+    const daqui30h = new Date(Date.now() + 30 * 3600_000);
+    expect(VendasService.podeCancelar(s, daqui30h)).toBe(false);
   });
 });

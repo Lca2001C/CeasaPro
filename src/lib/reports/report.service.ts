@@ -6,7 +6,8 @@ import { CaixasService } from "@/lib/services/caixas.service";
 import { perdasPorLote } from "@/lib/services/higienizacao.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { add, sub, toDecimal, money } from "@/lib/money";
-import { formatQty } from "@/lib/format";
+import { formatDate, formatQty } from "@/lib/format";
+import { linhasVendidas, resumirPor, type LinhaVendida } from "./linhas-vendidas";
 import { addDaysTz, APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
 import {
   PAYMENT_METHOD_LABELS,
@@ -39,6 +40,12 @@ interface Params {
    * escolhe entre vencimento, pagamento e cadastro.
    */
   dateField?: "dueDate" | "paidDate" | "createdAt";
+  /**
+   * Teto do relatório de despesas por VENCIMENTO (`Period.toVencimento`). Em
+   * "Este mês" é o fim do mês — a mesma janela do Início e de /despesas —, e
+   * não "até hoje". Sem ele, vale `to`.
+   */
+  toVencimento?: Date;
   /** Agrupa as linhas por categoria, com subtotal em cada grupo. */
   agruparPorCategoria?: boolean;
 }
@@ -84,6 +91,11 @@ function agruparPorCategoria<T extends LinhaAgrupavel>(linhas: T[]): Record<stri
   }
   return saida;
 }
+
+/** Os relatórios por produto agrupam pelo NOME, como sempre fizeram. */
+const porNome = (l: LinhaVendida) => l.productName;
+const porNomeAsc = (a: { name: string }, b: { name: string }) =>
+  a.name.localeCompare(b.name, "pt-BR");
 
 export async function buildReport(kind: ReportKind, p: Params): Promise<ReportResult> {
   const db = getTenantPrisma(p.tenantId);
@@ -198,14 +210,31 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       // conta de janeiro jogava a despesa no mês errado, e era o relatório que
       // o contador recebia.
       const campo = p.dateField ?? "dueDate";
-      const despesas = await db.expense.findMany({
-        where: { [campo]: { gte: p.from, lte: p.to } },
-        include: { category: true },
-        orderBy: [{ [campo]: "asc" }],
-      });
+      // Por vencimento, "Este mês" vai até o FIM do mês, como o Início conta
+      // "Contas do mês" (ver `Period.toVencimento`). Pagamento e cadastro são
+      // fatos já acontecidos e continuam "até agora".
+      const ate = campo === "dueDate" && p.toVencimento ? p.toVencimento : p.to;
+      const janela = { gte: p.from, lte: ate };
+      // Por vencimento, a despesa SEM vencimento (o formulário deixa em branco)
+      // conta pela data de cadastro — o mesmo `COALESCE("dueDate","createdAt")`
+      // do painel. Com `dueDate` puro ela ficava fora do relatório e dentro do
+      // "Sobrou no mês", e o relatório entregue ao contador não explicava o
+      // lucro do Início.
+      const dataDe = (d: { dueDate: Date | null; paidDate: Date | null; createdAt: Date }) =>
+        campo === "dueDate" ? (d.dueDate ?? d.createdAt) : d[campo];
+      const despesas = (
+        await db.expense.findMany({
+          where:
+            campo === "dueDate"
+              ? { OR: [{ dueDate: janela }, { dueDate: null, createdAt: janela }] }
+              : { [campo]: janela },
+          include: { category: true },
+          orderBy: [{ [campo]: "asc" }, { createdAt: "asc" }],
+        })
+      ).sort((a, b) => (dataDe(a)?.getTime() ?? 0) - (dataDe(b)?.getTime() ?? 0));
       const linhas = despesas.map((d) => ({
         categoria: d.category?.name ?? "Sem categoria",
-        data: d[campo],
+        data: dataDe(d),
         description: d.description,
         category: d.category?.name ?? "-",
         type: EXPENSE_TYPE_LABELS[d.type],
@@ -217,6 +246,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       }));
       return {
         ...base,
+        // O cabeçalho (tela, PDF e Excel) diz a janela que foi de fato somada.
+        period: { from: p.from, to: ate },
         title: `${REPORT_LABELS[kind]} (por ${LABEL_CAMPO_DATA[campo]})`,
         columns: [
           { key: "data", label: LABEL_CAMPO_DATA[campo], format: "date" },
@@ -295,28 +326,17 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "LUCRO_PRODUTO": {
       // Receita, custo (snapshot na venda) e lucro por produto no periodo.
-      const rows = await prisma.$queryRaw<
-        { name: string; qtd: Prisma.Decimal; receita: Prisma.Decimal; custo: Prisma.Decimal }[]
-      >`
-        SELECT pr.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS qtd,
-               COALESCE(SUM(si."lineTotal"), 0) AS receita,
-               COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS custo
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
-          AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
-        GROUP BY pr.name
-        ORDER BY (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) DESC
-      `;
-      const mapped = rows.map((r) => ({
-        name: r.name,
-        qtd: toDecimal(r.qtd),
-        receita: money(toDecimal(r.receita)),
-        custo: money(toDecimal(r.custo)),
-        lucro: money(sub(r.receita, r.custo)),
-      }));
+      // Receita com o desconto da VENDA rateado (ver `linhasVendidas`): somando
+      // `lineTotal` cru, este relatório nunca fechava com o de vendas.
+      const mapped = resumirPor(await linhasVendidas(p.tenantId, p.from, p.to), porNome)
+        .sort((a, b) => b.lucro.comparedTo(a.lucro) || porNomeAsc(a, b))
+        .map((r) => ({
+          name: r.name,
+          qtd: r.qtd,
+          receita: r.receita,
+          custo: r.custo,
+          lucro: r.lucro,
+        }));
       return {
         ...base,
         columns: [
@@ -337,21 +357,9 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "MAIS_VENDIDOS": {
-      const rows = await prisma.$queryRaw<
-        { name: string; qtd: Prisma.Decimal; receita: Prisma.Decimal }[]
-      >`
-        SELECT pr.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS qtd,
-               COALESCE(SUM(si."lineTotal"), 0) AS receita
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
-          AND s."saleDate" >= ${p.from} AND s."saleDate" <= ${p.to}
-        GROUP BY pr.name
-        ORDER BY COALESCE(SUM(si.quantity), 0) DESC
-        LIMIT 50
-      `;
+      const rows = resumirPor(await linhasVendidas(p.tenantId, p.from, p.to), porNome)
+        .sort((a, b) => b.qtd.comparedTo(a.qtd) || porNomeAsc(a, b))
+        .slice(0, 50);
       return {
         ...base,
         columns: [
@@ -359,28 +367,19 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "qtd", label: "Qtd. vendida", align: "right", format: "qty" },
           { key: "receita", label: "Receita", align: "right", format: "money" },
         ],
-        rows: rows.map((r) => ({
-          name: r.name,
-          qtd: toDecimal(r.qtd),
-          receita: money(toDecimal(r.receita)),
-        })),
+        rows: rows.map((r) => ({ name: r.name, qtd: r.qtd, receita: r.receita })),
         totals: { name: "TOTAL", receita: add(...rows.map((r) => r.receita)) },
       };
     }
 
     case "LUCRO_FORNECEDOR": {
-      const rows = await prisma.$queryRaw<
-        {
-          supplier: string;
-          compras: Prisma.Decimal;
-          receita: Prisma.Decimal;
-          custo: Prisma.Decimal;
-        }[]
-      >`
-        WITH last_supplier AS (
+      const SEM_FORNECEDOR = "__sem_fornecedor__";
+      const [ultimoFornecedor, comprasPorFornecedor, vendidas] = await Promise.all([
+        // Fornecedor da última compra de cada produto até o fim do período.
+        prisma.$queryRaw<{ productId: string; supplier_key: string; supplier: string }[]>`
           SELECT DISTINCT ON (pi."productId")
-                 pi."productId",
-                 COALESCE(pu."supplierId", '__sem_fornecedor__') AS supplier_key,
+                 pi."productId" AS "productId",
+                 COALESCE(pu."supplierId", ${SEM_FORNECEDOR}) AS supplier_key,
                  COALESCE(su.name, 'Sem fornecedor') AS supplier
           FROM purchase_items pi
           JOIN purchases pu ON pu.id = pi."purchaseId"
@@ -389,23 +388,9 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             AND pu."deletedAt" IS NULL
             AND pu."purchaseDate" <= ${p.to}
           ORDER BY pi."productId", pu."purchaseDate" DESC, pu."createdAt" DESC
-        ),
-        sales_by_supplier AS (
-          SELECT ls.supplier_key,
-                 ls.supplier,
-                 COALESCE(SUM(si."lineTotal"), 0) AS receita,
-                 COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS custo
-          FROM sale_items si
-          JOIN sales sa ON sa.id = si."saleId"
-          JOIN last_supplier ls ON ls."productId" = si."productId"
-          WHERE si."tenantId" = ${p.tenantId}
-            AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
-            AND sa."saleDate" >= ${p.from}
-            AND sa."saleDate" <= ${p.to}
-          GROUP BY ls.supplier_key, ls.supplier
-        ),
-        purchases_by_supplier AS (
-          SELECT COALESCE(pu."supplierId", '__sem_fornecedor__') AS supplier_key,
+        `,
+        prisma.$queryRaw<{ supplier_key: string; supplier: string; compras: Prisma.Decimal }[]>`
+          SELECT COALESCE(pu."supplierId", ${SEM_FORNECEDOR}) AS supplier_key,
                  COALESCE(su.name, 'Sem fornecedor') AS supplier,
                  COALESCE(SUM(pi."lineTotal" + pi."freightShare"), 0) AS compras
           FROM purchase_items pi
@@ -415,24 +400,51 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             AND pu."deletedAt" IS NULL
             AND pu."purchaseDate" >= ${p.from}
             AND pu."purchaseDate" <= ${p.to}
-          GROUP BY COALESCE(pu."supplierId", '__sem_fornecedor__'), COALESCE(su.name, 'Sem fornecedor')
-        )
-        SELECT COALESCE(pb.supplier, sb.supplier, 'Sem fornecedor') AS supplier,
-               COALESCE(pb.compras, 0) AS compras,
-               COALESCE(sb.receita, 0) AS receita,
-               COALESCE(sb.custo, 0) AS custo
-        FROM purchases_by_supplier pb
-        FULL OUTER JOIN sales_by_supplier sb ON sb.supplier_key = pb.supplier_key
-        ORDER BY (COALESCE(sb.receita, 0) - COALESCE(sb.custo, 0)) DESC,
-                 COALESCE(pb.compras, 0) DESC
-      `;
-      const mapped = rows.map((r) => ({
-        supplier: r.supplier,
-        compras: money(toDecimal(r.compras)),
-        receita: money(toDecimal(r.receita)),
-        custo: money(toDecimal(r.custo)),
-        lucro: money(sub(r.receita, r.custo)),
-      }));
+          GROUP BY 1, 2
+        `,
+        linhasVendidas(p.tenantId, p.from, p.to),
+      ]);
+
+      // Produto SEM compra registrada até o fim do período (estoque lançado
+      // por ajuste) vai para "Sem fornecedor". Era um JOIN interno com a
+      // última compra, e a venda desses produtos sumia do relatório — a
+      // receita total não fechava com "Lucro por produto".
+      const fornecedorDe = new Map(ultimoFornecedor.map((f) => [f.productId, f]));
+      const chaveDaLinha = (l: { productId: string }) =>
+        fornecedorDe.get(l.productId)?.supplier_key ?? SEM_FORNECEDOR;
+      const nomeDaChave = new Map<string, string>([[SEM_FORNECEDOR, "Sem fornecedor"]]);
+      for (const f of ultimoFornecedor) nomeDaChave.set(f.supplier_key, f.supplier);
+      const vendasPorFornecedor = new Map(
+        resumirPor(vendidas, chaveDaLinha).map((r) => [r.chave, r]),
+      );
+
+      const grupos = new Map<string, { supplier: string; compras: Prisma.Decimal }>();
+      for (const c of comprasPorFornecedor) {
+        grupos.set(c.supplier_key, { supplier: c.supplier, compras: money(toDecimal(c.compras)) });
+      }
+      for (const chave of vendasPorFornecedor.keys()) {
+        if (!grupos.has(chave)) {
+          grupos.set(chave, {
+            supplier: nomeDaChave.get(chave) ?? "Sem fornecedor",
+            compras: toDecimal(0),
+          });
+        }
+      }
+
+      const mapped = [...grupos.entries()]
+        .map(([chave, g]) => {
+          const v = vendasPorFornecedor.get(chave);
+          const receita = v?.receita ?? toDecimal(0);
+          const custo = v?.custo ?? toDecimal(0);
+          return {
+            supplier: g.supplier,
+            compras: g.compras,
+            receita,
+            custo,
+            lucro: FinancialCalc.lucroBruto(receita, custo),
+          };
+        })
+        .sort((a, b) => b.lucro.comparedTo(a.lucro) || b.compras.comparedTo(a.compras));
       return {
         ...base,
         columns: [
@@ -454,31 +466,18 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "PRODUTOS_PREJUIZO": {
-      const rows = await prisma.$queryRaw<
-        { name: string; qtd: Prisma.Decimal; receita: Prisma.Decimal; custo: Prisma.Decimal }[]
-      >`
-        SELECT pr.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS qtd,
-               COALESCE(SUM(si."lineTotal"), 0) AS receita,
-               COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS custo
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId}
-          AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
-          AND s."saleDate" >= ${p.from}
-          AND s."saleDate" <= ${p.to}
-        GROUP BY pr.name
-        HAVING (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) < 0
-        ORDER BY (COALESCE(SUM(si."lineTotal"), 0) - COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0)) ASC
-      `;
-      const mapped = rows.map((r) => ({
-        name: r.name,
-        qtd: toDecimal(r.qtd),
-        receita: money(toDecimal(r.receita)),
-        custo: money(toDecimal(r.custo)),
-        prejuizo: money(sub(r.receita, r.custo)),
-      }));
+      // Com o desconto da venda rateado: a venda que só deu prejuízo DEPOIS do
+      // desconto precisa aparecer aqui.
+      const mapped = resumirPor(await linhasVendidas(p.tenantId, p.from, p.to), porNome)
+        .filter((r) => r.lucro.isNegative())
+        .sort((a, b) => a.lucro.comparedTo(b.lucro) || porNomeAsc(a, b))
+        .map((r) => ({
+          name: r.name,
+          qtd: r.qtd,
+          receita: r.receita,
+          custo: r.custo,
+          prejuizo: r.lucro,
+        }));
       return {
         ...base,
         columns: [
@@ -499,53 +498,39 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "ESTOQUE_PARADO": {
-      const rows = await prisma.$queryRaw<
-        {
-          name: string;
-          quantity: Prisma.Decimal;
-          value: Prisma.Decimal;
-          lastMovementAt: Date | null;
-          lastSaleAt: Date | null;
-        }[]
-      >`
-        WITH saldo AS (
-          SELECT "productId",
-                 COALESCE(SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END), 0) AS quantity,
-                 COALESCE(SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END * COALESCE("unitCost", 0)), 0) AS value,
-                 MAX("movedAt") AS "lastMovementAt"
-          FROM stock_movements
-          WHERE "tenantId" = ${p.tenantId}
-          GROUP BY "productId"
-        ),
-        last_sale AS (
-          SELECT si."productId", MAX(sa."saleDate") AS "lastSaleAt"
+      // Saldo e VALOR vêm de `EstoqueService.getPositions` — custo médio
+      // ponderado móvel, o mesmo da tela de Estoque e do painel. A soma do
+      // livro-razão (`Σ qtde com sinal × unitCost`) que ficava aqui dava outro
+      // número para o mesmo produto, e sobrava valor em produto já vendido.
+      const [posicoes, ultimasVendas] = await Promise.all([
+        EstoqueService.getPositions(p.tenantId),
+        prisma.$queryRaw<{ productId: string; lastSaleAt: Date }[]>`
+          SELECT si."productId" AS "productId", MAX(sa."saleDate") AS "lastSaleAt"
           FROM sale_items si
           JOIN sales sa ON sa.id = si."saleId"
           WHERE si."tenantId" = ${p.tenantId}
             AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
           GROUP BY si."productId"
-        )
-        SELECT pr.name AS name,
-               saldo.quantity AS quantity,
-               saldo.value AS value,
-               saldo."lastMovementAt" AS "lastMovementAt",
-               last_sale."lastSaleAt" AS "lastSaleAt"
-        FROM saldo
-        JOIN products pr ON pr.id = saldo."productId"
-        LEFT JOIN last_sale ON last_sale."productId" = saldo."productId"
-        WHERE pr."tenantId" = ${p.tenantId}
-          AND pr."deletedAt" IS NULL
-          AND saldo.quantity > 0
-          AND (last_sale."lastSaleAt" IS NULL OR last_sale."lastSaleAt" < ${p.from})
-        ORDER BY last_sale."lastSaleAt" ASC NULLS FIRST, saldo."lastMovementAt" ASC NULLS FIRST, pr.name ASC
-      `;
-      const mapped = rows.map((r) => ({
-        name: r.name,
-        quantity: toDecimal(r.quantity),
-        value: money(toDecimal(r.value)),
-        lastSaleAt: r.lastSaleAt,
-        lastMovementAt: r.lastMovementAt,
-      }));
+        `,
+      ]);
+      const ultimaVenda = new Map(ultimasVendas.map((u) => [u.productId, u.lastSaleAt]));
+      const tempo = (d: Date | null | undefined) => (d ? d.getTime() : -Infinity);
+      const mapped = posicoes
+        .filter((pos) => pos.quantity.greaterThan(0))
+        .map((pos) => ({
+          name: pos.name,
+          quantity: pos.quantity,
+          value: pos.value,
+          lastSaleAt: ultimaVenda.get(pos.productId) ?? null,
+          lastMovementAt: pos.lastMovementAt,
+        }))
+        .filter((r) => r.lastSaleAt === null || r.lastSaleAt < p.from)
+        .sort(
+          (a, b) =>
+            tempo(a.lastSaleAt) - tempo(b.lastSaleAt) ||
+            tempo(a.lastMovementAt) - tempo(b.lastMovementAt) ||
+            a.name.localeCompare(b.name, "pt-BR"),
+        );
       return {
         ...base,
         columns: [
@@ -564,17 +549,17 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     }
 
     case "CAIXAS_PAPELAO": {
-      const rows = await prisma.$queryRaw<
-        {
-          date: Date;
-          source: string;
-          product: string;
-          party: string;
-          entrada: Prisma.Decimal;
-          saida: Prisma.Decimal;
-          total: Prisma.Decimal;
-        }[]
-      >`
+      type LinhaPapelao = {
+        date: Date;
+        source: string;
+        product: string;
+        party: string;
+        entrada: Prisma.Decimal;
+        saida: Prisma.Decimal;
+        total: Prisma.Decimal;
+      };
+      const [outras, vendidas] = await Promise.all([
+        prisma.$queryRaw<LinhaPapelao[]>`
         SELECT pu."purchaseDate" AS date,
                'Compra' AS source,
                pr.name AS product,
@@ -594,24 +579,6 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
         UNION ALL
 
-        SELECT sa."saleDate" AS date,
-               'Venda' AS source,
-               pr.name AS product,
-               COALESCE(sa."customerName", 'Sem cliente') AS party,
-               0::numeric AS entrada,
-               COALESCE(si.quantity, 0) AS saida,
-               COALESCE(si."lineTotal", 0) AS total
-        FROM sale_items si
-        JOIN sales sa ON sa.id = si."saleId"
-        JOIN products pr ON pr.id = si."productId"
-        WHERE si."tenantId" = ${p.tenantId}
-          AND sa."deletedAt" IS NULL AND sa."cancelledAt" IS NULL
-          AND sa."saleDate" >= ${p.from}
-          AND sa."saleDate" <= ${p.to}
-          AND COALESCE(si."recipientType", pr."recipientType") = 'PAPELAO'
-
-        UNION ALL
-
         SELECT ps."saleDate" AS date,
                'Venda embalagem' AS source,
                pt.name AS product,
@@ -626,9 +593,28 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           AND ps."saleDate" >= ${p.from}
           AND ps."saleDate" <= ${p.to}
           AND pt.name ILIKE '%papel%'
-
-        ORDER BY date ASC, source ASC, product ASC
-      `;
+      `,
+        linhasVendidas(p.tenantId, p.from, p.to),
+      ]);
+      // A venda entra com a receita da LINHA já com o desconto da venda
+      // rateado — `lineTotal` cru contava de novo o que o cliente não pagou.
+      const daVenda: LinhaPapelao[] = vendidas
+        .filter((l) => l.recipientType === "PAPELAO")
+        .map((l) => ({
+          date: l.saleDate,
+          source: "Venda",
+          product: l.productName,
+          party: l.customerName ?? "Sem cliente",
+          entrada: toDecimal(0),
+          saida: l.quantity,
+          total: l.receita,
+        }));
+      const rows = [...outras, ...daVenda].sort(
+        (a, b) =>
+          new Date(a.date).getTime() - new Date(b.date).getTime() ||
+          a.source.localeCompare(b.source, "pt-BR") ||
+          a.product.localeCompare(b.product, "pt-BR"),
+      );
       const mapped = rows.map((r) => ({
         date: r.date,
         source: r.source,
@@ -678,17 +664,26 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
        *
        * "Sem vencimento e antigo" ganhou régua explícita: mais de 30 dias desde
        * a abertura. Sem uma régua, "antigo" não é verificável.
+       *
+       * Inadimplência é POSIÇÃO numa data de corte, não fluxo do período.
+       * Filtrar pela abertura da conta dentro do período (como se fez na
+       * correção 2) escondia exatamente os devedores antigos: no preset "Este
+       * mês" só entravam contas abertas neste mês, e o ramo "sem vencimento há
+       * mais de 30 dias" nunca batia (aberta depois do dia 1º E há mais de 30
+       * dias não cabem juntos). A conta de julho nunca paga não aparecia em
+       * preset nenhum. Agora o fim do período é o corte: entra quem já tinha a
+       * conta aberta até ali e estava atrasado nele. Situação e saldo são os de
+       * hoje (a conta quitada depois do corte já não é cobrança).
        */
-      const hoje = startOfDayTz(new Date());
-      const limiteSemVencimento = addDaysTz(hoje, -DIAS_PARA_COBRAR_SEM_VENCIMENTO);
+      const agora = new Date();
+      const corte = startOfDayTz(p.to < agora ? p.to : agora);
+      const limiteSemVencimento = addDaysTz(corte, -DIAS_PARA_COBRAR_SEM_VENCIMENTO);
       const contas = await db.creditAccount.findMany({
         where: {
           status: "EM_ABERTO",
-          // O período filtra pela ABERTURA da conta: `dueDate` pode ser nulo, e
-          // filtrar por ele deixaria de fora justamente quem não tem data.
-          createdAt: { gte: p.from, lte: p.to },
+          createdAt: { lte: p.to },
           OR: [
-            { dueDate: { lt: hoje } },
+            { dueDate: { lt: corte } },
             { dueDate: null, createdAt: { lt: limiteSemVencimento } },
           ],
         },
@@ -704,6 +699,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       }));
       return {
         ...base,
+        title: `${REPORT_LABELS[kind]} (posição em ${formatDate(corte)})`,
         columns: [
           { key: "customerName", label: "Cliente" },
           { key: "dueDate", label: "Vencimento", format: "date" },

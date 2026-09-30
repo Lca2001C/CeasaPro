@@ -1,4 +1,4 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, vi } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
@@ -166,6 +166,134 @@ describe("Exclusão de plano (super-admin)", () => {
     expect(
       await prisma.tenantSubscription.count({ where: { planId: plano.id } }),
     ).toBe(1);
+  });
+});
+
+/**
+ * Plano que é ALVO de troca agendada não pode sair de circulação.
+ *
+ * A renovação paga antes da virada já é cobrada pelo preço do plano agendado;
+ * desativá-lo fazia a virada descartar o agendamento (plano inativo), e
+ * excluí-lo zerava `pendingPlanId` pela FK SET NULL. Nos dois casos o cliente
+ * ficava no plano antigo tendo pago o preço do novo.
+ */
+describe("Plano com troca agendada", () => {
+  async function comTrocaAgendadaPara(alvoId: string) {
+    const atual = await criarPlano("Plano Atual");
+    const tenantId = await createTestTenant("TROCA AGENDADA");
+    tenants.push(tenantId);
+    const fim = new Date(Date.now() + 20 * 86_400_000);
+    await prisma.tenantSubscription.create({
+      data: {
+        tenantId,
+        planId: atual.id,
+        status: "ATIVO",
+        monthlyAmount: 49.9,
+        activatedAt: new Date(),
+        currentPeriodEnd: fim,
+        graceDays: 5,
+        pendingPlanId: alvoId,
+        pendingPlanFrom: fim,
+      },
+    });
+    return tenantId;
+  }
+
+  const entrada = (id: string, active: boolean) => ({
+    id,
+    name: "Plano Agendado",
+    priceMonthly: 29.9,
+    active,
+    modules: [],
+  });
+
+  it("recusa desativar e mantém o agendamento", async () => {
+    const alvo = await criarPlano("Plano Agendado");
+    const tenantId = await comTrocaAgendadaPara(alvo.id);
+
+    await expect(AdminService.updatePlan(entrada(alvo.id, false), ctx)).rejects.toThrow(
+      /troca agendada/i,
+    );
+    expect((await prisma.plan.findUniqueOrThrow({ where: { id: alvo.id } })).active).toBe(true);
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(sub.pendingPlanId).toBe(alvo.id);
+
+    // Editar sem desativar continua permitido.
+    await AdminService.updatePlan(entrada(alvo.id, true), ctx);
+  });
+
+  it("recusa excluir (a FK SET NULL apagaria o agendamento em silêncio)", async () => {
+    const alvo = await criarPlano("Plano Agendado");
+    const tenantId = await comTrocaAgendadaPara(alvo.id);
+
+    await expect(AdminService.deletePlan(alvo.id, ctx)).rejects.toThrow(/troca agendada/i);
+    expect(await prisma.plan.findUnique({ where: { id: alvo.id } })).not.toBeNull();
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(sub.pendingPlanId).toBe(alvo.id);
+  });
+
+  it("agendamento de empresa EXCLUÍDA não trava", async () => {
+    const alvo = await criarPlano("Plano Agendado");
+    const tenantId = await comTrocaAgendadaPara(alvo.id);
+    await prisma.tenant.update({ where: { id: tenantId }, data: { deletedAt: new Date() } });
+
+    await AdminService.updatePlan(entrada(alvo.id, false), ctx);
+    expect((await prisma.plan.findUniqueOrThrow({ where: { id: alvo.id } })).active).toBe(false);
+  });
+});
+
+describe("Exclusão de plano é atômica", () => {
+  it("se o plano não sai, o histórico das excluídas também não", async () => {
+    const plano = await criarPlano("Plano Atômico");
+    const excluida = await createTestTenant("EXCLUIDA ATOMICA");
+    tenants.push(excluida);
+    const sub = await prisma.tenantSubscription.create({
+      data: {
+        tenantId: excluida,
+        planId: plano.id,
+        status: "ATIVO",
+        monthlyAmount: 10,
+        currentPeriodEnd: new Date("2026-12-01T00:00:00Z"),
+        graceDays: 5,
+      },
+    });
+    await prisma.tenant.update({ where: { id: excluida }, data: { deletedAt: new Date() } });
+
+    // Simula a corrida: `plan.delete` falha DEPOIS de a limpeza já ter rodado.
+    const original = prisma.$transaction.bind(prisma);
+    const espiao = vi
+      .spyOn(prisma, "$transaction")
+      .mockImplementation(((fn: (tx: unknown) => Promise<unknown>) =>
+        original(async (tx) =>
+          fn(
+            new Proxy(tx, {
+              get(alvo, prop, rec) {
+                if (prop === "plan") {
+                  return {
+                    ...alvo.plan,
+                    delete: async () => {
+                      throw new Error("FK simulada");
+                    },
+                  };
+                }
+                return Reflect.get(alvo, prop, rec);
+              },
+            }),
+          ),
+        )) as never);
+    try {
+      await expect(
+        AdminService.deletePlan(plano.id, ctx, { apagarHistoricoDeExcluidas: true }),
+      ).rejects.toThrow(/FK simulada/);
+    } finally {
+      espiao.mockRestore();
+    }
+
+    expect(await prisma.plan.findUnique({ where: { id: plano.id } })).not.toBeNull();
+    expect(await prisma.tenantSubscription.findUnique({ where: { id: sub.id } })).not.toBeNull();
+    expect(
+      await prisma.auditLog.count({ where: { entity: "TenantSubscription", entityId: plano.id } }),
+    ).toBe(0);
   });
 });
 

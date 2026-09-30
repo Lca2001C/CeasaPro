@@ -25,6 +25,7 @@ import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 import { toast } from "sonner";
 import { sair } from "@/lib/sair";
+import { hrefAtual } from "./item-atual";
 
 const items = [
   { href: "/dashboard", label: "Início", icon: Home },
@@ -62,12 +63,15 @@ export function SideNav({
   trialLabel?: string | null;
 }) {
   const pathname = usePathname();
-  const isActive = (href: string) =>
-    pathname === href || pathname.startsWith(href + "/");
   const visible = items.filter((item) => {
     const m = moduleForPath(item.href);
     return !m || isModuleEnabled(modules, m);
   });
+  // Um item ativo só: ver `hrefAtual` (em /vendas/nova, "Vendas" também casava).
+  const atual = hrefAtual(
+    visible.map((i) => i.href),
+    pathname,
+  );
   return (
     <aside
       // Âncora do tour guiado; a barra de baixo tem a dela. Ver `nav-mobile`.
@@ -84,7 +88,7 @@ export function SideNav({
         <nav aria-label="Menu principal" className="mt-2 flex flex-col gap-1 overflow-y-auto">
           {visible.map((item) => {
             const Icon = item.icon;
-            const active = isActive(item.href);
+            const active = item.href === atual;
             return (
               <Link
                 key={item.href}

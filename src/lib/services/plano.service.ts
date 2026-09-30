@@ -6,6 +6,7 @@ import type { OptionalModuleKey } from "@/lib/plan/modules";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { refMonthTz } from "@/lib/tz";
+import { baixarPendentes, cancelarNoGateway } from "@/lib/payments/cobrancas-pendentes";
 import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -85,7 +86,11 @@ export const PlanoService = {
     // A troca agendada vence pelo relógio, e ninguém garante que o cron rodou
     // antes desta tela abrir. Aplicar aqui é o que impede a página de anunciar
     // como vigente um plano que já deixou de ser.
-    const aplicado = await this.aplicarTrocaProgramada(atual, now);
+    // Relê sempre que HAVIA agendamento: além de aplicado, ele pode ter sido
+    // descartado (plano agendado fora de oferta), e aí a linha em memória ainda
+    // anunciaria a troca.
+    const aplicado =
+      (await this.aplicarTrocaProgramada(atual, now)) !== null || atual.pendingPlanId !== null;
     const sub = aplicado
       ? await prisma.tenantSubscription.findUniqueOrThrow({
           where: { tenantId },
@@ -218,7 +223,16 @@ export const PlanoService = {
       include: { plan: true, pendingPlan: true },
     });
     if (!sub) throw new NotFoundError("Assinatura não encontrada");
-    if (sub.cancelledAt) {
+    // Cancelada com o período pago AINDA correndo: a troca é recusada — o mês
+    // foi comprado num plano, e a assinatura não vai renovar para estrear outro.
+    // Quem quer continuar desfaz o cancelamento antes.
+    //
+    // Com o período já encerrado, recusar prendia o cliente que voltou: pela
+    // `/assinatura` ele escolhia outro plano, o pagamento chamava esta função e
+    // levava "a assinatura está cancelada" — a única saída era recontratar no
+    // plano antigo. Aqui não há período pago a proteger, então a troca vale na
+    // hora (o `agendar` abaixo dá falso) e o pagamento limpa `cancelledAt`.
+    if (sub.cancelledAt && sub.currentPeriodEnd > now) {
       throw new BusinessRuleError(
         "A assinatura está cancelada. Desfaça o cancelamento ou contrate de novo antes de trocar de plano.",
       );
@@ -274,10 +288,17 @@ export const PlanoService = {
     }
 
     if (agendar) {
-      await prisma.$transaction(async (tx) => {
+      const obsoletas = await prisma.$transaction(async (tx) => {
         await tx.tenantSubscription.update({
           where: { tenantId: ctx.tenantId },
           data: { pendingPlanId: target.id, pendingPlanFrom: sub.currentPeriodEnd },
+        });
+        // A próxima cobrança compra o período do plano AGENDADO (`valorDevido`).
+        // Um QR já emitido pelo preço antigo — a renovação adiantada da janela
+        // do lembrete, tipicamente — pagaria o mês novo pelo valor errado.
+        const baixadas = await baixarPendentes(tx, {
+          tenantId: ctx.tenantId,
+          amount: { not: target.priceMonthly },
         });
         await audit(
           {
@@ -297,7 +318,9 @@ export const PlanoService = {
           },
           tx,
         );
+        return baixadas;
       });
+      await cancelarNoGateway(obsoletas, { tenantId: ctx.tenantId, motivo: "troca-de-plano" }, now);
 
       logger.info(
         {
@@ -317,7 +340,7 @@ export const PlanoService = {
       };
     }
 
-    const updated = await prisma.$transaction(async (tx) => {
+    const { row: updated, obsoletas } = await prisma.$transaction(async (tx) => {
       const row = await tx.tenantSubscription.update({
         where: { tenantId: ctx.tenantId },
         data: {
@@ -329,6 +352,15 @@ export const PlanoService = {
           pendingPlanFrom: null,
         },
         include: { plan: true },
+      });
+      // O QR emitido pelo preço do plano antigo deixa de ser a cobrança certa:
+      // pago, ele compraria o mês do plano novo pelo valor do antigo (e o
+      // pagamento viraria "valor a menor"). Sai aqui e, depois do commit, do
+      // Mercado Pago — antes só saía do nosso banco, e só se o cliente voltasse
+      // a gerar um código.
+      const baixadas = await baixarPendentes(tx, {
+        tenantId: ctx.tenantId,
+        amount: { not: target.priceMonthly },
       });
       await audit(
         {
@@ -344,8 +376,9 @@ export const PlanoService = {
         },
         tx,
       );
-      return row;
+      return { row, obsoletas: baixadas };
     });
+    await cancelarNoGateway(obsoletas, { tenantId: ctx.tenantId, motivo: "troca-de-plano" }, now);
 
     return {
       planName: updated.plan?.name ?? target.name,
@@ -366,10 +399,16 @@ export const PlanoService = {
       throw new BusinessRuleError("Não há troca de plano agendada.");
     }
 
-    await prisma.$transaction(async (tx) => {
+    const obsoletas = await prisma.$transaction(async (tx) => {
       await tx.tenantSubscription.update({
         where: { tenantId: ctx.tenantId },
         data: { pendingPlanId: null, pendingPlanFrom: null },
+      });
+      // Sem agendamento, a próxima cobrança volta a ser do plano vigente: o QR
+      // emitido pelo preço do agendado deixou de ser o valor devido.
+      const baixadas = await baixarPendentes(tx, {
+        tenantId: ctx.tenantId,
+        amount: { not: sub.monthlyAmount },
       });
       await audit(
         {
@@ -388,6 +427,11 @@ export const PlanoService = {
         },
         tx,
       );
+      return baixadas;
+    });
+    await cancelarNoGateway(obsoletas, {
+      tenantId: ctx.tenantId,
+      motivo: "troca-agendada-desfeita",
     });
 
     return { ok: true as const };
@@ -407,23 +451,46 @@ export const PlanoService = {
    */
   async aplicarTrocaProgramada(sub: SubComTrocaAgendada, now = new Date()): Promise<Plan | null> {
     if (!sub.pendingPlanId || !sub.pendingPlanFrom) return null;
-    if (sub.pendingPlanFrom > now) return null;
 
     const alvo = await prisma.plan.findUnique({ where: { id: sub.pendingPlanId } });
     if (!alvo || !alvo.active) {
       // O plano saiu de oferta entre a contratação e a virada da competência.
       // Descartar o agendamento é o único caminho que não prende a empresa: ela
       // segue no plano vigente, que é o que vinha usando e pagando.
+      //
+      // Descarta ASSIM QUE vê, e não só na virada. `valorDevido` já ignora
+      // plano agendado inativo (cobra o vigente); se o agendamento ficasse de
+      // pé até a data, a tela de plano seguiria anunciando uma troca que não vai
+      // acontecer, com a cobrança dizendo outra coisa. O painel já recusa
+      // desativar plano com troca agendada — isto é para o dado de antes da trava.
       logger.warn(
         { tenantId: sub.tenantId, pendingPlanId: sub.pendingPlanId },
         "Troca de plano agendada descartada: o plano não existe mais ou saiu de oferta",
       );
-      await prisma.tenantSubscription.update({
-        where: { id: sub.id },
-        data: { pendingPlanId: null, pendingPlanFrom: null },
+      await prisma.$transaction(async (tx) => {
+        const { count } = await tx.tenantSubscription.updateMany({
+          where: { id: sub.id, pendingPlanId: sub.pendingPlanId },
+          data: { pendingPlanId: null, pendingPlanFrom: null },
+        });
+        if (count !== 1) return;
+        await audit(
+          {
+            tenantId: sub.tenantId,
+            action: "UPDATE",
+            entity: "TenantSubscription",
+            entityId: sub.id,
+            oldData: {
+              pendingPlanId: sub.pendingPlanId,
+              pendingPlanFrom: sub.pendingPlanFrom?.toISOString() ?? null,
+            },
+            newData: { pendingPlanId: null, motivo: "troca-agendada-descartada-plano-inativo" },
+          },
+          tx,
+        );
       });
       return null;
     }
+    if (sub.pendingPlanFrom > now) return null;
 
     const aplicou = await prisma.$transaction(async (tx) => {
       // `pendingPlanId` no filtro fecha a corrida entre o cron e um login que

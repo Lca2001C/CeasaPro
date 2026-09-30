@@ -1,8 +1,19 @@
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { ProdutoInput, ProdutoUpdateInput } from "@/lib/validations/produto";
 import type { TenantCtx } from "@/lib/http/with-action";
+
+/** O produto já aparece em algum lançamento (estoque, compra ou venda)? */
+async function temHistorico(tenantId: string, productId: string): Promise<boolean> {
+  const db = getTenantPrisma(tenantId);
+  const [movimento, compra, venda] = await Promise.all([
+    db.stockMovement.findFirst({ where: { productId }, select: { id: true } }),
+    db.purchaseItem.findFirst({ where: { productId }, select: { id: true } }),
+    db.saleItem.findFirst({ where: { productId }, select: { id: true } }),
+  ]);
+  return Boolean(movimento || compra || venda);
+}
 
 export const ProdutosService = {
   async list(tenantId: string, search?: string) {
@@ -13,6 +24,14 @@ export const ProdutosService = {
         : undefined,
       orderBy: [{ active: "desc" }, { name: "asc" }],
     });
+  },
+
+  /**
+   * O produto já tem lançamento? A tela de edição usa para travar a unidade
+   * de venda — a mesma regra que `update` aplica no servidor.
+   */
+  temHistorico(tenantId: string, productId: string): Promise<boolean> {
+    return temHistorico(tenantId, productId);
   },
 
   async get(tenantId: string, id: string) {
@@ -52,6 +71,19 @@ export const ProdutosService = {
     const db = getTenantPrisma(ctx.tenantId);
     const before = await db.product.findFirst({ where: { id: input.id } });
     if (!before) throw new NotFoundError("Produto não encontrado");
+
+    // Nenhum movimento, compra ou venda guarda a unidade: todos leem a do
+    // produto vivo. Trocar CAIXA → KG num produto com histórico reinterpretava
+    // o livro-razão inteiro — 50 caixas em estoque viravam "50 kg", o custo
+    // por caixa virava custo por quilo, e o fiado passado era relido em kg.
+    if (input.saleUnit !== before.saleUnit && (await temHistorico(ctx.tenantId, before.id))) {
+      throw new BusinessRuleError(
+        "Este produto já tem compras, vendas ou movimento de estoque, e a unidade de venda " +
+          "não pode mudar: o histórico passaria a ser lido na unidade nova. Cadastre um " +
+          "produto novo para vender na outra unidade.",
+      );
+    }
+
     const product = await db.product.update({
       where: { id: input.id },
       data: {

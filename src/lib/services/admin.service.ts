@@ -93,6 +93,40 @@ async function recusarAmbienteAdmin(tenantId: string): Promise<void> {
   }
 }
 
+/**
+ * Recusa tirar de circulação um plano que é ALVO de troca agendada.
+ *
+ * O agendamento (`pendingPlanId`) é a promessa "a partir de `pendingPlanFrom`
+ * você está neste plano", e a renovação paga antes da virada já é cobrada pelo
+ * preço dele (`valorDevido`). Desativar o plano faz a virada descartar o
+ * agendamento (`aplicarTrocaProgramada` não aplica plano inativo), e excluir
+ * zera a FK (SET NULL): nos dois casos o cliente fica no plano antigo tendo
+ * pago o preço do novo — ou o contrário, no upgrade — sem aviso nenhum.
+ *
+ * A troca agendada se resolve sozinha em no máximo um período; até lá o plano
+ * precisa continuar existindo e valendo.
+ */
+async function recusarSeHaTrocaAgendada(
+  db: Pick<Prisma.TransactionClient, "tenantSubscription">,
+  planId: string,
+  acao: "desativado" | "excluído",
+): Promise<void> {
+  const agendadas = await db.tenantSubscription.count({
+    where: { pendingPlanId: planId, tenant: { deletedAt: null } },
+  });
+  if (agendadas > 0) {
+    throw new BusinessRuleError(
+      `${agendadas} empresa(s) têm troca agendada para este plano no próximo período. ` +
+        `Ele não pode ser ${acao} antes de a troca acontecer — senão o cliente paga o ` +
+        "preço deste plano e continua no antigo.",
+    );
+  }
+}
+
+/** Recortes da lista de `/admin/usuarios`. */
+export const RECORTES_USUARIOS = ["ONLINE", "TESTE", "EM_DIA", "INADIMPLENTES", "INATIVOS"] as const;
+export type RecorteUsuarios = (typeof RECORTES_USUARIOS)[number];
+
 // O slug do plano interno vem de `plano.service` — a vitrine pública e o
 // cadastro precisam do mesmo valor para não oferecê-lo a cliente.
 
@@ -359,23 +393,31 @@ export const AdminService = {
     if (!t) throw new NotFoundError("Empresa não encontrada");
     await recusarAmbienteAdmin(input.tenantId);
 
-    await prisma.tenant.update({
-      where: { id: input.tenantId },
-      data: { status: input.status },
-    });
-    // Bloqueio imediato: derruba sessões ativas da empresa.
-    if (input.status !== "ACTIVE") await revokeAllForTenant(input.tenantId);
+    // Uma transação só (regra 5): status, revogação e auditoria juntos. Em
+    // chamadas separadas, uma falha entre elas deixava a empresa bloqueada com
+    // sessões vivas, ou sem registro de quem a bloqueou.
+    await prisma.$transaction(async (tx) => {
+      await tx.tenant.update({
+        where: { id: input.tenantId },
+        data: { status: input.status },
+      });
+      // Bloqueio imediato: derruba sessões ativas da empresa.
+      if (input.status !== "ACTIVE") await revokeAllForTenant(input.tenantId, "TENANT", tx);
 
-    await audit({
-      tenantId: input.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "STATUS_CHANGE",
-      entity: "Tenant",
-      entityId: input.tenantId,
-      oldData: { status: t.status },
-      newData: { status: input.status, reason: input.reason },
-      ip: ctx.ip,
+      await audit(
+        {
+          tenantId: input.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "STATUS_CHANGE",
+          entity: "Tenant",
+          entityId: input.tenantId,
+          oldData: { status: t.status },
+          newData: { status: input.status, reason: input.reason },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
     return { status: input.status };
   },
@@ -432,19 +474,24 @@ export const AdminService = {
           },
         });
       }
-    });
-    await revokeAllForTenant(id);
-
-    await audit({
-      tenantId: id,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "Tenant",
-      entityId: id,
-      oldData: { status: t.status, tradeName: t.tradeName },
-      newData: { usuariosExcluidos: usuarios.length },
-      ip: ctx.ip,
+      // Revogação e auditoria DENTRO da transação (regra 5): depois do commit,
+      // uma queda de conexão deixava a empresa excluída sem registro de quem
+      // excluiu, ou com as sessões vivas até o access expirar.
+      await revokeAllForTenant(id, "TENANT", tx);
+      await audit(
+        {
+          tenantId: id,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "Tenant",
+          entityId: id,
+          oldData: { status: t.status, tradeName: t.tradeName },
+          newData: { usuariosExcluidos: usuarios.length },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
     return { id };
   },
@@ -452,20 +499,25 @@ export const AdminService = {
   async updateMonthlyAmount(tenantId: string, monthlyAmount: number, ctx: AdminCtx) {
     const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
     if (!sub) throw new NotFoundError("Assinatura não encontrada");
-    await prisma.tenantSubscription.update({
-      where: { tenantId },
-      data: { monthlyAmount },
-    });
-    await audit({
-      tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "UPDATE",
-      entity: "TenantSubscription",
-      entityId: sub.id,
-      oldData: { monthlyAmount: sub.monthlyAmount.toString() },
-      newData: { monthlyAmount },
-      ip: ctx.ip,
+    await prisma.$transaction(async (tx) => {
+      await tx.tenantSubscription.update({
+        where: { tenantId },
+        data: { monthlyAmount },
+      });
+      await audit(
+        {
+          tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "TenantSubscription",
+          entityId: sub.id,
+          oldData: { monthlyAmount: sub.monthlyAmount.toString() },
+          newData: { monthlyAmount },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
   },
 
@@ -520,32 +572,42 @@ export const AdminService = {
       );
     }
 
-    const plan = await prisma.plan.update({
-      where: { id: input.id },
-      data: {
-        name: input.name,
-        priceMonthly: input.priceMonthly,
-        active: input.active,
-        features: { modules },
-      },
-    });
-    await audit({
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "UPDATE",
-      entity: "Plan",
-      entityId: plan.id,
-      oldData: {
-        name: before.name,
-        priceMonthly: before.priceMonthly.toString(),
-        active: before.active,
-      },
-      newData: {
-        name: plan.name,
-        priceMonthly: plan.priceMonthly.toString(),
-        active: plan.active,
-      },
-      ip: ctx.ip,
+    if (before.active && !input.active) {
+      await recusarSeHaTrocaAgendada(prisma, input.id, "desativado");
+    }
+
+    const plan = await prisma.$transaction(async (tx) => {
+      const atualizado = await tx.plan.update({
+        where: { id: input.id },
+        data: {
+          name: input.name,
+          priceMonthly: input.priceMonthly,
+          active: input.active,
+          features: { modules },
+        },
+      });
+      await audit(
+        {
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "Plan",
+          entityId: atualizado.id,
+          oldData: {
+            name: before.name,
+            priceMonthly: before.priceMonthly.toString(),
+            active: before.active,
+          },
+          newData: {
+            name: atualizado.name,
+            priceMonthly: atualizado.priceMonthly.toString(),
+            active: atualizado.active,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return atualizado;
     });
     return plan;
   },
@@ -578,79 +640,94 @@ export const AdminService = {
       );
     }
 
-    // A FK é `Restrict`, então QUALQUER assinatura impede a exclusão — inclusive
-    // a de empresa já excluída (soft delete mantém a assinatura). Contar as
-    // duas coisas separado é o que permite explicar o motivo real: dizer
-    // "está em 1 assinatura" sobre um cliente que não existe mais manda o
-    // super-admin procurar uma empresa que ele não vai achar em lugar nenhum.
-    const [emUsoAtivo, total] = await Promise.all([
-      prisma.tenantSubscription.count({
+    // Tudo numa transação só (regra 5): contagem, limpeza do histórico, exclusão
+    // do plano e as duas auditorias. Antes eram chamadas soltas, e um
+    // `plan.delete` recusado pela FK (assinatura nova criada no meio) deixava o
+    // histórico já apagado e auditado sem o plano ter saído.
+    await prisma.$transaction(async (tx) => {
+      // Troca AGENDADA para este plano (em empresa viva) também impede: a FK de
+      // `pendingPlanId` é SET NULL, e o agendamento sumiria em silêncio — com
+      // a renovação possivelmente já cobrada pelo preço deste plano.
+      await recusarSeHaTrocaAgendada(tx, id, "excluído");
+
+      // A FK é `Restrict`, então QUALQUER assinatura impede a exclusão — inclusive
+      // a de empresa já excluída (soft delete mantém a assinatura). Contar as
+      // duas coisas separado é o que permite explicar o motivo real: dizer
+      // "está em 1 assinatura" sobre um cliente que não existe mais manda o
+      // super-admin procurar uma empresa que ele não vai achar em lugar nenhum.
+      const emUsoAtivo = await tx.tenantSubscription.count({
         where: { planId: id, tenant: { deletedAt: null } },
-      }),
-      prisma.tenantSubscription.count({ where: { planId: id } }),
-    ]);
+      });
+      const total = await tx.tenantSubscription.count({ where: { planId: id } });
 
-    if (emUsoAtivo > 0) {
-      throw new BusinessRuleError(
-        `Este plano está em ${emUsoAtivo} assinatura(s) ativa(s) e não pode ser excluído. ` +
-          "Desative-o para parar de oferecê-lo — quem já assinou continua como está.",
-      );
-    }
-
-    if (total > 0) {
-      // Só empresas EXCLUÍDAS seguram o plano. É o caso típico da limpeza de
-      // teste: criou plano, criou empresa, excluiu a empresa — e a assinatura
-      // sobreviveu ao soft delete, travando o plano para sempre.
-      if (!opts?.apagarHistoricoDeExcluidas) {
+      if (emUsoAtivo > 0) {
         throw new BusinessRuleError(
-          `Nenhuma empresa ativa usa este plano, mas ${total} empresa(s) já excluída(s) ` +
-            "ainda guardam o histórico de assinatura nele. Confirme a exclusão do " +
-            "histórico para remover o plano.",
+          `Este plano está em ${emUsoAtivo} assinatura(s) ativa(s) e não pode ser excluído. ` +
+            "Desative-o para parar de oferecê-lo — quem já assinou continua como está.",
         );
       }
 
-      // Apagar a assinatura leva junto os pagamentos dela (FK em cascata) —
-      // por isso exige confirmação explícita e só vale para empresa que já foi
-      // excluída. De empresa ativa o histórico financeiro nunca é tocado.
-      const assinaturas = await prisma.tenantSubscription.findMany({
-        where: { planId: id, tenant: { deletedAt: { not: null } } },
-        select: { id: true, tenantId: true },
-      });
-      const pagamentos = await prisma.subscriptionPayment.count({
-        where: { subscriptionId: { in: assinaturas.map((a) => a.id) } },
-      });
-      await prisma.tenantSubscription.deleteMany({
-        where: { id: { in: assinaturas.map((a) => a.id) } },
-      });
-      await audit({
-        userId: ctx.userId,
-        actorEmail: ctx.session.email,
-        action: "DELETE",
-        entity: "TenantSubscription",
-        entityId: id,
-        oldData: {
-          motivo: "Limpeza de plano — empresas já excluídas",
-          assinaturas: assinaturas.length,
-          pagamentos,
-        },
-        ip: ctx.ip,
-      });
-    }
+      if (total > 0) {
+        // Só empresas EXCLUÍDAS seguram o plano. É o caso típico da limpeza de
+        // teste: criou plano, criou empresa, excluiu a empresa — e a assinatura
+        // sobreviveu ao soft delete, travando o plano para sempre.
+        if (!opts?.apagarHistoricoDeExcluidas) {
+          throw new BusinessRuleError(
+            `Nenhuma empresa ativa usa este plano, mas ${total} empresa(s) já excluída(s) ` +
+              "ainda guardam o histórico de assinatura nele. Confirme a exclusão do " +
+              "histórico para remover o plano.",
+          );
+        }
 
-    await prisma.plan.delete({ where: { id } });
-    await audit({
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "Plan",
-      entityId: id,
-      oldData: {
-        name: plan.name,
-        slug: plan.slug,
-        priceMonthly: plan.priceMonthly.toString(),
-        active: plan.active,
-      },
-      ip: ctx.ip,
+        // Apagar a assinatura leva junto os pagamentos dela (FK em cascata) —
+        // por isso exige confirmação explícita e só vale para empresa que já foi
+        // excluída. De empresa ativa o histórico financeiro nunca é tocado.
+        const assinaturas = await tx.tenantSubscription.findMany({
+          where: { planId: id, tenant: { deletedAt: { not: null } } },
+          select: { id: true, tenantId: true },
+        });
+        const pagamentos = await tx.subscriptionPayment.count({
+          where: { subscriptionId: { in: assinaturas.map((a) => a.id) } },
+        });
+        await tx.tenantSubscription.deleteMany({
+          where: { id: { in: assinaturas.map((a) => a.id) } },
+        });
+        await audit(
+          {
+            userId: ctx.userId,
+            actorEmail: ctx.session.email,
+            action: "DELETE",
+            entity: "TenantSubscription",
+            entityId: id,
+            oldData: {
+              motivo: "Limpeza de plano — empresas já excluídas",
+              assinaturas: assinaturas.length,
+              pagamentos,
+            },
+            ip: ctx.ip,
+          },
+          tx,
+        );
+      }
+
+      await tx.plan.delete({ where: { id } });
+      await audit(
+        {
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "Plan",
+          entityId: id,
+          oldData: {
+            name: plan.name,
+            slug: plan.slug,
+            priceMonthly: plan.priceMonthly.toString(),
+            active: plan.active,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
     return { id, name: plan.name };
   },
@@ -692,7 +769,17 @@ export const AdminService = {
    * mesmo `situacaoCobranca` da lista: contador e linha nunca discordam por
    * terem lógicas diferentes.
    */
-  async listUsers(filtro?: { busca?: string; somenteInativos?: boolean }) {
+  async listUsers(filtro?: {
+    busca?: string;
+    somenteInativos?: boolean;
+    /**
+     * Recorte da LISTA (os totais continuam sendo do conjunto inteiro, para os
+     * cartões não mudarem conforme o filtro). Aplicado sobre TODOS os usuários
+     * antes do `take`: filtrar em memória a lista já cortada em 200 fazia
+     * "Sem acesso" responder "nenhum usuário" com o cartão marcando N.
+     */
+    recorte?: RecorteUsuarios;
+  }) {
     const busca = filtro?.busca?.trim();
     const agora = new Date();
 
@@ -708,33 +795,6 @@ export const AdminService = {
           }
         : {}),
     };
-
-    const usuarios = await prisma.user.findMany({
-      where,
-      include: {
-        tenant: {
-          select: {
-            id: true,
-            tradeName: true,
-            deletedAt: true,
-            status: true,
-            subscription: {
-              select: {
-                status: true,
-                statusSource: true,
-                activatedAt: true,
-                trialEndsAt: true,
-                currentPeriodEnd: true,
-                graceDays: true,
-                cancelledAt: true,
-              },
-            },
-          },
-        },
-      },
-      orderBy: [{ active: "desc" }, { name: "asc" }],
-      take: 200,
-    });
 
     // Sem `return []` aqui: os totais precisam ser calculados de qualquer
     // forma (uma busca sem resultado tem de mostrar zeros, não a contagem
@@ -790,16 +850,70 @@ export const AdminService = {
       emTeste: 0,
       emDia: 0,
       inadimplentes: 0,
+      /** Quantos usuários o recorte pedido tem, antes do `take`. */
+      noRecorte: 0,
       /** A tela avisa quando não mostrou tudo, em vez de calar. */
-      truncado: paraContar.length > usuarios.length,
+      truncado: false,
     };
+    const situacaoDe = new Map<string, SituacaoCobrancaDetalhe["situacao"]>();
     for (const u of paraContar) {
       if (!u.tenant || u.tenant.deletedAt) continue;
       const situacao = situacaoCobranca(u.tenant.subscription, agora).situacao;
+      situacaoDe.set(u.id, situacao);
       if (situacao === "em_teste") totais.emTeste++;
       else if (situacao === "em_dia") totais.emDia++;
       else if (situacao === "inadimplente") totais.inadimplentes++;
     }
+
+    const recorte = filtro?.recorte;
+    const idsDoRecorte = recorte
+      ? paraContar
+          .filter((u) => {
+            switch (recorte) {
+              case "ONLINE":
+                return idsOnline.has(u.id);
+              case "TESTE":
+                return situacaoDe.get(u.id) === "em_teste";
+              case "EM_DIA":
+                return situacaoDe.get(u.id) === "em_dia";
+              case "INADIMPLENTES":
+                return situacaoDe.get(u.id) === "inadimplente";
+              case "INATIVOS":
+                return !u.active;
+            }
+          })
+          .map((u) => u.id)
+      : null;
+
+    const usuarios = await prisma.user.findMany({
+      where: idsDoRecorte ? { ...where, id: { in: idsDoRecorte } } : where,
+      include: {
+        tenant: {
+          select: {
+            id: true,
+            tradeName: true,
+            deletedAt: true,
+            status: true,
+            subscription: {
+              select: {
+                status: true,
+                statusSource: true,
+                activatedAt: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                graceDays: true,
+                cancelledAt: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: [{ active: "desc" }, { name: "asc" }],
+      take: 200,
+    });
+
+    totais.noRecorte = idsDoRecorte ? idsDoRecorte.length : paraContar.length;
+    totais.truncado = totais.noRecorte > usuarios.length;
 
     const lista = usuarios.map((u) => ({
       ...u,
@@ -835,22 +949,27 @@ export const AdminService = {
     }
     if (user.active === input.active) return { id: user.id, active: user.active };
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { active: input.active },
-    });
-    if (!input.active) await revokeAllForUser(user.id);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: { active: input.active },
+      });
+      if (!input.active) await revokeAllForUser(user.id, "ADMIN", tx);
 
-    await audit({
-      tenantId: user.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "STATUS_CHANGE",
-      entity: "User",
-      entityId: user.id,
-      oldData: { active: user.active },
-      newData: { active: input.active, sessoesRevogadas: !input.active },
-      ip: ctx.ip,
+      await audit(
+        {
+          tenantId: user.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "STATUS_CHANGE",
+          entity: "User",
+          entityId: user.id,
+          oldData: { active: user.active },
+          newData: { active: input.active, sessoesRevogadas: !input.active },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
     return { id: user.id, active: input.active };
   },
@@ -868,26 +987,33 @@ export const AdminService = {
     if (!user) throw new NotFoundError("Usuário não encontrado");
 
     const tempPassword = randomBytes(6).toString("base64url");
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        passwordHash: await hashPassword(tempPassword),
-        mustChangePassword: true,
-        resetTokenHash: null,
-        resetTokenExpiresAt: null,
-      },
-    });
-    await revokeAllForUser(user.id, "PASSWORD");
+    // O hash (Argon2, lento) sai ANTES da transação, para não segurá-la aberta.
+    const passwordHash = await hashPassword(tempPassword);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          passwordHash,
+          mustChangePassword: true,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null,
+        },
+      });
+      await revokeAllForUser(user.id, "PASSWORD", tx);
 
-    await audit({
-      tenantId: user.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "PASSWORD_RESET",
-      entity: "User",
-      entityId: user.id,
-      newData: { porSuperAdmin: true, sessoesRevogadas: true },
-      ip: ctx.ip,
+      await audit(
+        {
+          tenantId: user.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "PASSWORD_RESET",
+          entity: "User",
+          entityId: user.id,
+          newData: { porSuperAdmin: true, sessoesRevogadas: true },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
 
     // Melhor esforço: se o e-mail não sair, a senha ainda aparece na tela.
@@ -937,32 +1063,37 @@ export const AdminService = {
       }
     }
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: {
-        deletedAt: new Date(),
-        active: false,
-        // Libera o endereço para um cadastro novo (ver `emailDeExcluido`).
-        email: emailDeExcluido(user.id, user.email),
-        // Junto com o endereço, libera o vínculo do Google: `googleSub` é
-        // @unique e travaria o recadastro de quem voltasse por lá.
-        googleSub: null,
-        // Um link de recuperação pendente não pode sobreviver à exclusão.
-        resetTokenHash: null,
-        resetTokenExpiresAt: null,
-      },
-    });
-    await revokeAllForUser(user.id);
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: user.id },
+        data: {
+          deletedAt: new Date(),
+          active: false,
+          // Libera o endereço para um cadastro novo (ver `emailDeExcluido`).
+          email: emailDeExcluido(user.id, user.email),
+          // Junto com o endereço, libera o vínculo do Google: `googleSub` é
+          // @unique e travaria o recadastro de quem voltasse por lá.
+          googleSub: null,
+          // Um link de recuperação pendente não pode sobreviver à exclusão.
+          resetTokenHash: null,
+          resetTokenExpiresAt: null,
+        },
+      });
+      await revokeAllForUser(user.id, "ADMIN", tx);
 
-    await audit({
-      tenantId: user.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "User",
-      entityId: user.id,
-      oldData: { name: user.name, email: user.email, role: user.role },
-      ip: ctx.ip,
+      await audit(
+        {
+          tenantId: user.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "User",
+          entityId: user.id,
+          oldData: { name: user.name, email: user.email, role: user.role },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
     return { id: user.id, name: user.name };
   },

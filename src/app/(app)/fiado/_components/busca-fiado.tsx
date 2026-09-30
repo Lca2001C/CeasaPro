@@ -36,6 +36,9 @@ export function BuscaFiado() {
       const novo = new URLSearchParams(params.toString());
       if (termo.trim()) novo.set("q", termo.trim());
       else novo.delete("q");
+      // Busca nova começa na página 1: a página 7 de "Todas" quase nunca
+      // existe no resultado filtrado.
+      novo.delete("pagina");
       router.replace(`/fiado?${novo.toString()}`);
     }, 350);
     return () => clearTimeout(t);

@@ -104,7 +104,9 @@ export function avaliarAlerta(config: AlertaConfigurado, preco: PrecoObservado):
     return { motivos, variacao: null };
   }
   const atual = toNumber(preco.refPrice);
-  if (!Number.isFinite(atual)) return { motivos, variacao: null };
+  // Preço zero ou negativo é dado ruim (boletim manual com "0,00"), não queda
+  // de mercado: sem este corte, virava "caiu 100% (R$ 0,00)" e piso disparado.
+  if (!Number.isFinite(atual) || atual <= 0) return { motivos, variacao: null };
 
   const limiar = Math.max(toNumber(config.variacaoMinima), VARIACAO_MINIMA_ACEITA);
   if (variacao !== null && Math.abs(variacao) >= limiar) {

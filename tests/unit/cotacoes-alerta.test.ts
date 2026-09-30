@@ -182,3 +182,20 @@ describe("frase do disparo", () => {
     );
   });
 });
+
+describe("avaliarAlerta — preço zero não é queda de mercado", () => {
+  /**
+   * Um boletim manual com "0,00" gravado virava "caiu 100% (R$ 0,00)" e ainda
+   * disparava o piso (0 <= piso). O CSV já recusa zero; isto é a defesa para o
+   * dado que entrou antes da correção ou por outro caminho.
+   */
+  it("R$ 0,00 não dispara baixa nem piso", () => {
+    const r = avaliarAlerta(config({ precoPiso: 5 }), { refPrice: 0, anterior: 10 });
+    expect(r.motivos).toEqual([]);
+    expect(r.variacao).toBeNull();
+  });
+
+  it("negativo também não", () => {
+    expect(avaliarAlerta(config({ precoPiso: 5 }), { refPrice: -1, anterior: 10 }).motivos).toEqual([]);
+  });
+});

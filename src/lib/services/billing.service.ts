@@ -33,21 +33,76 @@ import type {
   CardPaymentResult,
   CheckoutInput,
 } from "@/lib/validations/billing";
+import {
+  baixarPendentes,
+  cancelarNoGateway,
+  type CobrancaBaixada,
+} from "@/lib/payments/cobrancas-pendentes";
 import { PlanoService } from "./plano.service";
+import { AdminNotificationsService } from "./admin-notifications.service";
 import { sendEmail, paymentApprovedEmail, subscriptionDueSoonEmail } from "@/lib/email";
 import { describeError, logger } from "@/lib/logger";
-import { civilParts, refMonthTz, zonedTimeToUtc } from "@/lib/tz";
+import {
+  addDaysTz,
+  civilParts,
+  endOfDayTz,
+  refMonthTz,
+  startOfDayTz,
+  zonedTimeToUtc,
+} from "@/lib/tz";
 import { TERMS_VERSION } from "@/lib/legal";
+import { cnpjValido, normalizarCnpj } from "@/lib/cnpj";
 
 /** Validade da cobrança do mês (QR PIX e preferência de cartão). */
 const CHARGE_TTL_HOURS = 48;
 /** Antecedência do lembrete de vencimento, em dias. */
 export const DUE_REMINDER_DAYS = 3;
+
+/**
+ * Quantos dias de CALENDÁRIO (fuso do app) separam `de` de `ate`: 28/09 13:30 →
+ * 30/09 18:00 são 2, não os 3 do `ceil` sobre horas corridas. Arredonda para
+ * absorver a hora de diferença de uma virada de horário de verão.
+ */
+export function diasDeCalendario(de: Date, ate: Date): number {
+  return Math.round(
+    (startOfDayTz(ate).getTime() - startOfDayTz(de).getTime()) / (24 * 60 * 60 * 1000),
+  );
+}
 /** Só reconcilia cobranças com alguns minutos de vida, para não competir com o webhook. */
 const RECONCILE_MIN_AGE_MINUTES = 10;
 
-/** Teto de cada lote da reconciliação diária (pendentes e aprovadas separados). */
+/** Teto de cada lote da reconciliação diária (pendentes, canceladas e aprovadas separados). */
 const RECONCILE_BATCH = 200;
+
+/**
+ * Orçamento de tempo padrão da reconciliação.
+ *
+ * A rota do cron tem 60 s (teto do Hobby) e ainda precisa recalcular status,
+ * mandar lembretes, gerar despesas, limpar tabelas e importar boletins. Antes
+ * a reconciliação não tinha prazo e consultava até 400 cobranças uma a uma: com
+ * ~100–150 pagantes ela sozinha passava do teto, e a plataforma matava a função
+ * antes de tudo o que vinha depois — em silêncio.
+ */
+export const RECONCILE_BUDGET_MS = 20_000;
+
+/** Consultas simultâneas ao Mercado Pago. Baixo o bastante para não levar 429. */
+const RECONCILE_CONCURRENCY = 6;
+
+/** Prazo de cada consulta: uma resposta pendurada não pode segurar o lote. */
+const RECONCILE_MP_TIMEOUT_MS = 8_000;
+
+/**
+ * Por quanto tempo uma cobrança CANCELADA ainda é relida no Mercado Pago: a
+ * validade do QR mais folga para o webhook atrasado. Passado isso, o PIX
+ * expirou lá e não há mais como ele ser pago.
+ */
+const RECONCILE_CANCELADAS_JANELA_MS = (CHARGE_TTL_HOURS + 72) * 60 * 60 * 1000;
+
+/** Status do Mercado Pago de uma cobrança que não pode mais ser paga. */
+const PIX_MORTO = new Set(["cancelled", "rejected"]);
+
+/** Por que um pagamento aprovado no Mercado Pago não comprou mês nenhum. */
+type MotivoNaoCreditado = "VALOR_MENOR" | "DUPLICADO";
 
 const CARD_PAYMENT_TYPE: Record<"CREDIT_CARD" | "DEBIT_CARD", CardPaymentTypeId> = {
   CREDIT_CARD: "credit_card",
@@ -68,6 +123,79 @@ function currentRefMonth(d = new Date()): string {
 function previousRefMonth(d = new Date()): string {
   const c = civilParts(d);
   return refMonthTz(zonedTimeToUtc(c.year, c.month - 1, 1));
+}
+
+/** "2026-12" → "2027-01". Aritmética sobre o rótulo, sem fuso nenhum envolvido. */
+function mesSeguinte(ref: string): string {
+  const [ano, mes] = ref.split("-").map(Number);
+  return mes === 12 ? `${ano + 1}-01` : `${ano}-${String(mes + 1).padStart(2, "0")}`;
+}
+
+/**
+ * A renovação já pode ser paga? É a MESMA janela do lembrete de vencimento
+ * (`DUE_REMINDER_DAYS`, por dia de calendário): o e-mail diz "vence em 3 dias,
+ * pague aqui", e o botão dele precisa levar a um pagamento possível.
+ *
+ * Período já vencido também conta (dias negativos): quem venceu e ainda tem a
+ * competência do calendário marcada como paga — a noite do último dia de um
+ * período de 28/02, ou um vencimento recuado por estorno de mês anterior —
+ * ficaria sem ter como pagar até o mês virar.
+ *
+ * Só para quem já pagou alguma vez: antes da ativação não há período a renovar.
+ */
+export function dentroDaJanelaDeRenovacao(
+  sub: { activatedAt: Date | null; currentPeriodEnd: Date },
+  now: Date,
+): boolean {
+  return (
+    sub.activatedAt !== null && diasDeCalendario(now, sub.currentPeriodEnd) <= DUE_REMINDER_DAYS
+  );
+}
+
+async function competenciaAprovada(tenantId: string, referenceMonth: string) {
+  return prisma.subscriptionPayment.findFirst({
+    where: { tenantId, referenceMonth, status: "APROVADO" },
+    orderBy: { paidAt: "desc" },
+  });
+}
+
+/**
+ * Qual competência a PRÓXIMA cobrança compra — e se ela já está paga.
+ *
+ * A regra era "o mês do calendário": com ele pago, qualquer cobrança nova era
+ * recusada (MENSALIDADE_JA_PAGA) até o mês virar. Só que o período pago não
+ * acompanha o calendário: quem pagou em 01/09 vence em 01/10, recebe em 28/09 o
+ * lembrete "vence em 3 dias" e, clicando nele, dava com "a mensalidade deste
+ * mês já está paga". O lembrete não era atendível — só dava para pagar já
+ * vencido.
+ *
+ * Agora, com o mês corrente pago E dentro da janela de renovação, a cobrança é
+ * da competência do período que está sendo comprado: `refMonthTz` do
+ * vencimento (o período novo começa nele). Se esse rótulo coincide com o mês
+ * corrente — período que vence no fim do próprio mês, como 31/08 → 30/09 —, é o
+ * mês seguinte, senão a competência colidiria com a já paga.
+ *
+ * O que não muda: fora da janela, mês pago é mês pago; e a chave `approvedKey`
+ * (`<tenant>:<competência>`) continua garantindo um crédito por competência —
+ * pagar adiantado duas vezes esbarra nela como qualquer duplicata.
+ */
+export async function competenciaACobrar(
+  tenantId: string,
+  sub: { activatedAt: Date | null; currentPeriodEnd: Date },
+  now: Date,
+): Promise<{ refMonth: string; antecipada: boolean; paga: SubscriptionPayment | null }> {
+  const corrente = currentRefMonth(now);
+  const pagaCorrente = await competenciaAprovada(tenantId, corrente);
+  if (!pagaCorrente || !dentroDaJanelaDeRenovacao(sub, now)) {
+    return { refMonth: corrente, antecipada: false, paga: pagaCorrente };
+  }
+  const doPeriodo = refMonthTz(sub.currentPeriodEnd);
+  const proxima = doPeriodo > corrente ? doPeriodo : mesSeguinte(corrente);
+  return {
+    refMonth: proxima,
+    antecipada: true,
+    paga: await competenciaAprovada(tenantId, proxima),
+  };
 }
 
 /**
@@ -179,18 +307,30 @@ function periodoSemOEstornado(
  *
  * Usado para gerar a cobrança E para conferir o valor que entrou — as duas
  * pontas precisam concordar, senão o pagamento correto seria recusado.
+ *
+ * Plano agendado INATIVO não conta. A virada (`aplicarTrocaProgramada`)
+ * descarta a troca para plano fora de oferta e a empresa segue no vigente;
+ * cobrar o preço do agendado seria vender o mês de um plano que ela não vai
+ * receber. O painel já recusa desativar plano com troca agendada, mas há dado
+ * gravado antes dessa trava — e para ele a única resposta segura é o plano que
+ * de fato vai valer.
  */
 export function valorDevido(
   sub: {
     monthlyAmount: Decimal;
     currentPeriodEnd: Date;
     pendingPlanFrom: Date | null;
-    pendingPlan: { priceMonthly: Decimal } | null;
+    pendingPlan: { priceMonthly: Decimal; active: boolean } | null;
   },
   now: Date,
 ): Decimal {
   const inicio = sub.currentPeriodEnd > now ? sub.currentPeriodEnd : now;
-  if (sub.pendingPlan && sub.pendingPlanFrom && sub.pendingPlanFrom <= inicio) {
+  if (
+    sub.pendingPlan &&
+    sub.pendingPlan.active &&
+    sub.pendingPlanFrom &&
+    sub.pendingPlanFrom <= inicio
+  ) {
     return money(sub.pendingPlan.priceMonthly);
   }
   return money(sub.monthlyAmount);
@@ -232,6 +372,92 @@ async function gravarCobranca(
     }
   }
   return prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId } });
+}
+
+/**
+ * Registra um pagamento que o Mercado Pago APROVOU e que não comprou mês nenhum,
+ * e avisa o super-admin — uma vez.
+ *
+ * Antes os dois casos (valor a menor, segunda aprovação da competência) só iam
+ * para o log com "precisa de devolução ou crédito manual". Ninguém lê log
+ * procurando dinheiro parado: o cliente pagou, não recebeu o que pagou, e a
+ * primeira notícia disso era a reclamação dele — ou nenhuma.
+ *
+ * A marca (`uncreditedAt`) é gravada com compare-and-set: a reconciliação relê
+ * a linha todo dia, e sem a marca o aviso sairia todo dia também.
+ *
+ * Linha PENDENTE sai de cena (vira CANCELADO): o QR dela JÁ FOI PAGO, e
+ * mantê-la em aberto deixava a tela mostrando "Aguardando o pagamento" de um
+ * código quitado, no lugar da cobrança certa. O status APROVADO fica de fora de
+ * propósito — é ele que compra o mês, e é exatamente o que não pode acontecer.
+ */
+async function registrarNaoCreditado(
+  payment: SubscriptionPayment,
+  mp: MpPayment,
+  motivo: MotivoNaoCreditado,
+  detalhe: { devido?: Decimal | null; jaAprovado?: string | null },
+): Promise<boolean> {
+  const agora = new Date();
+  const marcou = await prisma.$transaction(async (tx) => {
+    const { count } = await tx.subscriptionPayment.updateMany({
+      where: { id: payment.id, uncreditedAt: null, status: { notIn: ["APROVADO", "ESTORNADO"] } },
+      data: {
+        uncreditedAt: agora,
+        uncreditedReason: motivo,
+        statusDetail: mp.statusDetail ?? payment.statusDetail,
+        ...(payment.status === "PENDENTE" ? { status: "CANCELADO", threeDsUrl: null } : {}),
+      },
+    });
+    if (count !== 1) return false;
+    await audit(
+      {
+        tenantId: payment.tenantId,
+        action: "PAYMENT_NOT_CREDITED",
+        entity: "SubscriptionPayment",
+        entityId: payment.id,
+        oldData: { status: payment.status },
+        newData: {
+          motivo,
+          mpPaymentId: mp.id,
+          mpStatus: mp.status,
+          pago: String(mp.amount),
+          devido: detalhe.devido?.toString() ?? null,
+          jaAprovado: detalhe.jaAprovado ?? null,
+          referenceMonth: payment.referenceMonth,
+        },
+      },
+      tx,
+    );
+    return true;
+  });
+  if (!marcou) return false;
+
+  const tenant = await prisma.tenant
+    .findUnique({ where: { id: payment.tenantId }, select: { tradeName: true } })
+    .catch(() => null);
+  const empresa = tenant?.tradeName ?? payment.tenantId;
+  await AdminNotificationsService.criar({
+    kind: "PAGAMENTO_NAO_CREDITADO",
+    title:
+      motivo === "VALOR_MENOR"
+        ? "Pagamento abaixo da mensalidade — mês não creditado"
+        : "Segundo pagamento da mesma competência — mês não creditado",
+    body:
+      motivo === "VALOR_MENOR"
+        ? `${empresa} pagou R$ ${money(mp.amount).toFixed(2)} (pagamento ${mp.id}, competência ` +
+          `${payment.referenceMonth}), mas a mensalidade devida é R$ ${detalhe.devido?.toFixed(2) ?? "?"}. ` +
+          "O valor entrou no Mercado Pago: credite a diferença ou devolva."
+        : `${empresa} teve o pagamento ${mp.id} aprovado na competência ${payment.referenceMonth}, que já ` +
+          `estava paga${detalhe.jaAprovado ? ` (pagamento ${detalhe.jaAprovado})` : ""}. ` +
+          "O valor entrou no Mercado Pago e não comprou mês nenhum: devolva ou credite manualmente.",
+    href: `/admin/clientes/${payment.tenantId}`,
+    tenantId: payment.tenantId,
+  });
+  logger.error(
+    { tenantId: payment.tenantId, mpPaymentId: mp.id, motivo, referenceMonth: payment.referenceMonth },
+    "Pagamento aprovado e NÃO creditado — super-admin avisado",
+  );
+  return true;
 }
 
 /**
@@ -302,11 +528,19 @@ interface ChargeContext {
   externalRefPrefix: string;
 }
 
-/** CNPJ do tenant como identificação do pagador, se estiver completo. */
-function identificacaoDoPagador(cnpj: string | null): { type: string; number: string } | null {
-  const digitos = (cnpj ?? "").replace(/\D/g, "");
-  if (digitos.length !== 14) return null;
-  return { type: "CNPJ", number: digitos };
+/**
+ * CNPJ do tenant como identificação do pagador, se for um CNPJ válido.
+ *
+ * Conferir só o tamanho mandava ao Mercado Pago um CNPJ com dígito trocado
+ * (base antiga, gravada antes de `cnpjSchema` validar o DV), e o PIX da
+ * mensalidade era recusado com uma mensagem que não aponta o documento. Sem
+ * identificação o PIX sai normalmente — o documento é opcional ali.
+ */
+export function identificacaoDoPagador(
+  cnpj: string | null,
+): { type: string; number: string } | null {
+  if (!cnpj || !cnpjValido(cnpj)) return null;
+  return { type: "CNPJ", number: normalizarCnpj(cnpj) };
 }
 
 /**
@@ -331,7 +565,10 @@ async function prepareCharge(
   // ser lido. O agendamento existe justamente porque a competência anterior
   // estava paga; se a cobrança da competência nova saísse pelo plano antigo, o
   // adiamento teria só empurrado o mesmo desconto para o mês seguinte.
-  if (await PlanoService.aplicarTrocaProgramada(sub, now)) {
+  // Relê também quando havia agendamento e nada foi aplicado: ele pode ter sido
+  // descartado (plano agendado fora de oferta).
+  const tinhaAgendamento = sub.pendingPlanId !== null;
+  if ((await PlanoService.aplicarTrocaProgramada(sub, now)) || tinhaAgendamento) {
     sub = await prisma.tenantSubscription.findUniqueOrThrow({
       where: { tenantId },
       include: { tenant: { include: { users: { where: { role: "OWNER" }, take: 1 } } } },
@@ -341,16 +578,20 @@ async function prepareCharge(
   // A guarda de "mês já pago" vem ANTES da troca de plano: trocar primeiro
   // deixava o cliente com o plano novo e sem cobrança nenhuma — a exceção
   // abortava o pagamento, mas a troca já estava gravada.
-  const refMonth = currentRefMonth(now);
-  const alreadyPaid = await prisma.subscriptionPayment.findFirst({
-    where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
-  });
-  if (alreadyPaid) {
+  //
+  // A competência não é mais sempre o mês do calendário: dentro da janela do
+  // lembrete, com o mês corrente pago, é a do período que vai ser comprado
+  // (ver `competenciaACobrar`).
+  const alvo = await competenciaACobrar(tenantId, sub, now);
+  const refMonth = alvo.refMonth;
+  if (alvo.paga) {
     // Código próprio: a tela reage recarregando para o estado "já pago" em vez
     // de mostrar isto como erro. Não é falha do usuário — é a tela estando
     // desatualizada em relação a um pagamento que já entrou.
     throw new BusinessRuleError(
-      "A mensalidade deste mês já está paga.",
+      alvo.antecipada
+        ? `A mensalidade de ${refMonth} já está paga.`
+        : "A mensalidade deste mês já está paga.",
       "MENSALIDADE_JA_PAGA",
     );
   }
@@ -372,7 +613,7 @@ async function prepareCharge(
   const pendingPlan = sub.pendingPlanId
     ? await prisma.plan.findUnique({
         where: { id: sub.pendingPlanId },
-        select: { priceMonthly: true },
+        select: { priceMonthly: true, active: true },
       })
     : null;
 
@@ -397,17 +638,16 @@ export const BillingService = {
       include: { plan: true, tenant: true },
     });
     if (!sub) return null;
-    const refMonth = currentRefMonth();
-    const [pendingCharge, paidCharge] = await Promise.all([
-      prisma.subscriptionPayment.findFirst({
-        where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
-        orderBy: { createdAt: "desc" },
-      }),
-      prisma.subscriptionPayment.findFirst({
-        where: { tenantId, referenceMonth: refMonth, status: "APROVADO" },
-        orderBy: { paidAt: "desc" },
-      }),
-    ]);
+    // A MESMA competência que `prepareCharge` cobraria agora. Olhar só o mês do
+    // calendário fazia a tela dizer "já paga" a quem estava na janela de
+    // renovação — e o botão de pagar nem aparecia.
+    const alvo = await competenciaACobrar(tenantId, sub, new Date());
+    const refMonth = alvo.refMonth;
+    const paidCharge = alvo.paga;
+    const pendingCharge = await prisma.subscriptionPayment.findFirst({
+      where: { tenantId, referenceMonth: refMonth, status: "PENDENTE" },
+      orderBy: { createdAt: "desc" },
+    });
     // Cobrança vencida NÃO é cobrança pendente para quem está olhando a tela.
     //
     // Sem este `isUsable`, quem gerava o PIX e não pagava em 48h voltava para
@@ -459,7 +699,9 @@ export const BillingService = {
     // contrário, no downgrade).
     const mesmoValor = existing ? money(existing.amount).equals(charge.amount) : false;
     if (existing?.qrCode && isUsable(existing, now) && mesmoValor) return existing;
+    let substituida: CobrancaBaixada | null = null;
     if (existing) {
+      substituida = existing;
       // Cancela QUALQUER pendente do mês que não será reaproveitada — inclusive
       // a que ficou sem `qrCode` (o Mercado Pago falhou no meio). Deixá-la
       // pendente criaria duas cobranças abertas para o mesmo mês, e a tela
@@ -478,17 +720,38 @@ export const BillingService = {
       );
     }
 
-    const pix = await withMpError(() =>
-      createPixPayment({
-        amount: toNumber(charge.amount),
-        description: charge.description,
-        payerEmail: charge.payerEmail,
-        payerName: charge.payerName,
-        payerIdentification: charge.payerIdentification,
-        externalReference: externalRef,
-        expiresAt,
-      }),
-    );
+    const gerarPix = (idempotencySalt?: string) =>
+      withMpError(() =>
+        createPixPayment({
+          amount: toNumber(charge.amount),
+          description: charge.description,
+          payerEmail: charge.payerEmail,
+          payerName: charge.payerName,
+          payerIdentification: charge.payerIdentification,
+          externalReference: externalRef,
+          expiresAt,
+          idempotencySalt,
+        }),
+      );
+    let pix = await gerarPix();
+    // A chave de idempotência (referência + valor) devolveu uma cobrança MORTA:
+    // é o QR deste mesmo valor que cancelamos no gateway quando o cliente trocou
+    // de plano — e agora ele voltou ao plano de antes. Mostrá-lo seria entregar
+    // um código que o banco recusa; pede outro com chave nova.
+    if (PIX_MORTO.has(pix.status)) {
+      logger.warn(
+        { tenantId, mpPaymentId: pix.mpPaymentId, mpStatus: pix.status },
+        "Mercado Pago devolveu cobrança PIX já encerrada pela idempotência — gerando outra",
+      );
+      pix = await gerarPix(String(now.getTime()));
+    }
+
+    // O QR substituído sai de circulação também no gateway — só depois de o
+    // novo existir, e nunca quando o "novo" é ele mesmo (a idempotência do MP
+    // devolve a MESMA cobrança quando o valor não mudou).
+    if (substituida && substituida.mpPaymentId !== pix.mpPaymentId) {
+      await cancelarNoGateway([substituida], { tenantId, motivo: "pix-substituido" }, now);
+    }
 
     // O Mercado Pago é idempotente pela chave `pix:<ref>:<valor>`: pedir de
     // novo dentro da validade da chave devolve a MESMA cobrança. Se ela já foi
@@ -561,13 +824,23 @@ export const BillingService = {
     );
 
     // O cartão substitui qualquer PIX ainda em aberto do mesmo mês — só DEPOIS
-    // que o Mercado Pago aceitou a tentativa. Cancelar antes deixava a empresa
-    // sem nenhuma forma de pagar quando o cartão era recusado: o QR já tinha
-    // sido invalidado e a tela não oferecia outro.
-    await prisma.subscriptionPayment.updateMany({
-      where: { tenantId, referenceMonth: charge.refMonth, status: "PENDENTE" },
-      data: { status: "CANCELADO" },
-    });
+    // que o Mercado Pago aceitou a tentativa, e só se ela não foi RECUSADA.
+    // Cancelar antes deixava a empresa sem nenhuma forma de pagar quando o
+    // cartão era recusado: o QR já tinha sido invalidado e a tela não oferecia
+    // outro. A recusa do emissor não é exceção (volta como `status: rejected`),
+    // então conferir só "a API respondeu" deixava o mesmo buraco aberto — agora
+    // que o cancelamento vale também no gateway, o QR morreria de verdade.
+    //
+    // A própria linha do cartão fica de fora: a mesma tentativa repetida volta
+    // com o mesmo `mpPaymentId` e é reaberta por `gravarCobranca` logo abaixo.
+    if (!PIX_MORTO.has(paid.status)) {
+      const substituidas = await baixarPendentes(prisma, {
+        tenantId,
+        referenceMonth: charge.refMonth,
+        OR: [{ mpPaymentId: null }, { mpPaymentId: { not: paid.mpPaymentId } }],
+      });
+      await cancelarNoGateway(substituidas, { tenantId, motivo: "cartao-substituiu-pix" }, now);
+    }
 
     // `upsert`, não `create`: a chave de idempotência do cartão é determinística
     // (mesmo mês + mesmo token), então tentar de novo com o MESMO cartão faz o
@@ -657,6 +930,12 @@ export const BillingService = {
     const newStatus = mapMpStatus(mp.status);
     if (payment.status === newStatus) return "ignorado"; // idempotente
 
+    // Cancelada por nós, ainda viva no gateway (o cancelamento lá falhou ou não
+    // pegou): NÃO reabre. Voltar a PENDENTE ressuscitaria uma cobrança que foi
+    // substituída — duas abertas no mesmo mês, e a tela mostrando a errada. Se
+    // ela vier a ser paga, a aprovação passa por aqui normalmente.
+    if (payment.status === "CANCELADO" && newStatus === "PENDENTE") return "ignorado";
+
     // Sair de APROVADO só é legítimo por reversão explícita. Qualquer outro
     // status (inclusive os que `mapMpStatus` agrupa em PENDENTE, como
     // `in_process` e `authorized`) seria uma leitura estranha da API — e como o
@@ -672,23 +951,22 @@ export const BillingService = {
 
     // O valor que ENTROU tem de cobrir a mensalidade DEVIDA.
     //
-    // Trocar de plano na tela de pagamento marca a cobrança anterior como
-    // CANCELADO só no NOSSO banco: o código PIX antigo continua pagável no
-    // Mercado Pago por 48h, porque não existe cancelamento no gateway
-    // (`mercadopago.ts` só tem `create*` e `getPayment`). Pagando o código
-    // antigo — justamente o que já estava copiado no app do banco — o mês era
-    // creditado por inteiro e a assinatura ficava ATIVA no plano NOVO, mais
-    // caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
+    // Trocar de plano marca a cobrança anterior como CANCELADO no nosso banco
+    // e tenta cancelá-la no gateway — mas o cancelamento lá é de melhor
+    // esforço, e o código antigo pode ter sido pago antes dele. Pagando o
+    // código antigo — justamente o que já estava copiado no app do banco — o
+    // mês era creditado por inteiro e a assinatura ficava ATIVA no plano NOVO,
+    // mais caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
     // MENSALIDADE_JA_PAGA bloqueava a cobrança correta do mês.
     //
     // Conferir contra `payment.amount` não pegaria nada: a linha antiga foi
     // cobrada em 49,90 e foi 49,90 que entrou. Quem decide é o valor devido.
     //
     // A checagem fica FORA da transação de propósito: abortá-la lá dentro não
-    // desfaria o `updateMany` já aplicado. Deixando a linha intocada, a tela
-    // continua oferecendo o pagamento — o cliente não fica com "já pago neste
-    // mês" e sem acesso, que seria outro beco sem saída — e o valor a menos
-    // fica registrado no log para um humano resolver (crédito ou devolução).
+    // desfaria o `updateMany` já aplicado. O mês não é creditado, a tela
+    // continua oferecendo o pagamento certo — o cliente não fica com "já pago
+    // neste mês" e sem acesso, que seria outro beco sem saída — e o super-admin
+    // recebe o caso para resolver (crédito ou devolução).
     if (newStatus === "APROVADO") {
       const cobrado = await prisma.tenantSubscription.findUnique({
         where: { id: payment.subscriptionId },
@@ -696,7 +974,7 @@ export const BillingService = {
           monthlyAmount: true,
           currentPeriodEnd: true,
           pendingPlanFrom: true,
-          pendingPlan: { select: { priceMonthly: true } },
+          pendingPlan: { select: { priceMonthly: true, active: true } },
         },
       });
       const devido = cobrado ? valorDevido(cobrado, new Date()) : null;
@@ -710,6 +988,7 @@ export const BillingService = {
           },
           "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
         );
+        await registrarNaoCreditado(payment, mp, "VALOR_MENOR", { devido });
         return "ignorado";
       }
     }
@@ -719,7 +998,20 @@ export const BillingService = {
     // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
     const isReversal = payment.status === "APROVADO";
 
-    const resultado = await prisma.$transaction(async (tx) => {
+    interface Resultado {
+      aplicado: boolean;
+      bloqueou: boolean;
+      duplicado: boolean;
+      /** `mpPaymentId` da aprovada que já ocupava a competência (duplicata). */
+      jaAprovado?: string | null;
+      /** Bloqueio MANUAL (chargeback/admin) desfeito por esta aprovação. */
+      bloqueioDesfeito?: { status: SubscriptionStatus; motivo: string | null } | null;
+      /** Outras cobranças abertas da competência, baixadas por esta aprovação. */
+      outrasPendentes?: CobrancaBaixada[];
+    }
+    const NADA: Resultado = { aplicado: false, bloqueou: false, duplicado: false };
+
+    const resultado = await prisma.$transaction(async (tx): Promise<Resultado> => {
       /*
         Uma única cobrança APROVADA por competência.
 
@@ -755,7 +1047,7 @@ export const BillingService = {
             "Segunda cobrança aprovada na mesma competência — mês NÃO creditado de novo. " +
               "O valor entrou no Mercado Pago e precisa de devolução ou crédito manual.",
           );
-          return { aplicado: false, bloqueou: false, duplicado: true };
+          return { ...NADA, duplicado: true, jaAprovado: outraAprovada.mpPaymentId };
         }
       }
 
@@ -771,16 +1063,54 @@ export const BillingService = {
           method: payment.method ?? mapMpMethod(mp),
           // Acompanha o status: sai de APROVADO, libera a competência.
           approvedKey: chaveDeAprovacao(newStatus, payment.tenantId, payment.referenceMonth),
+          // Creditada: a pendência "aprovada e não creditada", se havia, acabou.
+          ...(newStatus === "APROVADO" ? { uncreditedAt: null, uncreditedReason: null } : {}),
           rawPayload: mp as unknown as object,
         },
       });
-      if (count !== 1) return { aplicado: false, bloqueou: false, duplicado: false };
+      if (count !== 1) return NADA;
 
+      let bloqueioDesfeito: Resultado["bloqueioDesfeito"] = null;
+      let outrasPendentes: CobrancaBaixada[] = [];
       if (newStatus === "APROVADO") {
         const sub = await tx.tenantSubscription.findUnique({
           where: { id: payment.subscriptionId },
         });
+        // A competência está paga: qualquer outra cobrança aberta dela (o QR
+        // gerado de novo, o cartão parado no 3DS) só serviria para o cliente
+        // pagar duas vezes. Sai daqui e, depois do commit, do gateway.
+        outrasPendentes = await baixarPendentes(tx, {
+          tenantId: payment.tenantId,
+          referenceMonth: payment.referenceMonth,
+          id: { not: payment.id },
+        });
         if (sub) {
+          // Bloqueio MANUAL em BLOQUEADO é decisão humana (chargeback, ou o
+          // super-admin). O pagamento o desfaz — é o comportamento combinado:
+          // quem pagou volta a usar —, mas quem decidiu precisa saber.
+          if (sub.statusSource === "MANUAL" && sub.status === "BLOQUEADO") {
+            bloqueioDesfeito = { status: sub.status, motivo: sub.statusReason };
+            await audit(
+              {
+                tenantId: payment.tenantId,
+                action: "STATUS_CHANGE",
+                entity: "TenantSubscription",
+                entityId: sub.id,
+                oldData: {
+                  status: sub.status,
+                  statusSource: sub.statusSource,
+                  statusReason: sub.statusReason,
+                },
+                newData: {
+                  status: "ATIVO",
+                  statusSource: "AUTO",
+                  motivo: "bloqueio-manual-desfeito-por-pagamento",
+                  mpPaymentId: mp.id,
+                },
+              },
+              tx,
+            );
+          }
           // Assinatura nova (nunca ativada) ou vencida há tempos tem
           // `currentPeriodEnd` no passado: o ciclo recomeça hoje, senão o mês
           // recém-pago já nasceria vencido e a empresa seguiria bloqueada.
@@ -916,9 +1246,9 @@ export const BillingService = {
         },
         tx,
       );
-      return { aplicado: true, bloqueou, duplicado: false };
+      return { aplicado: true, bloqueou, duplicado: false, bloqueioDesfeito, outrasPendentes };
     })
-      .catch((e: unknown) => {
+      .catch((e: unknown): Resultado => {
         // Entre o `findFirst` lá em cima e este `updateMany` ainda cabe outro
         // webhook da mesma competência. Quando cabe, quem recusa a segunda
         // aprovação é o índice único — e o resultado é o mesmo: o mês não é
@@ -933,10 +1263,57 @@ export const BillingService = {
           "Corrida entre dois pagamentos aprovados da mesma competência — o banco recusou " +
             "o segundo. O valor entrou no Mercado Pago e precisa de devolução ou crédito manual.",
         );
-        return { aplicado: false, bloqueou: false, duplicado: true };
+        return { ...NADA, duplicado: true };
       });
 
+    if (resultado.duplicado) {
+      // O dinheiro entrou e não comprou nada: não pode sumir no log.
+      let jaAprovado = resultado.jaAprovado ?? null;
+      if (!jaAprovado) {
+        const outra = await prisma.subscriptionPayment.findFirst({
+          where: {
+            tenantId: payment.tenantId,
+            referenceMonth: payment.referenceMonth,
+            status: "APROVADO",
+            id: { not: payment.id },
+          },
+          select: { mpPaymentId: true },
+        });
+        jaAprovado = outra?.mpPaymentId ?? null;
+      }
+      await registrarNaoCreditado(payment, mp, "DUPLICADO", { jaAprovado });
+    }
+
     if (!resultado.aplicado) return "ignorado";
+
+    if (resultado.outrasPendentes?.length) {
+      await cancelarNoGateway(resultado.outrasPendentes, {
+        tenantId: payment.tenantId,
+        motivo: "competencia-paga",
+      });
+    }
+
+    if (resultado.bloqueioDesfeito) {
+      const tenant = await prisma.tenant
+        .findUnique({ where: { id: payment.tenantId }, select: { tradeName: true } })
+        .catch(() => null);
+      await AdminNotificationsService.criar({
+        kind: "BLOQUEIO_DESFEITO_POR_PAGAMENTO",
+        title: "Empresa bloqueada voltou a ativa por pagamento",
+        body:
+          `${tenant?.tradeName ?? payment.tenantId} estava BLOQUEADA` +
+          (resultado.bloqueioDesfeito.motivo ? ` (${resultado.bloqueioDesfeito.motivo})` : "") +
+          ` e voltou a ter acesso porque o pagamento ${mp.id} (competência ` +
+          `${payment.referenceMonth}) foi aprovado. Se o bloqueio precisa continuar, ` +
+          "bloqueie de novo pelo painel.",
+        href: `/admin/clientes/${payment.tenantId}`,
+        tenantId: payment.tenantId,
+      });
+      logger.warn(
+        { tenantId: payment.tenantId, mpPaymentId: mp.id, motivo: resultado.bloqueioDesfeito.motivo },
+        "Bloqueio manual desfeito por pagamento aprovado — super-admin avisado",
+      );
+    }
 
     // Só revoga sessão quando a competência ficou de fato descoberta. Reversão
     // com outro pagamento válido no mês não derruba ninguém.
@@ -970,40 +1347,93 @@ export const BillingService = {
 
   /**
    * Rede de segurança para webhook perdido: consulta no Mercado Pago as
-   * cobranças do mês atual e do anterior e aplica o status real.
+   * cobranças da janela de competências e aplica o status real.
    *
-   * Cobre os dois sentidos:
+   * Cobre três casos:
    *  - PENDENTE → o webhook de aprovação se perdeu e a empresa pagou sem receber
    *    acesso;
+   *  - CANCELADO recente → a cobrança foi substituída (troca de plano, cartão,
+   *    cancelamento), o cancelamento no gateway não pegou e o cliente pagou o QR
+   *    velho. Sem reler, esse dinheiro só era visto se o webhook chegasse; agora
+   *    ele é creditado quando cobre o devido, ou vira aviso ao super-admin
+   *    (`registrarNaoCreditado`). Se o gateway ainda a mostra em aberto, o
+   *    cancelamento é tentado de novo;
    *  - APROVADO → o webhook de **estorno/chargeback** se perdeu e a empresa
-   *    segue usando o sistema depois de a cobrança ter sido revertida. Só o
-   *    webhook cuidava disso, então uma entrega perdida ficava permanente.
+   *    segue usando o sistema depois de a cobrança ter sido revertida.
    *
-   * A janela de dois meses limita o custo (uma consulta por cobrança, por dia).
-   * Chargeback aberto depois disso não é recuperado aqui — chega pelo webhook ou
-   * pela conferência manual no painel do Mercado Pago.
+   * A janela é mês anterior, corrente e seguinte — o seguinte existe desde que a
+   * renovação pode ser paga adiantada (`competenciaACobrar`). Chargeback aberto
+   * depois disso não é recuperado aqui — chega pelo webhook ou pela conferência
+   * manual no painel do Mercado Pago.
+   *
+   * ## Prazo, concorrência e rotação
+   *
+   * Era um laço sequencial sem prazo sobre até 400 cobranças, e o cron tem 60 s
+   * para tudo. Com ~100–150 pagantes a reconciliação sozinha estourava o teto e
+   * a plataforma matava a função — levando junto, em silêncio, o recálculo de
+   * status, os lembretes, as despesas recorrentes e os boletins.
+   *
+   *  - **Orçamento** (`orcamentoMs`): conferido antes de cada consulta. O que não
+   *    coube fica para amanhã, e o retorno diz quantas ficaram.
+   *  - **Concorrência limitada** (6 consultas simultâneas), agrupada por empresa:
+   *    duas cobranças da mesma empresa nunca são aplicadas ao mesmo tempo, então
+   *    a reversão de uma não corre contra a aprovação da outra.
+   *  - **Rotação** (`lastReconciledAt`): cada lote lê primeiro as nunca
+   *    conferidas e depois as conferidas há mais tempo; entre as nunca
+   *    conferidas, as mais recentes. Um lote cortado pelo prazo não deixa sempre
+   *    as mesmas de fora, e a aprovação de ontem é sempre das primeiras.
+   *
+   * A ordem entre os lotes continua: PENDENTES primeiro (são o resgate de quem
+   * pagou e está sem acesso), depois as CANCELADAS, depois a varredura de
+   * estorno.
    */
-  async reconcilePendingPayments(now = new Date()) {
-    if (!isMercadoPagoConfigured()) return { verificados: 0, atualizados: 0 };
+  async reconcilePendingPayments(
+    opts: {
+      now?: Date;
+      /** Tempo máximo gasto aqui, em ms. Padrão: `RECONCILE_BUDGET_MS`. */
+      orcamentoMs?: number;
+      /** Consultas simultâneas ao Mercado Pago. */
+      concorrencia?: number;
+    } = {},
+  ) {
+    const now = opts.now ?? new Date();
+    const resumo = {
+      verificados: 0,
+      atualizados: 0,
+      pendentes: 0,
+      canceladas: 0,
+      aprovadas: 0,
+      /** Ficaram para a próxima rodada porque o orçamento acabou. */
+      naoVerificados: 0,
+      esgotouTempo: false,
+    };
+    if (!isMercadoPagoConfigured()) return resumo;
+
+    // Relógio de parede, e não `now`: o prazo é da execução, não do dado.
+    const prazo = Date.now() + (opts.orcamentoMs ?? RECONCILE_BUDGET_MS);
+    const concorrencia = Math.max(1, opts.concorrencia ?? RECONCILE_CONCURRENCY);
 
     // A idade mínima vale só para as PENDENTES: recém-criada, a cobrança ainda
     // está sendo resolvida pelo webhook e consultar agora só gastaria chamada.
     const cutoff = new Date(now.getTime() - RECONCILE_MIN_AGE_MINUTES * 60 * 1000);
-    const meses = [currentRefMonth(now), previousRefMonth(now)];
+    const meses = [previousRefMonth(now), currentRefMonth(now), mesSeguinte(currentRefMonth(now))];
 
-    // Dois lotes, e as PENDENTES primeiro.
-    //
-    // Antes era um só `findMany` com `OR: [PENDENTE, APROVADO]`, `take: 200` e
-    // `createdAt: "asc"`. As APROVADAS são reconsultadas todos os dias por dois
-    // meses e são sempre MAIS ANTIGAS que as pendentes de hoje, então a partir
-    // de ~100 empresas pagantes o lote fechava antes de alcançar uma única
-    // pendente. Quem pagou e teve o webhook perdido — o webhook processa em
-    // `after()`, então uma queda de instância engole o evento em silêncio —
-    // ficava SUSPENSO indefinidamente vendo "Aguardando o pagamento", com esta
-    // rotina sendo a única rede de segurança que existia para o caso.
-    //
-    // As pendentes são o resgate e não podem disputar vaga com a varredura de
-    // estorno; cada lote tem o seu teto.
+    const orderBy: Prisma.SubscriptionPaymentOrderByWithRelationInput[] = [
+      { lastReconciledAt: { sort: "asc", nulls: "first" } },
+      { createdAt: "desc" },
+    ];
+    const select = {
+      id: true,
+      tenantId: true,
+      mpPaymentId: true,
+      status: true,
+      expiresAt: true,
+    } as const;
+
+    // Três lotes, cada um com o seu teto. As pendentes são o resgate e não
+    // podem disputar vaga com a varredura de estorno: com um lote só, as
+    // aprovadas (reconsultadas todo dia) enchiam o teto antes de alcançar uma
+    // única pendente.
     const pendentes = await prisma.subscriptionPayment.findMany({
       where: {
         mpPaymentId: { not: null },
@@ -1011,8 +1441,28 @@ export const BillingService = {
         status: "PENDENTE",
         createdAt: { lt: cutoff },
       },
-      orderBy: { createdAt: "asc" },
+      orderBy,
       take: RECONCILE_BATCH,
+      select,
+    });
+    const canceladas = await prisma.subscriptionPayment.findMany({
+      where: {
+        mpPaymentId: { not: null },
+        referenceMonth: { in: meses },
+        OR: [
+          // Ainda pode ter sido paga: o QR vale 48 h, mais folga de webhook.
+          {
+            status: "CANCELADO",
+            createdAt: { gte: new Date(now.getTime() - RECONCILE_CANCELADAS_JANELA_MS) },
+          },
+          // Aprovada e não creditada: segue sendo relida para registrar o
+          // desfecho (a devolução vira ESTORNADO e sai da fila sozinha).
+          { uncreditedAt: { not: null }, status: { in: ["CANCELADO", "RECUSADO"] } },
+        ],
+      },
+      orderBy,
+      take: RECONCILE_BATCH,
+      select,
     });
     const aprovadas = await prisma.subscriptionPayment.findMany({
       where: {
@@ -1020,18 +1470,21 @@ export const BillingService = {
         referenceMonth: { in: meses },
         status: "APROVADO",
       },
-      orderBy: { createdAt: "asc" },
+      orderBy,
       take: RECONCILE_BATCH,
+      select,
     });
-    const cobrancas = [...pendentes, ...aprovadas];
+    resumo.pendentes = pendentes.length;
+    resumo.canceladas = canceladas.length;
+    resumo.aprovadas = aprovadas.length;
 
-    // Truncamento tem de aparecer: o retorno `{ verificados, atualizados }` não
-    // distingue "nada a fazer" de "lote estourado", e um lote que satura todo
-    // dia significa cobrança que nunca é verificada.
+    // Truncamento tem de aparecer: um lote que satura todo dia significa
+    // cobrança que demora a ser verificada (a rotação garante que chega).
     for (const [nome, lote] of [
       ["pendentes", pendentes],
+      ["canceladas", canceladas],
       ["aprovadas", aprovadas],
-    ]) {
+    ] as const) {
       if (lote.length === RECONCILE_BATCH) {
         logger.warn(
           { lote: nome, teto: RECONCILE_BATCH },
@@ -1040,21 +1493,72 @@ export const BillingService = {
       }
     }
 
-    let atualizados = 0;
-    for (const p of cobrancas) {
-      if (!p.mpPaymentId) continue;
+    // Fila única na ordem de prioridade, sem repetir linha, agrupada por
+    // empresa na ordem em que cada empresa aparece pela primeira vez.
+    type Item = (typeof pendentes)[number];
+    const vistos = new Set<string>();
+    const porEmpresa = new Map<string, Item[]>();
+    for (const p of [...pendentes, ...canceladas, ...aprovadas]) {
+      if (!p.mpPaymentId || vistos.has(p.id)) continue;
+      vistos.add(p.id);
+      const grupo = porEmpresa.get(p.tenantId);
+      if (grupo) grupo.push(p);
+      else porEmpresa.set(p.tenantId, [p]);
+    }
+    const grupos = [...porEmpresa.values()];
+    const total = vistos.size;
+
+    const conferir = async (p: Item): Promise<void> => {
       try {
-        const mp = await getPayment(p.mpPaymentId);
+        const mp = await getPayment(p.mpPaymentId!, { timeoutMs: RECONCILE_MP_TIMEOUT_MS });
         const r = await this.applyPaymentStatus(mp);
-        if (r === "aplicado") atualizados++;
+        if (r === "aplicado") resumo.atualizados++;
+        // Cancelada aqui, em aberto lá: o cancelamento no gateway falhou quando
+        // a cobrança foi substituída. Enquanto não expira ela é pagável —
+        // tenta de novo.
+        if (p.status === "CANCELADO" && mapMpStatus(mp.status) === "PENDENTE") {
+          await cancelarNoGateway([p], { tenantId: p.tenantId, motivo: "reconciliacao" }, now);
+        }
       } catch (e) {
         logger.error(
           { mpPaymentId: p.mpPaymentId, err: describeError(e) },
           "Falha ao reconciliar cobrança",
         );
+      } finally {
+        // Marca mesmo na falha: uma cobrança que dá erro todo dia não pode
+        // ficar para sempre na cabeça da fila tomando a vez das outras.
+        await prisma.subscriptionPayment
+          .updateMany({ where: { id: p.id }, data: { lastReconciledAt: new Date() } })
+          .catch(() => {});
+        resumo.verificados++;
       }
+    };
+
+    let proximo = 0;
+    const trabalhador = async (): Promise<void> => {
+      while (proximo < grupos.length) {
+        const grupo = grupos[proximo++];
+        for (const p of grupo) {
+          if (Date.now() >= prazo) {
+            resumo.esgotouTempo = true;
+            return;
+          }
+          await conferir(p);
+        }
+      }
+    };
+    await Promise.all(
+      Array.from({ length: Math.min(concorrencia, grupos.length) }, () => trabalhador()),
+    );
+
+    resumo.naoVerificados = total - resumo.verificados;
+    if (resumo.esgotouTempo) {
+      logger.warn(
+        { verificados: resumo.verificados, naoVerificados: resumo.naoVerificados },
+        "Reconciliação parou no orçamento de tempo — o restante vai primeiro na próxima rodada",
+      );
     }
-    return { verificados: cobrancas.length, atualizados };
+    return resumo;
   },
 
   /**
@@ -1071,7 +1575,11 @@ export const BillingService = {
    * entra, e quem está vencido/suspenso já foi avisado pelo bloqueio.
    */
   async enviarLembretesDeVencimento(now = new Date()) {
-    const limite = new Date(now.getTime() + DUE_REMINDER_DAYS * 24 * 60 * 60 * 1000);
+    // Janela por dia de CALENDÁRIO (fuso do app), não por horas corridas: com
+    // `now + 72h`, quem vence 30/09 às 18:00 ficava fora na rodada de 27/09
+    // (13:30, faltando 3,19 dias) e recebia na de 28/09 "vence em 3 dias" —
+    // com dois dias de antecedência e o texto errado por um.
+    const limite = endOfDayTz(addDaysTz(now, DUE_REMINDER_DAYS));
 
     const subs = await prisma.tenantSubscription.findMany({
       where: {
@@ -1083,6 +1591,9 @@ export const BillingService = {
       },
       include: {
         tenant: { include: { users: { where: { role: "OWNER", deletedAt: null }, take: 1 } } },
+        // O valor do e-mail é o que `prepareCharge` vai cobrar: com troca de
+        // plano agendada para o vencimento, é o preço do plano NOVO.
+        pendingPlan: { select: { priceMonthly: true, active: true } },
       },
       take: 500,
     });
@@ -1095,30 +1606,60 @@ export const BillingService = {
       if (!owner) continue;
 
       // Início da janela deste vencimento: qualquer lembrete gravado daqui para
-      // frente já é o deste período.
-      const janelaInicio = new Date(
-        sub.currentPeriodEnd.getTime() - DUE_REMINDER_DAYS * 24 * 60 * 60 * 1000,
-      );
-      const jaAvisado = await prisma.auditLog.findFirst({
-        where: {
-          tenantId: sub.tenantId,
-          entity: "TenantSubscription",
-          entityId: sub.id,
-          action: "SUBSCRIPTION_DUE_REMINDER",
-          createdAt: { gte: janelaInicio },
-        },
-        select: { id: true },
-      });
-      if (jaAvisado) continue;
+      // frente já é o deste período. Começo do DIA, pela mesma razão da
+      // janela de candidatos: o envio pode sair na tarde de D-3 mesmo que o
+      // vencimento seja às 23h, e uma janela de 72h exatas deixaria aquele
+      // envio de fora — o cron do dia seguinte mandaria de novo.
+      const janelaInicio = startOfDayTz(addDaysTz(sub.currentPeriodEnd, -DUE_REMINDER_DAYS));
 
-      const diasRestantes = Math.max(
-        1,
-        Math.ceil((sub.currentPeriodEnd.getTime() - now.getTime()) / (24 * 60 * 60 * 1000)),
-      );
+      // 0 = vence hoje (o e-mail diz "hoje"). Só chega aqui se os envios dos dias
+      // anteriores falharam; antes era grampeado em 1 e o texto dizia "amanhã".
+      const diasRestantes = Math.max(0, diasDeCalendario(now, sub.currentPeriodEnd));
+      const valor = valorDevido(sub, now);
+
+      // Reserva a marca ANTES de enviar, numa transação serializada por
+      // empresa. Checar, enviar e só depois gravar deixava duas execuções
+      // sobrepostas do cron (entrega dupla, disparo manual) passarem as duas
+      // pela checagem — dois e-mails iguais.
+      const marca = await prisma.$transaction(async (tx) => {
+        // Domínio 3 = lembrete de vencimento (o 1 é o de caixas plásticas).
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${sub.tenantId}), 3)`;
+        const jaAvisado = await tx.auditLog.findFirst({
+          where: {
+            tenantId: sub.tenantId,
+            entity: "TenantSubscription",
+            entityId: sub.id,
+            action: "SUBSCRIPTION_DUE_REMINDER",
+            createdAt: { gte: janelaInicio },
+          },
+          select: { id: true },
+        });
+        if (jaAvisado) return null;
+        return tx.auditLog.create({
+          data: {
+            tenantId: sub.tenantId,
+            action: "SUBSCRIPTION_DUE_REMINDER",
+            entity: "TenantSubscription",
+            entityId: sub.id,
+            newData: {
+              dueDate: sub.currentPeriodEnd.toISOString(),
+              daysAhead: diasRestantes,
+              amount: valor.toString(),
+              to: owner.email,
+            },
+            // O mesmo relógio da janela acima: a marca e a procura por ela
+            // precisam concordar sobre "quando", mesmo com `now` injetado.
+            createdAt: now,
+          },
+          select: { id: true },
+        });
+      });
+      if (!marca) continue;
+
       const mail = subscriptionDueSoonEmail({
         ownerName: owner.name,
         tradeName: sub.tenant.tradeName,
-        amount: sub.monthlyAmount.toString(),
+        amount: valor.toString(),
         dueDate: sub.currentPeriodEnd,
         daysAhead: diasRestantes,
         graceDays: sub.graceDays,
@@ -1126,27 +1667,20 @@ export const BillingService = {
       });
       const res = await sendEmail(owner.email, mail.subject, mail.html, {
         tags: [{ name: "tipo", value: "lembrete-vencimento" }],
-      });
-      // Só marca depois do envio dar certo: falha transitória do SMTP deve
-      // deixar o cron de amanhã tentar de novo, não silenciar o aviso.
+      }).catch((e: unknown) => ({ ok: false as const, error: describeError(e) }));
+      // A marca só FICA se o envio deu certo: falha transitória do SMTP deve
+      // deixar o cron de amanhã tentar de novo, não silenciar o aviso. A
+      // reserva vira registro de falha, que o dedupe não procura.
       if (!res.ok) {
         logger.error(
           { tenantId: sub.tenantId, err: res.error },
           "Falha ao enviar lembrete de vencimento — será tentado no próximo cron",
         );
+        await prisma.auditLog
+          .update({ where: { id: marca.id }, data: { action: "SUBSCRIPTION_DUE_REMINDER_FAILED" } })
+          .catch(() => {});
         continue;
       }
-      await audit({
-        tenantId: sub.tenantId,
-        action: "SUBSCRIPTION_DUE_REMINDER",
-        entity: "TenantSubscription",
-        entityId: sub.id,
-        newData: {
-          dueDate: sub.currentPeriodEnd.toISOString(),
-          daysAhead: diasRestantes,
-          to: owner.email,
-        },
-      });
       enviados++;
     }
     return { candidatos: subs.length, enviados };
@@ -1236,11 +1770,8 @@ export const BillingService = {
       agora,
     );
 
-    await prisma.$transaction(async (tx) => {
-      await tx.subscriptionPayment.updateMany({
-        where: { tenantId: ctx.tenantId, status: "PENDENTE" },
-        data: { status: "CANCELADO" },
-      });
+    const baixadas = await prisma.$transaction(async (tx) => {
+      const abertas = await baixarPendentes(tx, { tenantId: ctx.tenantId });
       await tx.tenantSubscription.update({
         where: { id: sub.id },
         data: {
@@ -1275,7 +1806,12 @@ export const BillingService = {
         },
         tx,
       );
+      return abertas;
     });
+
+    // Quem pediu para parar de pagar não pode ter um QR ainda pagável no app do
+    // banco: pago, ele desfaria o cancelamento sem o cliente querer.
+    await cancelarNoGateway(baixadas, { tenantId: ctx.tenantId, motivo: "assinatura-cancelada" }, agora);
 
     if (depois === "CANCELADO") {
       await revokeAllForTenant(ctx.tenantId);
@@ -1313,26 +1849,32 @@ export const BillingService = {
       );
     }
 
-    await prisma.tenantSubscription.update({
-      where: { id: sub.id },
-      data: {
-        cancelledAt: null,
-        status: depois,
-        statusSource: "AUTO",
-        statusReason: null,
-      },
-    });
-
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "STATUS_CHANGE",
-      entity: "TenantSubscription",
-      entityId: sub.id,
-      oldData: { cancelledAt: sub.cancelledAt, status: sub.status },
-      newData: { cancelledAt: null, status: depois },
-      ip: ctx.ip,
+    // Regra 5: a mudança e o registro dela commitam juntos. Separados, uma
+    // falha entre os dois deixava a assinatura reativada sem rastro na auditoria.
+    await prisma.$transaction(async (tx) => {
+      await tx.tenantSubscription.update({
+        where: { id: sub.id },
+        data: {
+          cancelledAt: null,
+          status: depois,
+          statusSource: "AUTO",
+          statusReason: null,
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "STATUS_CHANGE",
+          entity: "TenantSubscription",
+          entityId: sub.id,
+          oldData: { cancelledAt: sub.cancelledAt, status: sub.status },
+          newData: { cancelledAt: null, status: depois },
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
 
     return { status: depois };

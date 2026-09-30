@@ -19,9 +19,12 @@ afterAll(async () => {
 const hoje = new Date().toISOString().slice(0, 10);
 
 describe("Caixas plásticas — saldos derivados do ledger", () => {
-  it("entrada de 100 boas + 5 quebradas", async () => {
+  it("entrada de 105, das quais 5 quebradas → 100 boas", async () => {
+    // `quantity` é o TOTAL recebido, quebradas incluídas (é o que a compra e o
+    // formulário dizem). Este teste lançava "100 com 5 quebradas" esperando 100
+    // limpas — o outro sentido, que contava as quebradas duas vezes.
     await CaixasService.registrar(
-      { type: "ENTRADA", quantity: 100, brokenQty: 5, supplierName: "Ceasa", movementDate: hoje },
+      { type: "ENTRADA", quantity: 105, brokenQty: 5, supplierName: "Ceasa", movementDate: hoje },
       ctx,
     );
     const s = await CaixasService.getSaldo(tenantId);

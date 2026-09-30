@@ -345,3 +345,157 @@ describe("verificarDefasagem", () => {
     expect(defasadas.map((d) => d.code)).not.toContain(orfa);
   });
 });
+
+describe("prazo da execução (#49)", () => {
+  /**
+   * Uma fonte pendurada não pode decidir quanto tempo a função vive.
+   *
+   * Antes, o orçamento só era conferido na PARTIDA de cada central: uma central
+   * começada com folga "suficiente" levava 12 + 1 + 12 s por requisição e
+   * passava do `maxDuration` — a plataforma matava a função, a run não era
+   * gravada e `verificarDefasagem` (que roda depois) não rodava.
+   *
+   * A fonte falsa aqui se comporta como `buscarHtml` com prazo: fica pendurada
+   * até o prazo que recebeu e devolve `semTempo`. O que se prova é que o prazo
+   * CHEGA à fonte, que a importação inteira termina dentro do orçamento, e que o
+   * desfecho é registrado sem alarme de falha.
+   */
+  it("central pendurada é interrompida dentro do orçamento, registrada e sem aviso de falha", async () => {
+    const prazosRecebidos: (number | undefined)[] = [];
+    const pendurada: FonteDeCotacao = {
+      chave: "ceasaminas",
+      async buscar({ prazo }) {
+        prazosRecebidos.push(prazo);
+        await new Promise((r) => setTimeout(r, Math.max(0, (prazo ?? Date.now()) - Date.now())));
+        return { ok: false, linhas: [], erro: "prazo da execução esgotado", semTempo: true };
+      },
+      parse: () => ({ ok: false, linhas: [] }),
+    };
+
+    const orcamentoMs = 7_000;
+    const inicio = Date.now();
+    const r = await CotacoesImportService.importarTodasAsCentrais({
+      fonteInjetada: pendurada,
+      orcamentoMs,
+    });
+    const decorrido = Date.now() - inicio;
+
+    expect(decorrido).toBeLessThan(orcamentoMs);
+    expect(prazosRecebidos.length).toBeGreaterThan(0);
+    for (const p of prazosRecebidos) {
+      expect(p).toBeDefined();
+      expect(p!).toBeLessThanOrEqual(inicio + orcamentoMs);
+    }
+    // Quem começou foi interrompido; quem não coube ficou para a próxima.
+    expect(r.resultados.every((x) => x.status === "SEM_TEMPO")).toBe(true);
+    expect(r.resultados.length + r.puladasPorTempo).toBe(r.centrais);
+
+    const tocada = r.resultados[0]!.centralCode;
+    const run = await prisma.ceasaImportRun.findFirstOrThrow({
+      where: { centralCode: tocada },
+      orderBy: { startedAt: "desc" },
+    });
+    expect(run.status).toBe("FALHA");
+    expect(run.error).toMatch(/Interrompida/);
+    // "Não deu tempo" não é a fonte quebrada: nada de COTACOES_FALHA.
+    expect(await AdminNotificationsService.listar()).toHaveLength(0);
+
+    // Limpa as runs que a interrupção gravou em centrais de OUTROS testes/seed.
+    await prisma.ceasaImportRun.deleteMany({
+      where: { error: { startsWith: "Interrompida" }, startedAt: { gte: new Date(inicio) } },
+    });
+  }, 15_000);
+
+  it("prazo já vencido: nenhum dia é pedido à fonte", async () => {
+    const fonte = fonteQueDevolve(COM_DADOS);
+    const r = await CotacoesImportService.importarCentral(CENTRAL, {
+      fonteInjetada: fonte,
+      prazo: Date.now() - 1,
+    });
+    expect(r.status).toBe("SEM_TEMPO");
+    expect(fonte.chamadas).toBe(0);
+  });
+});
+
+describe("lacunas entre boletins (#53)", () => {
+  /**
+   * Praça que publica DEPOIS do cron: o boletim de terça sai às 15h, e na
+   * quarta às 13:30 o de quarta já saiu. O recuo achava quarta e parava — a
+   * terça nunca era pedida, e o histórico pulava um pregão calado.
+   */
+  const hoje = civilParts(new Date());
+  const diaMenos = (n: number) => new Date(Date.UTC(hoje.year, hoje.month - 1, hoje.day - n));
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  /** Fonte que responde conforme a DATA pedida, e anota as datas. */
+  function fontePorData(comBoletim: Set<string>) {
+    const pedidas: string[] = [];
+    const fonte: FonteDeCotacao = {
+      chave: "ceasaminas",
+      async buscar({ data }) {
+        pedidas.push(iso(data));
+        return comBoletim.has(iso(data)) ? COM_DADOS : SEM_BOLETIM;
+      },
+      parse: () => ({ ok: false, linhas: [] }),
+    };
+    return { fonte, pedidas };
+  }
+
+  it("completa o dia que faltou entre o último gravado e o de hoje", async () => {
+    // Já gravado: três dias atrás.
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: diaMenos(3),
+      linhas: COM_DADOS.linhas,
+      sourceKey: "ceasaminas",
+    });
+    const { fonte, pedidas } = fontePorData(new Set([iso(diaMenos(0)), iso(diaMenos(1))]));
+
+    const r = await CotacoesImportService.importarCentral(CENTRAL, { fonteInjetada: fonte });
+
+    expect(r.status).toBe("OK");
+    expect(r.diasCompletados).toBe(1);
+    const dias = await prisma.ceasaQuote.findMany({
+      where: { centralCode: CENTRAL },
+      select: { quoteDate: true },
+      distinct: ["quoteDate"],
+      orderBy: { quoteDate: "asc" },
+    });
+    expect(dias.map((d) => iso(d.quoteDate))).toEqual([
+      iso(diaMenos(3)),
+      iso(diaMenos(1)),
+      iso(diaMenos(0)),
+    ]);
+    // Parou no último gravado: não pediu de novo o dia -3 nem além dele.
+    expect(pedidas).toEqual([iso(diaMenos(0)), iso(diaMenos(1)), iso(diaMenos(2))]);
+  });
+
+  it("praça diária já em dia: nenhuma requisição a mais", async () => {
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: diaMenos(1),
+      linhas: COM_DADOS.linhas,
+      sourceKey: "ceasaminas",
+    });
+    const { fonte, pedidas } = fontePorData(new Set([iso(diaMenos(0))]));
+    const r = await CotacoesImportService.importarCentral(CENTRAL, { fonteInjetada: fonte });
+    expect(r.diasCompletados).toBe(0);
+    expect(pedidas).toEqual([iso(diaMenos(0))]);
+  });
+
+  it("falha ao completar não derruba o dia principal", async () => {
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: diaMenos(4),
+      linhas: COM_DADOS.linhas,
+      sourceKey: "ceasaminas",
+    });
+    const r = await CotacoesImportService.importarCentral(CENTRAL, {
+      fonteInjetada: fonteQueDevolve(COM_DADOS, FALHOU),
+    });
+    expect(r.status).toBe("OK");
+    expect(r.diasCompletados).toBe(0);
+    // Tarefa acessória: não vira aviso de falha da central.
+    expect(await AdminNotificationsService.listar()).toHaveLength(0);
+  });
+});

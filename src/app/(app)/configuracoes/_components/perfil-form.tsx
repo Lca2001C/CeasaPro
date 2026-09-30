@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 export function PerfilConfigForm({ initial, email }: { initial: PerfilInput; email: string }) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
@@ -25,7 +26,7 @@ export function PerfilConfigForm({ initial, email }: { initial: PerfilInput; ema
 
   async function onSubmit(values: PerfilInput) {
     setSaving(true);
-    const res = await salvarPerfil(values);
+    const res = await chamarAction(() => salvarPerfil(values));
     if (res.ok) {
       // O cabeçalho lê o nome do claim `name` do JWT, não do banco. Sem renovar,
       // ele continuaria mostrando o nome antigo por até o TTL do access token —

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import { valeRepetir } from "@/lib/cotacoes/http";
+import { buscarHtml, valeRepetir } from "@/lib/cotacoes/http";
 
 /**
  * Duas travas que não cabem em teste de comportamento e que, se quebrarem, só
@@ -50,7 +50,10 @@ describe("a importação não pode derrubar o que ela pegou carona", () => {
     // reconciliação do dia acontece. Rodando por último, o pior caso é a
     // plataforma matar a função com tudo que é receita já commitado.
     const raspagem = billing.indexOf("CotacoesImportService.importarTodasAsCentrais");
-    expect(raspagem).toBeGreaterThan(billing.indexOf("reconcilePendingPayments()"));
+    // `(` sem o `)`: a chamada passa o orçamento da reconciliação. Conferir que
+    // ela EXISTE, senão o `indexOf` -1 faria a comparação passar sozinha.
+    expect(billing.indexOf("reconcilePendingPayments(")).toBeGreaterThan(-1);
+    expect(raspagem).toBeGreaterThan(billing.indexOf("reconcilePendingPayments("));
     expect(raspagem).toBeGreaterThan(billing.indexOf("recomputeStatuses()"));
     expect(raspagem).toBeGreaterThan(billing.indexOf("enviarLembretesDeVencimento()"));
   });
@@ -133,5 +136,62 @@ describe("valeRepetir", () => {
     expect(valeRepetir(200, undefined)).toBe(false);
     expect(valeRepetir(undefined, "algo inesperado")).toBe(false);
     expect(valeRepetir(undefined, undefined)).toBe(false);
+  });
+});
+
+describe("buscarHtml respeita o prazo da execução", () => {
+  /**
+   * Fonte pendurada: sem prazo, cada requisição custava 12 + 1 + 12 s, e uma
+   * central começada com folga "suficiente" estourava o maxDuration da função —
+   * que matava junto o alarme de defasagem. Com prazo, a tentativa é encurtada
+   * para caber, e o desfecho é "sem tempo", não "a fonte quebrou".
+   */
+  const pendurado = (_url: RequestInfo | URL, init?: RequestInit) =>
+    new Promise<Response>((_, rejeitar) => {
+      init?.signal?.addEventListener("abort", () =>
+        rejeitar(init.signal!.reason ?? new Error("The operation was aborted due to timeout")),
+      );
+    });
+
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("aborta no prazo e marca semTempo, sem retry", async () => {
+    const chamadas: number[] = [];
+    vi.stubGlobal("fetch", (u: RequestInfo | URL, i?: RequestInit) => {
+      chamadas.push(Date.now());
+      return pendurado(u, i);
+    });
+    const inicio = Date.now();
+    const r = await buscarHtml("https://fonte.invalida/boletim", {}, {}, { prazo: inicio + 1_500 });
+    const decorrido = Date.now() - inicio;
+
+    expect(r.ok).toBe(false);
+    expect(r.semTempo).toBe(true);
+    expect(chamadas).toHaveLength(1);
+    expect(decorrido).toBeLessThan(3_000);
+  });
+
+  it("prazo já vencido nem abre conexão", async () => {
+    let chamou = false;
+    vi.stubGlobal("fetch", () => {
+      chamou = true;
+      return Promise.resolve(new Response("x"));
+    });
+    const r = await buscarHtml("https://fonte.invalida/boletim", {}, {}, { prazo: Date.now() + 100 });
+    expect(r).toMatchObject({ ok: false, semTempo: true });
+    expect(chamou).toBe(false);
+  });
+
+  it("retry que não cabe no prazo não é tentado, e o erro REAL é devolvido", async () => {
+    let n = 0;
+    vi.stubGlobal("fetch", () => {
+      n++;
+      return Promise.resolve(new Response("", { status: 503 }));
+    });
+    // 1,5 s de prazo: o backoff de 1 s deixaria menos que o mínimo de uma tentativa.
+    const r = await buscarHtml("https://fonte.invalida/boletim", {}, {}, { prazo: Date.now() + 1_500 });
+    expect(n).toBe(1);
+    expect(r).toMatchObject({ ok: false, status: 503, erro: "HTTP 503" });
+    expect(r.semTempo).toBeFalsy();
   });
 });

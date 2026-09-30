@@ -80,8 +80,52 @@ describe("Compra com caixas plásticas", () => {
     const antes = await CaixasService.getSaldo(tenantId);
     await comprar({ caixasRecebidas: 30, caixasQuebradas: 4 });
     const depois = await CaixasService.getSaldo(tenantId);
-    expect(depois.limpas).toBe(antes.limpas + 30);
+    // "Quantas caixas" é o TOTAL que chegou (a compra recusa quebradas acima
+    // dele). Esta asserção dizia +30 e cristalizava o defeito: as 4 quebradas
+    // contavam como limpas E como perdidas — 34 caixas de 30 —, e o sistema
+    // aceitava SAIDA de 30 com só 26 boas no box.
+    expect(depois.limpas).toBe(antes.limpas + 26);
     expect(depois.perdidas).toBe(antes.perdidas + 4);
+  });
+
+  it("quebradas de uma entrada SUJA saem das sujas, não das limpas", async () => {
+    const antes = await CaixasService.getSaldo(tenantId);
+    await comprar({ caixasRecebidas: 20, caixasQuebradas: 3, caixasSujas: true });
+    const depois = await CaixasService.getSaldo(tenantId);
+    expect(depois.sujas).toBe(antes.sujas + 17);
+    expect(depois.limpas).toBe(antes.limpas);
+    expect(depois.perdidas).toBe(antes.perdidas + 3);
+  });
+
+  it("SAIDA acima das boas é recusada: as quebradas não se vendem", async () => {
+    const t = await createTestTenant("COMPRA CAIXAS SAIDA");
+    tenants.push(t);
+    const c = makeCtx(t);
+    const p = await prisma.product.create({
+      data: { tenantId: t, name: `Tomate ${uniq()}`, saleUnit: "CAIXA", active: true },
+    });
+    await ComprasService.registrarCompra(
+      {
+        supplierId: null,
+        purchaseDate: new Date().toISOString(),
+        freight: 0,
+        caixasRecebidas: 30,
+        caixasQuebradas: 4,
+        items: [{ productId: p.id, quantity: 10, unitPrice: 5 }],
+      },
+      c,
+    );
+    await expect(
+      CaixasService.registrar(
+        {
+          type: "SAIDA",
+          quantity: 30,
+          customerName: "Mercadinho",
+          movementDate: new Date().toISOString(),
+        },
+        c,
+      ),
+    ).rejects.toThrow(/26 caixa\(s\) limpa/);
   });
 
   it("vincula o movimento à compra e registra a origem", async () => {
@@ -122,5 +166,40 @@ describe("Compra com caixas plásticas", () => {
       where: { tenantId, quantity: 99 },
     });
     expect(orfao).toBe(0);
+  });
+});
+
+/**
+ * Sem o módulo `caixas`, a compra não mexe no livro-razão de caixas.
+ *
+ * O gate existia na venda (`registrarVenda` zera as caixas) e faltava na
+ * compra: um POST com `caixasRecebidas` gravava ENTRADA para uma empresa que
+ * não tem o controle — e a tela nem oferecia o campo.
+ */
+describe("Compra sem o módulo de caixas (regressão)", () => {
+  it("grava a compra e o estoque, mas nenhum movimento de caixa", async () => {
+    const semCaixas: TenantCtx = {
+      ...ctx,
+      session: { ...ctx.session, modules: (ctx.session.modules ?? []).filter((m) => m !== "caixas") },
+    };
+    const antes = await prisma.plasticCrateMovement.count({ where: { tenantId } });
+
+    const compra = await ComprasService.registrarCompra(
+      {
+        supplierId: null,
+        purchaseDate: new Date().toISOString(),
+        freight: 0,
+        caixasRecebidas: 15,
+        caixasQuebradas: 2,
+        items: [{ productId: produtoId, quantity: 10, unitPrice: 5 }],
+      },
+      semCaixas,
+    );
+
+    expect(compra.id).toBeTruthy();
+    expect(
+      await prisma.stockMovement.count({ where: { sourceType: "PURCHASE", sourceId: compra.id } }),
+    ).toBe(1);
+    expect(await prisma.plasticCrateMovement.count({ where: { tenantId } })).toBe(antes);
   });
 });

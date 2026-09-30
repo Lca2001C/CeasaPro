@@ -206,7 +206,7 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
 
     const esperado = trialEndFrom(new Date(antes)).getTime();
     // Tolerância de alguns segundos para o tempo de execução do teste.
-    expect(Math.abs(confirmado.trialEndsAt.getTime() - esperado)).toBeLessThan(10_000);
+    expect(Math.abs(confirmado.trialEndsAt!.getTime() - esperado)).toBeLessThan(10_000);
 
     const sub = await prisma.tenantSubscription.findUnique({
       where: { tenantId: res.tenantId! },
@@ -259,7 +259,7 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
     const primeira = await SignupService.confirmEmail(res.devToken!);
     const segunda = await SignupService.confirmEmail(res.devToken!);
 
-    expect(segunda.trialEndsAt.getTime()).toBe(primeira.trialEndsAt.getTime());
+    expect(segunda.trialEndsAt!.getTime()).toBe(primeira.trialEndsAt!.getTime());
   });
 
   it("token inexistente é recusado", async () => {
@@ -331,7 +331,7 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
       const novo = tokenDoUltimoEmail();
       expect(novo).not.toBe(res.devToken);
       const ok = await SignupService.confirmEmail(novo);
-      expect(ok.trialEndsAt.getTime()).toBeGreaterThan(Date.now());
+      expect(ok.trialEndsAt!.getTime()).toBeGreaterThan(Date.now());
 
       const sub = await prisma.tenantSubscription.findUniqueOrThrow({
         where: { tenantId: res.tenantId! },
@@ -350,6 +350,55 @@ describe("Confirmação do e-mail libera o teste grátis", () => {
       await expect(SignupService.confirmEmail(res.devToken!)).rejects.toThrow(/inválido/i);
       expect(correio.enviados.length).toBe(depoisDoPrimeiro);
     });
+  });
+});
+
+/**
+ * Reabrir o link DEPOIS de confirmado não pode fingir que a conta não está
+ * confirmada, nem prometer um teste que não foi concedido.
+ */
+describe("link reaberto depois da confirmação", () => {
+  it("link vencido de conta já confirmada: não reenvia e-mail nem diz 'expirou'", async () => {
+    const res = await registrar(entrada());
+    const primeira = await SignupService.confirmEmail(res.devToken!);
+    await prisma.user.updateMany({
+      where: { tenantId: res.tenantId! },
+      data: { verifyTokenExpiresAt: new Date(Date.now() - 60_000) },
+    });
+    const antes = correio.enviados.length;
+
+    const deNovo = await SignupService.confirmEmail(res.devToken!);
+
+    expect(deNovo.trialEndsAt!.getTime()).toBe(primeira.trialEndsAt!.getTime());
+    expect(correio.enviados.length).toBe(antes);
+  });
+
+  it("quem pagou antes de confirmar: confirma sem teste e sem auditar TRIAL", async () => {
+    const res = await registrar(entrada());
+    // Entrou sem confirmar e pagou a 1ª mensalidade em /assinatura.
+    const pagoAte = new Date(Date.now() + 30 * 86_400_000);
+    await prisma.tenantSubscription.update({
+      where: { tenantId: res.tenantId! },
+      data: { status: "ATIVO", activatedAt: new Date(), currentPeriodEnd: pagoAte },
+    });
+
+    const r = await SignupService.confirmEmail(res.devToken!);
+
+    expect(r.trialEndsAt).toBeNull();
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { tenantId: res.tenantId! },
+    });
+    expect(sub.status).toBe("ATIVO");
+    expect(sub.trialEndsAt).toBeNull();
+    const user = await prisma.user.findFirstOrThrow({ where: { tenantId: res.tenantId! } });
+    expect(user.emailVerifiedAt).not.toBeNull();
+    const logsTrial = await prisma.auditLog.count({
+      where: { tenantId: res.tenantId!, entity: "TenantSubscription", action: "UPDATE" },
+    });
+    expect(logsTrial).toBe(0);
+
+    // Reabrir de novo, agora já confirmado: leitura pura, mesmo resultado.
+    expect((await SignupService.confirmEmail(res.devToken!)).trialEndsAt).toBeNull();
   });
 });
 

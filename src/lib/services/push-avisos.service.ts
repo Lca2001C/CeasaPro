@@ -1,9 +1,9 @@
 import { prisma } from "@/lib/db/prisma";
 import { AvisosService } from "./avisos.service";
 import { planModules } from "@/lib/plan/modules";
-import { accessDecision } from "@/lib/billing/status";
+import type { Prisma } from "@prisma/client";
+import { accessDecision, computeStatus } from "@/lib/billing/status";
 import { enviarPushParaUsuario, isPushConfigured } from "@/lib/pwa/push-server";
-import { audit } from "@/lib/audit";
 import { describeError, logger } from "@/lib/logger";
 
 /**
@@ -43,6 +43,62 @@ export interface ResultadoAvisos {
   enviados: number;
   pulados: number;
   inscricoesRemovidas: number;
+}
+
+/** Ação gravada no lugar da marca quando a reserva não resultou em envio. */
+const ACAO_FALHA = "PUSH_AVISO_FAILED";
+
+/**
+ * Reserva a marca de dedupe do dia: confere e grava NUMA transação serializada
+ * por empresa, antes do envio. O lock usa o domínio 4 ("aviso diário por push")
+ * no namespace da empresa (`hashtext(tenantId)`); o 1 é o de caixas plásticas,
+ * o 3 o do lembrete de vencimento.
+ *
+ * Checar e gravar separados pelo envio era a janela de duas execuções
+ * sobrepostas mandarem o mesmo aviso. O advisory lock é de TRANSAÇÃO (sobrevive
+ * ao pgbouncer do Neon, como o de caixas): a segunda execução espera o commit da
+ * primeira e, relendo, já encontra a marca. Devolve o id da marca, ou `null`
+ * quando o aviso de hoje já foi (ou está sendo) enviado.
+ */
+async function reservarMarca(
+  tenantId: string,
+  janelaInicio: Date,
+  newData: Record<string, unknown>,
+): Promise<string | null> {
+  return prisma.$transaction(async (tx) => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), 4)`;
+    const ja = await tx.auditLog.findFirst({
+      where: {
+        tenantId,
+        entity: "Tenant",
+        entityId: tenantId,
+        action: ACAO_AUDITORIA,
+        createdAt: { gte: janelaInicio },
+      },
+      select: { id: true },
+    });
+    if (ja) return null;
+    const marca = await tx.auditLog.create({
+      data: {
+        tenantId,
+        action: ACAO_AUDITORIA,
+        entity: "Tenant",
+        entityId: tenantId,
+        newData: newData as Prisma.InputJsonValue,
+      },
+      select: { id: true },
+    });
+    return marca.id;
+  });
+}
+
+/**
+ * Desfaz a reserva quando nada saiu: a linha vira registro de FALHA (o dedupe
+ * só procura a ação de sucesso), então o cron de amanhã tenta de novo e a
+ * tentativa continua visível na auditoria.
+ */
+async function liberarMarca(id: string): Promise<void> {
+  await prisma.auditLog.update({ where: { id }, data: { action: ACAO_FALHA } });
 }
 
 /** Monta título e corpo a partir dos avisos da empresa. */
@@ -133,58 +189,101 @@ export const PushAvisosService = {
           select: {
             status: true,
             deletedAt: true,
-            subscription: { select: { status: true, plan: { select: { features: true } } } },
+            subscription: {
+              select: {
+                status: true,
+                statusSource: true,
+                activatedAt: true,
+                trialEndsAt: true,
+                currentPeriodEnd: true,
+                graceDays: true,
+                cancelledAt: true,
+                pendingPlanFrom: true,
+                plan: { select: { features: true } },
+                pendingPlan: { select: { features: true, active: true } },
+              },
+            },
           },
         });
         if (!tenant || tenant.deletedAt) {
           resultado.pulados += 1;
           continue;
         }
-        if (accessDecision(tenant.status, tenant.subscription?.status) === "blocked") {
+        // O status é RECALCULADO das datas, como no login (`buildAccessPayload`),
+        // e não o gravado: o gravado só é atualizado pelo cron de billing, às
+        // 13:30, e este roda às 06:30. Um teste que venceu às 20:00 de ontem
+        // ainda estava TRIAL no banco, recebia o resumo do dia, e o toque caía
+        // em /conta/suspensa — justo o que a regra 3 existe para evitar. O mesmo
+        // valia para cancelamento com o mês pago vencendo de madrugada e para
+        // VENCIDO que passou da tolerância.
+        const sub = tenant.subscription;
+        const statusEfetivo = sub ? computeStatus(sub, agora) : null;
+        if (accessDecision(tenant.status, statusEfetivo) === "blocked") {
           resultado.pulados += 1;
           continue;
         }
 
         // Sem sessão aqui: os módulos vêm do plano da assinatura. Sem eles, a
         // notificação do dia podia ser "Higienização a pagar" para quem não
-        // tem o módulo, e o toque caía no paywall.
-        const avisos = await AvisosService.get(
-          tenantId,
-          planModules(tenant.subscription?.plan?.features),
-        );
+        // tem o módulo, e o toque caía no paywall. Troca de plano agendada que
+        // já venceu vale: é o plano que o login vai aplicar no toque (o
+        // `aplicarTrocaProgramada` descarta o agendamento de plano inativo, e
+        // aqui o mesmo critério mantém o vigente). Só leitura — quem aplica é o
+        // login ou o cron de billing, não o de avisos.
+        const trocaVenceu =
+          !!sub?.pendingPlan?.active && !!sub.pendingPlanFrom && sub.pendingPlanFrom <= agora;
+        const features = trocaVenceu ? sub!.pendingPlan!.features : sub?.plan?.features;
+        const avisos = await AvisosService.get(tenantId, planModules(features), agora);
         if (avisos.length === 0) {
           resultado.pulados += 1;
           continue;
         }
 
         const { title, body } = montarMensagem(avisos);
-        let algumEnviado = false;
 
-        for (const userId of userIds) {
-          const r = await enviarPushParaUsuario(userId, {
-            title,
-            body,
-            url: avisos[0]!.href,
-            // `tag` fixa: o aviso de hoje SUBSTITUI o de ontem na bandeja em vez
-            // de empilhar uma pilha que ninguém lê.
-            tag: "avisos-operacionais",
-          });
-          resultado.inscricoesRemovidas += r.removidos;
-          if (r.enviados > 0) algumEnviado = true;
+        // Reserva a marca ANTES de enviar. A checagem acima é só o atalho
+        // barato; ela e a gravação ficavam separadas pelos segundos do envio, e
+        // duas execuções sobrepostas (entrega dupla do cron, POST manual durante
+        // a agendada) passavam as duas por ela — duas notificações, e com
+        // `renotify` a segunda vibrava de novo.
+        const marca = await reservarMarca(tenantId, janelaInicio, {
+          avisos: avisos.length,
+          title,
+        });
+        if (!marca) {
+          resultado.pulados += 1;
+          continue;
         }
 
-        // A marca do dedupe só é gravada se ALGO saiu. Falha de rede no serviço de
-        // push não pode silenciar o aviso de amanhã.
+        let algumEnviado = false;
+
+        try {
+          for (const userId of userIds) {
+            const r = await enviarPushParaUsuario(userId, {
+              title,
+              body,
+              url: avisos[0]!.href,
+              // `tag` fixa: o aviso de hoje SUBSTITUI o de ontem na bandeja em
+              // vez de empilhar uma pilha que ninguém lê.
+              tag: "avisos-operacionais",
+            });
+            resultado.inscricoesRemovidas += r.removidos;
+            if (r.enviados > 0) algumEnviado = true;
+          }
+        } catch (e) {
+          // Exceção no meio do envio sem nada entregue: a reserva não pode
+          // silenciar o aviso de amanhã.
+          if (!algumEnviado) await liberarMarca(marca).catch(() => {});
+          throw e;
+        }
+
+        // A marca do dedupe só FICA se algo saiu. Falha de rede no serviço de
+        // push não pode silenciar o aviso de amanhã: a reserva vira registro de
+        // falha, que o dedupe não procura.
         if (algumEnviado) {
-          await audit({
-            tenantId,
-            action: ACAO_AUDITORIA,
-            entity: "Tenant",
-            entityId: tenantId,
-            newData: { avisos: avisos.length, title },
-          });
           resultado.enviados += 1;
         } else {
+          await liberarMarca(marca);
           resultado.pulados += 1;
         }
       } catch (e) {

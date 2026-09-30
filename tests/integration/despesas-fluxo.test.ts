@@ -591,3 +591,120 @@ describe("Lista unificada com higienização", () => {
     expect(pagas.some((l) => l.id === lote.id && l.status === "PAGO")).toBe(true);
   });
 });
+
+/**
+ * Corridas na recorrência e na baixa.
+ *
+ * `gerarProximaParcela` era "procura filho, depois cria" sem trava: o cron e o
+ * dono tocando "Pagar" no mesmo instante (ou uma entrega dupla do cron) criavam
+ * DOIS filhos com `recurring: true`, e cada um gerava o próprio dali em diante —
+ * o aluguel em dobro todo mês, para sempre, sem erro.
+ */
+describe("Concorrência na recorrência e na baixa", () => {
+  it("duas gerações simultâneas da mesma origem criam UMA parcela", async () => {
+    const d = await criar({ dueDate: "2026-08-10", recurring: true });
+
+    const r = await Promise.all([
+      DespesasService.gerarProximaParcela(d, ctx),
+      DespesasService.gerarProximaParcela(d, ctx),
+      DespesasService.gerarProximaParcela(d, ctx),
+    ]);
+    expect(r.filter(Boolean)).toHaveLength(1);
+
+    const filhas = await prisma.expense.findMany({ where: { tenantId, parentId: d.id } });
+    expect(filhas).toHaveLength(1);
+    expect(filhas[0]!.recurring).toBe(true);
+    // Um gerador ativo por conta fixa, não dois.
+    expect(await prisma.expense.count({ where: { tenantId, recurring: true } })).toBe(1);
+  });
+
+  it("o cron e a baixa manual ao mesmo tempo não duplicam a parcela", async () => {
+    const d = await criar({ dueDate: "2026-08-10", recurring: true });
+
+    await Promise.all([
+      DespesasService.marcarComoPago({ id: d.id }, ctx),
+      DespesasService.gerarRecorrentes(ctx, new Date("2026-09-03T12:00:00.000Z")),
+    ]);
+
+    expect(await prisma.expense.count({ where: { tenantId, parentId: d.id } })).toBe(1);
+    expect(await prisma.expense.count({ where: { tenantId, recurring: true } })).toBe(1);
+  });
+
+  it("duas baixas simultâneas: uma vence, a outra recebe 'já está paga'", async () => {
+    const d = await criar({ dueDate: "2026-09-10", recurring: true });
+
+    const r = await Promise.allSettled([
+      DespesasService.marcarComoPago({ id: d.id }, ctx),
+      DespesasService.marcarComoPago({ id: d.id }, ctx),
+    ]);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    const recusa = r.find((x): x is PromiseRejectedResult => x.status === "rejected");
+    expect(String(recusa?.reason)).toMatch(/já está paga/i);
+
+    expect(await prisma.expense.count({ where: { tenantId, parentId: d.id } })).toBe(1);
+    const baixas = await prisma.auditLog.count({
+      where: { tenantId, entity: "Expense", entityId: d.id, action: "UPDATE" },
+    });
+    expect(baixas).toBe(1);
+  });
+});
+
+describe("Aba Pagas", () => {
+  it("ordena pela data de PAGAMENTO, e as sem vencimento não furam a fila", async () => {
+    const semVenc = await criar({ description: "Sem vencimento, paga há tempos", dueDate: null });
+    await DespesasService.marcarComoPago({ id: semVenc.id, paidDate: "2025-01-15" }, ctx);
+    const janeiro = await criar({ description: "Venceu em janeiro, paga hoje", dueDate: "2026-01-10" });
+    await DespesasService.marcarComoPago({ id: janeiro.id, paidDate: "2026-09-03" }, ctx);
+    const setembro = await criar({ description: "Vence em setembro, paga em agosto", dueDate: "2026-09-20" });
+    await DespesasService.marcarComoPago({ id: setembro.id, paidDate: "2026-08-20" }, ctx);
+
+    const pagas = await DespesasService.list(tenantId, { status: "PAGO" });
+    expect(pagas.map((d) => d.id)).toEqual([janeiro.id, setembro.id, semVenc.id]);
+  });
+});
+
+describe("Replicar mês — o resultado diz por que nada foi copiado", () => {
+  it("recorrentes puladas não são contadas como 'já replicadas'", async () => {
+    await criar({ description: "Aluguel", dueDate: "2026-08-05", recurring: true });
+    await criar({ description: "Internet", dueDate: "2026-08-15", recurring: true });
+
+    const r = await DespesasService.replicarMes("2026-08", ctx, HOJE);
+    expect(r).toMatchObject({ encontradas: 2, criadas: 0, jaCopiadas: 0, recorrentes: 2 });
+  });
+
+  it("separa as já copiadas das recorrentes", async () => {
+    await criar({ description: "Luz", dueDate: "2026-08-05" });
+    await criar({ description: "Aluguel", dueDate: "2026-08-10", recurring: true });
+    await DespesasService.replicarMes("2026-08", ctx, HOJE);
+
+    const r = await DespesasService.replicarMes("2026-08", ctx, HOJE);
+    expect(r).toMatchObject({ criadas: 0, jaCopiadas: 1, recorrentes: 1 });
+  });
+});
+
+describe("Aviso de fiado vencido conta CLIENTES", () => {
+  beforeEach(async () => {
+    await prisma.creditAccount.deleteMany({ where: { tenantId } });
+  });
+
+  it("um cliente com três entregas vencidas é um cliente", async () => {
+    const venc = new Date(HOJE.getTime() - 5 * 864e5);
+    await prisma.creditAccount.createMany({
+      data: [
+        { tenantId, customerName: "João", totalAmount: 100, dueDate: venc },
+        { tenantId, customerName: "João", totalAmount: 50, dueDate: venc },
+        { tenantId, customerName: " joão ", totalAmount: 25, dueDate: venc },
+        { tenantId, customerName: "Maria", totalAmount: 10, dueDate: venc },
+      ],
+    });
+
+    const avisos = await AvisosService.get(tenantId, undefined, HOJE);
+    const aviso = avisos.find((a) => a.tipo === "fiado_vencido");
+    expect(aviso?.label).toBe("2 cliente(s) com fiado vencido");
+    expect(aviso?.count).toBe(2);
+    // O dinheiro continua sendo a soma de todas as entregas.
+    expect(aviso?.total?.toString()).toBe("185");
+
+    await prisma.creditAccount.deleteMany({ where: { tenantId } });
+  });
+});

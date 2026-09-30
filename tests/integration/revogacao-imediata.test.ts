@@ -1,8 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { buildAccessPayload } from "@/lib/auth/build-session";
-import { revokeAllForUser, revokeAllForTenant } from "@/lib/auth/refresh";
-import { assertSessaoValida } from "@/lib/auth/revogacao";
+import {
+  createRefreshToken,
+  revokeAllForUser,
+  revokeAllForTenant,
+  rotateRefreshToken,
+} from "@/lib/auth/refresh";
+import { assertSessaoValida, sessaoAindaValida } from "@/lib/auth/revogacao";
 import { UnauthorizedError } from "@/lib/http/app-error";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
 
@@ -113,5 +118,39 @@ describe("token sem os claims novos", () => {
 
     await revokeAllForUser(userId, "ADMIN");
     await expect(assertSessaoValida(legado)).rejects.toBeInstanceOf(UnauthorizedError);
+  });
+});
+
+describe("o caminho dos layouts: responde, não lança", () => {
+  /*
+    Os layouts `(app)` e `(admin)` usam `sessaoAindaValida` e REDIRECIONAM para
+    `/api/auth/renovar?revogada=1`. Exceção num layout não tem boundary que a
+    pegue e caía no `global-error` sem saída por até 15 minutos.
+  */
+  it("mesma regra do assert, em booleano", async () => {
+    const sessao = await sessaoDe(userId);
+    await expect(sessaoAindaValida(sessao)).resolves.toBe(true);
+
+    await revokeAllForUser(userId, "PASSWORD");
+
+    await expect(sessaoAindaValida(sessao)).resolves.toBe(false);
+  });
+
+  it("empresa bloqueada: false para todos os usuários dela", async () => {
+    const sessao = await sessaoDe(outroUserId);
+    await revokeAllForTenant(tenantId);
+    await expect(sessaoAindaValida(sessao)).resolves.toBe(false);
+  });
+
+  it("a revogação mata o refresh junto — a saída do layout termina no login", async () => {
+    /*
+      É o que garante que a rota de saída não "ressuscita" a sessão: o refresh
+      que o navegador ainda carrega foi revogado na mesma transação que subiu o
+      epoch, então a renovação responde `invalido`, apaga os cookies e manda ao
+      `/login` — e sem access cookie o proxy deixa o `/login` abrir.
+    */
+    const refresh = await createRefreshToken(userId);
+    await revokeAllForUser(userId, "PASSWORD");
+    await expect(rotateRefreshToken(refresh)).resolves.toEqual({ tipo: "invalido" });
   });
 });

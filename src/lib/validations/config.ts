@@ -1,5 +1,6 @@
 import { ehUfValida } from "@/lib/constants";
 import { z } from "zod";
+import { cnpjValido, normalizarCnpj } from "@/lib/cnpj";
 
 /**
  * CNPJ opcional — em branco tem de virar `null`, nunca `""`.
@@ -10,12 +11,20 @@ import { z } from "zod";
  * vazia no índice — e toda outra que salvasse os dados da própria empresa
  * batia em P2002, que chega na tela como "Ocorreu um erro inesperado", para
  * sempre. Convertendo aqui, os três pontos de escrita ficam cobertos.
+ *
+ * Preenchido, é gravado SÓ COM OS DÍGITOS e precisa ter dígito verificador
+ * válido. Texto cru deixava o mesmo CNPJ entrar duas vezes em formatos
+ * diferentes (a unicidade compara texto), e um dígito trocado só aparecia
+ * quando o Mercado Pago recusava o PIX da mensalidade. Pontuação e prefixo
+ * colados ("CNPJ: 12.345…") são aceitos e descartados — o teto de tamanho é
+ * folgado por isso. A leitura não muda: `formatCNPJ` formata os dois jeitos.
  */
 export const cnpjSchema = z
   .string()
   .trim()
-  .max(20)
-  .transform((v) => v || null)
+  .max(40, "CNPJ inválido")
+  .refine((v) => v === "" || cnpjValido(v), "CNPJ inválido — confira os 14 números")
+  .transform((v) => normalizarCnpj(v) || null)
   .nullable()
   .optional();
 
@@ -28,12 +37,12 @@ export const cnpjSchema = z
  * formulário parcial apagava o resto.
  */
 export const empresaSchema = z.object({
-  tradeName: z.string().trim().min(1, "Informe o nome").max(120),
-  legalName: z.string().trim().max(160).nullable().optional(),
+  tradeName: z.string().trim().min(1, "Informe o nome").max(120, "Até 120 caracteres"),
+  legalName: z.string().trim().max(160, "Até 160 caracteres").nullable().optional(),
   cnpj: cnpjSchema,
-  phone: z.string().trim().max(20).nullable().optional(),
-  address: z.string().trim().max(200).nullable().optional(),
-  businessHours: z.string().trim().max(120).nullable().optional(),
+  phone: z.string().trim().max(20, "Telefone muito longo").nullable().optional(),
+  address: z.string().trim().max(200, "Até 200 caracteres").nullable().optional(),
+  businessHours: z.string().trim().max(120, "Até 120 caracteres").nullable().optional(),
   /**
    * Saiu do cadastro público (que passou a pedir só e-mail e senha) e passou a
    * morar aqui. Teto de 60 é o mesmo que o cadastro usava — mudar agora deixaria

@@ -19,6 +19,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { PlanoForm } from "./plano-form";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 export function PlanoRow({ plano }: { plano: PlanoInput & { id: string } }) {
   const router = useRouter();
@@ -30,7 +31,7 @@ export function PlanoRow({ plano }: { plano: PlanoInput & { id: string } }) {
 
   function excluir(apagarHistoricoDeExcluidas = false) {
     start(async () => {
-      const res = await excluirPlano({ id: plano.id, apagarHistoricoDeExcluidas });
+      const res = await chamarAction(() => excluirPlano({ id: plano.id, apagarHistoricoDeExcluidas }));
       if (!res.ok) {
         // Plano em uso cai aqui, com a contagem de assinaturas na mensagem.
         // "Confirme a exclusão do histórico" = só empresas já excluídas travam,

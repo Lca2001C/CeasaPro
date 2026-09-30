@@ -33,7 +33,10 @@ export function formatCell(value: unknown, format?: ReportFormatCell): string {
  * Protege contra CSV/Excel Formula Injection: um valor digitado pelo usuário que
  * comece com = + - @ (ou tab/CR) pode virar fórmula ativa ao abrir a planilha.
  * Prefixamos com aspa simples para forçar o Excel/Sheets a tratar como texto.
- * Usado APENAS na exportação (na tela o React já escapa e não há execução).
+ * Para exportação em TEXTO puro (CSV). O .xlsx não usa isto: ali o apóstrofo
+ * ficava gravado no conteúdo e o Excel o exibia; o `excel.exporter` grava a
+ * string como string com formato "Texto" (`@`), que dá a mesma proteção sem
+ * alterar o valor. Na tela o React já escapa e não há execução.
  */
 export function spreadsheetSafe(value: string): string {
   if (value && /^[=+\-@\t\r]/.test(value)) {

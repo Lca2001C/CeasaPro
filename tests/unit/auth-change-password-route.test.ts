@@ -22,17 +22,34 @@ const buildAccessPayload = vi.fn();
 const setAuthCookies = vi.fn();
 const findFirst = vi.fn();
 const update = vi.fn();
+const audit = vi.fn();
 /** Ordem real das operações sensíveis, para afirmar a sequência. */
 const ordem: string[] = [];
 
+/**
+ * O cliente da transação. A troca de senha, a revogação e a auditoria têm de
+ * receber ESTE objeto — é o que as põe no mesmo commit (regra 5).
+ */
+const TX = {
+  user: {
+    update: (a: unknown) => {
+      ordem.push("update-senha");
+      return update(a);
+    },
+  },
+};
+/** Falha do commit: simula o banco caindo no meio da transação. */
+let transacaoFalha: Error | null = null;
+
 vi.mock("@/lib/db/prisma", () => ({
   prisma: {
-    user: {
-      findFirst: (a: unknown) => findFirst(a),
-      update: (a: unknown) => {
-        ordem.push("update-senha");
-        return update(a);
-      },
+    user: { findFirst: (a: unknown) => findFirst(a) },
+    $transaction: async (fn: (tx: typeof TX) => Promise<unknown>) => {
+      ordem.push("inicio-tx");
+      const r = await fn(TX);
+      if (transacaoFalha) throw transacaoFalha;
+      ordem.push("commit");
+      return r;
     },
   },
 }));
@@ -49,9 +66,9 @@ vi.mock("@/lib/auth/cookies", () => ({
   setAuthCookies: (a: string, r: string) => setAuthCookies(a, r),
 }));
 vi.mock("@/lib/auth/refresh", () => ({
-  revokeAllForUser: (id: string, m: string) => {
+  revokeAllForUser: (id: string, m: string, tx: unknown) => {
     ordem.push("revogar");
-    return revokeAllForUser(id, m);
+    return revokeAllForUser(id, m, tx);
   },
   createRefreshToken: (id: string, m: unknown) => {
     ordem.push("criar-refresh");
@@ -64,7 +81,12 @@ vi.mock("@/lib/security/rate-limit-db", async () => {
   );
   return { ...real, rateLimitDb: (k: string, o: unknown) => rateLimitDb(k, o) };
 });
-vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
+vi.mock("@/lib/audit", () => ({
+  audit: (i: unknown, db: unknown) => {
+    ordem.push("auditar");
+    return audit(i, db);
+  },
+}));
 vi.mock("@/lib/http/request", () => ({
   clientIp: vi.fn().mockResolvedValue("1.2.3.4"),
   userAgent: vi.fn().mockResolvedValue("navegador"),
@@ -91,6 +113,7 @@ const trocar = (corpo: unknown = { currentPassword: "senha-atual", newPassword: 
 
 beforeEach(() => {
   ordem.length = 0;
+  transacaoFalha = null;
   getSession.mockResolvedValue({ sub: "user-1", role: "OWNER", tenantId: "empresa-A" });
   rateLimitDb.mockResolvedValue({ ok: true });
   verifyPassword.mockResolvedValue(true);
@@ -114,7 +137,7 @@ describe("expulsar as outras sessões", () => {
       mais 15 minutos, e o refresh vale até expirar.
     */
     await trocar();
-    expect(revokeAllForUser).toHaveBeenCalledWith("user-1", "PASSWORD");
+    expect(revokeAllForUser).toHaveBeenCalledWith("user-1", "PASSWORD", TX);
   });
 
   it("revoga ANTES de criar o novo refresh — a ordem é o que mantém a pessoa logada", async () => {
@@ -134,6 +157,47 @@ describe("expulsar as outras sessões", () => {
   it("grava cookies novos, então a sessão atual sobrevive", async () => {
     await trocar();
     expect(setAuthCookies).toHaveBeenCalledWith("novo-access", "novo-refresh");
+  });
+});
+
+describe("regra 5: senha, revogação e auditoria no mesmo commit", () => {
+  it("as três escritas recebem o cliente da transação", async () => {
+    /*
+      Antes a revogação rodava DEPOIS do update, fora de transação: um soluço
+      do banco entre as duas deixava a senha nova gravada e o refresh token do
+      invasor vivo — o contrário do que a pessoa pediu ao trocar a senha.
+    */
+    await trocar();
+
+    expect(revokeAllForUser.mock.calls[0]![2]).toBe(TX);
+    expect(audit).toHaveBeenCalledWith(
+      expect.objectContaining({ action: "PASSWORD_CHANGE", userId: "user-1" }),
+      TX,
+    );
+    const iInicio = ordem.indexOf("inicio-tx");
+    const iCommit = ordem.indexOf("commit");
+    for (const passo of ["update-senha", "revogar", "auditar"]) {
+      const i = ordem.indexOf(passo);
+      expect(i, passo).toBeGreaterThan(iInicio);
+      expect(i, passo).toBeLessThan(iCommit);
+    }
+    // O refresh novo nasce DEPOIS do commit — senão a própria revogação o mataria.
+    expect(ordem.indexOf("criar-refresh")).toBeGreaterThan(iCommit);
+  });
+
+  it("transação que falha: envelope 500 e NENHUMA sessão nova", async () => {
+    transacaoFalha = new Error("conexão caiu");
+
+    const r = await trocar();
+
+    expect(r.status).toBe(500);
+    const corpo = await r.json();
+    expect(corpo.ok).toBe(false);
+    expect(corpo.error.code).toBe("INTERNAL");
+    // A mensagem interna não vaza.
+    expect(JSON.stringify(corpo)).not.toContain("conexão caiu");
+    expect(createRefreshToken).not.toHaveBeenCalled();
+    expect(setAuthCookies).not.toHaveBeenCalled();
   });
 });
 

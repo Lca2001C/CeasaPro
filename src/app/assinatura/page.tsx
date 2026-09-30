@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { LogoutButton } from "@/components/logout-button";
 import { AssinaturaClient } from "./_components/assinatura-client";
 import { NOME_EMPRESA_PADRAO, empresaSemNome } from "@/lib/tenant-defaults";
+import { accessDecision } from "@/lib/billing/status";
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +28,12 @@ export default async function AssinaturaPage() {
   // Empresa que nunca pagou tem `currentPeriodEnd` no passado: mostrar "vence
   // <data antiga>" só confundiria. O convite é para a primeira ativação.
   const primeiraAtivacao = Boolean(sub && !sub.activatedAt);
+
+  // Mesma decisão do proxy: bloqueado, /configuracoes não abre (não é
+  // billing-safe) e o link levava a /conta/suspensa — justamente para a
+  // empresa que nunca pagou, que é quem mais vê o aviso do nome padrão.
+  const acessoBloqueado =
+    accessDecision(session.tenantStatus, session.subStatus) === "blocked";
 
   return (
     // `main`, e não `div`: esta tela é alcançável com a conta BLOQUEADA, então
@@ -78,9 +85,16 @@ export default async function AssinaturaPage() {
             <strong>{NOME_EMPRESA_PADRAO}</strong> — é esse nome que vai aparecer no
             comprovante do pagamento.
           </p>
-          <Button asChild variant="outline" size="sm" className="mt-2">
-            <Link href="/configuracoes">Ajustar em Configurações</Link>
-          </Button>
+          {acessoBloqueado ? (
+            <p className="mt-2 text-muted-foreground">
+              Depois que o pagamento for aprovado, você pode trocar o nome em
+              Configurações.
+            </p>
+          ) : (
+            <Button asChild variant="outline" size="sm" className="mt-2">
+              <Link href="/configuracoes">Ajustar em Configurações</Link>
+            </Button>
+          )}
         </div>
       )}
 

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { FiadoService } from "@/lib/services/fiado.service";
+import { FiadoService, FIADO_POR_PAGINA } from "@/lib/services/fiado.service";
 import { VendasService } from "@/lib/services/vendas.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
@@ -328,5 +328,312 @@ describe("caixas na listagem do fiado", () => {
     const saldos = await CaixasService.saldoPorCliente(tenantId);
     expect(saldos.get(cliente)).toBe(12);
     expect(totalCaixas - antes).toBe(12);
+  });
+});
+
+describe("Lançamento manual de fiado (regressão)", () => {
+  const baixasDoProduto = () =>
+    prisma.stockMovement.count({ where: { tenantId, productId: produtoId, type: "SAIDA" } });
+
+  it("preço zero é recusado ANTES de gravar: sem venda, sem baixa, sem retentativa que duplica", async () => {
+    const cliente = `Esquecido ${uniq()}`;
+    const antes = await baixasDoProduto();
+    const tentar = () =>
+      FiadoService.create(
+        {
+          customerName: cliente,
+          saleDate: "2026-09-10",
+          items: [{ productId: produtoId, quantity: 3, unitPrice: 0 }],
+        },
+        ctx,
+      );
+
+    // O operador tenta duas vezes, como fazia ao ver o erro.
+    await expect(tentar()).rejects.toThrow(/R\$ 0,00/);
+    await expect(tentar()).rejects.toThrow(/R\$ 0,00/);
+
+    expect(await prisma.sale.count({ where: { tenantId, customerName: cliente } })).toBe(0);
+    expect(await baixasDoProduto()).toBe(antes);
+  });
+
+  it("telefone e observação entram na mesma transação da venda, na venda e na conta", async () => {
+    const cliente = `Com telefone ${uniq()}`;
+    const conta = await FiadoService.create(
+      {
+        customerName: cliente,
+        customerPhone: "31988887777",
+        notes: "Paga na sexta",
+        saleDate: "2026-09-10",
+        items: [{ productId: produtoId, quantity: 2, unitPrice: 5 }],
+      },
+      ctx,
+    );
+
+    expect(conta.customerPhone).toBe("31988887777");
+    expect(conta.notes).toBe("Paga na sexta");
+    const venda = await prisma.sale.findUniqueOrThrow({ where: { id: conta.saleId! } });
+    // A venda ficava sem telefone: o detalhe em /vendas/[id] não o mostrava.
+    expect(venda.customerPhone).toBe("31988887777");
+
+    // A observação aparece na auditoria da venda, que roda dentro da transação.
+    const log = await prisma.auditLog.findFirstOrThrow({
+      where: { tenantId, entity: "Sale", entityId: venda.id, action: "CREATE" },
+    });
+    expect(JSON.stringify(log.newData)).toContain("Paga na sexta");
+  });
+});
+
+describe("Cartões da lista do fiado na aba 'Pagas' (regressão)", () => {
+  it("o total a receber e as caixas na rua não zeram por causa do filtro", async () => {
+    const aberto = await FiadoService.listOpen(tenantId, "EM_ABERTO");
+    expect(Number(aberto.totalGeral)).toBeGreaterThan(0);
+
+    // Uma conta quitada, para a aba "Pagas" ter o que listar.
+    const { conta } = await vendaFiada({ qtd: 1, preco: 3 });
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 3, method: "PIX" }, ctx);
+
+    const [emAberto, pagas, todas] = await Promise.all([
+      FiadoService.listOpen(tenantId, "EM_ABERTO"),
+      FiadoService.listOpen(tenantId, "PAGO"),
+      FiadoService.listOpen(tenantId, "TODAS"),
+    ]);
+    expect(pagas.contas.every((c) => c.status === "PAGO")).toBe(true);
+    expect(pagas.totalGeral.toString()).toBe(emAberto.totalGeral.toString());
+    expect(pagas.totalCaixas).toBe(emAberto.totalCaixas);
+    expect(todas.totalGeral.toString()).toBe(emAberto.totalGeral.toString());
+  });
+});
+
+describe("Detalhe do fiado de venda mista (regressão)", () => {
+  it("traz o total da venda e o que foi pago no balcão, além da parte fiada", async () => {
+    const sale = await VendasService.registrarVenda(
+      {
+        customerName: `Misto ${uniq()}`,
+        paymentMethod: "FIADO",
+        payments: [
+          { method: "PIX", amount: 60 },
+          { method: "FIADO", amount: 40 },
+        ],
+        saleDate: new Date().toISOString(),
+        items: [{ productId: produtoId, quantity: 10, unitPrice: 10 }],
+      },
+      ctx,
+    );
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: sale.id } });
+    const detalhe = await FiadoService.get(tenantId, conta.id);
+
+    expect(detalhe.totalAmount.toString()).toBe("40");
+    expect(detalhe.totalDaVenda.toString()).toBe("100");
+    expect(detalhe.pagoNoBalcao.toString()).toBe("60");
+  });
+
+  it("fiado puro não tem nada pago no balcão", async () => {
+    const { conta } = await vendaFiada({ qtd: 2, preco: 4 });
+    const detalhe = await FiadoService.get(tenantId, conta.id);
+    expect(detalhe.totalDaVenda.toString()).toBe("8");
+    expect(detalhe.pagoNoBalcao.toString()).toBe("0");
+  });
+});
+
+/**
+ * Excluir fiado cujas caixas JÁ VOLTARAM.
+ *
+ * O RETORNO é lançado por nome de cliente, sem vínculo com a venda. Apagar a
+ * SAIDA da venda nesse caso deixava o RETORNO sem contrapartida: o saldo do
+ * cliente ia a negativo, `comClientes` também, e as caixas devolvidas
+ * voltavam duas vezes (uma suja pelo retorno, outra limpa pela exclusão).
+ */
+describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
+  it("todas devolvidas: nada é estornado e o saldo do cliente fica em zero", async () => {
+    const antes = await CaixasService.getSaldo(tenantId);
+    const { conta } = await vendaFiada({ qtd: 10, preco: 2, caixas: 10 });
+    await FiadoService.registrarDevolucaoCaixas(
+      { accountId: conta.id, quantity: 10, movementDate: new Date().toISOString() },
+      ctx,
+    );
+
+    const r = await FiadoService.remove(conta.id, ctx);
+    expect(r.caixasEstornadas).toBe(0);
+    expect(r.caixasNaoEstornadas).toBe(10);
+
+    const saldos = await CaixasService.saldoPorCliente(tenantId);
+    expect(saldos.get(conta.customerName) ?? 0).toBe(0);
+    const depois = await CaixasService.getSaldo(tenantId);
+    // Antes: `comClientes` terminava 10 ABAIXO do que era antes da venda.
+    expect(depois.comClientes).toBe(antes.comClientes);
+    // As 10 voltaram sujas pelo RETORNO — e só por ele.
+    expect(depois.sujas).toBe(antes.sujas + 10);
+    expect(depois.limpas).toBe(antes.limpas - 10);
+  });
+
+  it("parte devolvida: estorna só o que ainda está com o cliente", async () => {
+    const antes = await CaixasService.getSaldo(tenantId);
+    const { sale, conta } = await vendaFiada({ qtd: 10, preco: 2, caixas: 10 });
+    await FiadoService.registrarDevolucaoCaixas(
+      { accountId: conta.id, quantity: 4, movementDate: new Date().toISOString() },
+      ctx,
+    );
+
+    const r = await FiadoService.remove(conta.id, ctx);
+    expect(r.caixasEstornadas).toBe(6);
+    expect(r.caixasNaoEstornadas).toBe(4);
+
+    const saldos = await CaixasService.saldoPorCliente(tenantId);
+    expect(saldos.get(conta.customerName) ?? 0).toBe(0);
+    const depois = await CaixasService.getSaldo(tenantId);
+    expect(depois.comClientes).toBe(antes.comClientes);
+    // 6 voltam limpas pelo estorno, 4 já tinham voltado sujas.
+    expect(depois.limpas).toBe(antes.limpas - 4);
+    expect(depois.sujas).toBe(antes.sujas + 4);
+
+    // A SAIDA fica (o RETORNO depende dela) e o estorno aponta para a venda.
+    const movs = await prisma.plasticCrateMovement.findMany({
+      where: { saleId: sale.id },
+      select: { type: true, quantity: true },
+    });
+    expect(movs).toEqual(
+      expect.arrayContaining([
+        { type: "SAIDA", quantity: 10 },
+        { type: "ESTORNO_SAIDA", quantity: 6 },
+      ]),
+    );
+
+    const log = await prisma.auditLog.findFirstOrThrow({
+      where: { tenantId, entity: "CreditAccount", entityId: conta.id, action: "DELETE" },
+    });
+    expect(log.newData).toMatchObject({ caixasDevolvidas: 6, caixasNaoEstornadas: 4 });
+  });
+
+  it("cliente com outra venda: o saldo dele cobre a venda, e a exclusão é exata", async () => {
+    // Retorno não é da venda, é do cliente: levou 8 + 5, devolveu 5. Excluir a
+    // venda de 8 deixa o cliente com zero, sem estorno parcial.
+    const cliente = `Duas vendas ${uniq()}`;
+    const vender = (caixas: number) =>
+      VendasService.registrarVenda(
+        {
+          customerName: cliente,
+          paymentMethod: "FIADO",
+          saleDate: new Date().toISOString(),
+          plasticCrateQty: caixas,
+          items: [
+            {
+              productId: produtoId,
+              quantity: 1,
+              unitPrice: 10,
+              recipientType: "PLASTICA" as const,
+              crateQty: caixas,
+            },
+          ],
+        },
+        ctx,
+      );
+    const venda8 = await vender(8);
+    await vender(5);
+    await CaixasService.registrar(
+      {
+        type: "RETORNO",
+        quantity: 5,
+        customerName: cliente,
+        movementDate: new Date().toISOString(),
+      },
+      ctx,
+    );
+    const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: venda8.id } });
+
+    const r = await FiadoService.remove(conta.id, ctx);
+    expect(r.caixasEstornadas).toBe(8);
+    expect(r.caixasNaoEstornadas).toBe(0);
+    const saldos = await CaixasService.saldoPorCliente(tenantId);
+    expect(saldos.get(cliente) ?? 0).toBe(0);
+    expect(await prisma.plasticCrateMovement.count({ where: { saleId: venda8.id } })).toBe(0);
+  });
+});
+
+/**
+ * Abas "Pagas" e "Todas": paginadas, da mais recente para a mais antiga.
+ *
+ * Eram carregadas inteiras e em ordem crescente — a lista abria na conta mais
+ * antiga e crescia sem teto. Os cartões continuam somando TODA a dívida em
+ * aberto, não a página.
+ */
+describe("Paginação do fiado (regressão)", () => {
+  let t = "";
+  const base = Date.UTC(2026, 0, 1, 12);
+
+  beforeAll(async () => {
+    t = await createTestTenant("FIADO PAGINAS");
+    tenants.push(t);
+    // 3 abertas, as mais ANTIGAS — ficam na última página de "Todas".
+    await prisma.creditAccount.createMany({
+      data: [0, 1, 2].map((i) => ({
+        tenantId: t,
+        customerName: `Aberta ${i}`,
+        totalAmount: 10,
+        paidAmount: 0,
+        status: "EM_ABERTO" as const,
+        dueDate: new Date(base - 864e5),
+        createdAt: new Date(base + i * 1000),
+      })),
+    });
+    // 55 quitadas, mais novas.
+    await prisma.creditAccount.createMany({
+      data: Array.from({ length: 55 }, (_, i) => ({
+        tenantId: t,
+        customerName: `Paga ${String(i).padStart(2, "0")}`,
+        totalAmount: 5,
+        paidAmount: 5,
+        status: "PAGO" as const,
+        createdAt: new Date(base + 60_000 + i * 1000),
+      })),
+    });
+  });
+
+  it("a aba de quitadas vem em páginas, da mais recente para a mais antiga", async () => {
+    const p1 = await FiadoService.listOpen(t, "PAGO", undefined, { pagina: 1 });
+    expect(p1.contas.length).toBe(FIADO_POR_PAGINA);
+    expect(p1.total).toBe(55);
+    expect(p1.ultimaPagina).toBe(2);
+    expect(p1.contas[0]!.customerName).toBe("Paga 54");
+    const datas = p1.contas.map((c) => c.createdAt.getTime());
+    expect([...datas].sort((a, b) => b - a)).toEqual(datas);
+
+    const p2 = await FiadoService.listOpen(t, "PAGO", undefined, { pagina: 2 });
+    expect(p2.contas.length).toBe(5);
+    expect(p2.contas.at(-1)!.customerName).toBe("Paga 00");
+    // Nenhuma conta repetida entre as páginas.
+    const ids = new Set([...p1.contas, ...p2.contas].map((c) => c.id));
+    expect(ids.size).toBe(55);
+  });
+
+  it("os cartões somam TODA a dívida em aberto, mesmo fora da página", async () => {
+    const todas1 = await FiadoService.listOpen(t, "TODAS", undefined, { pagina: 1 });
+    // As abertas são as mais antigas: não estão na página 1.
+    expect(todas1.contas.some((c) => c.status === "EM_ABERTO")).toBe(false);
+    expect(todas1.total).toBe(58);
+    expect(todas1.totalGeral.toString()).toBe("30");
+    expect(todas1.vencidas).toBe(3);
+
+    const pagas = await FiadoService.listOpen(t, "PAGO", undefined, { pagina: 2 });
+    expect(pagas.totalGeral.toString()).toBe("30");
+    expect(pagas.vencidas).toBe(3);
+  });
+
+  it("a aba em aberto continua inteira e em ordem crescente", async () => {
+    const abertas = await FiadoService.listOpen(t, "EM_ABERTO", undefined, { pagina: 2 });
+    expect(abertas.contas.map((c) => c.customerName)).toEqual([
+      "Aberta 0",
+      "Aberta 1",
+      "Aberta 2",
+    ]);
+    expect(abertas.pagina).toBe(1);
+    expect(abertas.ultimaPagina).toBe(1);
+    expect(abertas.totalGeral.toString()).toBe("30");
+  });
+
+  it("a busca vale para a contagem e para os cartões", async () => {
+    const r = await FiadoService.listOpen(t, "TODAS", "Aberta 1");
+    expect(r.total).toBe(1);
+    expect(r.contas.map((c) => c.customerName)).toEqual(["Aberta 1"]);
+    expect(r.totalGeral.toString()).toBe("10");
   });
 });

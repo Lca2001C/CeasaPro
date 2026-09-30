@@ -8,10 +8,25 @@ import { loginSchema } from "@/lib/validations/auth";
 import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
+import { errorResponse } from "@/lib/http/error-response";
 
 export const runtime = "nodejs";
 
+/**
+ * Falha inesperada (banco fora, rate limit sem conexão) sai no envelope padrão
+ * de `errorResponse`: 500 com `{ ok: false, error: { code: "INTERNAL" } }` e a
+ * referência do log, nunca um 500 cru que o formulário não sabe ler. A mensagem
+ * não diz nada sobre a conta — o genérico de credencial continua valendo.
+ */
 export async function POST(req: Request) {
+  try {
+    return await entrar(req);
+  } catch (e) {
+    return errorResponse(e);
+  }
+}
+
+async function entrar(req: Request): Promise<Response> {
   const ip = (await clientIp()) ?? "unknown";
   const body = await req.json().catch(() => ({}));
   const parsed = loginSchema.safeParse(body);

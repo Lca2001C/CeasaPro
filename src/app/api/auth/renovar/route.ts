@@ -5,10 +5,19 @@ import {
   setAuthCookies,
   clearAuthCookies,
   marcarTentativaDeRenovacao,
+  renovouAgoraHaPouco,
 } from "@/lib/auth/cookies";
-import { auditarReusoDeSessao, rotateRefreshToken } from "@/lib/auth/refresh";
+import {
+  auditarReusoDeSessao,
+  revokeRefreshToken,
+  rotateRefreshToken,
+} from "@/lib/auth/refresh";
 import { clientIp, userAgent } from "@/lib/http/request";
-import { destinoSeguro, ehNavegacaoDeTopo } from "@/lib/auth/renovacao";
+import {
+  destinoSeguro,
+  ehNavegacaoDeTopo,
+  veioDeSessaoRevogada,
+} from "@/lib/auth/renovacao";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -57,7 +66,24 @@ export async function GET(req: Request): Promise<Response> {
   }
 
   const atual = await readRefreshCookie();
-  if (!atual) return paraLogin();
+  // Apaga mesmo sem refresh: quem chega aqui vindo de um layout que recusou a
+  // sessão ainda tem o access cookie VIVO, e com ele o proxy devolveria o
+  // `/login` para a home — e a home para o layout que recusa. Para o desvio do
+  // proxy (sem access cookie) é inofensivo.
+  if (!atual) {
+    await clearAuthCookies();
+    return paraLogin();
+  }
+
+  // Segunda passada de um layout logo depois de uma renovação que deu certo: a
+  // sessão nova também foi recusada. Não renova de novo — encerra. É o que
+  // garante que layout → renovar → layout termina em no máximo dois saltos.
+  // Ver `PARAM_SESSAO_REVOGADA`.
+  if (veioDeSessaoRevogada(url.searchParams) && (await renovouAgoraHaPouco())) {
+    await revokeRefreshToken(atual, "LOGOUT");
+    await clearAuthCookies();
+    return paraLogin();
+  }
 
   const ip = (await clientIp()) ?? undefined;
   const ua = (await userAgent()) ?? undefined;

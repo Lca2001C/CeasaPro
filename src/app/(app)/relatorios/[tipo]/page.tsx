@@ -51,6 +51,7 @@ export default async function RelatorioViewPage({
     tenantId,
     from: period.from,
     to: period.to,
+    toVencimento: period.toVencimento,
     dateField: campo,
     agruparPorCategoria: sp.agrupar === "categoria",
   });
@@ -61,7 +62,7 @@ export default async function RelatorioViewPage({
         <h1 className="text-xl font-bold">{report.title}</h1>
       </div>
       <p className="mb-4 text-sm text-muted-foreground">
-        Periodo: {formatDate(period.from)} a {formatDate(period.to)}
+        Periodo: {formatDate(report.period.from)} a {formatDate(report.period.to)}
       </p>
 
       <ReportToolbar

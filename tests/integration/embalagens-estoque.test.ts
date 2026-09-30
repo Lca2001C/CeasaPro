@@ -228,3 +228,106 @@ describe("Excluir venda devolve o saldo", () => {
     expect(movs[0].type).toBe("AJUSTE");
   });
 });
+
+/**
+ * Corridas: dois aparelhos do mesmo box agindo ao mesmo tempo.
+ *
+ * O saldo era lido FORA da transação e sem trava, então duas vendas das últimas
+ * unidades passavam as duas pela validação e o saldo ia a negativo. E ligar o
+ * controle duas vezes juntas gravava dois AJUSTEs — o saldo nascia em dobro.
+ */
+describe("Concorrência no estoque de embalagens", () => {
+  it("duas vendas simultâneas do saldo inteiro: só uma passa, o saldo não fica negativo", async () => {
+    const tipo = await novoTipo("Corrida");
+    await EmbalagensService.ativarControleEstoque(
+      { packagingTypeId: tipo.id, quantidadeAtual: 10 },
+      ctx,
+    );
+    const vender = () =>
+      EmbalagensService.createSale(
+        {
+          packagingTypeId: tipo.id,
+          quantity: 10,
+          unitPrice: 1,
+          saleDate: new Date().toISOString(),
+          customerName: "Cliente",
+        },
+        ctx,
+      );
+
+    const r = await Promise.allSettled([vender(), vender(), vender()]);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    const recusas = r.filter((x): x is PromiseRejectedResult => x.status === "rejected");
+    expect(recusas).toHaveLength(2);
+    for (const x of recusas) expect(String(x.reason)).toMatch(/em estoque/);
+    expect(await saldoDe(tipo.id)).toBe(0);
+  });
+
+  it("ligar o controle duas vezes ao mesmo tempo grava o saldo inicial uma vez só", async () => {
+    const tipo = await novoTipo("Ligar2x");
+    const ligar = () =>
+      EmbalagensService.ativarControleEstoque(
+        { packagingTypeId: tipo.id, quantidadeAtual: 50 },
+        ctx,
+      );
+
+    const r = await Promise.allSettled([ligar(), ligar()]);
+    expect(r.filter((x) => x.status === "fulfilled")).toHaveLength(1);
+    expect(await saldoDe(tipo.id)).toBe(50);
+    expect(
+      await prisma.packagingMovement.count({ where: { packagingTypeId: tipo.id, type: "AJUSTE" } }),
+    ).toBe(1);
+  });
+});
+
+describe("Saldo e totais que não quebram com volume", () => {
+  it("soma acima de 2^31 não derruba o saldo (o cast era ::int)", async () => {
+    const tipo = await novoTipo("Gigante");
+    await prisma.packagingType.update({ where: { id: tipo.id }, data: { tracksStock: true } });
+    await prisma.packagingMovement.createMany({
+      data: [1_500_000_000, 1_500_000_000].map((quantity) => ({
+        tenantId,
+        packagingTypeId: tipo.id,
+        type: "ENTRADA" as const,
+        quantity,
+      })),
+    });
+    expect(await saldoDe(tipo.id)).toBe(3_000_000_000);
+  });
+
+  it("os totais do mês somam TODAS as vendas do mês, não só as 100 da lista", async () => {
+    const t = await createTestTenant("EMBALAGENS TOTAIS");
+    tenants.push(t);
+    const tipo = await prisma.packagingType.create({ data: { tenantId: t, name: "Caixa" } });
+    const agora = new Date();
+    await prisma.packagingSale.createMany({
+      data: Array.from({ length: 120 }, () => ({
+        tenantId: t,
+        packagingTypeId: tipo.id,
+        saleDate: agora,
+        quantity: 2,
+        unitPrice: 1.5,
+        totalAmount: 3,
+      })),
+    });
+    // Venda de outro mês: fica na lista (se couber), mas não no total do mês.
+    await prisma.packagingSale.create({
+      data: {
+        tenantId: t,
+        packagingTypeId: tipo.id,
+        saleDate: new Date(agora.getTime() - 60 * 864e5),
+        quantity: 1000,
+        unitPrice: 1,
+        totalAmount: 1000,
+      },
+    });
+
+    const { vendas, total, totalQtd } = await EmbalagensService.listSales(t, agora);
+    expect(vendas).toHaveLength(100);
+    expect(totalQtd).toBe(240);
+    expect(total.toString()).toBe("360");
+
+    await prisma.packagingSale.deleteMany({ where: { tenantId: t } });
+    await prisma.packagingType.deleteMany({ where: { tenantId: t } });
+  });
+});

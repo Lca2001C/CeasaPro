@@ -14,7 +14,11 @@
  *
  * As funções aqui são puras (só `Intl`) e valem no servidor e no browser —
  * o formulário e o relatório precisam concordar sobre que dia é hoje.
+ * (`app-error` não importa nada, então a recusa de data inválida não arrasta
+ * dependência de servidor para o browser nem para o proxy Edge.)
  */
+import { ValidationError } from "@/lib/http/app-error";
+
 export const APP_TIME_ZONE = "America/Sao_Paulo";
 
 interface CivilParts {
@@ -175,10 +179,40 @@ export function refMonthTz(date: Date = new Date()): string {
  * aparecia na cara do usuário: vencimento digitado 10/09 voltava 09/09 na tela
  * (o formatador usa APP_TIME_ZONE) e a conta nascia vencida um dia antes do
  * combinado. Valor que já venha com hora (ISO completo) passa direto.
+ *
+ * **Qualquer outra coisa é recusada com `ValidationError`** (422, com mensagem),
+ * em vez de cair em `new Date(value)`. Aquele fallback anulava em silêncio a
+ * recusa de data impossível de {@link parseIsoDateTz}: o V8 aceita dia até 31
+ * em qualquer mês e transborda, então "2026-02-31" virava 03/03 (e à
+ * meia-noite UTC, o deslocamento que esta função existe para evitar), e
+ * "2026-04-31" virava 01/05. Texto em outro formato era pior de dois jeitos:
+ * "10/09/2026" era lido como 9 de OUTUBRO (formato americano) e gravado sem
+ * erro, e "25/09/2026" virava Invalid Date e estourava no Prisma como 500.
+ *
+ * O ISO completo aceito exige hora e fuso explícitos (`Z` ou `±HH:MM`): é a
+ * única forma que o próprio sistema produz (`toISOString()`, quando a venda ou
+ * a compra repassa a data para o livro de caixas), e sem fuso o `new Date`
+ * leria a hora no fuso do processo — UTC na Vercel.
  */
 export function parseFormDateTz(value: string): Date {
-  return parseIsoDateTz(value) ?? new Date(value);
+  const dia = parseIsoDateTz(value);
+  if (dia) return dia;
+
+  const texto = value.trim();
+  if (ISO_COM_HORA_E_FUSO.test(texto)) {
+    const instante = new Date(texto);
+    // A parte da data também é conferida: "2026-02-31T10:00:00Z" transborda no
+    // `new Date` exatamente como a data sem hora.
+    if (!Number.isNaN(instante.getTime()) && parseIsoDateTz(texto.slice(0, 10))) {
+      return instante;
+    }
+  }
+  throw new ValidationError("Data inválida. Use o seletor de data.");
 }
+
+/** ISO 8601 com hora e fuso explícitos — o único "com hora" que {@link parseFormDateTz} aceita. */
+const ISO_COM_HORA_E_FUSO =
+  /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:Z|[+-]\d{2}:\d{2})$/;
 
 export function parseIsoDateTz(value: string): Date | null {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());

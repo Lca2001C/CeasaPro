@@ -10,6 +10,7 @@ import {
   resetarSenhaUsuario,
 } from "@/actions/admin.actions";
 import { Button } from "@/components/ui/button";
+import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
   DialogContent,
@@ -46,7 +47,7 @@ export function AcoesUsuario({
 
   function excluir() {
     start(async () => {
-      const res = await excluirUsuario(userId);
+      const res = await chamarAction(() => excluirUsuario(userId));
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -59,7 +60,7 @@ export function AcoesUsuario({
 
   function alternar() {
     start(async () => {
-      const res = await alterarStatusUsuario({ userId, active: !ativo });
+      const res = await chamarAction(() => alterarStatusUsuario({ userId, active: !ativo }));
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -73,7 +74,7 @@ export function AcoesUsuario({
 
   function resetar() {
     start(async () => {
-      const res = await resetarSenhaUsuario(userId);
+      const res = await chamarAction(() => resetarSenhaUsuario(userId));
       if (!res.ok) {
         toast.error(res.error.message);
         return;

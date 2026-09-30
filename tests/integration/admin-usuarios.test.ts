@@ -1,14 +1,27 @@
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { AdminService } from "@/lib/services/admin.service";
 import { novaEmpresaSchema } from "@/lib/validations/admin";
 import { BusinessRuleError } from "@/lib/http/app-error";
 import { verifyPassword } from "@/lib/auth/password";
+import { cnpjValido } from "@/lib/cnpj";
+import { formatCNPJ } from "@/lib/format";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
 // `tenants` já é declarado abaixo; o helper de criação vem do factory.
 import type { AdminCtx } from "@/lib/http/with-action";
 
 const uniq = () => Math.random().toString(36).slice(2, 8);
+
+/** CNPJ aleatório VÁLIDO (o schema confere o dígito verificador). */
+function gerarCnpj(): string {
+  for (;;) {
+    const base = Array.from({ length: 12 }, () => Math.floor(Math.random() * 10)).join("");
+    for (let dv = 0; dv < 100; dv++) {
+      const c = base + String(dv).padStart(2, "0");
+      if (cnpjValido(c)) return c;
+    }
+  }
+}
 const tenants: string[] = [];
 const usuarios: string[] = [];
 const planos: string[] = [];
@@ -444,7 +457,7 @@ describe("CNPJ opcional e único", () => {
   });
 
   it("CNPJ repetido é recusado com mensagem, não com 'erro inesperado'", async () => {
-    const cnpj = `12345678${uniq().slice(0, 6)}`;
+    const cnpj = gerarCnpj();
     const a = await AdminService.createTenantWithOwner(
       novaEmpresaSchema.parse({
         tradeName: "Box CNPJ",
@@ -463,7 +476,9 @@ describe("CNPJ opcional e único", () => {
       AdminService.createTenantWithOwner(
         novaEmpresaSchema.parse({
           tradeName: "Outro Box",
-          cnpj,
+          // O MESMO CNPJ com máscara: antes passava, porque a unicidade
+          // comparava o texto cru.
+          cnpj: formatCNPJ(cnpj),
           ownerName: "Outro",
           ownerEmail: `cnpj-b-${uniq()}@teste.com`,
           planId: planoId,
@@ -479,8 +494,62 @@ describe("CNPJ opcional e único", () => {
     ).rejects.toThrow(BusinessRuleError);
   });
 
+  it("CNPJ com dígito verificador errado é recusado; válido é gravado só com dígitos", async () => {
+    const cnpj = gerarCnpj();
+    const errado = cnpj.slice(0, 13) + String((Number(cnpj[13]) + 1) % 10);
+    expect(() =>
+      novaEmpresaSchema.parse({
+        tradeName: "Box DV",
+        cnpj: formatCNPJ(errado),
+        ownerName: "Dono",
+        ownerEmail: `cnpj-dv-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+    ).toThrow(/CNPJ inválido/);
+
+    const a = await AdminService.createTenantWithOwner(
+      novaEmpresaSchema.parse({
+        tradeName: "Box DV",
+        cnpj: formatCNPJ(cnpj),
+        ownerName: "Dono",
+        ownerEmail: `cnpj-dv-${uniq()}@teste.com`,
+        planId: planoId,
+        monthlyAmount: 100,
+        graceDays: 5,
+      }),
+      ctx,
+    );
+    tenants.push(a.tenantId);
+    const t = await prisma.tenant.findUniqueOrThrow({ where: { id: a.tenantId } });
+    expect(t.cnpj).toBe(cnpj);
+  });
+
+  it("CNPJ antigo gravado COM máscara ainda conta na unicidade", async () => {
+    const cnpj = gerarCnpj();
+    const legado = await createTestTenant("LEGADO CNPJ");
+    tenants.push(legado);
+    await prisma.tenant.update({ where: { id: legado }, data: { cnpj: formatCNPJ(cnpj) } });
+
+    await expect(
+      AdminService.createTenantWithOwner(
+        novaEmpresaSchema.parse({
+          tradeName: "Box repetido",
+          cnpj,
+          ownerName: "Dono",
+          ownerEmail: `cnpj-leg-${uniq()}@teste.com`,
+          planId: planoId,
+          monthlyAmount: 100,
+          graceDays: 5,
+        }),
+        ctx,
+      ),
+    ).rejects.toThrow(BusinessRuleError);
+  });
+
   it("excluir a empresa libera o CNPJ para o recadastro", async () => {
-    const cnpj = `98765432${uniq().slice(0, 6)}`;
+    const cnpj = gerarCnpj();
     const a = await AdminService.createTenantWithOwner(
       novaEmpresaSchema.parse({
         tradeName: "Box a excluir",
@@ -558,6 +627,16 @@ describe("Contadores da tela de usuários", () => {
     // ...mas o total conta os 206 e enxerga o desativado.
     expect(totais.total).toBe(206);
     expect(totais.semAcesso).toBe(1);
+
+    // E o filtro "Sem acesso" ENCONTRA o desativado: o recorte vem antes do
+    // corte em 200, não depois (antes, a tela filtrava em memória os 200 ativos
+    // e respondia "nenhum usuário" com o cartão marcando 1).
+    const semAcesso = await AdminService.listUsers({ busca: marca, recorte: "INATIVOS" });
+    expect(semAcesso.usuarios.map((u) => u.id)).toEqual([inativo.id]);
+    expect(semAcesso.totais.noRecorte).toBe(1);
+    expect(semAcesso.totais.truncado).toBe(false);
+    // Os cartões continuam sendo do conjunto inteiro.
+    expect(semAcesso.totais.total).toBe(206);
   });
 
   it("busca sem resultado devolve zeros, não a contagem anterior", async () => {
@@ -568,5 +647,84 @@ describe("Contadores da tela de usuários", () => {
     expect(totais.total).toBe(0);
     expect(totais.semAcesso).toBe(0);
     expect(totais.truncado).toBe(false);
+  });
+});
+
+/**
+ * Regra 5: escrita, revogação e auditoria no MESMO commit.
+ *
+ * Antes eram chamadas soltas: se a auditoria (ou a revogação) falhasse depois
+ * da escrita, o usuário ficava desativado sem registro de quem o desativou —
+ * ou excluído com as sessões vivas. Aqui a auditoria falha DENTRO da
+ * transação, e nada pode ter sido gravado.
+ */
+describe("Ações do super-admin são atômicas", () => {
+  async function comAuditoriaQuebrada<T>(fn: () => Promise<T>) {
+    const original = prisma.$transaction.bind(prisma);
+    const espiao = vi.spyOn(prisma, "$transaction").mockImplementation(((
+      arg: (tx: unknown) => Promise<unknown>,
+    ) =>
+      original(async (tx) =>
+        arg(
+          new Proxy(tx, {
+            get(alvo, prop, rec) {
+              if (prop === "auditLog") {
+                return {
+                  create: async () => {
+                    throw new Error("auditoria fora do ar");
+                  },
+                };
+              }
+              return Reflect.get(alvo, prop, rec);
+            },
+          }),
+        ),
+      )) as never);
+    try {
+      return await fn();
+    } finally {
+      espiao.mockRestore();
+    }
+  }
+
+  it("desativar: sem auditoria, o usuário continua ativo e com a sessão", async () => {
+    const u = await criarUsuario({});
+    await prisma.refreshToken.create({
+      data: {
+        userId: u.id,
+        tokenHash: `atomico-${uniq()}`,
+        familyId: uniq(),
+        expiresAt: new Date(Date.now() + 86_400_000),
+      },
+    });
+
+    await expect(
+      comAuditoriaQuebrada(() => AdminService.setUserActive({ userId: u.id, active: false }, ctx)),
+    ).rejects.toThrow(/auditoria/);
+
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(depois.active).toBe(true);
+    expect(depois.sessionEpoch).toBe(u.sessionEpoch);
+    expect(await prisma.refreshToken.count({ where: { userId: u.id, revokedAt: null } })).toBe(1);
+  });
+
+  it("excluir: sem auditoria, nada é excluído", async () => {
+    const u = await criarUsuario({});
+    await expect(
+      comAuditoriaQuebrada(() => AdminService.deleteUser(u.id, ctx)),
+    ).rejects.toThrow(/auditoria/);
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(depois.deletedAt).toBeNull();
+    expect(depois.email).toBe(u.email);
+  });
+
+  it("resetar senha: sem auditoria, a senha antiga continua valendo", async () => {
+    const u = await criarUsuario({});
+    await expect(
+      comAuditoriaQuebrada(() => AdminService.resetUserPassword(u.id, ctx)),
+    ).rejects.toThrow(/auditoria/);
+    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    expect(depois.passwordHash).toBe("hash-antigo");
+    expect(depois.sessionEpoch).toBe(u.sessionEpoch);
   });
 });

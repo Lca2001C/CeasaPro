@@ -239,6 +239,32 @@ export default async function CotacoesPage({
         </Card>
       )}
 
+      {/*
+        Dois produtos seus no MESMO item do boletim.
+
+        A grade mostra um produto por linha do boletim; o outro não tinha linha
+        própria e sumia da tela. Aqui ele aparece, dizendo em qual produto o
+        preço está sendo mostrado — o preço é o mesmo, só o nome na linha é outro.
+      */}
+      {painel.vinculosNaMesmaCotacao.length > 0 && (
+        <Card className="p-3">
+          <p className="text-sm font-medium">
+            {painel.vinculosNaMesmaCotacao.length === 1
+              ? "1 produto seu usa a mesma cotação de outro produto"
+              : `${painel.vinculosNaMesmaCotacao.length} produtos seus usam a mesma cotação de outro produto`}
+          </p>
+          <ul className="mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground">
+            {painel.vinculosNaMesmaCotacao.map((v) => (
+              <li key={v.produtoId} className="[overflow-wrap:anywhere]">
+                <strong className="font-medium">{v.produtoNome}</strong> — {v.ceasaProductName}
+                {v.unit !== null && ` na embalagem ${rotuloDeEmbalagem(v.unit)}`}
+                {v.junto && `, mostrado na linha de ${v.junto}`}
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <BuscaCotacoes />
 
       <div className="flex gap-2">

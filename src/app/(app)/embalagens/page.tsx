@@ -4,6 +4,7 @@ import { requireTenant } from "@/lib/auth/session";
 import { EmbalagensService } from "@/lib/services/embalagens.service";
 import { excluirVendaEmbalagem } from "@/actions/embalagens.actions";
 import { formatBRL, formatDate } from "@/lib/format";
+import { APP_TIME_ZONE } from "@/lib/tz";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { StatCard } from "@/components/data/stat-card";
@@ -23,6 +24,11 @@ export default async function EmbalagensPage() {
     EmbalagensService.listTypes(tenantId),
     EmbalagensService.saldos(tenantId),
   ]);
+  const mesAtual = new Intl.DateTimeFormat("pt-BR", {
+    timeZone: APP_TIME_ZONE,
+    month: "long",
+    year: "numeric",
+  }).format(new Date());
 
   return (
     <div>
@@ -55,8 +61,10 @@ export default async function EmbalagensPage() {
       </Card>
 
       <div className="mb-4 grid grid-cols-2 gap-2">
-        <StatCard label="Embalagens vendidas" value={String(totalQtd)} />
-        <StatCard label="Total vendido" value={formatBRL(total)} tone="success" />
+        {/* Totais do MÊS corrente, somados no banco — não da lista abaixo,
+            que mostra só as 100 vendas mais recentes. */}
+        <StatCard label="Vendidas no mês" value={String(totalQtd)} hint={mesAtual} />
+        <StatCard label="Total vendido no mês" value={formatBRL(total)} hint={mesAtual} tone="success" />
       </div>
 
       <Tabs defaultValue="vendas">

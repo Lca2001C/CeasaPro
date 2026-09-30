@@ -2,19 +2,34 @@
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { registrarMovimentoCaixa } from "@/actions/caixas.actions";
-import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
+import { caixaMovimentoTipoEnum, type CaixaMovimentoInput } from "@/lib/validations/caixa";
 import type { CrateSaldo } from "@/lib/services/caixas.service";
-import { CRATE_MOVEMENT_LABELS, toOptions } from "@/lib/labels";
+import { CRATE_MOVEMENT_LABELS } from "@/lib/labels";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 type Tipo = CaixaMovimentoInput["type"];
+
+/**
+ * As opções do `<select>` saem do MESMO enum que o servidor valida.
+ *
+ * Montá-las a partir de `CRATE_MOVEMENT_LABELS` oferecia "Estorno de venda
+ * cancelada" (e os movimentos do higienizador), que o schema sempre recusa: o
+ * usuário preenchia tudo e recebia "Verifique os campos destacados" sem campo
+ * nenhum destacado.
+ */
+export const TIPOS_MANUAIS = caixaMovimentoTipoEnum.options.map((value) => ({
+  value,
+  label: CRATE_MOVEMENT_LABELS[value] ?? value,
+}));
 
 /** Quantas caixas o tipo escolhido pode consumir — orienta o usuário antes do erro. */
 function disponivel(type: Tipo, saldo: CrateSaldo): string | null {
@@ -23,10 +38,6 @@ function disponivel(type: Tipo, saldo: CrateSaldo): string | null {
       return `${saldo.limpas} caixa(s) limpa(s) em estoque`;
     case "RETORNO":
       return `${saldo.comClientes} caixa(s) com clientes`;
-    case "SAIDA_HIGIENIZACAO":
-      return `${saldo.sujas} caixa(s) suja(s) em estoque`;
-    case "RETORNO_HIGIENIZACAO":
-      return `${saldo.emHigienizacao} caixa(s) no higienizador`;
     default:
       return null;
   }
@@ -40,7 +51,6 @@ export function MovimentoCaixaForm({
   tipoInicial,
   quantidadeInicial,
   clienteInicial,
-  higienizadorInicial,
   clientesConhecidos = [],
 }: {
   saldo: CrateSaldo;
@@ -49,8 +59,6 @@ export function MovimentoCaixaForm({
   /** Quantidade sugerida — vem do saldo que o atalho conhece. */
   quantidadeInicial?: string;
   clienteInicial?: string;
-  /** Vem do atalho "caixas perdidas no higienizador", no detalhe do lote. */
-  higienizadorInicial?: string;
   /** Evita o mesmo cliente virar dois nomes diferentes no livro-razão. */
   clientesConhecidos?: string[];
 }) {
@@ -61,13 +69,11 @@ export function MovimentoCaixaForm({
   const [dirty, setDirty] = useState(false);
   const [customerName, setCustomerName] = useState(clienteInicial ?? "");
   const [supplierName, setSupplierName] = useState("");
-  const [cleanerName, setCleanerName] = useState(higienizadorInicial ?? "");
   const [movementDate, setMovementDate] = useState(isoDateTz());
   const [notes, setNotes] = useState("");
   const [saving, setSaving] = useState(false);
 
   const needsCustomer = type === "SAIDA" || type === "RETORNO";
-  const needsCleaner = type === "SAIDA_HIGIENIZACAO" || type === "RETORNO_HIGIENIZACAO";
   const isEntrada = type === "ENTRADA";
   const isQuebra = type === "QUEBRA";
   const hint = disponivel(type, saldo);
@@ -76,20 +82,22 @@ export function MovimentoCaixaForm({
     const qty = parseInt(quantity, 10);
     if (!qty || qty <= 0) return toast.error("Informe a quantidade.");
     if (needsCustomer && !customerName.trim()) return toast.error("Informe o cliente.");
-    if (needsCleaner && !cleanerName.trim()) return toast.error("Informe o higienizador.");
+    const quebradas = isEntrada && brokenQty ? parseInt(brokenQty, 10) : undefined;
+    if (quebradas !== undefined && quebradas > qty) {
+      return toast.error("As quebradas não podem passar do total de caixas recebidas.");
+    }
 
     setSaving(true);
-    const res = await registrarMovimentoCaixa({
+    const res = await chamarAction(() => registrarMovimentoCaixa({
       type,
       quantity: qty,
-      brokenQty: isEntrada && brokenQty ? parseInt(brokenQty, 10) : undefined,
+      brokenQty: quebradas,
       dirty: isEntrada || isQuebra ? dirty : undefined,
       customerName: customerName.trim() || null,
       supplierName: supplierName.trim() || null,
-      cleanerName: cleanerName.trim() || null,
       movementDate,
       notes: notes.trim() || null,
-    });
+    }));
     setSaving(false);
     if (res.ok) {
       toast.success("Movimentação registrada.");
@@ -104,7 +112,7 @@ export function MovimentoCaixaForm({
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="type">Tipo de movimentação</Label>
         <Select id="type" value={type} onChange={(e) => setType(e.target.value as Tipo)}>
-          {toOptions(CRATE_MOVEMENT_LABELS).map((o) => (
+          {TIPOS_MANUAIS.map((o) => (
             <option key={o.value} value={o.value}>
               {o.label}
             </option>
@@ -115,6 +123,8 @@ export function MovimentoCaixaForm({
 
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
+          {/* Na ENTRADA é o TOTAL recebido; as quebradas são parte dele — o
+              rótulo do campo de quebradas ("Dessas, …") diz isso. */}
           <Label htmlFor="quantity">Quantidade de caixas</Label>
           <Input
             id="quantity"
@@ -138,7 +148,7 @@ export function MovimentoCaixaForm({
             <Input id="supplierName" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <Label htmlFor="brokenQty">Caixas quebradas na chegada (opcional)</Label>
+            <Label htmlFor="brokenQty">Dessas, quantas chegaram quebradas (opcional)</Label>
             <Input
               id="brokenQty"
               type="number"
@@ -186,15 +196,16 @@ export function MovimentoCaixaForm({
         </div>
       )}
 
-      {(needsCleaner || isQuebra) && (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="cleanerName">
-            {isQuebra
-              ? "Higienizador (se a caixa sumiu na lavagem — opcional)"
-              : "Higienizador"}
-          </Label>
-          <Input id="cleanerName" value={cleanerName} onChange={(e) => setCleanerName(e.target.value)} />
-        </div>
+      {/* Perda no higienizador não se lança aqui: solta, ela não fica ligada ao
+          lote, e o lote nunca mais fecha. O caminho é o próprio envio. */}
+      {isQuebra && (
+        <p className="text-xs text-muted-foreground">
+          Sumiu ou quebrou no higienizador? Registre no próprio envio, em{" "}
+          <Link href="/higienizacao" className="underline">
+            Higienização
+          </Link>
+          .
+        </p>
       )}
 
       <div className="flex flex-col gap-1.5">

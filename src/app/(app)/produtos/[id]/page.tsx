@@ -16,11 +16,16 @@ export default async function EditarProdutoPage({
 
   const p = await ProdutosService.get(tenantId, id).catch(() => null);
   if (!p) notFound();
+  // Com compra, venda ou movimento de estoque a unidade não muda (o servidor
+  // recusa). A tela trava o campo antes, em vez de deixar o dono descobrir
+  // pelo erro depois de salvar.
+  const temHistorico = await ProdutosService.temHistorico(tenantId, p.id);
 
   return (
     <div>
       <PageHeader title="Editar produto" />
       <ProdutoForm
+        temHistorico={temHistorico}
         initial={{
           id: p.id,
           name: p.name,

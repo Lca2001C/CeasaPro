@@ -1,12 +1,27 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
-import { toDecimal, money, sub } from "@/lib/money";
+import { toDecimal, money } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/linhas-vendidas";
+import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
+
+/**
+ * Higienização do mês para o painel: saldo em aberto, o que SAIU do caixa no
+ * mês (soma dos pagamentos por `paidAt`) e o custo dos envios do mês.
+ *
+ * Tudo somado no banco. Antes o painel carregava todos os lotes da história e
+ * somava o `paidAmount` ACUMULADO pela data do ÚLTIMO pagamento: lote de
+ * R$ 300 pago 100 em agosto e 200 em setembro contava R$ 0 em agosto e R$ 300
+ * em setembro, e o "Sobrou no mês" de setembro saía R$ 100 abaixo do real.
+ */
+function higienizacaoDoMes(tenantId: string, inicio: Date, fim: Date) {
+  return resumoDaHigienizacao(tenantId, { inicio, fim }, startOfDay(new Date()));
+}
 
 export interface DashboardProductRow {
   productId: string;
@@ -95,9 +110,7 @@ export const DashboardService = {
       despRows,
       chartRows,
       estoqueValor,
-      topVendidosRows,
-      topLucrativosRows,
-      prejuizoRows,
+      linhasDoMes,
       estoqueParadoRows,
       despOperacional,
       higLotes,
@@ -155,53 +168,16 @@ export const DashboardService = {
         SELECT DATE_TRUNC('day', "saleDate" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE}) AS d,
                SUM("totalAmount") AS total
         FROM sales
-        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL AND "saleDate" >= ${chartStart}
+        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL AND "saleDate" >= ${chartStart} AND "saleDate" <= ${ateAgora}
         GROUP BY d ORDER BY d ASC
       `,
       EstoqueService.getTotalValue(tenantId),
-      prisma.$queryRaw<ProductMetricRow[]>`
-        SELECT p.id AS "productId",
-               p.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS quantity,
-               COALESCE(SUM(si."lineTotal"), 0) AS total,
-               COALESCE(SUM(si."lineTotal" - (si.quantity * si."unitCostAtSale")), 0) AS profit
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
-        GROUP BY p.id, p.name
-        ORDER BY quantity DESC, total DESC
-        LIMIT 5
-      `,
-      prisma.$queryRaw<ProductMetricRow[]>`
-        SELECT p.id AS "productId",
-               p.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS quantity,
-               COALESCE(SUM(si."lineTotal"), 0) AS total,
-               COALESCE(SUM(si."lineTotal" - (si.quantity * si."unitCostAtSale")), 0) AS profit
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
-        GROUP BY p.id, p.name
-        ORDER BY profit DESC, total DESC
-        LIMIT 5
-      `,
-      prisma.$queryRaw<ProductMetricRow[]>`
-        SELECT p.id AS "productId",
-               p.name AS name,
-               COALESCE(SUM(si.quantity), 0) AS quantity,
-               COALESCE(SUM(si."lineTotal"), 0) AS total,
-               COALESCE(SUM(si."lineTotal" - (si.quantity * si."unitCostAtSale")), 0) AS profit
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        JOIN products p ON p.id = si."productId"
-        WHERE si."tenantId" = ${tenantId} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL AND s."saleDate" >= ${monthStart}
-        GROUP BY p.id, p.name
-        HAVING COALESCE(SUM(si."lineTotal" - (si.quantity * si."unitCostAtSale")), 0) < 0
-        ORDER BY profit ASC
-        LIMIT 5
-      `,
+      // Receita por produto com o desconto da VENDA rateado — a mesma fonte dos
+      // relatórios. Somando `lineTotal` cru, "Mais lucrativos" mostrava lucro
+      // numa venda que deu prejuízo depois do desconto, e "Com prejuízo" não a
+      // apontava. Teto "até agora", como os cartões do mês: sem ele a venda com
+      // data futura entrava nas listas e não nos cartões do mesmo painel.
+      linhasVendidas(tenantId, monthStart, ateAgora),
       prisma.$queryRaw<IdleProductRow[]>`
         WITH saldo AS (
           SELECT "productId",
@@ -241,30 +217,21 @@ export const DashboardService = {
           AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
       `,
       isModuleEnabled(modules, "higienizacao")
-        ? db.crateCleaning.findMany({
-            select: { totalAmount: true, paidAmount: true, sentDate: true, paidDate: true },
-          })
-        : Promise.resolve([]),
+        ? higienizacaoDoMes(tenantId, monthStart, fimDoMes)
+        : Promise.resolve(HIGIENIZACAO_ZERADA),
     ]);
 
+    const porProduto = porProdutoDoMes(linhasDoMes);
     const vendasMesTotal = toDecimal(vendasMes._sum.totalAmount ?? 0);
     const cmvMes = toDecimal((cmvRows[0]?.cmv ?? 0) as Prisma.Decimal.Value);
     const despesasFixasMes = sumExpenseByType(despRows, "FIXA");
     let despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
 
-    let higSaldoAberto = toDecimal(0);
-    let higPagaMes = toDecimal(0);
-    let higEnviadaMes = toDecimal(0);
-    for (const lote of higLotes) {
-      const saldo = sub(lote.totalAmount, lote.paidAmount);
-      if (saldo.greaterThan(0)) higSaldoAberto = higSaldoAberto.plus(saldo);
-      if (lote.paidDate && lote.paidDate >= monthStart && lote.paidDate <= fimDoMes) {
-        higPagaMes = higPagaMes.plus(lote.paidAmount);
-      }
-      if (lote.sentDate >= monthStart && lote.sentDate <= fimDoMes) {
-        higEnviadaMes = higEnviadaMes.plus(lote.totalAmount);
-      }
-    }
+    const {
+      saldoAberto: higSaldoAberto,
+      pagaNoPeriodo: higPagaMes,
+      enviadaNoPeriodo: higEnviadaMes,
+    } = higLotes;
     despesasVariaveisMes = money(despesasVariaveisMes.plus(higEnviadaMes));
 
     // Frete lançado como despesa já está no CMV (unitCost). Higienização paga
@@ -308,9 +275,16 @@ export const DashboardService = {
       margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, vendasMesTotal),
       despesasFixasMes,
       despesasVariaveisMes,
-      topVendidos: mapProductMetric(topVendidosRows),
-      topLucrativos: mapProductMetric(topLucrativosRows),
-      produtosComPrejuizo: mapProductMetric(prejuizoRows),
+      topVendidos: [...porProduto]
+        .sort((a, b) => b.quantity.comparedTo(a.quantity) || b.total.comparedTo(a.total))
+        .slice(0, 5),
+      topLucrativos: [...porProduto]
+        .sort((a, b) => b.profit.comparedTo(a.profit) || b.total.comparedTo(a.total))
+        .slice(0, 5),
+      produtosComPrejuizo: porProduto
+        .filter((r) => r.profit.isNegative())
+        .sort((a, b) => a.profit.comparedTo(b.profit))
+        .slice(0, 5),
       estoqueParado: estoqueParadoRows.map((r) => ({
         productId: r.productId,
         name: r.name,
@@ -322,14 +296,6 @@ export const DashboardService = {
   },
 };
 
-interface ProductMetricRow {
-  productId: string;
-  name: string;
-  quantity: Prisma.Decimal | string;
-  total: Prisma.Decimal | string;
-  profit: Prisma.Decimal | string;
-}
-
 interface IdleProductRow {
   productId: string;
   name: string;
@@ -337,13 +303,13 @@ interface IdleProductRow {
   lastMovementAt: Date | null;
 }
 
-function mapProductMetric(rows: ProductMetricRow[]): DashboardProductRow[] {
-  return rows.map((r) => ({
+function porProdutoDoMes(linhas: LinhaVendida[]): DashboardProductRow[] {
+  return resumirPor(linhas, (l) => l.productId).map((r) => ({
     productId: r.productId,
     name: r.name,
-    quantity: toDecimal(r.quantity as Prisma.Decimal.Value),
-    total: money(toDecimal(r.total as Prisma.Decimal.Value)),
-    profit: money(toDecimal(r.profit as Prisma.Decimal.Value)),
+    quantity: r.qtd,
+    total: r.receita,
+    profit: r.lucro,
   }));
 }
 

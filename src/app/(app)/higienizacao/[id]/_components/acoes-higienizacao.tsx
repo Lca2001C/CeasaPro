@@ -16,6 +16,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 export function AcoesHigienizacao({
   id,
   caixasAReceber,
@@ -47,11 +48,11 @@ export function AcoesHigienizacao({
     const qty = parseInt(perdaQty, 10);
     if (!qty || qty <= 0) return toast.error("Informe quantas caixas se perderam.");
     setPerdaBusy(true);
-    const res = await registrarPerdaHigienizacao({
+    const res = await chamarAction(() => registrarPerdaHigienizacao({
       id,
       quantity: qty,
       movementDate: perdaDate,
-    });
+    }));
     setPerdaBusy(false);
     if (res.ok) {
       toast.success(`${qty} caixa(s) registrada(s) como perdida(s).`);
@@ -64,7 +65,7 @@ export function AcoesHigienizacao({
     const qty = parseInt(devQty, 10);
     if (!qty || qty <= 0) return toast.error("Informe a quantidade devolvida.");
     setDevBusy(true);
-    const res = await registrarDevolucaoHigienizacao({ id, quantity: qty, returnedDate: devDate });
+    const res = await chamarAction(() => registrarDevolucaoHigienizacao({ id, quantity: qty, returnedDate: devDate }));
     setDevBusy(false);
     if (res.ok) {
       toast.success("Devolução registrada.");
@@ -76,7 +77,7 @@ export function AcoesHigienizacao({
   async function pagar() {
     if (!payAmount || payAmount <= 0) return toast.error("Informe o valor pago.");
     setPayBusy(true);
-    const res = await registrarPagamentoHigienizacao({ id, amount: payAmount, paidDate: payDate });
+    const res = await chamarAction(() => registrarPagamentoHigienizacao({ id, amount: payAmount, paidDate: payDate }));
     setPayBusy(false);
     if (res.ok) {
       toast.success("Pagamento registrado.");

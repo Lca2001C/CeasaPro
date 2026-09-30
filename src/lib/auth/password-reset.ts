@@ -77,14 +77,22 @@ export async function findUserByResetToken(raw: string): Promise<ResettableUser 
  * A limpeza do token é condicionada ao próprio hash (`updateMany` com o hash no
  * where): se dois cliques no mesmo link chegarem juntos, só o primeiro afeta
  * uma linha — o segundo vê 0 e recebe "link inválido".
+ *
+ * Senha nova, revogação das sessões (refresh + `sessionEpoch`) e a auditoria
+ * `PASSWORD_RESET` saem no MESMO commit (regra 5). Antes a revogação vinha
+ * depois da transação: um soluço do banco entre as duas deixava a senha trocada
+ * e os refresh tokens antigos vivos — justamente o que a pessoa queria matar ao
+ * redefinir a senha de uma conta invadida.
  */
 export async function consumeResetToken(args: {
   userId: string;
   rawToken: string;
   passwordHash: string;
+  /** IP de quem redefiniu, para a auditoria. */
+  ip?: string | null;
 }): Promise<boolean> {
   const now = new Date();
-  const ok = await prisma.$transaction(async (tx) => {
+  return prisma.$transaction(async (tx) => {
     const result = await tx.user.updateMany({
       where: {
         id: args.userId,
@@ -141,10 +149,23 @@ export async function consumeResetToken(args: {
         }
       }
     }
+
+    // Senha trocada => todo refresh token antigo morre (sessão roubada perde
+    // acesso), e o `sessionEpoch` sobe junto, derrubando os access tokens.
+    await revokeAllForUser(args.userId, "PASSWORD", tx);
+    await audit(
+      {
+        tenantId: user.tenantId,
+        userId: args.userId,
+        actorEmail: user.email,
+        action: "PASSWORD_RESET",
+        entity: "User",
+        entityId: args.userId,
+        newData: { passwordReset: true, sessionsRevoked: true },
+        ip: args.ip ?? null,
+      },
+      tx,
+    );
     return true;
   });
-  if (!ok) return false;
-  // Senha trocada => todo refresh token antigo morre (sessão roubada perde acesso).
-  await revokeAllForUser(args.userId, "PASSWORD");
-  return true;
 }

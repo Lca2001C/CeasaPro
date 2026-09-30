@@ -2,13 +2,13 @@ import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
-import { add, money } from "@/lib/money";
+import { money, toDecimal } from "@/lib/money";
 import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
 import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
 import type { Prisma, PrismaClient } from "@prisma/client";
 import type { TipoEmbalagemInput, VendaEmbalagemInput } from "@/lib/validations/embalagem";
 import type { TenantCtx } from "@/lib/http/with-action";
-import { parseFormDateTz } from "@/lib/tz";
+import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
 
 type DbClient = Pick<PrismaClient, "packagingType">;
 
@@ -44,16 +44,21 @@ export const EmbalagensService = {
    * "não controlado", não como zero.
    */
   async saldos(tenantId: string): Promise<Map<string, number>> {
-    const rows = await prisma.$queryRaw<{ packagingTypeId: string; saldo: number }[]>`
+    // `::bigint`, não `::int`: cada movimento cabe no Int da coluna, mas a SOMA
+    // não precisa caber — duas entradas de 1,5 bilhão (valor colado, dedo
+    // gordo) faziam o cast levantar "integer out of range", e daí em diante
+    // `saldos()` falhava sempre: /embalagens em 500 e toda venda de tipo
+    // controlado em "erro inesperado", até alguém mexer no banco.
+    const rows = await prisma.$queryRaw<{ packagingTypeId: string; saldo: bigint }[]>`
       SELECT "packagingTypeId",
              COALESCE(SUM(
                CASE WHEN type::text IN ('ENTRADA', 'AJUSTE') THEN quantity ELSE -quantity END
-             ), 0)::int AS saldo
+             ), 0)::bigint AS saldo
       FROM packaging_movements
       WHERE "tenantId" = ${tenantId}
       GROUP BY "packagingTypeId"
     `;
-    return new Map(rows.map((r) => [r.packagingTypeId, r.saldo]));
+    return new Map(rows.map((r) => [r.packagingTypeId, Number(r.saldo)]));
   },
 
   /**
@@ -75,10 +80,17 @@ export const EmbalagensService = {
     }
 
     await db.$transaction(async (tx) => {
-      await tx.packagingType.update({
-        where: { id: tipo.id },
+      // Condicional: a checagem de `tracksStock` acima foi feita fora da tx.
+      // Dois aparelhos ligando o mesmo tipo juntos passavam os dois por ela e
+      // gravavam dois AJUSTEs — o saldo nascia em dobro, e toda validação de
+      // venda seguinte usava o número errado. Só um vence este update.
+      const { count } = await tx.packagingType.updateMany({
+        where: { id: tipo.id, tracksStock: false },
         data: { tracksStock: true },
       });
+      if (count === 0) {
+        throw new BusinessRuleError("O controle de estoque deste tipo já está ligado.");
+      }
       if (input.quantidadeAtual > 0) {
         await tx.packagingMovement.create({
           data: {
@@ -173,15 +185,30 @@ export const EmbalagensService = {
     });
   },
 
-  async listSales(tenantId: string) {
+  /**
+   * As vendas recentes (lista) e os totais do MÊS corrente (cards).
+   *
+   * Os totais eram somados sobre as 100 linhas da lista: passada a centésima
+   * venda, "Total vendido" virava a soma de uma janela móvel, sem período no
+   * rótulo — e podia até CAIR quando entrava uma venda pequena e saía uma
+   * grande. Agora é o banco que soma, recortado no mês (fuso do app), e a tela
+   * diz de qual mês fala. O `take: 100` ficou só para a lista.
+   */
+  async listSales(tenantId: string, agora = new Date()) {
     const db = getTenantPrisma(tenantId);
-    const vendas = await db.packagingSale.findMany({
-      include: { type: true },
-      orderBy: { saleDate: "desc" },
-      take: 100,
-    });
-    const total = money(add(...vendas.map((v) => v.totalAmount)));
-    const totalQtd = vendas.reduce((a, v) => a + v.quantity, 0);
+    const [vendas, doMes] = await Promise.all([
+      db.packagingSale.findMany({
+        include: { type: true },
+        orderBy: { saleDate: "desc" },
+        take: 100,
+      }),
+      db.packagingSale.aggregate({
+        _sum: { totalAmount: true, quantity: true },
+        where: { saleDate: { gte: startOfMonthTz(agora), lt: startOfNextMonthTz(agora) } },
+      }),
+    ]);
+    const total = money(toDecimal(doMes._sum.totalAmount ?? 0));
+    const totalQtd = doMes._sum.quantity ?? 0;
     return { vendas, total, totalQtd };
   },
 
@@ -190,23 +217,45 @@ export const EmbalagensService = {
     const tipo = await db.packagingType.findFirst({ where: { id: input.packagingTypeId } });
     if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
 
-    // Só valida saldo de quem controla estoque. Tipo sem controle segue como
-    // antes: registra a venda e pronto — não inventa saldo negativo.
-    if (tipo.tracksStock) {
-      const saldo = (await this.saldos(ctx.tenantId)).get(tipo.id) ?? 0;
-      if (input.quantity > saldo) {
-        throw new BusinessRuleError(
-          `Você tem ${saldo} ${tipo.name} em estoque e está vendendo ${input.quantity}. ` +
-            "Registre a entrada antes ou ajuste a quantidade.",
-        );
-      }
-    }
-
     const totalAmount = FinancialCalc.valorTotalVenda(input.quantity, input.unitPrice);
 
     // Venda e baixa na MESMA transação: uma sem a outra deixaria o saldo
     // mentindo até alguém conferir na mão.
     const venda = await db.$transaction(async (tx) => {
+      // Trava a linha do tipo ANTES de ler o saldo, e lê o saldo DENTRO da tx.
+      // O saldo era lido fora dela, sem trava: dois aparelhos vendendo as 10
+      // últimas caixas ao mesmo tempo passavam os dois pela validação e o saldo
+      // ia a -10 — exatamente o que ela existe para impedir. A granularidade é
+      // o tipo (o saldo é por tipo), então travar a linha dele basta; o
+      // segundo vendedor espera o commit do primeiro e lê o saldo já baixado.
+      // `tracksStock` é relido aqui pelo mesmo motivo: ligar o controle ao
+      // mesmo tempo que uma venda não pode deixar a venda sem baixa.
+      const travado = await tx.$queryRaw<{ tracksStock: boolean }[]>`
+        SELECT "tracksStock" FROM packaging_types
+        WHERE id = ${tipo.id} AND "tenantId" = ${ctx.tenantId}
+        FOR UPDATE
+      `;
+      const controla = travado[0]?.tracksStock ?? false;
+
+      // Só valida saldo de quem controla estoque. Tipo sem controle segue como
+      // antes: registra a venda e pronto — não inventa saldo negativo.
+      if (controla) {
+        const [linha] = await tx.$queryRaw<{ saldo: bigint }[]>`
+          SELECT COALESCE(SUM(
+                   CASE WHEN type::text IN ('ENTRADA', 'AJUSTE') THEN quantity ELSE -quantity END
+                 ), 0)::bigint AS saldo
+          FROM packaging_movements
+          WHERE "tenantId" = ${ctx.tenantId} AND "packagingTypeId" = ${tipo.id}
+        `;
+        const saldo = Number(linha?.saldo ?? 0);
+        if (input.quantity > saldo) {
+          throw new BusinessRuleError(
+            `Você tem ${saldo} ${tipo.name} em estoque e está vendendo ${input.quantity}. ` +
+              "Registre a entrada antes ou ajuste a quantidade.",
+          );
+        }
+      }
+
       const criada = await tx.packagingSale.create({
         data: {
           tenantId: ctx.tenantId,
@@ -219,7 +268,7 @@ export const EmbalagensService = {
         },
       });
 
-      if (tipo.tracksStock) {
+      if (controla) {
         await tx.packagingMovement.create({
           data: {
             tenantId: ctx.tenantId,
@@ -245,7 +294,7 @@ export const EmbalagensService = {
             tipo: tipo.name,
             quantity: input.quantity,
             totalAmount: totalAmount.toString(),
-            baixouEstoque: tipo.tracksStock,
+            baixouEstoque: controla,
           },
           ip: ctx.ip,
         },

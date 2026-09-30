@@ -13,6 +13,7 @@ import {
   zonedTimeToUtc,
 } from "@/lib/tz";
 import { resolvePeriod } from "@/lib/dates";
+import { ValidationError } from "@/lib/http/app-error";
 import { formatDate, formatDateOnly, formatDateTime, formatDayMonthOnly } from "@/lib/format";
 import { frescorDoBoletim } from "@/lib/cotacoes/frescor";
 
@@ -109,10 +110,38 @@ describe("fuso do app (America/Sao_Paulo)", () => {
   });
 
   it("data impossível deixa de virar outra data no formulário", () => {
-    // `parseFormDateTz` cai para `new Date(v)` quando o ISO é recusado: o
-    // resultado passa a ser Invalid Date, que o banco rejeita ruidosamente, em
-    // vez de uma data errada gravada em silêncio.
-    expect(Number.isNaN(parseFormDateTz("2026-13-45").getTime())).toBe(true);
+    // `parseFormDateTz` recusa com ValidationError (422), em vez de gravar
+    // uma data errada em silêncio ou estourar no Prisma como 500.
+    expect(() => parseFormDateTz("2026-13-45")).toThrow(ValidationError);
+  });
+
+  it("dia 29 a 31 inexistente no mês NÃO transborda pelo fallback do new Date (regressão)", () => {
+    // O teste acima usava só o mês 13, que o `new Date` também recusa. O V8
+    // aceita dia até 31 em qualquer mês e rola o valor: "2026-02-31" virava
+    // 2026-03-03T00:00Z (02/03 às 21h aqui) e "2026-04-31", 01/05. O fallback
+    // desfazia a recusa de `parseIsoDateTz` justamente nesses casos.
+    expect(new Date("2026-02-31").getTime()).not.toBeNaN(); // o contraste
+    expect(() => parseFormDateTz("2026-02-31")).toThrow(ValidationError);
+    expect(() => parseFormDateTz("2026-04-31")).toThrow(ValidationError);
+    expect(() => parseFormDateTz("2026-02-29")).toThrow(ValidationError);
+    expect(() => parseFormDateTz("2026-02-31T10:00:00.000Z")).toThrow(ValidationError);
+  });
+
+  it("texto em outro formato é recusado, não lido como data americana", () => {
+    // "10/09/2026" era lido como 9 de outubro e gravado sem erro;
+    // "25/09/2026" virava Invalid Date e o Prisma respondia 500.
+    expect(() => parseFormDateTz("10/09/2026")).toThrow(ValidationError);
+    expect(() => parseFormDateTz("25/09/2026")).toThrow(ValidationError);
+    expect(() => parseFormDateTz("")).toThrow(ValidationError);
+    // Com hora mas sem fuso, o `new Date` leria no fuso do processo.
+    expect(() => parseFormDateTz("2026-09-10T18:45:00")).toThrow(ValidationError);
+  });
+
+  it("ISO completo com fuso explícito continua passando", () => {
+    expect(parseFormDateTz("2026-09-10T18:45:00-03:00").toISOString()).toBe(
+      "2026-09-10T21:45:00.000Z",
+    );
+    expect(parseFormDateTz(" 2026-09-10 ").toISOString()).toBe("2026-09-10T03:00:00.000Z");
   });
 });
 

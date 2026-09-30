@@ -34,6 +34,11 @@ export interface ResultadoDaFonte {
   dataDaResposta?: string | null;
   httpStatus?: number;
   erro?: string;
+  /**
+   * A busca parou porque o PRAZO da execução acabou (ver `buscarHtml`), não
+   * porque a fonte quebrou. O importador registra e segue sem avisar falha.
+   */
+  semTempo?: boolean;
 }
 
 export interface ParametrosDeBusca {
@@ -41,6 +46,12 @@ export interface ParametrosDeBusca {
   sourceParams: unknown;
   /** Dia do boletim desejado. */
   data: Date;
+  /**
+   * Instante (epoch ms) em que a execução precisa ter parado. Toda requisição
+   * da fonte repassa isto a `buscarHtml`; sem ele, uma fonte pendurada decide
+   * sozinha quanto tempo a função serverless vive.
+   */
+  prazo?: number;
 }
 
 /**

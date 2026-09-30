@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { urlDoServiceWorker } from "@/lib/pwa/sw-version";
 
 /**
  * Em produção: registra o service worker (PWA).
@@ -24,9 +25,13 @@ export function PwaRegister() {
       return;
     }
 
-    navigator.serviceWorker.register("/sw.js").catch(() => {
-      // sem SW o app continua funcionando normalmente
-    });
+    // `?v=<build>`: um endereço por deploy é o que faz o navegador instalar o SW
+    // novo (e refazer o precache das páginas offline). Ver `sw-version.ts`.
+    navigator.serviceWorker
+      .register(urlDoServiceWorker(process.env.CEASAPRO_SW_VERSION), { scope: "/" })
+      .catch(() => {
+        // sem SW o app continua funcionando normalmente
+      });
   }, []);
   return null;
 }

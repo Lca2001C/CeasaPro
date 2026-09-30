@@ -10,6 +10,7 @@ import { apiPost } from "@/lib/api-client";
 import { formatBRL, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
   DialogContent,
@@ -38,7 +39,7 @@ export function TrocarPlano({
     if (!selected) return;
     const alvo = selected;
     start(async () => {
-      const res = await trocarPlano({ planId: alvo.id });
+      const res = await chamarAction(() => trocarPlano({ planId: alvo.id }));
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -64,7 +65,7 @@ export function TrocarPlano({
 
   function desfazerAgendamento() {
     start(async () => {
-      const res = await cancelarTrocaDePlano({});
+      const res = await chamarAction(() => cancelarTrocaDePlano({}));
       if (!res.ok) {
         toast.error(res.error.message);
         return;

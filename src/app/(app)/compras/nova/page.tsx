@@ -35,6 +35,9 @@ export default async function NovaCompraPage() {
           .map((f) => ({ id: f.id, name: f.name }))}
         ultimosPagos={ultimosPagos}
         boletim={boletim}
+        // Mesmo gate do servidor (`ComprasService.registrarCompra`): sem o
+        // módulo, a compra não registra caixas e a tela não oferece o campo.
+        caixasHabilitado={isModuleEnabled(session.modules, "caixas")}
       />
     </div>
   );

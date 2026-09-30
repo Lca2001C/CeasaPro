@@ -3,8 +3,13 @@ import type { PaymentMethod } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { money, toDecimal } from "@/lib/money";
-import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
+import { add, money, toDecimal } from "@/lib/money";
+import {
+  BusinessRuleError,
+  ForbiddenError,
+  NotFoundError,
+  ValidationError,
+} from "@/lib/http/app-error";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { FinancialCalc } from "./financial-calc.service";
@@ -109,6 +114,18 @@ export function ajustarParcelasAoTotal(
   const alvo = candidatas.reduce((maior, p) => (p.cents > maior.cents ? p : maior));
   alvo.cents += resto;
   return ajustadas;
+}
+
+/**
+ * O que a venda grava além do que vem no corpo do PDV.
+ *
+ * Só o fiado manual usa: a observação é da conta a receber, e não da venda.
+ * Antes ela (e o telefone) entrava num `update` solto DEPOIS do commit da
+ * venda, fora da transação e sem auditoria; se esse update falhasse, a tela
+ * respondia erro com a venda já gravada, e a retentativa duplicava a baixa.
+ */
+export interface OpcoesDaVenda {
+  observacaoDoFiado?: string | null;
 }
 
 export const VendasService = {
@@ -243,7 +260,19 @@ export const VendasService = {
     // Canceladas ficam fora por padrão: continuam na base para auditoria, mas
     // poluiriam a leitura de "o que eu vendi".
     if (!f.incluirCanceladas) where.cancelledAt = null;
-    if (f.paymentMethod) where.paymentMethod = f.paymentMethod;
+    // A forma de pagamento filtra pelas PARCELAS, não pela forma predominante.
+    //
+    // `Sale.paymentMethod` guarda a predominante (`formaPredominante`): numa
+    // venda de R$ 60 no PIX + R$ 40 em dinheiro ela é PIX, e o filtro
+    // "Dinheiro" escondia uma venda que pôs R$ 40 na gaveta. Venda antiga,
+    // gravada antes das parcelas existirem, não tem `sale_payments`, e para
+    // ela a coluna continua sendo a única fonte.
+    if (f.paymentMethod) {
+      where.OR = [
+        { payments: { some: { method: f.paymentMethod } } },
+        { payments: { none: {} }, paymentMethod: f.paymentMethod },
+      ];
+    }
     if (f.q) where.customerName = { contains: f.q, mode: "insensitive" };
 
     if (f.preset && f.preset !== "todas") {
@@ -282,16 +311,52 @@ export const VendasService = {
     return db.sale.count({ where: this.filtroDoHistorico(opts, agora) });
   },
 
-  /** Totais do recorte atual, para o cabeçalho do histórico. */
+  /**
+   * Totais do recorte atual, para o cabeçalho do histórico.
+   *
+   * Duas regras que a lista não segue, de propósito:
+   *
+   *  - **Cancelada nunca soma.** "Ver canceladas" existe para CONFERIR o que
+   *    foi cancelado; somá-las fazia uma venda de R$ 500 cancelada por engano
+   *    aparecer no "Total no período" como faturamento. A lista continua
+   *    mostrando a venda (riscada), mas o faturamento é só o de venda válida.
+   *  - **Com filtro de forma, o total é o que entrou NAQUELA forma.** Filtrando
+   *    "Dinheiro", uma venda de R$ 60 no PIX + R$ 40 em dinheiro soma R$ 40 (o
+   *    que foi para a gaveta), não R$ 100. Venda antiga sem parcelas gravadas
+   *    entra pelo total, como sempre entrou.
+   */
   async totaisDoFiltro(tenantId: string, opts: VendaFiltro = {}, agora = new Date()) {
     const db = getTenantPrisma(tenantId);
+    const where: Prisma.SaleWhereInput = {
+      ...this.filtroDoHistorico(opts, agora),
+      cancelledAt: null,
+    };
     const r = await db.sale.aggregate({
       _sum: { totalAmount: true, discountAmount: true },
       _count: { _all: true },
-      where: this.filtroDoHistorico(opts, agora),
+      where,
     });
+
+    let total = toDecimal(r._sum.totalAmount ?? 0);
+    if (opts.paymentMethod) {
+      const [parcelas, semParcelas] = await Promise.all([
+        db.salePayment.aggregate({
+          _sum: { amount: true },
+          // `deletedAt` vai explícito: a extensão de tenant só o injeta no
+          // `where` de topo, e aqui a venda é um filtro de relação. Sem ele, a
+          // parcela de uma venda excluída pelo fiado continuaria somando.
+          where: { method: opts.paymentMethod, sale: { ...where, deletedAt: null } },
+        }),
+        db.sale.aggregate({
+          _sum: { totalAmount: true },
+          where: { ...where, payments: { none: {} } },
+        }),
+      ]);
+      total = add(parcelas._sum.amount ?? 0, semParcelas._sum.totalAmount ?? 0);
+    }
+
     return {
-      total: money(toDecimal(r._sum.totalAmount ?? 0)),
+      total: money(total),
       descontos: money(toDecimal(r._sum.discountAmount ?? 0)),
       quantidade: r._count._all,
     };
@@ -329,10 +394,16 @@ export const VendasService = {
    * Fiado com pagamento recebido não cancela: o dinheiro já entrou, e desfazer
    * a venda deixaria o recebimento órfão. Nesse caso o caminho é estornar o
    * pagamento no fiado primeiro.
+   *
+   * A janela conta do REGISTRO (`createdAt`), não de `saleDate`. No PDV os dois
+   * coincidem, mas o fiado manual grava `saleDate` como a meia-noite do dia
+   * escolhido: um fiado lançado às 20h tinha 4h de janela, um lançado com a
+   * data de ontem já nascia sem poder cancelar, e um com data futura ganhava
+   * janela até depois dela.
    */
   podeCancelar(
     venda: {
-      saleDate: Date;
+      createdAt: Date;
       cancelledAt: Date | null;
       creditAccount?: { payments?: { id: string }[] } | null;
     },
@@ -340,7 +411,7 @@ export const VendasService = {
   ): boolean {
     if (venda.cancelledAt) return false;
     if ((venda.creditAccount?.payments?.length ?? 0) > 0) return false;
-    const limite = venda.saleDate.getTime() + HORAS_PARA_CANCELAR * 3600_000;
+    const limite = venda.createdAt.getTime() + HORAS_PARA_CANCELAR * 3600_000;
     return agora.getTime() <= limite;
   },
 
@@ -431,9 +502,21 @@ export const VendasService = {
       // Só volta para o estoque de caixas o que ainda está com o cliente: se ele
       // já devolveu parte, aquelas caixas já foram contabilizadas de volta e
       // estornar de novo deixaria o saldo com clientes negativo.
+      //
+      // O limite é o saldo DO CLIENTE da venda, não só o da empresa: com outros
+      // fregueses segurando caixas, o global cobria as 8 da venda enquanto o
+      // cliente só tinha 3, e `registrarInTx` recusava o estorno — a venda
+      // ficava impossível de cancelar.
       if (venda.plasticCrateQty > 0) {
         const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
-        caixasEstornadas = Math.min(venda.plasticCrateQty, Math.max(0, saldo.comClientes));
+        const doCliente = venda.customerName
+          ? await CaixasService.saldoDoClienteInTx(tx, ctx.tenantId, venda.customerName)
+          : saldo.comClientes;
+        caixasEstornadas = Math.min(
+          venda.plasticCrateQty,
+          Math.max(0, doCliente),
+          Math.max(0, saldo.comClientes),
+        );
       }
 
       if (caixasEstornadas > 0) {
@@ -454,11 +537,24 @@ export const VendasService = {
 
       // A conta de fiado é apagada (soft delete), não zerada: a dívida nunca
       // existiu. Sem pagamentos, não há nada a preservar nela.
+      //
+      // A checagem "sem recebimento" lá em cima roda FORA da transação: um
+      // pagamento que entrasse entre ela e aqui (outra tela aberta) era apagado
+      // junto com a conta, e o `CreditPayment` ficava órfão, ainda somando no
+      // fluxo de caixa. O filtro `paidAmount: 0` refaz a checagem de forma
+      // atômica na própria escrita — o mesmo padrão de `FiadoService.remove`.
+      // Se não casar, a exceção desfaz a transação inteira: nem a venda fica
+      // cancelada nem o estoque volta.
       if (venda.creditAccount) {
-        await tx.creditAccount.update({
-          where: { id: venda.creditAccount.id },
+        const apagada = await tx.creditAccount.updateMany({
+          where: { id: venda.creditAccount.id, paidAmount: 0 },
           data: { deletedAt: new Date() },
         });
+        if (apagada.count !== 1) {
+          throw new BusinessRuleError(
+            "Esta venda fiada acabou de receber um pagamento. Estorne o pagamento no fiado antes de cancelar.",
+          );
+        }
       }
 
       await audit(
@@ -508,7 +604,7 @@ export const VendasService = {
     });
   },
 
-  async registrarVenda(input: VendaInput, ctx: TenantCtx) {
+  async registrarVenda(input: VendaInput, ctx: TenantCtx, opcoes: OpcoesDaVenda = {}) {
     const db = getTenantPrisma(ctx.tenantId);
 
     // Caminho rápido da retentativa: a mesma chave já virou venda?
@@ -523,7 +619,7 @@ export const VendasService = {
     }
 
     try {
-      return Object.assign(await this.gravarVenda(db, input, ctx), { jaRegistrada: false });
+      return await this.gravarVenda(db, input, ctx, opcoes);
     } catch (e) {
       // Corrida de verdade: dois toques simultâneos com a mesma chave. O
       // segundo INSERT bloqueia no índice único até o primeiro commitar e então
@@ -542,7 +638,25 @@ export const VendasService = {
     db: ReturnType<typeof getTenantPrisma>,
     input: VendaInput,
     ctx: TenantCtx,
+    opcoes: OpcoesDaVenda = {},
   ) {
+    // Fiado de R$ 0,00 é recusado ANTES de qualquer escrita.
+    //
+    // Com total zero não há o que cobrar, então nenhuma conta a receber nascia,
+    // mas a venda, a baixa de estoque e a saída de caixas eram gravadas
+    // mesmo assim. No fiado manual a tela respondia erro ("conta não
+    // encontrada") depois do commit, e cada nova tentativa baixava o estoque
+    // outra vez; no PDV a venda "fiada" sumia da lista do fiado. O schema do
+    // fiado manual já exige preço em todo item. Esta é a barreira de quem
+    // chegar aqui por outro caminho, inclusive o PDV com preço zero confirmado.
+    const temParteFiada =
+      input.paymentMethod === "FIADO" || Boolean(input.payments?.some((p) => p.method === "FIADO"));
+    if (temParteFiada && calcularTotaisVenda(input).totalCents === 0n) {
+      throw new BusinessRuleError(
+        "Venda fiada de R$ 0,00 não gera conta a receber. Confira o preço dos itens.",
+      );
+    }
+
     const productIds = [...new Set(input.items.map((i) => i.productId))];
     // `parseFormDateTz` e nao `new Date`: `new Date("2026-09-04")` e meia-noite UTC,
     // ou seja, 03/09 as 21h em Sao Paulo. A venda caia no dia ANTERIOR no painel,
@@ -555,6 +669,20 @@ export const VendasService = {
     // quem não usa caixa retornável, e barrava a venda por um saldo irrelevante.
     const caixasHabilitado = isModuleEnabled(ctx.session.modules, "caixas");
     const plasticCrateQty = caixasHabilitado ? resolvePlasticCrateQty(input) : 0;
+
+    // Caixa plástica exige cliente, e a conta é a RESOLVIDA, não o campo cru.
+    // Sem isto, um POST com `recipientType: "PLASTICA"` e `crateQty` nos itens,
+    // mas sem `plasticCrateQty` e sem `customerName`, gravava um movimento de
+    // SAÍDA com cliente nulo: as caixas saíam do box e nenhum RETORNO conseguia
+    // devolvê-las, porque devolução exige o nome de quem levou.
+    //
+    // Mora aqui, e não no schema, porque só vale COM o módulo: sem ele as
+    // caixas já foram zeradas acima, e o refine (que não conhece o módulo)
+    // barrava a venda de balcão por um controle que a empresa não tem.
+    if (plasticCrateQty > 0 && !input.customerName?.trim()) {
+      const mensagem = "Informe o cliente para controlar as caixas plásticas";
+      throw new ValidationError(mensagem, { customerName: mensagem });
+    }
 
     return db.$transaction(async (tx) => {
       // Trava as linhas de produto ANTES de ler o saldo.
@@ -586,6 +714,25 @@ export const VendasService = {
       `;
       if (products.length !== productIds.length) {
         throw new NotFoundError("Um ou mais produtos nao foram encontrados");
+      }
+
+      // Retentativa que esperou no lock acima: a chave já virou venda?
+      //
+      // Se a primeira requisição passou do tempo-limite do PDV (20 s) mas
+      // continuou rodando, a retentativa com a mesma chave não a acha no atalho
+      // de `registrarVenda` (ela ainda não tinha feito commit) e fica esperando
+      // aqui, no `FOR UPDATE` dos mesmos produtos. Quando o lock solta, a
+      // venda já está gravada e o saldo já foi baixado: sem esta releitura, a
+      // validação logo abaixo respondia "Estoque insuficiente" para uma venda
+      // que existe, e o P2002 do INSERT (o ramo que reconhece a duplicata)
+      // nunca era alcançado. Em READ COMMITTED esta consulta, feita depois do
+      // lock, já enxerga o commit da primeira.
+      if (input.idempotencyKey) {
+        const jaGravada = await tx.sale.findFirst({
+          where: { idempotencyKey: input.idempotencyKey },
+          include: { items: true, payments: true },
+        });
+        if (jaGravada) return Object.assign(jaGravada, { jaRegistrada: true });
       }
 
       // 1. Saldo atual por produto + custo médio PONDERADO das entradas.
@@ -789,6 +936,7 @@ export const VendasService = {
             paidAmount: new Prisma.Decimal(0),
             status: "EM_ABERTO",
             dueDate: input.dueDate ? parseFormDateTz(input.dueDate) : null,
+            notes: opcoes.observacaoDoFiado || null,
           },
         });
       }
@@ -810,6 +958,7 @@ export const VendasService = {
             paymentMethod: sale.paymentMethod,
             pagamentos: parcelas.map((p) => `${p.method}:${p.amount}`),
             fiado: totalFiado.toString(),
+            ...(opcoes.observacaoDoFiado ? { observacaoDoFiado: opcoes.observacaoDoFiado } : {}),
             items: sale.items.length,
             plasticCrateQty,
           },
@@ -818,7 +967,7 @@ export const VendasService = {
         tx,
       );
 
-      return sale;
+      return Object.assign(sale, { jaRegistrada: false });
     });
   },
 };

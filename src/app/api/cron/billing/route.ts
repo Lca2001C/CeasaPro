@@ -21,6 +21,14 @@ export const maxDuration = 60;
 
 /** Teto de tempo desta função, com folga para a resposta sair. */
 const ORCAMENTO_DA_ROTA_MS = 45_000;
+/**
+ * Fatia da reconciliação no orçamento da rota. É a única etapa que fala com o
+ * Mercado Pago em volume: sem teto, ela consumia os 60 s sozinha e o que vem
+ * depois (status, lembretes, despesas, limpezas, boletins) nunca rodava. O que
+ * não couber hoje vai primeiro amanhã (rotação por `lastReconciledAt`). Cada
+ * consulta tem prazo próprio de 8 s, então o pior caso fica perto de 28 s.
+ */
+const ORCAMENTO_RECONCILIACAO_MS = 20_000;
 /** Abaixo disto não vale começar: não dá para importar praça nenhuma. */
 const MINIMO_PARA_IMPORTAR_MS = 5_000;
 
@@ -44,6 +52,9 @@ function authorized(req: Request): boolean {
  *  6. por último, importa os boletins de cotação.
  * A ordem importa: reconciliar antes evita suspender quem já pagou, e recalcular
  * antes do aviso evita mandar "vence em 3 dias" para quem acabou de pagar.
+ * Por isso a reconciliação continua primeiro — mas com ORÇAMENTO próprio e sem
+ * poder derrubar o resto: as etapas locais são baratas e não podem passar fome
+ * esperando o gateway.
  * Protegido por CRON_SECRET. Configurado em vercel.json.
  */
 async function handle(req: Request): Promise<Response> {
@@ -52,7 +63,15 @@ async function handle(req: Request): Promise<Response> {
   }
   const comecou = Date.now();
   try {
-    const reconciliacao = await BillingService.reconcilePendingPayments();
+    const reconciliacao = await BillingService.reconcilePendingPayments({
+      orcamentoMs: ORCAMENTO_RECONCILIACAO_MS,
+    }).catch((e) => {
+      // Falhar a reconciliação (banco, gateway fora) não pode levar junto o
+      // recálculo de status: ele é o que suspende quem venceu e libera quem
+      // está em dia pelas datas, e não depende do Mercado Pago.
+      logger.error({ err: describeError(e) }, "Falha na reconciliação com o Mercado Pago");
+      return { erro: "falhou" as const };
+    });
     const statuses = await BillingService.recomputeStatuses();
     // Depois do recálculo: quem acabou de ser reativado por um pagamento
     // reconciliado não deve receber aviso de vencimento no mesmo minuto.

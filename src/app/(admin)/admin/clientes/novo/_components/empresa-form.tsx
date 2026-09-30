@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ChangeEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Controller, useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -14,7 +14,9 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
+import { formatBRL } from "@/lib/format";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 interface Plano {
   id: string;
   name: string;
@@ -29,6 +31,7 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
     register,
     handleSubmit,
     control,
+    setValue,
     formState: { errors },
   } = useForm<NovaEmpresaInput>({
     resolver: zodResolver(novaEmpresaSchema),
@@ -41,7 +44,7 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
 
   async function onSubmit(values: NovaEmpresaInput) {
     setSaving(true);
-    const res = await criarEmpresa(values);
+    const res = await chamarAction(() => criarEmpresa(values));
     setSaving(false);
     if (res.ok) {
       toast.success("Empresa criada!");
@@ -97,11 +100,15 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cnpj">CNPJ</Label>
-          <Input id="cnpj" {...register("cnpj")} />
+          <Input id="cnpj" inputMode="numeric" {...register("cnpj")} />
+          {errors.cnpj && <span className="text-xs text-destructive">{errors.cnpj.message}</span>}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="phone">Telefone</Label>
           <Input id="phone" {...register("phone")} />
+          {errors.phone && (
+            <span className="text-xs text-destructive">{errors.phone.message}</span>
+          )}
         </div>
       </div>
 
@@ -128,13 +135,36 @@ export function EmpresaForm({ planos }: { planos: Plano[] }) {
       <p className="text-sm font-medium">Assinatura</p>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="planId">Plano</Label>
-        <Select id="planId" {...register("planId")}>
+        {/*
+          Trocar o plano REESCREVE a mensalidade com o preço dele. Antes o campo
+          ficava com o preço do primeiro plano da lista (o mais barato), e a
+          empresa nascia no plano caro pagando o barato para sempre — não há
+          tela para corrigir depois. Preço negociado continua possível: edita-se
+          a Mensalidade DEPOIS de escolher o plano.
+        */}
+        <Select
+          id="planId"
+          {...register("planId", {
+            onChange: (e: ChangeEvent<HTMLSelectElement>) => {
+              const plano = planos.find((p) => p.id === e.target.value);
+              if (plano) {
+                setValue("monthlyAmount", plano.priceMonthly, {
+                  shouldDirty: true,
+                  shouldValidate: true,
+                });
+              }
+            },
+          })}
+        >
           {planos.map((p) => (
             <option key={p.id} value={p.id}>
-              {p.name}
+              {p.name} — {formatBRL(p.priceMonthly)}/mês
             </option>
           ))}
         </Select>
+        {errors.planId && (
+          <span className="text-xs text-destructive">{errors.planId.message}</span>
+        )}
       </div>
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">

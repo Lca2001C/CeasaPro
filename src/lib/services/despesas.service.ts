@@ -4,13 +4,15 @@ import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
-import { money, sub, toDecimal } from "@/lib/money";
+import { money, toDecimal } from "@/lib/money";
 import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
 import {
+  addDaysTz,
   civilParts,
   endOfDayTz,
   isoDateTz,
   parseFormDateTz,
+  parseIsoDateTz,
   startOfDayTz,
   startOfMonthTz,
   startOfNextMonthTz,
@@ -100,6 +102,37 @@ export function whereDeFiltro(f: DespesaFiltro, agora = new Date()): Prisma.Expe
   return where;
 }
 
+/** Teto do atalho "vence nos próximos N dias" vindo da URL. */
+export const PROXIMOS_DIAS_MAX = 90;
+
+/**
+ * Período do filtro a partir da URL de /despesas (`de`, `ate`, `proximos`).
+ *
+ * A URL é entrada do usuário — link editado à mão, truncado ou colado — e ia
+ * crua para `whereDeFiltro`: `?de=abc` virava data inválida e `?proximos=1e400`
+ * virava `Infinity` dias, e a tela respondia 500 em vez de ignorar o filtro.
+ * Aqui só passa data "YYYY-MM-DD" que existe, e `proximos` só vale como inteiro
+ * de 1 a {@link PROXIMOS_DIAS_MAX}. O que não passa é descartado em silêncio,
+ * como `paginaDaUrl` já faz com a página.
+ */
+export function periodoDaUrl(
+  sp: { de?: unknown; ate?: unknown; proximos?: unknown },
+  agora = new Date(),
+): { from?: string; to?: string; proximos: boolean } {
+  const n = typeof sp.proximos === "string" ? Number(sp.proximos) : NaN;
+  if (Number.isInteger(n) && n > 0) {
+    const dias = Math.min(n, PROXIMOS_DIAS_MAX);
+    return {
+      from: isoDateTz(startOfDayTz(agora)),
+      to: isoDateTz(addDaysTz(agora, dias)),
+      proximos: true,
+    };
+  }
+  const dia = (v: unknown) =>
+    typeof v === "string" && parseIsoDateTz(v) ? v.trim() : undefined;
+  return { from: dia(sp.de), to: dia(sp.ate), proximos: false };
+}
+
 /** Mês seguinte ao vencimento, preservando o dia — 31/01 vira 28/02, não 03/03. */
 export function proximoVencimento(dueDate: Date): Date {
   const c = civilParts(dueDate);
@@ -160,6 +193,150 @@ export interface ResumoMes {
   referencia: string;
 }
 
+/** Números da higienização que entram nos cartões de Despesas e do Início. */
+export interface ResumoHigienizacao {
+  /** Soma de `total − pago` dos lotes que ainda devem (nunca negativo). */
+  saldoAberto: Prisma.Decimal;
+  /** Quantos lotes ainda devem. */
+  abertoCount: number;
+  /** Parte de `saldoAberto` de lotes enviados antes de `hoje`. */
+  vencido: Prisma.Decimal;
+  vencidoCount: number;
+  /** O que SAIU do caixa na janela: soma dos pagamentos por `paidAt`. */
+  pagaNoPeriodo: Prisma.Decimal;
+  /** Quantos lotes receberam algum pagamento na janela. */
+  pagaCount: number;
+  /** Custo dos lotes ENVIADOS na janela (a estrutura de custo do mês). */
+  enviadaNoPeriodo: Prisma.Decimal;
+  /** Custo dos lotes enviados na janela `anterior` (zero sem ela). */
+  enviadaNoAnterior: Prisma.Decimal;
+}
+
+export const HIGIENIZACAO_ZERADA: ResumoHigienizacao = Object.freeze({
+  saldoAberto: new Prisma.Decimal(0),
+  abertoCount: 0,
+  vencido: new Prisma.Decimal(0),
+  vencidoCount: 0,
+  pagaNoPeriodo: new Prisma.Decimal(0),
+  pagaCount: 0,
+  enviadaNoPeriodo: new Prisma.Decimal(0),
+  enviadaNoAnterior: new Prisma.Decimal(0),
+});
+
+type Janela = { inicio: Date; fim: Date };
+
+/**
+ * Higienização somada NO BANCO, com o pago contado por PAGAMENTO.
+ *
+ * `crate_cleanings.paidAmount` é acumulado e `paidDate` guarda só a data do
+ * ÚLTIMO pagamento. Somar `paidAmount` filtrando por `paidDate` — como o painel
+ * e o resumo de Despesas faziam — jogava o lote inteiro no mês do último
+ * pagamento: R$ 300 pagos 100 em agosto e 200 em setembro davam agosto R$ 0 e
+ * setembro R$ 300. `crate_cleaning_payments` tem uma linha por pagamento, com
+ * a data em que o dinheiro saiu; é a mesma fonte do fluxo de caixa
+ * (`report.service.ts`), então o Início, Despesas e o relatório fecham.
+ *
+ * O saldo em aberto também é SQL: antes cada tela carregava todos os lotes da
+ * história para somar em JavaScript, e o custo crescia sem teto.
+ *
+ * `prisma` cru com `tenantId` explícito nas duas tabelas, no molde das outras
+ * agregações do painel. O lote excluído sai pelo `deletedAt` do lote — a linha
+ * de pagamento não tem `deletedAt` própria.
+ */
+export async function resumoDaHigienizacao(
+  tenantId: string,
+  janela: Janela,
+  hoje: Date,
+  anterior?: Janela,
+): Promise<ResumoHigienizacao> {
+  const ant = anterior ?? janela;
+  const [lotes, pagos] = await Promise.all([
+    prisma.$queryRaw<
+      {
+        saldo_aberto: Prisma.Decimal | string;
+        aberto_count: number;
+        vencido: Prisma.Decimal | string;
+        vencido_count: number;
+        enviada: Prisma.Decimal | string;
+        enviada_anterior: Prisma.Decimal | string;
+      }[]
+    >`
+      SELECT
+        COALESCE(SUM("totalAmount" - "paidAmount") FILTER (WHERE "totalAmount" > "paidAmount"), 0) AS saldo_aberto,
+        COUNT(*) FILTER (WHERE "totalAmount" > "paidAmount")::int AS aberto_count,
+        COALESCE(SUM("totalAmount" - "paidAmount") FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" < ${hoje}), 0) AS vencido,
+        COUNT(*) FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" < ${hoje})::int AS vencido_count,
+        COALESCE(SUM("totalAmount") FILTER (WHERE "sentDate" >= ${janela.inicio} AND "sentDate" <= ${janela.fim}), 0) AS enviada,
+        COALESCE(SUM("totalAmount") FILTER (WHERE "sentDate" >= ${ant.inicio} AND "sentDate" <= ${ant.fim}), 0) AS enviada_anterior
+      FROM crate_cleanings
+      WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+    `,
+    prisma.$queryRaw<{ paga: Prisma.Decimal | string; paga_count: number }[]>`
+      SELECT COALESCE(SUM(pg.amount), 0) AS paga,
+             COUNT(DISTINCT pg."cleaningId")::int AS paga_count
+      FROM crate_cleaning_payments pg
+      JOIN crate_cleanings cc ON cc.id = pg."cleaningId"
+      WHERE pg."tenantId" = ${tenantId} AND cc."tenantId" = ${tenantId}
+        AND cc."deletedAt" IS NULL
+        AND pg."paidAt" >= ${janela.inicio} AND pg."paidAt" <= ${janela.fim}
+    `,
+  ]);
+  const l = lotes[0];
+  const p = pagos[0];
+  const dec = (v: Prisma.Decimal | string | undefined) =>
+    money(toDecimal((v ?? 0) as Prisma.Decimal.Value));
+  return {
+    saldoAberto: dec(l?.saldo_aberto),
+    abertoCount: Number(l?.aberto_count ?? 0),
+    vencido: dec(l?.vencido),
+    vencidoCount: Number(l?.vencido_count ?? 0),
+    pagaNoPeriodo: dec(p?.paga),
+    pagaCount: Number(p?.paga_count ?? 0),
+    enviadaNoPeriodo: dec(l?.enviada),
+    enviadaNoAnterior: anterior ? dec(l?.enviada_anterior) : money(toDecimal(0)),
+  };
+}
+
+/**
+ * Pré-filtro no banco para a lista de higienização, a partir do filtro da tela.
+ *
+ * Devolve `null` quando nenhuma linha de higienização pode passar (tipo FIXA
+ * ou categoria escolhida — lote não tem nenhum dos dois). O resto é um
+ * SUPERCONJUNTO do que `linhasDeHigienizacao` aceita: ela continua sendo a
+ * regra; aqui só se evita trazer para a memória a história inteira de lotes
+ * quando a aba ou o período já descartam a maioria.
+ */
+function whereDaHigienizacao(
+  filtro: DespesaFiltro,
+  agora: Date,
+): Prisma.CrateCleaningWhereInput | null {
+  if (filtro.type === "FIXA" || filtro.categoryId) return null;
+  const e: Prisma.CrateCleaningWhereInput[] = [];
+
+  if (filtro.vencidas) {
+    // Saldo > 0 implica status != PAGO (`computeCleaningStatus` só marca PAGO
+    // com o dinheiro quitado), então o recorte por status é seguro.
+    e.push({ status: { not: "PAGO" }, sentDate: { lt: startOfDayTz(agora) } });
+  } else if (filtro.status === "PAGO") {
+    e.push({ paidAmount: { gt: 0 } });
+  } else if (filtro.status === "PENDENTE") {
+    e.push({ status: { not: "PAGO" } });
+  }
+
+  const from = toDate(filtro.from);
+  const to = toDate(filtro.to);
+  if (from || to) {
+    const campo = filtro.dateField ?? "dueDate";
+    const range: Prisma.DateTimeFilter = {};
+    if (from) range.gte = from;
+    if (to) range.lte = endOfDayTz(to);
+    if (campo === "paidDate") e.push({ paidDate: range });
+    else if (campo === "createdAt") e.push({ createdAt: range });
+    else e.push({ sentDate: range });
+  }
+  return e.length > 0 ? { AND: e } : {};
+}
+
 async function higienizacoesFiltradas(
   tenantId: string,
   filtro: DespesaFiltro,
@@ -167,8 +344,11 @@ async function higienizacoesFiltradas(
   agora: Date,
 ): Promise<ContaUnificada[]> {
   if (!isModuleEnabled(modules, "higienizacao")) return [];
+  const where = whereDaHigienizacao(filtro, agora);
+  if (!where) return [];
   const db = getTenantPrisma(tenantId);
   const lotes = await db.crateCleaning.findMany({
+    where,
     select: {
       id: true,
       cleanerName: true,
@@ -376,10 +556,14 @@ export const DespesasService = {
       include: { category: true },
       // A ordem reproduz o que a tela fazia em JS: o que vence primeiro no topo,
       // e sem vencimento no fim (não há prazo correndo). Para as já pagas, o
-      // mais recente primeiro — ali a ordem de vencimento não diz nada.
+      // PAGAMENTO mais recente primeiro — ali a ordem de vencimento não diz
+      // nada. Era `dueDate desc`, e no Postgres DESC põe NULLS FIRST: as pagas
+      // sem vencimento, mesmo de anos atrás, abriam a aba, e a conta de janeiro
+      // quitada hoje aparecia abaixo da de setembro paga em agosto. Mesmo
+      // critério do prefixo de higienização (`paidDate` desc).
       orderBy:
         opts.status === "PAGO"
-          ? [{ dueDate: "desc" }, { createdAt: "desc" }]
+          ? [{ paidDate: { sort: "desc", nulls: "last" } }, { createdAt: "desc" }]
           : [{ dueDate: { sort: "asc", nulls: "last" } }, { createdAt: "desc" }],
       take: opts.take ?? DESPESAS_POR_PAGINA,
       skip: opts.skip ?? 0,
@@ -523,15 +707,8 @@ export const DespesasService = {
         where: { saleDate: noMes, cancelledAt: null },
       }),
       isModuleEnabled(modules, "higienizacao")
-        ? db.crateCleaning.findMany({
-            select: {
-              totalAmount: true,
-              paidAmount: true,
-              sentDate: true,
-              paidDate: true,
-            },
-          })
-        : Promise.resolve([]),
+        ? resumoDaHigienizacao(tenantId, mes, hoje, anterior)
+        : Promise.resolve(HIGIENIZACAO_ZERADA),
     ]);
 
     const doMes = FinancialCalc.totaisDespesas(
@@ -541,36 +718,17 @@ export const DespesasService = {
       porTipoAnterior.map((g) => ({ type: g.type, amount: g._sum.amount ?? 0 })),
     );
 
-    let aPagarValor = money(toDecimal(aPagar._sum.amount ?? 0));
-    let aPagarCount = aPagar._count._all;
-    let pagasValor = money(toDecimal(pagas._sum.amount ?? 0));
-    let pagasCount = pagas._count._all;
-    let variaveis = doMes.variaveis;
-    let variaveisMesAnterior = doMesAnterior.variaveis;
-    let vencidasValor = money(toDecimal(vencidas._sum.amount ?? 0));
-    let vencidasCount = vencidas._count._all;
-
-    for (const lote of hig) {
-      const saldo = money(sub(lote.totalAmount, lote.paidAmount));
-      if (saldo.greaterThan(0)) {
-        aPagarValor = money(aPagarValor.plus(saldo));
-        aPagarCount += 1;
-        if (lote.sentDate < hoje) {
-          vencidasValor = money(vencidasValor.plus(saldo));
-          vencidasCount += 1;
-        }
-      }
-      if (lote.paidDate && lote.paidDate >= mes.inicio && lote.paidDate <= mes.fim) {
-        pagasValor = money(pagasValor.plus(lote.paidAmount));
-        pagasCount += 1;
-      }
-      if (lote.sentDate >= mes.inicio && lote.sentDate <= mes.fim) {
-        variaveis = money(variaveis.plus(lote.totalAmount));
-      }
-      if (lote.sentDate >= anterior.inicio && lote.sentDate <= anterior.fim) {
-        variaveisMesAnterior = money(variaveisMesAnterior.plus(lote.totalAmount));
-      }
-    }
+    // Higienização: saldo em aberto soma no "a pagar" (e no vencido, se o
+    // envio é de antes de hoje); "pagas" soma os PAGAMENTOS feitos no mês, não
+    // o acumulado do lote — ver `resumoDaHigienizacao`.
+    const aPagarValor = money(toDecimal(aPagar._sum.amount ?? 0).plus(hig.saldoAberto));
+    const aPagarCount = aPagar._count._all + hig.abertoCount;
+    const pagasValor = money(toDecimal(pagas._sum.amount ?? 0).plus(hig.pagaNoPeriodo));
+    const pagasCount = pagas._count._all + hig.pagaCount;
+    const variaveis = money(doMes.variaveis.plus(hig.enviadaNoPeriodo));
+    const variaveisMesAnterior = money(doMesAnterior.variaveis.plus(hig.enviadaNoAnterior));
+    const vencidasValor = money(toDecimal(vencidas._sum.amount ?? 0).plus(hig.vencido));
+    const vencidasCount = vencidas._count._all + hig.vencidoCount;
 
     const faturamento = money(toDecimal(vendas._sum.totalAmount ?? 0));
     const geralDoMes = money(doMes.fixas.plus(variaveis));
@@ -719,24 +877,36 @@ export const DespesasService = {
     }
 
     const paidDate = toDate(input.paidDate) ?? startOfDayTz(new Date());
-    const e = await db.expense.update({
-      where: { id: input.id },
-      data: {
-        status: "PAGO",
-        paidDate,
-        paymentMethod: input.paymentMethod ?? before.paymentMethod,
-      },
-    });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "UPDATE",
-      entity: "Expense",
-      entityId: e.id,
-      oldData: { status: before.status, paidDate: before.paidDate },
-      newData: { status: e.status, paidDate: e.paidDate },
-      ip: ctx.ip,
+    // A baixa é condicional ao status: a checagem acima é só a mensagem rápida.
+    // Dois aparelhos (ou duas abas) quitando juntos passavam os dois por ela,
+    // e cada um gravava o seu "pago" e a sua auditoria. Aqui só um vence; o
+    // outro recebe a mesma recusa de quem chegou depois.
+    const e = await db.$transaction(async (tx) => {
+      const { count } = await tx.expense.updateMany({
+        where: { id: input.id, status: { not: "PAGO" } },
+        data: {
+          status: "PAGO",
+          paidDate,
+          paymentMethod: input.paymentMethod ?? before.paymentMethod,
+        },
+      });
+      if (count === 0) throw new BusinessRuleError("Esta despesa já está paga.");
+      const paga = await tx.expense.findFirstOrThrow({ where: { id: input.id } });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "Expense",
+          entityId: paga.id,
+          oldData: { status: before.status, paidDate: before.paidDate },
+          newData: { status: paga.status, paidDate: paga.paidDate },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return paga;
     });
 
     if (e.recurring) {
@@ -797,61 +967,79 @@ export const DespesasService = {
    *
    * A marca `recurring` ANDA para a nova parcela e sai da antiga: assim existe
    * exatamente um gerador ativo por conta fixa. É isso que faz a operação ser
-   * idempotente — reexecutar não acha mais nada para gerar. O `parentId` também
-   * é checado, para o caso de duas execuções simultâneas.
+   * idempotente — reexecutar não acha mais nada para gerar. Duas execuções
+   * simultâneas são resolvidas pela reivindicação atômica da marca (ver abaixo);
+   * o `parentId` fica como segunda checagem, para origem que já tenha filho.
    *
    * Sem `dueDate` não há como saber para qual mês copiar; nesse caso a marca é
    * retirada, para não ficar prometendo algo que nunca acontece.
    */
-  async gerarProximaParcela(origem: Expense, ctx: TenantCtx) {
+  async gerarProximaParcela(origem: Pick<Expense, "id">, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
 
-    if (!origem.dueDate) {
-      await db.expense.update({ where: { id: origem.id }, data: { recurring: false } });
-      return null;
-    }
-    const jaGerada = await db.expense.findFirst({
-      where: { parentId: origem.id },
-      select: { id: true },
-    });
-    if (jaGerada) {
-      await db.expense.update({ where: { id: origem.id }, data: { recurring: false } });
-      return null;
-    }
+    return db.$transaction(async (tx) => {
+      // A origem é REIVINDICADA antes de qualquer outra coisa: tirar a marca é
+      // um update condicional, e só uma execução o vence. Era um "procura
+      // filho, depois cria" sem trava — o cron das 13:30 e o dono tocando
+      // "Pagar" no mesmo instante (ou uma entrega dupla do cron) passavam os
+      // dois pela procura, criavam dois filhos com `recurring: true`, e cada
+      // um gerava o próprio filho dali em diante: o aluguel em dobro todo mês,
+      // para sempre. Aqui a segunda execução bloqueia na linha até a primeira
+      // commitar, reavalia o `recurring: true` e sai com count 0.
+      const { count } = await tx.expense.updateMany({
+        where: { id: origem.id, recurring: true },
+        data: { recurring: false },
+      });
+      if (count === 0) return null;
 
-    const proxima = await db.expense.create({
-      data: {
-        tenantId: ctx.tenantId,
-        description: origem.description,
-        amount: origem.amount,
-        type: origem.type,
-        status: "PENDENTE",
-        categoryId: origem.categoryId,
-        paymentMethod: origem.paymentMethod,
-        dueDate: proximoVencimento(origem.dueDate),
-        paidDate: null,
-        recurring: true,
-        parentId: origem.id,
-      },
-    });
-    await db.expense.update({ where: { id: origem.id }, data: { recurring: false } });
+      // Lida DEPOIS da reivindicação: o objeto recebido pode estar velho
+      // (valor ou vencimento editados entre a leitura do cron e agora).
+      const atual = await tx.expense.findFirst({ where: { id: origem.id } });
+      // Sem vencimento não há mês seguinte: a marca já saiu acima.
+      if (!atual?.dueDate) return null;
 
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "CREATE",
-      entity: "Expense",
-      entityId: proxima.id,
-      newData: {
-        origem: origem.id,
-        description: proxima.description,
-        dueDate: proxima.dueDate,
-        motivo: "recorrencia_mensal",
-      },
-      ip: ctx.ip,
+      const jaGerada = await tx.expense.findFirst({
+        where: { parentId: atual.id },
+        select: { id: true },
+      });
+      if (jaGerada) return null;
+
+      const proxima = await tx.expense.create({
+        data: {
+          tenantId: ctx.tenantId,
+          description: atual.description,
+          amount: atual.amount,
+          type: atual.type,
+          status: "PENDENTE",
+          categoryId: atual.categoryId,
+          paymentMethod: atual.paymentMethod,
+          dueDate: proximoVencimento(atual.dueDate),
+          paidDate: null,
+          recurring: true,
+          parentId: atual.id,
+        },
+      });
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "Expense",
+          entityId: proxima.id,
+          newData: {
+            origem: atual.id,
+            description: proxima.description,
+            dueDate: proxima.dueDate,
+            motivo: "recorrencia_mensal",
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return proxima;
     });
-    return proxima;
   },
 
   /**
@@ -915,6 +1103,13 @@ export const DespesasService = {
       (o) => !copiados.has(o.id) && o.dueDate && !o.recurring,
     );
 
+    // O que ficou de fora, e POR QUÊ — a tela precisa dizer. "Nada a copiar:
+    // as 3 conta(s) já foram replicadas" era falso quando as 3 eram
+    // recorrentes ainda pendentes: não existia cópia nenhuma, e o dono
+    // concluía que o mês seguinte já estava lançado.
+    const jaCopiadasCount = origem.filter((o) => copiados.has(o.id)).length;
+    const recorrentes = origem.filter((o) => !copiados.has(o.id) && o.recurring).length;
+
     let criadas = 0;
     for (const o of pendentesDeCopia) {
       await db.expense.create({
@@ -944,7 +1139,13 @@ export const DespesasService = {
       newData: { motivo: "replicar_mes", origem: referencia, criadas },
       ip: ctx.ip,
     });
-    return { origem: referencia, encontradas: origem.length, criadas };
+    return {
+      origem: referencia,
+      encontradas: origem.length,
+      criadas,
+      jaCopiadas: jaCopiadasCount,
+      recorrentes,
+    };
   },
 
   /**

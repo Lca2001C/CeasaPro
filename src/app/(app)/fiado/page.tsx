@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { AlertTriangle, ChevronRight, Plus, Container } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { FiadoService } from "@/lib/services/fiado.service";
@@ -20,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { startOfDayTz } from "@/lib/tz";
+import { paginaDaUrl } from "@/lib/paginacao";
 import {
   PrecoResumo,
   ProdutosResumo,
@@ -39,25 +41,40 @@ const FILTROS: { value: FiadoStatusFiltro; label: string }[] = [
 export default async function FiadoPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; q?: string }>;
+  searchParams: Promise<{ status?: string; q?: string; pagina?: string }>;
 }) {
-  const { status: rawStatus, q } = await searchParams;
+  const { status: rawStatus, q, pagina: rawPagina } = await searchParams;
   const status = fiadoStatusFiltroEnum.safeParse(rawStatus).data ?? "EM_ABERTO";
   const busca = q?.trim() || undefined;
+  const paginaPedida = paginaDaUrl(rawPagina);
 
   const { tenantId } = await requireTenant();
-  const { contas, totalGeral, totalCaixas } = await FiadoService.listOpen(
-    tenantId,
-    status,
-    busca,
-  );
+  const agora = new Date();
+  // "Pagas" e "Todas" são paginadas (crescem para sempre); "Em aberto" não —
+  // ver `FIADO_POR_PAGINA`. Os cartões e o aviso de vencidas somam todas as
+  // contas em aberto, nunca só a página.
+  const { contas, totalGeral, totalCaixas, vencidas, total, pagina, ultimaPagina } =
+    await FiadoService.listOpen(tenantId, status, busca, { pagina: paginaPedida, agora });
+
+  const linkPara = (patch: { status?: string; pagina?: number }) => {
+    const sp = new URLSearchParams();
+    sp.set("status", patch.status ?? status);
+    if (busca) sp.set("q", busca);
+    if (patch.pagina && patch.pagina > 1) sp.set("pagina", String(patch.pagina));
+    return `/fiado?${sp.toString()}`;
+  };
+
+  // Página que não existe (URL editada, ou a lista encurtou): vai para a
+  // última válida em vez de dizer "nenhuma conta" — que seria mentira.
+  if (pagina > ultimaPagina && total > 0) {
+    redirect(linkPara({ pagina: ultimaPagina }));
+  }
 
   // Vencida = tem data de vencimento no passado e ainda deve. Comparar por dia
   // brasileiro: `new Date()` puro faria uma conta vencer às 21h do dia anterior.
-  const hoje = startOfDayTz(new Date());
+  const hoje = startOfDayTz(agora);
   const estaVencida = (c: (typeof contas)[number]) =>
     c.status === "EM_ABERTO" && c.dueDate !== null && c.dueDate < hoje;
-  const vencidas = contas.filter(estaVencida).length;
 
   return (
     <div>
@@ -107,7 +124,7 @@ export default async function FiadoPage({
             size="sm"
             variant={status === f.value ? "default" : "outline"}
           >
-            <Link href={`/fiado?status=${f.value}${busca ? `&q=${encodeURIComponent(busca)}` : ""}`}>
+            <Link href={linkPara({ status: f.value })}>
               {f.label}
             </Link>
           </Button>
@@ -279,6 +296,28 @@ export default async function FiadoPage({
               </Link>
             ))}
           </div>
+
+          {ultimaPagina > 1 && (
+            <div className="mt-4 flex items-center justify-between gap-2">
+              {pagina > 1 ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={linkPara({ pagina: pagina - 1 })}>Anterior</Link>
+                </Button>
+              ) : (
+                <span />
+              )}
+              <span className="text-xs text-muted-foreground">
+                Página {pagina} de {ultimaPagina} · {total} conta{total === 1 ? "" : "s"}
+              </span>
+              {pagina < ultimaPagina ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={linkPara({ pagina: pagina + 1 })}>Próxima</Link>
+                </Button>
+              ) : (
+                <span />
+              )}
+            </div>
+          )}
         </>
       )}
     </div>

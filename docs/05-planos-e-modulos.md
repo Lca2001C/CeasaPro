@@ -35,7 +35,7 @@ Ao logar (ou renovar a sessão), o sistema lê o plano da empresa e coloca a lis
 A regra de ouro: **o bloqueio é decidido no servidor**. Esconder do menu é apenas conforto visual.
 
 1. **Navegação** (menu inferior e lateral): itens de módulos não incluídos ficam ocultos. Isso é só UX.
-2. **Middleware** (`src/middleware.ts`): ao acessar a rota de um módulo desabilitado, páginas são redirecionadas para `/plano?bloqueado=<modulo>` e APIs recebem **403**.
+2. **Proxy** (`src/proxy.ts` — o antigo `middleware.ts` do Next 15): ao acessar a rota de um módulo desabilitado, páginas são redirecionadas para `/plano?bloqueado=<modulo>` e APIs recebem **403**.
 3. **Servidor** (defense in depth): os wrappers `withTenantAction`/`withTenantRoute` aceitam a opção `module`; se o módulo não estiver no plano, lançam **ForbiddenError**. Aplicado nas ações de caixas, higienização e embalagens, e no export de relatórios avançados (gate por tipo de relatório).
 
 Assim, mesmo que alguém digite a URL direto ou chame a API sem passar pelo menu, o acesso é recusado.
@@ -54,7 +54,9 @@ Mostra ao dono:
 A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de módulo) → `PlanoService.changePlan`, que aplica as regras **no servidor** (o cliente só envia o `planId` alvo):
 - só planos **existentes e ativos**; nunca o plano atual; **nunca** o plano interno do ambiente do super-admin (`ADMIN_PLAN_SLUG`) — recusado pelo slug, não por `active`, porque ativá-lo é um clique e ele custa R$ 0 por 50 anos;
 - o **valor mensal vem sempre do plano** (nunca do cliente);
-- **não** altera status, vencimento nem `statusSource` (respeita eventual bloqueio manual do super-admin e o período já pago).
+- **não** altera status, vencimento nem `statusSource` (respeita eventual bloqueio manual do super-admin e o período já pago);
+- **assinatura cancelada:** recusada enquanto o período pago ainda corre (o mês foi comprado num plano e não vai renovar; o caminho é desfazer o cancelamento antes). Com o período **já encerrado** a troca é aceita e vale na hora — é o cliente voltando pela `/assinatura` com outro plano, e o pagamento limpa `cancelledAt`;
+- toda troca (na hora, agendada ou desfeita) **baixa as cobranças PENDENTES cujo valor deixou de ser o devido**, no banco e no Mercado Pago (ver "Uma cobrança viva por mês").
 
 **Quando a troca vale.** Depende de a competência corrente já estar paga:
 
@@ -66,6 +68,8 @@ A troca é feita pela action `trocarPlano` (`withTenantAction`, sem gate de mód
 O agendamento existe porque a mensalidade compra o **mês**, e é o plano que decide quais módulos valem nesse mês. Com a troca valendo sempre na hora, quem pagasse o básico no dia 1º e subisse para o completo no dia 2 usava o mês todo pelo preço do básico — e repetindo a manobra nunca chegava a pagar o plano que usa. O downgrade é adiado pela razão simétrica: tirar na hora módulos recém-pagos seria receber o mês e entregar meio.
 
 A troca agendada passa a valer em `PlanoService.aplicarTrocaProgramada`, chamada de onde ela tem consequência e não pode esperar o cron da tarde: `buildAccessPayload` (o claim `modules` do token), `prepareCharge` (o valor que vai ao Mercado Pago), `getPlanoView` (a tela) e `recomputeStatuses` (o cron diário). Escolher de novo o plano vigente **desfaz** o agendamento, e há também a action `cancelarTrocaDePlano`.
+
+**Plano agendado que saiu de oferta.** O painel recusa desativar plano com troca agendada, mas existe dado gravado antes dessa trava. Para ele: `valorDevido` **ignora** o plano agendado inativo (cobra o plano vigente) e `aplicarTrocaProgramada` **descarta** o agendamento assim que o encontra — não só na data —, com registro na auditoria. As duas pontas concordam: a empresa segue no plano que vinha usando e paga o preço dele.
 
 Quando a troca vale na hora, o acesso aos módulos acompanha: a tela chama `/api/auth/refresh` após a troca, o claim `modules` é reemitido e a navegação/gating se ajustam sem esperar o TTL. O **novo valor é cobrado na próxima renovação** (não há cobrança proporcional nesta versão). Só empresas com acesso liberado (não bloqueadas) chegam a `/plano`, então a troca pressupõe assinatura ativa.
 
@@ -80,7 +84,7 @@ Empresa recém-criada nasce `SUSPENSO`, e o proxy só a deixa abrir `/assinatura
 
 Duas guardas do servidor sustentam isso:
 - a checagem de "mensalidade do mês já paga" roda **antes** da troca de plano, senão um pagamento recusado por esse motivo deixaria o cliente com o plano novo e sem cobrança;
-- um QR PIX em aberto só é reaproveitado se o valor **ainda for o mesmo**; depois de uma troca de plano ele é cancelado e um novo é gerado, para ninguém pagar 29,90 e receber o plano de 99,90.
+- um QR PIX em aberto só é reaproveitado se o valor **ainda for o mesmo**; depois de uma troca de plano ele é cancelado (no banco **e no Mercado Pago**) e um novo é gerado, para ninguém pagar 29,90 e receber o plano de 99,90. Se a idempotência do Mercado Pago devolver um QR já cancelado lá (o cliente voltou ao plano de antes), outro é pedido com chave nova.
 
 ## Assinatura e cobrança (Mercado Pago)
 
@@ -97,9 +101,12 @@ Duas guardas do servidor sustentam isso:
   - **3DS em crédito e débito:** `three_d_secure_mode: "optional"` vai nos dois. Emissor brasileiro exige autenticação em compra sem cartão presente; sem o campo, o Mercado Pago não tem como negociá-la e o cartão **real** volta recusado, sem o portador ter chance de autenticar (cartão de teste passava, o que escondia o problema).
   - **Cartão de crédito e de débito (Payment Brick):** formulário do MP embutido; o cartão é **tokenizado no browser** (o servidor recebe só o token — PCI-safe) e cobrado **à vista (1x)**. A rota é `POST /api/billing/checkout/card` e a Idempotency-Key é derivada da cobrança + token, então retentar o mesmo cartão não duplica o débito. Requer `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` (sem ela a tela cai no fallback PIX-only).
   - **Débito com 3DS:** o débito exige o **CPF do titular** e envia `three_d_secure_mode: optional`. Quando o emissor pede autenticação, a cobrança fica `PENDENTE` com o desafio (`threeDsUrl`) renderizado num iframe; quem aprova de fato é o webhook.
-  - **Uma cobrança viva por mês:** pagar por cartão cancela um PIX pendente do mês; e se a mensalidade do mês já está paga, novas cobranças são recusadas.
+  - **Uma cobrança viva por mês:** pagar por cartão cancela um PIX pendente do mês (só se o cartão **não** foi recusado — recusado, o PIX continua valendo); e se a mensalidade da competência já está paga, novas cobranças são recusadas (`MENSALIDADE_JA_PAGA`, com a exceção da renovação adiantada descrita no lembrete de vencimento).
+  - **Cancelar é nos dois lados.** Toda cobrança pendente que deixa de ser a certa — QR substituído, troca de plano, cartão no lugar do PIX, assinatura cancelada, outra cobrança da competência aprovada — vira `CANCELADO` no banco (dentro da transação da decisão) e, depois do commit, é cancelada no Mercado Pago (`cancelPayment`, `PUT /v1/payments/{id}` com `status: cancelled`; [`cobrancas-pendentes.ts`](../src/lib/payments/cobrancas-pendentes.ts)). O cancelamento no gateway é de **melhor esforço**: falhou, fica no log como aviso e a reconciliação diária tenta de novo. Antes só o banco era atualizado, e o QR velho seguia pagável por 48 h no app do banco do cliente.
+  - **Aprovado que não credita não some.** Um pagamento que o Mercado Pago aprova e que não compra mês — **valor menor** que a mensalidade devida (o QR antigo pago depois da troca de plano) ou **segunda aprovação** da mesma competência — fica marcado (`uncreditedAt`/`uncreditedReason` = `VALOR_MENOR`/`DUPLICADO`), sai da tela como cobrança em aberto e gera **uma** notificação `PAGAMENTO_NAO_CREDITADO` para o super-admin, com empresa, pagamento, competência e valores. O mês **não** é creditado duas vezes: a regra de `approvedKey` continua valendo. Crédito ou devolução é decisão humana.
   - Todos confirmam por **webhook** (HMAC + anti-replay, idempotente por `mpPaymentId`); ao aprovar, a assinatura vira **ATIVO**, o vencimento avança 1 mês e a **tela detecta sozinha** (polling em `/api/billing/status`) — renova a sessão e libera o acesso sem recarregar. O webhook responde `200` na hora e processa depois da resposta, para o Mercado Pago não reenviar por timeout.
-- **Estorno e chargeback:** se um pagamento já aprovado é revertido (`refunded`, `cancelled`), a assinatura volta para `SUSPENSO`; em `charged_back` (contestação junto ao emissor) vai para `BLOQUEADO`, que exige análise do super-admin. Nos dois casos o `currentPeriodEnd` é revertido, `statusSource` vira `MANUAL` (para a tolerância não devolver o acesso) e **as sessões ativas da empresa são revogadas**, com registro `ACCESS_REVOKED` na auditoria. Um novo pagamento aprovado devolve `statusSource` para `AUTO`.
+- **Estorno e chargeback:** se um pagamento já aprovado é revertido (`refunded`, `cancelled`), a assinatura volta para `SUSPENSO`; em `charged_back` (contestação junto ao emissor) vai para `BLOQUEADO`. Nos dois casos o `currentPeriodEnd` é revertido (só a duração do período estornado), `statusSource` vira `MANUAL` (para a tolerância e o cron não devolverem o acesso) e **as sessões ativas da empresa são revogadas**, com registro `ACCESS_REVOKED` na auditoria — salvo se sobrar outro pagamento aprovado da mesma competência, caso em que o acesso fica.
+- **Um pagamento novo desfaz o bloqueio — e avisa.** A tela `/assinatura` abre mesmo bloqueada, e um pagamento aprovado devolve a assinatura a `ATIVO` com `statusSource: AUTO`, **inclusive** a que estava `BLOQUEADO` por chargeback (ou por decisão manual do super-admin na assinatura). O comportamento é deliberado: quem pagou volta a usar, sem esperar um humano. Mas o bloqueio era uma decisão humana, então esse caso grava `STATUS_CHANGE` na auditoria (com o motivo do bloqueio antigo) e cria a notificação `BLOQUEIO_DESFEITO_POR_PAGAMENTO` para o super-admin. Se o bloqueio precisa continuar, o caminho é **bloquear a empresa** no painel (`Tenant.status`), que pagamento nenhum desfaz. Reativar um `SUSPENSO` por estorno não gera aviso — é o caminho normal.
 - **Status da assinatura** (calculado em [`src/lib/billing/status.ts`](../src/lib/billing/status.ts)):
   - `ATIVO` — em dia;
   - `VENCIDO` — passou do vencimento, mas dentro da tolerância (`graceDays`): acesso liberado com **aviso**;
@@ -108,7 +115,10 @@ Duas guardas do servidor sustentam isso:
   - `CANCELADO` — assinatura encerrada.
   - `statusSource = MANUAL` faz o status definido pelo super-admin prevalecer sobre o cálculo automático.
 - **Bloqueio imediato:** o super-admin pode suspender/bloquear a empresa (`Tenant.status`), o que **revoga as sessões ativas** na hora.
-- **Cron diário** (`/api/cron/billing`, protegido por `CRON_SECRET`): reconcilia as cobranças do mês atual e do anterior direto no Mercado Pago e depois recalcula o status de todas as assinaturas (ex.: ATIVO → VENCIDO → SUSPENSO conforme as datas). A reconciliação cobre os dois sentidos: cobrança `PENDENTE` cujo webhook de aprovação se perdeu (a empresa pagou e não recebeu acesso) e cobrança `APROVADO` cujo webhook de **estorno** se perdeu (a empresa segue usando depois da reversão). Sair de `APROVADO` só é aceito com status de reversão explícito (`refunded`, `charged_back`, `cancelled`) — qualquer outra leitura da API é registrada e ignorada, para uma resposta estranha não derrubar o acesso de quem pagou.
+- **Vencimento (`addOneMonth`):** cada aprovação soma um mês **no calendário de Brasília** (`America/Sao_Paulo`, via `tz.ts`), mantendo a hora do dia e limitando ao último dia do mês de destino (31/01 → 28/02, 31/08 → 30/09). A conta era em UTC, e um pagamento às 22 h de 30/08 (já 31/08 em UTC) vencia em 29/09 às 22 h — um dia a menos.
+- **Cron diário** (`/api/cron/billing`, protegido por `CRON_SECRET`): reconcilia as cobranças direto no Mercado Pago e depois recalcula o status de todas as assinaturas (ex.: ATIVO → VENCIDO → SUSPENSO conforme as datas). A reconciliação cobre: cobrança `PENDENTE` cujo webhook de aprovação se perdeu (a empresa pagou e não recebeu acesso); cobrança `CANCELADO` recente (validade do QR + 3 dias) que o cliente pagou mesmo assim — creditada se cobre o devido, senão vira `PAGAMENTO_NAO_CREDITADO`; se o gateway ainda a mostra em aberto, o cancelamento é tentado de novo, e ela **nunca** é reaberta; e cobrança `APROVADO` cujo webhook de **estorno** se perdeu. A janela é mês anterior, corrente e **seguinte** (renovação adiantada). Sair de `APROVADO` só é aceito com status de reversão explícito (`refunded`, `charged_back`, `cancelled`) — qualquer outra leitura da API é registrada e ignorada.
+  - **Orçamento de tempo.** A rota tem 60 s (Hobby) para tudo. A reconciliação recebe uma fatia (`ORCAMENTO_RECONCILIACAO_MS`, 20 s), conferida antes de cada consulta; cada consulta tem prazo de 8 s; até **6 consultas simultâneas**, e nunca duas da mesma empresa ao mesmo tempo. Uma falha na reconciliação não derruba o resto: recálculo de status, lembretes, despesas recorrentes, limpezas e boletins rodam do mesmo jeito. O retorno informa `verificados`, `naoVerificados` e `esgotouTempo`.
+  - **Rotação.** `SubscriptionPayment.lastReconciledAt` é marcado a cada consulta (mesmo na falha). Cada lote lê primeiro as nunca conferidas, das mais recentes para as mais antigas, e depois as conferidas há mais tempo — o que o prazo cortou hoje vai primeiro amanhã, e a aprovação de ontem está sempre entre as primeiras.
 
 ### Recorrência: o que existe e o que não existe
 
@@ -126,6 +136,13 @@ Quem recebe: assinatura `ATIVO`, com `activatedAt` (já pagou pelo menos uma vez
 **Um aviso por período.** A marca é o próprio registro de auditoria `SUBSCRIPTION_DUE_REMINDER`, procurado dentro da janela deste vencimento: sem ela o cron mandaria o mesmo e-mail três dias seguidos. Quando o cliente paga, `currentPeriodEnd` avança e o período seguinte volta a ser elegível. A marca só é gravada **depois** de o envio dar certo — falha transitória do SMTP deixa o cron de amanhã tentar de novo, em vez de silenciar o aviso para sempre.
 
 O lembrete roda **depois** do recálculo de status, senão quem acabou de ser reativado por um pagamento reconciliado receberia "vence em 3 dias" no mesmo minuto. Uma falha no envio não derruba o cron: a cobrança não depende do e-mail.
+
+**O lembrete é atendível: renovação adiantada.** A guarda de "mensalidade já paga" olhava o mês do calendário, e o período pago não acompanha o calendário: quem pagou em 01/09 vence em 01/10, recebe em 28/09 "vence em 3 dias" e, pelo botão do e-mail, dava com "a mensalidade deste mês já está paga". Agora (`competenciaACobrar` em `billing.service.ts`):
+
+- com a competência do calendário paga **e** o vencimento dentro da mesma janela do lembrete (`DUE_REMINDER_DAYS`, por dia de calendário — ou já vencido), a cobrança é da **competência do período que está sendo comprado**: `refMonthTz(currentPeriodEnd)`, ou o mês seguinte ao corrente quando esse rótulo coincide com ele (período que vence no fim do próprio mês);
+- fora da janela, mês pago continua sendo mês pago (`MENSALIDADE_JA_PAGA`);
+- `getStatus` usa a mesma competência, então a tela `/assinatura` oferece o pagamento e o polling reconhece a aprovação;
+- o mês novo começa no vencimento antigo (adiantar não encurta nem alonga), o valor segue `valorDevido` (com troca agendada para o vencimento, é o preço do plano novo), e `approvedKey` continua garantindo um crédito por competência — pagar adiantado duas vezes vira `DUPLICADO`. O estorno do mês adiantado desconta só a duração dele.
 
 ## Limites
 

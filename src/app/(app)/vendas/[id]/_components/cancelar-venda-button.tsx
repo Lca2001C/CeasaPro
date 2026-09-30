@@ -8,6 +8,7 @@ import { cancelarVenda } from "@/actions/vendas.actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
   DialogClose,
@@ -43,7 +44,7 @@ export function CancelarVendaButton({
 
   function confirmar() {
     start(async () => {
-      const res = await cancelarVenda({ id, motivo: motivo.trim() || null });
+      const res = await chamarAction(() => cancelarVenda({ id, motivo: motivo.trim() || null }));
       if (!res.ok) {
         toast.error(res.error.message);
         return;

@@ -13,10 +13,11 @@ import type {
   FiadoStatusFiltro,
 } from "@/lib/validations/fiado";
 import type { TenantCtx } from "@/lib/http/with-action";
-import { parseFormDateTz } from "@/lib/tz";
+import { parseFormDateTz, startOfDayTz } from "@/lib/tz";
 
 const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
+  payments: { select: { method: true, amount: true } },
 } as const;
 
 /**
@@ -43,22 +44,52 @@ const SALE_RESUMO = {
   },
 } as const;
 
+/**
+ * Quantas contas cada página das abas "Pagas" e "Todas" mostra.
+ *
+ * Essas duas abas crescem para sempre — toda venda a prazo quitada fica nelas —
+ * e eram carregadas inteiras, com os itens de cada venda, em ordem crescente:
+ * com um ano de balcão a tela trazia milhares de linhas e abria na MAIS ANTIGA.
+ * "Em aberto" continua sem página: é a lista de cobrança, e dívida em aberto
+ * não pode ficar escondida na página 2.
+ */
+export const FIADO_POR_PAGINA = 50;
+
 export const FiadoService = {
   /**
    * Contas com saldo calculado + total geral a receber.
-   * O default (`EM_ABERTO`) mantém o comportamento original da listagem.
+   *
+   * `EM_ABERTO` (o padrão) mantém o comportamento original: todas as contas,
+   * da mais antiga para a mais nova. `PAGO` e `TODAS` são paginadas
+   * ({@link FIADO_POR_PAGINA}) e vêm da mais recente para a mais antiga.
+   *
+   * `totalGeral`, `totalCaixas` e `vencidas` são SEMPRE sobre todas as contas
+   * em aberto (respeitando só a busca), nunca sobre a página: são os cartões
+   * "Total a receber" e "Caixas com clientes", que falam da dívida na rua.
    */
-  async listOpen(tenantId: string, status: FiadoStatusFiltro = "EM_ABERTO", search?: string) {
+  async listOpen(
+    tenantId: string,
+    status: FiadoStatusFiltro = "EM_ABERTO",
+    search?: string,
+    opts: { pagina?: number; agora?: Date } = {},
+  ) {
     const db = getTenantPrisma(tenantId);
-    const [contas, caixasPorCliente] = await Promise.all([
+    const paginada = status !== "EM_ABERTO";
+    const pagina = paginada ? Math.max(1, Math.floor(opts.pagina ?? 1)) : 1;
+    const where = {
+      ...(status === "TODAS" ? {} : { status }),
+      ...(search ? { customerName: { contains: search, mode: "insensitive" as const } } : {}),
+    };
+    const [contas, total, caixasPorCliente] = await Promise.all([
       db.creditAccount.findMany({
-        where: {
-          ...(status === "TODAS" ? {} : { status }),
-          ...(search ? { customerName: { contains: search, mode: "insensitive" } } : {}),
-        },
+        where,
         include: { sale: SALE_RESUMO },
-        orderBy: { createdAt: "asc" },
+        orderBy: paginada
+          ? [{ createdAt: "desc" }, { id: "desc" }]
+          : [{ createdAt: "asc" }],
+        ...(paginada ? { take: FIADO_POR_PAGINA, skip: (pagina - 1) * FIADO_POR_PAGINA } : {}),
       }),
+      paginada ? db.creditAccount.count({ where }) : Promise.resolve(null),
       CaixasService.saldoPorCliente(tenantId),
     ]);
     const withSaldo = contas.map((c) => ({
@@ -77,8 +108,31 @@ export const FiadoService = {
         crateQty: it.crateQty,
       })),
     }));
-    const emAberto = withSaldo.filter((c) => c.status === "EM_ABERTO");
+    // Os cartões "Total a receber" e "Caixas com clientes" falam da dívida EM
+    // ABERTO, qualquer que seja a aba. Calculados sobre a lista já filtrada, a
+    // aba "Pagas" mostrava R$ 0,00 e 0 caixas para uma empresa com fiado na
+    // rua. Nas abas paginadas as contas abertas são lidas à parte (respeitando
+    // só a busca) — a página de "Todas" tem só um pedaço delas; em "Em aberto"
+    // a lista já é o conjunto inteiro.
+    const emAberto = paginada
+      ? (
+          await db.creditAccount.findMany({
+            where: {
+              status: "EM_ABERTO",
+              ...(search ? { customerName: { contains: search, mode: "insensitive" } } : {}),
+            },
+            select: { customerName: true, totalAmount: true, paidAmount: true, dueDate: true },
+          })
+        ).map((c) => ({
+          customerName: c.customerName,
+          dueDate: c.dueDate,
+          saldo: FinancialCalc.saldoFiado(c.totalAmount, c.paidAmount),
+        }))
+      : withSaldo.filter((c) => c.status === "EM_ABERTO");
     const totalGeral = add(...emAberto.map((c) => c.saldo));
+    // Vencida = vencimento antes de HOJE no fuso do app, ainda devendo.
+    const hoje = startOfDayTz(opts.agora ?? new Date());
+    const vencidas = emAberto.filter((c) => c.dueDate !== null && c.dueDate < hoje).length;
     // O saldo de caixas é por CLIENTE, não por conta. Cada venda fiada abre uma
     // conta nova (vendas.service.ts:607), então um cliente que compra a prazo
     // duas vezes tem duas contas em aberto — e somar linha a linha contava o
@@ -88,7 +142,17 @@ export const FiadoService = {
       (a, nome) => a + (caixasPorCliente.get(nome) ?? 0),
       0,
     );
-    return { contas: withSaldo, totalGeral, totalCaixas };
+    const totalContas = total ?? withSaldo.length;
+    return {
+      contas: withSaldo,
+      totalGeral,
+      totalCaixas,
+      vencidas,
+      /** Quantas contas o filtro tem ao todo (não só a página). */
+      total: totalContas,
+      pagina,
+      ultimaPagina: paginada ? Math.max(1, Math.ceil(totalContas / FIADO_POR_PAGINA)) : 1,
+    };
   },
 
   async get(tenantId: string, id: string) {
@@ -114,8 +178,20 @@ export const FiadoService = {
       crateQty: it.crateQty,
     }));
 
+    // A conta guarda só a PARTE fiada da venda. Numa venda de R$ 100 com R$ 60
+    // no PIX e R$ 40 no fiado, a tela mostrava os itens somando R$ 100 e, logo
+    // abaixo, "Total da compra R$ 40,00", sem nada dizendo que R$ 60 já tinham
+    // sido pagos no balcão. O detalhe precisa do total da venda e do que foi
+    // pago fora do fiado para fechar a conta na frente do dono.
+    const pagoNoBalcao = add(
+      ...(conta.sale?.payments ?? []).filter((p) => p.method !== "FIADO").map((p) => p.amount),
+    );
+
     return {
       ...conta,
+      totalDaVenda: conta.sale?.totalAmount ?? conta.totalAmount,
+      descontoDaVenda: conta.sale?.discountAmount ?? null,
+      pagoNoBalcao,
       saldo: FinancialCalc.saldoFiado(conta.totalAmount, conta.paidAmount),
       saleDate: conta.sale?.saleDate ?? conta.createdAt,
       paymentMethod: conta.sale?.paymentMethod ?? "FIADO",
@@ -128,11 +204,22 @@ export const FiadoService = {
   /**
    * Lançamento manual de venda fiada. Delega para VendasService.registrarVenda
    * para reaproveitar baixa de estoque, CMV, caixas plásticas e auditoria.
+   *
+   * Telefone e observação vão DENTRO da transação da venda: o telefone pelo
+   * próprio corpo da venda (que o grava na venda e na conta), a observação por
+   * `observacaoDoFiado`. Antes os dois entravam num `update` solto depois do
+   * commit, sem auditoria, e a venda ficava sem telefone no detalhe.
+   *
+   * A leitura da conta depois do commit não pode falhar: `gravarVenda` recusa
+   * fiado de R$ 0,00 antes de gravar, e é só com total zero que a conta não
+   * nascia. (Era esse o caso em que a tela respondia "conta não encontrada"
+   * com a venda e a baixa de estoque já gravadas.)
    */
   async create(input: FiadoManualInput, ctx: TenantCtx) {
     const sale = await VendasService.registrarVenda(
       {
         customerName: input.customerName,
+        customerPhone: input.customerPhone ?? null,
         paymentMethod: "FIADO",
         saleDate: input.saleDate,
         dueDate: input.dueDate ?? null,
@@ -140,21 +227,12 @@ export const FiadoService = {
         items: input.items,
       },
       ctx,
+      { observacaoDoFiado: input.notes ?? null },
     );
 
     const db = getTenantPrisma(ctx.tenantId);
     const conta = await db.creditAccount.findFirst({ where: { saleId: sale.id } });
     if (!conta) throw new NotFoundError("Conta de fiado não encontrada após a venda");
-
-    if (input.customerPhone || input.notes) {
-      return db.creditAccount.update({
-        where: { id: conta.id },
-        data: {
-          customerPhone: input.customerPhone ?? null,
-          notes: input.notes ?? null,
-        },
-      });
-    }
     return conta;
   },
 
@@ -218,6 +296,7 @@ export const FiadoService = {
         sale: {
           select: {
             id: true,
+            customerName: true,
             plasticCrateQty: true,
             items: true,
             payments: { select: { method: true } },
@@ -247,6 +326,8 @@ export const FiadoService = {
 
     const crateQty = conta.sale?.plasticCrateQty ?? 0;
     const agora = new Date();
+    // Decidido dentro da transação (depende do saldo do cliente sob lock).
+    let caixasEstornadas = 0;
 
     await db.$transaction(async (tx) => {
       // A checagem de pagamento acima roda FORA da transação: um pagamento que
@@ -275,9 +356,53 @@ export const FiadoService = {
         await tx.stockMovement.deleteMany({
           where: { tenantId: ctx.tenantId, sourceType: "SALE", sourceId: conta.sale.id },
         });
-        await tx.plasticCrateMovement.deleteMany({
-          where: { tenantId: ctx.tenantId, saleId: conta.sale.id },
-        });
+
+        // Caixas: apagar a SAIDA só desfaz a venda se as caixas AINDA estão
+        // com o cliente. O RETORNO é lançado por nome de cliente, sem vínculo
+        // com a venda — então, se ele já devolveu, apagar a SAIDA deixava o
+        // RETORNO sem contrapartida: `comClientes` ficava negativo e as
+        // devolvidas continuavam contadas como sujas (voltavam duas vezes).
+        //
+        // Decidido DENTRO da transação, depois do lock de caixas, pelo saldo
+        // DO CLIENTE — o mesmo critério de `VendasService.cancelarVenda`.
+        const cliente = conta.sale.customerName ?? conta.customerName;
+        if (crateQty > 0) {
+          const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
+          const doCliente = await CaixasService.saldoDoClienteInTx(tx, ctx.tenantId, cliente);
+          caixasEstornadas = Math.min(
+            crateQty,
+            Math.max(0, doCliente),
+            Math.max(0, saldo.comClientes),
+          );
+        }
+
+        if (caixasEstornadas === crateQty) {
+          // Tudo ainda está com o cliente (ou a venda não levou caixa): a
+          // reversão exata é apagar o movimento, como se a venda não tivesse
+          // existido — as caixas voltam para `limpas`.
+          await tx.plasticCrateMovement.deleteMany({
+            where: { tenantId: ctx.tenantId, saleId: conta.sale.id },
+          });
+        } else if (caixasEstornadas > 0) {
+          // Parte já voltou: a SAIDA fica (ela aconteceu, e o RETORNO lançado
+          // depende dela) e só o que o cliente ainda tem é estornado. O
+          // ESTORNO_SAIDA devolve essas caixas para `limpas`, como o
+          // cancelamento de venda faz.
+          await CaixasService.registrarInTx(
+            tx,
+            {
+              type: "ESTORNO_SAIDA",
+              quantity: caixasEstornadas,
+              customerName: cliente,
+              movementDate: agora.toISOString(),
+              saleId: conta.sale.id,
+              notes: "Estorno pela exclusão do fiado",
+            },
+            ctx,
+          );
+        }
+        // caixasEstornadas === 0 com caixas na venda: o cliente já devolveu
+        // todas. Nada a desfazer — a SAIDA e o RETORNO continuam se anulando.
 
         await tx.sale.update({
           where: { id: conta.sale.id },
@@ -300,7 +425,8 @@ export const FiadoService = {
           },
           newData: {
             itensDevolvidosAoEstoque: conta.sale?.items.length ?? 0,
-            caixasDevolvidas: crateQty,
+            caixasDevolvidas: caixasEstornadas,
+            caixasNaoEstornadas: crateQty - caixasEstornadas,
             vendaExcluida: Boolean(conta.sale),
           },
           ip: ctx.ip,
@@ -309,7 +435,13 @@ export const FiadoService = {
       );
     });
 
-    return { id: conta.id, customerName: conta.customerName };
+    return {
+      id: conta.id,
+      customerName: conta.customerName,
+      caixasEstornadas,
+      /** Caixas da venda que o cliente já tinha devolvido — não voltam de novo. */
+      caixasNaoEstornadas: crateQty - caixasEstornadas,
+    };
   },
 
   /** Cliente devolveu caixas plásticas — elas voltam sujas para o estoque. */

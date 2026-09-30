@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 /** Cliente devolveu caixas — voltam sujas para o estoque, prontas para higienizar. */
 export function DevolucaoCaixasForm({
   accountId,
@@ -29,7 +30,7 @@ export function DevolucaoCaixasForm({
     if (qty > maximo) return toast.error(`O cliente tem ${maximo} caixa(s) com ele.`);
 
     setSaving(true);
-    const res = await registrarDevolucaoCaixas({ accountId, quantity: qty, movementDate });
+    const res = await chamarAction(() => registrarDevolucaoCaixas({ accountId, quantity: qty, movementDate }));
     setSaving(false);
     if (res.ok) {
       toast.success("Devolução de caixas registrada.");

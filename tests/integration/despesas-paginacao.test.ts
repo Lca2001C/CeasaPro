@@ -141,10 +141,16 @@ describe("Ordem (a mesma que a tela produzia em JS)", () => {
     expect(primeiroSemData).toBeGreaterThan(ultimoComData);
   });
 
-  it("pagas: mais recente primeiro", async () => {
+  it("pagas: PAGAMENTO mais recente primeiro, sem data de pagamento no fim", async () => {
+    // Era por vencimento (`dueDate desc`, com NULLS FIRST no Postgres). O caso
+    // com datas de pagamento reais está em despesas-fluxo ("Aba Pagas").
     const p = await DespesasService.list(tenantId, { status: "PAGO", take: TOTAL });
-    const comData = p.filter((d) => d.dueDate !== null).map((d) => d.dueDate!.getTime());
+    const comData = p.filter((d) => d.paidDate !== null).map((d) => d.paidDate!.getTime());
     const ordenado = [...comData].sort((a, b) => b - a);
     expect(comData).toEqual(ordenado);
+    const primeiroSemData = p.findIndex((d) => d.paidDate === null);
+    if (primeiroSemData >= 0) {
+      expect(p.slice(primeiroSemData).every((d) => d.paidDate === null)).toBe(true);
+    }
   });
 });

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach } from "vitest";
 import { prisma } from "@/lib/db/prisma";
 import { buildReport } from "@/lib/reports/report.service";
 import { DashboardService } from "@/lib/services/dashboard.service";
-import { DespesasService } from "@/lib/services/despesas.service";
+import { DespesasService, refMes } from "@/lib/services/despesas.service";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { resolvePeriod } from "@/lib/dates";
@@ -120,20 +120,29 @@ describe("relatório de inadimplentes (regressão)", () => {
     expect(rel.rows).toHaveLength(0);
   });
 
-  it("respeita o período do cabeçalho", async () => {
-    // `p.from`/`p.to` eram ignorados: o cabeçalho dizia "Período: 01/09 a
-    // 30/09" e o conteúdo era o histórico inteiro.
+  it("é posição na data de corte (fim do período), não fluxo do período", async () => {
+    // `p.from`/`p.to` eram ignorados (histórico inteiro sob o cabeçalho do
+    // mês). A primeira correção passou a filtrar pela ABERTURA dentro do
+    // período — e escondeu os devedores antigos: a conta de 200 dias atrás não
+    // aparecia em preset nenhum. Agora o fim do período é o corte.
     await conta({ dueDate: addDaysTz(new Date(), -200), createdAt: addDaysTz(new Date(), -200) });
+    await conta({ dueDate: addDaysTz(new Date(), -15), createdAt: addDaysTz(new Date(), -20) });
     const p = periodoDoMes();
     const noMes = await buildReport("INADIMPLENTES", { tenantId, from: p.from, to: p.to });
-    expect(noMes.rows).toHaveLength(0);
+    expect(noMes.rows).toHaveLength(2);
 
-    const amplo = await buildReport("INADIMPLENTES", {
-      tenantId,
-      from: addDaysTz(new Date(), -365),
-      to: p.to,
+    // Corte há 100 dias: a conta aberta há 20 dias ainda não existia.
+    const antigo = resolvePeriod({
+      preset: "personalizado",
+      from: isoDateTz(addDaysTz(new Date(), -130)),
+      to: isoDateTz(addDaysTz(new Date(), -100)),
     });
-    expect(amplo.rows).toHaveLength(1);
+    const noCorte = await buildReport("INADIMPLENTES", {
+      tenantId,
+      from: antigo.from,
+      to: antigo.to,
+    });
+    expect(noCorte.rows).toHaveLength(1);
   });
 });
 
@@ -288,6 +297,33 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
   });
 });
 
+describe("despesa SEM vencimento no relatório por vencimento (regressão)", () => {
+  it("entra pela data de cadastro, como no painel", async () => {
+    const cat = await DespesasService.createCategory({ name: `Gasolina ${Date.now()}` }, ctx);
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Gasolina",
+        type: "VARIAVEL",
+        amount: 100,
+        status: "PAGO",
+        paidDate: new Date(),
+        dueDate: null,
+      },
+    });
+
+    const painel = await DashboardService.getSummary(tenantId);
+    const p = periodoDoMes();
+    const rel = await buildReport("DESPESAS", { tenantId, from: p.from, to: p.to });
+    // `dueDate: {gte, lte}` excluía NULL: a despesa reduzia o "Sobrou no mês"
+    // e não aparecia no relatório entregue ao contador.
+    expect(rel.rows.map((r) => r.description)).toContain("Gasolina");
+    expect(Number(String(rel.totals!.amount))).toBe(Number(painel.despesasVariaveisMes));
+    expect(rel.rows.find((r) => r.description === "Gasolina")!.data).toBeInstanceOf(Date);
+  });
+});
+
 describe("reduzir o envio de higienizacao NAO lava caixa (regressao)", () => {
   it("as caixas voltam para SUJAS, nao para limpas", async () => {
     await CaixasService.registrar(
@@ -391,5 +427,189 @@ describe("fluxo de caixa com pagamento parcelado ao higienizador", () => {
       0,
     );
     expect(total).toBe(10);
+  });
+});
+
+/**
+ * Higienização no lucro do mês (Início) e em "pagas no mês" (Despesas).
+ *
+ * As duas telas somavam o `paidAmount` ACUMULADO do lote pela data do ÚLTIMO
+ * pagamento. Lote de R$ 300 pago 100 no mês passado e 200 neste: o mês passado
+ * mostrava R$ 0 pago e este R$ 300 — o "Sobrou no mês" saía R$ 100 abaixo do
+ * real. Agora as duas somam os pagamentos (`crate_cleaning_payments`) por
+ * `paidAt`, a mesma fonte do fluxo de caixa.
+ */
+describe("higienização paga em parcelas de meses diferentes (regressão)", () => {
+  const inicioDoMes = () => startOfMonthTz(new Date());
+  // Dias do MÊS PASSADO, contados a partir do dia 1º deste mês.
+  const mesPassado = (diasAntes: number) => isoDateTz(addDaysTz(inicioDoMes(), -diasAntes));
+
+  async function lote300PagoEmDoisMeses() {
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 30, dirty: true, movementDate: mesPassado(25) },
+      ctx,
+    );
+    const lote = await HigienizacaoService.create(
+      {
+        cleanerName: `Parcelado-${Date.now()}`,
+        sentDate: mesPassado(20),
+        sentQty: 30,
+        unitPrice: 10,
+        notes: null,
+      },
+      ctx,
+    );
+    await HigienizacaoService.registrarPagamento(
+      { id: lote.id, amount: 100, paidDate: mesPassado(15) },
+      ctx,
+    );
+    await HigienizacaoService.registrarPagamento({ id: lote.id, amount: 200, paidDate: hoje }, ctx);
+    return lote;
+  }
+
+  it("Despesas: 'pagas' do mês passado = 100 e deste mês = 200", async () => {
+    await lote300PagoEmDoisMeses();
+    const agora = new Date();
+    const refAnterior = refMes(addDaysTz(inicioDoMes(), -1));
+
+    const atual = await DespesasService.resumoMes(tenantId, undefined, agora, ["higienizacao"]);
+    const anterior = await DespesasService.resumoMes(tenantId, refAnterior, agora, [
+      "higienizacao",
+    ]);
+    expect(Number(anterior.pagas)).toBe(100);
+    expect(Number(atual.pagas)).toBe(200);
+    expect(anterior.pagasCount).toBe(1);
+    expect(atual.pagasCount).toBe(1);
+    // Quitado: nada a pagar nem vencido.
+    expect(Number(atual.aPagar)).toBe(0);
+    expect(Number(atual.vencidas)).toBe(0);
+    // O envio foi no mês passado: é custo de lá, não deste.
+    expect(Number(anterior.variaveis)).toBe(300);
+    expect(Number(atual.variaveis)).toBe(0);
+    expect(Number(atual.variaveisMesAnterior)).toBe(300);
+  });
+
+  it("Início: o lucro do mês desconta só os 200 pagos neste mês", async () => {
+    await lote300PagoEmDoisMeses();
+    const sem = await DashboardService.getSummary(tenantId, []);
+    const com = await DashboardService.getSummary(tenantId, ["higienizacao"]);
+    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(200);
+    expect(Number(com.contasPagar)).toBe(Number(sem.contasPagar));
+  });
+
+  it("saldo em aberto: entra no 'a pagar', no vencido e no card do Início", async () => {
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 10, dirty: true, movementDate: mesPassado(10) },
+      ctx,
+    );
+    const lote = await HigienizacaoService.create(
+      {
+        cleanerName: `Aberto-${Date.now()}`,
+        sentDate: mesPassado(5),
+        sentQty: 10,
+        unitPrice: 8,
+        notes: null,
+      },
+      ctx,
+    );
+    await HigienizacaoService.registrarPagamento({ id: lote.id, amount: 30, paidDate: hoje }, ctx);
+
+    const resumo = await DespesasService.resumoMes(tenantId, undefined, new Date(), [
+      "higienizacao",
+    ]);
+    expect(Number(resumo.aPagar)).toBe(50);
+    expect(resumo.aPagarCount).toBe(1);
+    expect(Number(resumo.vencidas)).toBe(50);
+    expect(resumo.vencidasCount).toBe(1);
+    expect(Number(resumo.pagas)).toBe(30);
+
+    const sem = await DashboardService.getSummary(tenantId, []);
+    const com = await DashboardService.getSummary(tenantId, ["higienizacao"]);
+    expect(Number(com.contasPagar) - Number(sem.contasPagar)).toBe(50);
+    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(30);
+  });
+
+  it("lote excluído não conta em lugar nenhum", async () => {
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 5, dirty: true, movementDate: hoje },
+      ctx,
+    );
+    const lote = await HigienizacaoService.create(
+      { cleanerName: `Excluido-${Date.now()}`, sentDate: hoje, sentQty: 5, unitPrice: 4, notes: null },
+      ctx,
+    );
+    await HigienizacaoService.remove(lote.id, ctx);
+    const resumo = await DespesasService.resumoMes(tenantId, undefined, new Date(), [
+      "higienizacao",
+    ]);
+    expect(Number(resumo.aPagar)).toBe(0);
+    expect(Number(resumo.variaveis)).toBe(0);
+  });
+});
+
+/**
+ * "Este mês" no relatório de despesas × Início.
+ *
+ * O Início conta a despesa por vencimento até o FIM do mês ("Contas do mês",
+ * "Sobrou no mês"); o relatório com o preset "mes" ia só até hoje. No dia 8 os
+ * dois discordavam sobre o mesmo mês. A definição única é a do Início:
+ * `Period.toVencimento`.
+ */
+describe("relatório de despesas 'Este mês' fecha com o Início (regressão)", () => {
+  it("a conta que vence mais adiante neste mês entra no relatório por vencimento", async () => {
+    const cat = await DespesasService.createCategory({ name: `Fim ${Date.now()}` }, ctx);
+    const fimDoMes = new Date(startOfNextMonthTz(new Date()).getTime() - 1);
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Vence no fim do mês",
+        type: "FIXA",
+        amount: 400,
+        status: "PENDENTE",
+        dueDate: fimDoMes,
+      },
+    });
+    await prisma.expense.create({
+      data: {
+        tenantId,
+        categoryId: cat.id,
+        description: "Venceu hoje",
+        type: "VARIAVEL",
+        amount: 60,
+        status: "PENDENTE",
+        dueDate: new Date(),
+      },
+    });
+
+    const p = periodoDoMes();
+    const rel = await buildReport("DESPESAS", {
+      tenantId,
+      from: p.from,
+      to: p.to,
+      toVencimento: p.toVencimento,
+    });
+    const painel = await DashboardService.getSummary(tenantId);
+
+    expect(rel.rows.map((r) => r.description)).toEqual(
+      expect.arrayContaining(["Vence no fim do mês", "Venceu hoje"]),
+    );
+    expect(Number(String(rel.totals!.amount))).toBe(
+      Number(painel.despesasFixasMes) + Number(painel.despesasVariaveisMes),
+    );
+    // O cabeçalho diz a janela que foi somada.
+    expect(rel.period.to.getTime()).toBe(fimDoMes.getTime());
+  });
+
+  it("por PAGAMENTO continua 'até agora'", async () => {
+    const p = periodoDoMes();
+    const rel = await buildReport("DESPESAS", {
+      tenantId,
+      from: p.from,
+      to: p.to,
+      toVencimento: p.toVencimento,
+      dateField: "paidDate",
+    });
+    expect(rel.period.to.getTime()).toBe(p.to.getTime());
   });
 });

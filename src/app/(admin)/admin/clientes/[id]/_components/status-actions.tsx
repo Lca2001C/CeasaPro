@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { alterarStatusEmpresa } from "@/actions/admin.actions";
 import { Button } from "@/components/ui/button";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 export function StatusActions({
   tenantId,
@@ -18,7 +19,7 @@ export function StatusActions({
 
   function change(status: "ACTIVE" | "SUSPENDED" | "BLOCKED") {
     start(async () => {
-      const res = await alterarStatusEmpresa({ tenantId, status });
+      const res = await chamarAction(() => alterarStatusEmpresa({ tenantId, status }));
       if (res.ok) {
         toast.success("Status atualizado");
         router.refresh();

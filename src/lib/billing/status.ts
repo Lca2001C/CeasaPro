@@ -3,6 +3,7 @@ import type {
   TenantStatus,
   StatusSource,
 } from "@prisma/client";
+import { civilParts, zonedTimeToUtc } from "@/lib/tz";
 
 export type AccessDecision = "ok" | "warn" | "blocked";
 
@@ -28,20 +29,35 @@ export function trialDaysLeft(trialEndsAt: Date, now: Date = new Date()): number
 }
 
 /**
- * Avança exatamente um mês, em UTC, sem "vazar" para o mês seguinte.
+ * Avança exatamente um mês NO CALENDÁRIO BRASILEIRO, sem "vazar" para o mês
+ * seguinte.
+ *
  * `setMonth` nativo transformaria 31/08 em 01/10 (e 31/01 em 03/03), dando
- * dias de uso não pagos a cada renovação. Aqui o dia é limitado ao último dia do mês
- * de destino: 31/08 → 30/09, 31/01 → 28/02.
- * Usa UTC para o resultado não depender do fuso do servidor.
+ * dias de uso não pagos a cada renovação. Aqui o dia é limitado ao último dia
+ * do mês de destino: 31/08 → 30/09, 31/01 → 28/02 (29/02 em ano bissexto).
+ *
+ * A conta é feita sobre a data CIVIL em `America/Sao_Paulo` (`tz.ts`), e a hora
+ * do dia é preservada nesse fuso. Fazê-la em UTC errava a noite: 30/08 às 22h
+ * no Brasil já é 31/08 em UTC, o limite caía em 30/09 01:00 UTC — 29/09 às 22h
+ * aqui — e o cliente perdia um dia do mês pago. O resultado continua sem
+ * depender do fuso do servidor: o fuso usado é o do app, sempre.
  */
 export function addOneMonth(from: Date): Date {
-  const year = from.getUTCFullYear();
-  const month = from.getUTCMonth();
-  const day = from.getUTCDate();
-  const lastDayOfNextMonth = new Date(Date.UTC(year, month + 2, 0)).getUTCDate();
-  const next = new Date(from);
-  next.setUTCFullYear(year, month + 1, Math.min(day, lastDayOfNextMonth));
-  return next;
+  const c = civilParts(from);
+  const ano = c.month === 12 ? c.year + 1 : c.year;
+  const mes = c.month === 12 ? 1 : c.month + 1;
+  // Dia 0 do mês seguinte ao de destino = último dia do destino (`mes` é 1-12,
+  // e o `Date.UTC` o lê como índice 0-11, isto é, o mês DEPOIS dele).
+  const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  return zonedTimeToUtc(
+    ano,
+    mes,
+    Math.min(c.day, ultimoDia),
+    c.hour,
+    c.minute,
+    c.second,
+    from.getUTCMilliseconds(),
+  );
 }
 
 /**

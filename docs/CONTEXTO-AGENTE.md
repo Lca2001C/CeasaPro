@@ -38,7 +38,7 @@ Violar qualquer uma destas é regressão grave:
 5. **Operações que tocam 2+ tabelas** rodam em `prisma.$transaction`, com `audit()` **dentro** da transação.
 6. **PDV (`/vendas/nova`) é sagrado.** Não quebrar fluxo de venda no balcão (busca, carrinho, pagamento, fiado).
 7. **Gating de módulo e cobrança no servidor.** Esconder do menu é só UX. Proxy + `requireModule` / `accessDecision` são a barreira real.
-8. **Fuso `America/Sao_Paulo`** via `src/lib/tz.ts`. Nunca `setHours` / `toISOString().slice(0,10)` / `DATE_TRUNC` sem o fuso.
+8. **Fuso `America/Sao_Paulo`** via `src/lib/tz.ts`. Nunca `setHours` / `toISOString().slice(0,10)` / `DATE_TRUNC` sem o fuso. `parseFormDateTz` **lança** `ValidationError` para data que não existe (`2026-02-31`) — nunca cai em `new Date(v)`.
 9. **Páginas públicas com `export const dynamic = "force-dynamic"`.** CSP usa nonce por request; HTML estático sai sem nonce e o JS some.
 10. **Não há recorrência Mercado Pago.** Todo mês o cliente paga de novo em `/assinatura`.
 11. **Trial de 7 dias só começa na confirmação de e-mail.** `graceDays` **não** se aplica a quem nunca pagou. Trial vencido → `SUSPENSO`, nunca `VENCIDO`.
@@ -147,6 +147,11 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 - Valor cobrado **sempre do plano no banco**, nunca do que o cliente enviou.
 - Cron `GET /api/cron/billing` (`CRON_SECRET`): reconcilia MP + recalcula status + lembrete 3 dias antes do vencimento (só quem já pagou, um e-mail por período).
 - Não existe `preapproval`. Evolução em aberto.
+- **Reconciliação com orçamento:** 20 s, 6 chamadas ao MP ao mesmo tempo, fila rotativa por `SubscriptionPayment.lastReconciledAt`. As tarefas locais do cron rodam mesmo se ela falhar.
+- **QR substituído é cancelado no MP** (`cancelPayment`, best-effort, depois do commit) — não só no banco.
+- **Aprovado que não comprou mês** (valor a menor, duplicado): `uncreditedAt`/`uncreditedReason`, com aviso ao super-admin `PAGAMENTO_NAO_CREDITADO`. Nunca credita o mês duas vezes.
+- **Pagamento antecipado:** dentro de `DUE_REMINDER_DAYS` do vencimento, `competenciaACobrar` cobra a competência do PRÓXIMO período. Fora da janela, `MENSALIDADE_JA_PAGA`.
+- **Chargeback desfeito por pagamento:** o acesso volta sozinho e o admin é avisado (`BLOQUEIO_DESFEITO_POR_PAGAMENTO`). Para manter bloqueado, bloqueie a empresa (`Tenant.status`).
 
 ### Cancelar
 
@@ -201,6 +206,10 @@ Lista no formato da planilha do balcão (uma linha por entrega). Pagamento parci
 ### Estoque
 
 Posição derivada: `ENTRADA/AJUSTE − SAÍDA/QUEBRA/DOAÇÃO`. Ajuste manual `POST /api/estoque/ajuste`.
+
+Custo = **média ponderada móvel do estoque atual** (`sqlCustoEstoque`), repassada em ordem de **gravação** (`createdAt`), não de `movedAt`: a entrada pondera com o que sobrou, a saída sai pela média sem alterá-la, saldo ≤ 0 reinicia a média e vale zero. O `unitCost` gravado nas saídas é ignorado no cálculo. Só a quantidade: `EstoqueService.getQuantidades` (sem a conta de custo).
+
+Compra tem `idempotencyKey` (como a venda): o reenvio devolve a compra já gravada.
 
 ### Despesas
 
@@ -275,7 +284,8 @@ Cadastro público é o outro caminho de aquisição (trial). Empresas do admin *
 
 ## 11. PWA, SEO, legal
 
-- PWA: `src/app/manifest.ts`, `public/sw.js` (cache de assets), `pwa-register` em produção. Offline: `/offline` e `/consulta-offline` (snapshot no aparelho; limpar no logout).
+- PWA: `src/app/manifest.ts`, `public/sw.js` (cache de assets), `pwa-register` em produção. Offline: `/offline` e `/consulta-offline` (snapshot no aparelho; limpar no logout e ao abrir `/login`).
+- O SW é registrado como `/sw.js?v=<build>` (`CEASAPRO_SW_VERSION` em `next.config.ts`: `VERCEL_DEPLOYMENT_ID` → SHA → horário do build). Endereço novo = SW novo a cada deploy, e o `activate` apaga os caches `ceasapro-*` de outros builds. O snapshot tem `schemaVersion` (`src/lib/pwa/snapshot.ts`): mudou o formato, suba a versão.
 - Push: `PushSubscription` por usuário/endpoint; cron `/api/cron/avisos`.
 - SEO: `src/app/sitemap.ts` e `src/app/robots.ts` (públicos no proxy). Sitemap lista só `/`, `/cadastro`, `/login`, `/termos`, `/privacidade`. Search Console: enviar o caminho `sitemap.xml`. Verificação: `metadata.verification.google` em `src/app/layout.tsx`.
 - Legal: `/termos`, `/privacidade`. Aceite gravado no tenant (`termsVersion`). Versão em `src/lib/legal.ts`.
@@ -386,6 +396,7 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 | Dev local / convenções | [`07-instalacao-e-deploy.md`](07-instalacao-e-deploy.md), [`08-desenvolvimento.md`](08-desenvolvimento.md) |
 | Cotações: o que já mordeu | [`auditoria-2026-09-07.md`](auditoria-2026-09-07.md) |
 | Auditoria E2E + pendências | [`auditoria-2026-09-23.md`](auditoria-2026-09-23.md) |
+| Auditoria de bugs dos módulos (2ª rodada) | [`auditoria-2026-09-30.md`](auditoria-2026-09-30.md) |
 | Vercel + Neon | [`09-deploy-vercel.md`](09-deploy-vercel.md) |
 | PWA | [`10-pwa-evolucao.md`](10-pwa-evolucao.md) |
 | Next 16 (breaking) | `AGENTS.md` + `node_modules/next/dist/docs/` |

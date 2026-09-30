@@ -50,6 +50,14 @@ export function ReportToolbar({
 
   const exportar = (formato: "excel" | "pdf") => {
     const q = new URLSearchParams({ preset, format: formato });
+    // Período personalizado (vem da URL): sem repassar as datas, o arquivo
+    // saía com "Este mês" enquanto a tela mostrava outro período.
+    if (preset === "personalizado") {
+      const from = params.get("from");
+      const to = params.get("to");
+      if (from) q.set("from", from);
+      if (to) q.set("to", to);
+    }
     if (permiteEscolherData && campo !== "dueDate") q.set("campo", campo);
     if (mostrarOpcoesDeDespesa && agrupar) q.set("agrupar", agrupar);
     return `/api/reports/${kind}/export?${q.toString()}`;

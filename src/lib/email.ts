@@ -425,7 +425,7 @@ export function subscriptionDueSoonEmail(args: {
     timeZone: "America/Sao_Paulo",
   }).format(args.dueDate);
   const prazo =
-    args.daysAhead === 1 ? "amanhã" : `em ${args.daysAhead} dias`;
+    args.daysAhead <= 0 ? "hoje" : args.daysAhead === 1 ? "amanhã" : `em ${args.daysAhead} dias`;
   const tolerancia =
     args.graceDays > 0
       ? `Depois do vencimento ainda há ${args.graceDays} dia(s) de tolerância; passado esse prazo o acesso é bloqueado até a regularização.`

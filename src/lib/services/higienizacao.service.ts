@@ -106,13 +106,48 @@ export const HigienizacaoService = {
    */
   async list(tenantId: string, status?: CrateCleaningStatus) {
     const db = getTenantPrisma(tenantId);
-    const [todos, saldo] = await Promise.all([
-      db.crateCleaning.findMany({ orderBy: { sentDate: "desc" }, take: 500 }),
+    // Duas consultas, porque são duas perguntas.
+    //
+    // Os TOTAIS vêm de todos os lotes ainda não PAGO, sem `take`. Antes saíam
+    // dos 500 envios mais recentes, e um lote antigo pendente além do 500º
+    // sumia de "Caixas a receber" e "Total a pagar". Filtrar por `status` não
+    // perde nada: PAGO é terminal (caixas resolvidas E nada a pagar — ver
+    // `computeCleaningStatus`; editar, devolver, perder e pagar recusam lote
+    // PAGO), então lote PAGO contribui zero para os quatro números.
+    //
+    // A LISTA exibida continua limitada.
+    const [pendentesLotes, lista, saldo] = await Promise.all([
+      db.crateCleaning.findMany({
+        where: { status: { not: "PAGO" } },
+        select: {
+          id: true,
+          sentQty: true,
+          returnedQty: true,
+          totalAmount: true,
+          paidAmount: true,
+        },
+      }),
+      db.crateCleaning.findMany({
+        where: status ? { status } : {},
+        orderBy: { sentDate: "desc" },
+        take: 100,
+      }),
       CaixasService.getSaldo(tenantId),
     ]);
 
-    const perdas = await perdasPorLote(db, todos.map((c) => c.id));
-    const comDerivados = todos.map((c) => {
+    const ids = [...new Set([...pendentesLotes.map((c) => c.id), ...lista.map((c) => c.id)])];
+    const perdas = await perdasPorLote(db, ids);
+    const derivar = <
+      T extends {
+        id: string;
+        sentQty: number;
+        returnedQty: number;
+        totalAmount: Prisma.Decimal;
+        paidAmount: Prisma.Decimal;
+      },
+    >(
+      c: T,
+    ) => {
       const perdidas = perdas.get(c.id) ?? 0;
       return {
         ...c,
@@ -120,19 +155,19 @@ export const HigienizacaoService = {
         caixasAReceber: Math.max(0, c.sentQty - c.returnedQty - perdidas),
         valorAPagar: money(sub(c.totalAmount, c.paidAmount)),
       };
-    });
+    };
+    const emAberto = pendentesLotes.map(derivar);
 
     // Totais derivados (§8.8) — sempre globais.
-    const caixasAReceber = comDerivados.reduce((a, c) => a + c.caixasAReceber, 0);
-    const totalAPagar = money(add(...comDerivados.map((c) => c.valorAPagar)));
+    const caixasAReceber = emAberto.reduce((a, c) => a + c.caixasAReceber, 0);
+    const totalAPagar = money(add(...emAberto.map((c) => c.valorAPagar)));
 
     // Pendências do ciclo — cada uma tem uma ação diferente, então são
     // contadas separadamente em vez de um único "em aberto".
-    const aguardandoDevolucao = comDerivados.filter((c) => c.caixasAReceber > 0).length;
-    const aguardandoPagamento = comDerivados.filter((c) => gt(c.valorAPagar, 0)).length;
+    const aguardandoDevolucao = emAberto.filter((c) => c.caixasAReceber > 0).length;
+    const aguardandoPagamento = emAberto.filter((c) => gt(c.valorAPagar, 0)).length;
 
-    const registros = (status ? comDerivados.filter((c) => c.status === status) : comDerivados)
-      .slice(0, 100);
+    const registros = lista.map(derivar);
 
     return {
       registros,
@@ -219,6 +254,10 @@ export const HigienizacaoService = {
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
+      // Trava ANTES de ler o lote: uma devolução que comitasse entre a leitura
+      // de `before` (returnedQty 0) e a gravação final deixava sentQty=10 com
+      // returnedQty=50, e "Em higienização" negativo.
+      await CaixasService.travarInTx(tx, ctx.tenantId);
       const before = await tx.crateCleaning.findFirst({ where: { id: input.id } });
       if (!before) throw new NotFoundError("Registro não encontrado");
       if (before.returnedQty > 0 || !toDecimal(before.paidAmount).isZero()) {
@@ -280,6 +319,19 @@ export const HigienizacaoService = {
         //
         // Só é alcançável quando não houve devolução, pagamento nem perda — a
         // guarda no topo do método garante isso.
+        //
+        // Mas a guarda olha só o LOTE, e o pote "em higienização" é da empresa.
+        // Se as caixas já saíram dele por outro caminho (um movimento de
+        // higienizador lançado solto, de antes de `registrarInTx` exigir o
+        // vínculo), apagar a saída levava o pote a negativo e criava sujas
+        // fantasma, que o painel manda higienizar.
+        const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
+        if (saldo.emHigienizacao < -delta) {
+          throw new BusinessRuleError(
+            `Há ${saldo.emHigienizacao} caixa(s) no higienizador — não dá para tirar ` +
+              `${-delta} deste envio. Confira as caixas que já voltaram.`,
+          );
+        }
         let restante = -delta;
         const saidas = await tx.plasticCrateMovement.findMany({
           where: {
@@ -311,8 +363,10 @@ export const HigienizacaoService = {
         }
       }
 
-      const updated = await tx.crateCleaning.update({
-        where: { id: before.id },
+      // Compare-and-set no estado que liberou a edição (nada devolvido, nada
+      // pago). O lock acima já serializa; isto é a segunda linha de defesa.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: before.id, returnedQty: 0, paidAmount: before.paidAmount },
         data: {
           cleanerName: input.cleanerName,
           sentDate: parseFormDateTz(input.sentDate),
@@ -322,6 +376,12 @@ export const HigienizacaoService = {
           notes: input.notes ?? null,
         },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Este envio teve devolução ou pagamento agora mesmo — não pode mais ser alterado.",
+        );
+      }
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: before.id } });
 
       await audit(
         {
@@ -346,6 +406,10 @@ export const HigienizacaoService = {
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
+      // Trava antes de ler devolvidas E perdidas. O compare-and-set abaixo só
+      // enxerga `returnedQty`; uma perda simultânea (que não mexe nele) passava
+      // pelas duas guardas e o lote resolvia 6 caixas de 3 pendentes.
+      await CaixasService.travarInTx(tx, ctx.tenantId);
       const c = await tx.crateCleaning.findFirst({ where: { id: input.id } });
       if (!c) throw new NotFoundError("Registro não encontrado");
 
@@ -437,6 +501,13 @@ export const HigienizacaoService = {
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
+      // Trava ANTES de ler as pendências. O lock era tomado só dentro de
+      // `registrarInTx`, depois desta leitura: duas perdas de 3 (toque duplo,
+      // duas abas) no mesmo lote liam as duas "pendentes = 3" e passavam. A
+      // guarda global do ledger não pegava, porque outro lote do mesmo
+      // higienizador cobria a diferença — e esse outro lote depois não
+      // conseguia devolver as próprias caixas.
+      await CaixasService.travarInTx(tx, ctx.tenantId);
       const c = await tx.crateCleaning.findFirst({ where: { id: input.id } });
       if (!c) throw new NotFoundError("Registro não encontrado");
 
@@ -469,10 +540,18 @@ export const HigienizacaoService = {
         ...c,
         lostQty: perdidas + input.quantity,
       });
-      const updated = await tx.crateCleaning.update({
-        where: { id: c.id },
+      // Compare-and-set nas colunas que entram no status. O lock já serializa;
+      // isto recusa em vez de gravar um status calculado sobre dado velho.
+      const escrito = await tx.crateCleaning.updateMany({
+        where: { id: c.id, returnedQty: c.returnedQty, paidAmount: c.paidAmount },
         data: { status },
       });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Este envio mudou agora mesmo. Confira quantas caixas faltam e lance de novo.",
+        );
+      }
+      const updated = await tx.crateCleaning.findFirstOrThrow({ where: { id: c.id } });
 
       await audit(
         {
@@ -495,6 +574,10 @@ export const HigienizacaoService = {
   async registrarPagamento(input: HigienizacaoPagamentoInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction(async (tx) => {
+      // O status depende das perdas, que o CAS em `paidAmount` não enxerga:
+      // pagamento final + perda final simultâneos gravavam os dois um status
+      // calculado sobre a metade velha (ENVIADO/DEVOLVIDO em vez de PAGO).
+      await CaixasService.travarInTx(tx, ctx.tenantId);
       const c = await tx.crateCleaning.findFirst({ where: { id: input.id } });
       if (!c) throw new NotFoundError("Registro não encontrado");
       const saldo = sub(c.totalAmount, c.paidAmount);
@@ -576,6 +659,7 @@ export const HigienizacaoService = {
     const db = getTenantPrisma(ctx.tenantId);
 
     await db.$transaction(async (tx) => {
+      await CaixasService.travarInTx(tx, ctx.tenantId);
       const before = await tx.crateCleaning.findFirst({ where: { id } });
       if (!before) throw new NotFoundError("Registro não encontrado");
       if (!toDecimal(before.paidAmount).isZero()) {
@@ -591,6 +675,26 @@ export const HigienizacaoService = {
       if (perdidas > 0) {
         throw new BusinessRuleError(
           "Este envio já teve perda registrada e não pode ser excluído.",
+        );
+      }
+
+      // Apagar a saída devolve as caixas às sujas — só se elas ainda estão no
+      // pote "em higienização". Se já saíram dele por outro caminho, apagar
+      // deixava o pote negativo e somava sujas que não existem.
+      const saidas = await tx.plasticCrateMovement.findMany({
+        where: {
+          tenantId: ctx.tenantId,
+          crateCleaningId: before.id,
+          type: "SAIDA_HIGIENIZACAO",
+        },
+        select: { quantity: true },
+      });
+      const noHigienizador = saidas.reduce((a, m) => a + m.quantity, 0);
+      const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
+      if (saldo.emHigienizacao < noHigienizador) {
+        throw new BusinessRuleError(
+          `Há ${saldo.emHigienizacao} caixa(s) no higienizador, e este envio tirou ` +
+            `${noHigienizador}. Registre a devolução ou a perda no envio em vez de excluí-lo.`,
         );
       }
 

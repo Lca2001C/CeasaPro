@@ -3,6 +3,7 @@ import { DashboardService } from "@/lib/services/dashboard.service";
 import { AvisosService } from "@/lib/services/avisos.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { FiadoService } from "@/lib/services/fiado.service";
+import { PWA_SNAPSHOT_SCHEMA_VERSION, type PwaSnapshot } from "@/lib/pwa/snapshot";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -29,34 +30,12 @@ const LIMITE_FIADO = 100;
  * 3. **`cachedAt` é obrigatório.** Todo dado offline precisa carregar a hora em
  *    que foi buscado: número sem data faz o cliente decidir achando que está
  *    olhando o agora.
+ *
+ * 4. **`schemaVersion` vai junto.** O registro atravessa deploys no aparelho, e
+ *    quem o lê pode ser de outro build. O formato, a checagem e a regra de quando
+ *    subir a versão estão em `src/lib/pwa/snapshot.ts`.
  */
-export interface PwaSnapshot {
-  cachedAt: string;
-  empresa: { nome: string };
-  resumo: {
-    hojeVendi: number;
-    aReceber: number;
-    estoqueValor: number;
-    contasPagar: number;
-  };
-  /** `total` nulo = o aviso não é sobre dinheiro (ver `Aviso.total`). */
-  avisos: { tipo: string; label: string; count: number; total: number | null; href: string }[];
-  estoque: {
-    productId: string;
-    name: string;
-    saleUnit: string;
-    quantity: number;
-    value: number;
-  }[];
-  fiado: {
-    id: string;
-    cliente: string;
-    saldo: number;
-    dueDate: string | null;
-    caixasComCliente: number;
-  }[];
-  totais: { fiadoEmAberto: number; caixasComClientes: number };
-}
+export type { PwaSnapshot } from "@/lib/pwa/snapshot";
 
 export const GET = withTenantRoute({
   handler: async (_input, ctx): Promise<PwaSnapshot> => {
@@ -70,6 +49,7 @@ export const GET = withTenantRoute({
     ]);
 
     return {
+      schemaVersion: PWA_SNAPSHOT_SCHEMA_VERSION,
       cachedAt: new Date().toISOString(),
       empresa: { nome: ctx.session.name },
       resumo: {

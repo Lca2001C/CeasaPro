@@ -220,8 +220,18 @@ export function calcularTotaisVenda(venda: VendaParaTotal): TotaisDaVenda {
     somaBruto = somarExato(somaBruto, bruto);
     brutosCents.push(paraCentavosExato(bruto));
 
+    // Piso em zero: o desconto que zera o item nunca vira receita negativa.
+    //
+    // O limite do desconto da linha é o bruto ARREDONDADO (é o que a tela
+    // mostra e o que o PDV deixa digitar), mas a linha líquida é calculada
+    // sobre o bruto EXATO. Com 1,25 kg × R$ 3,50 = 4,375 (tela: R$ 4,38), um
+    // desconto de 4,38 dava −0,005, arredondado para −1 centavo: a venda era
+    // gravada com um `sale_item` de R$ −0,01, e sozinho no carrinho o total
+    // zerava e o servidor acusava "desconto maior que o total da venda" numa
+    // venda sem desconto nenhum.
     const liquida = subtrairExato(bruto, exato(item.discountAmount ?? 0));
-    lineTotalsCents.push(paraCentavosExato(liquida));
+    const liquidaCents = paraCentavosExato(liquida);
+    lineTotalsCents.push(liquidaCents < 0n ? 0n : liquidaCents);
   }
 
   // O desconto da venda incide sobre a soma das linhas JÁ arredondadas — é

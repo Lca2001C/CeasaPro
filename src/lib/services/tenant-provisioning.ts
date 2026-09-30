@@ -1,6 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { emailIdentity } from "@/lib/email-identity";
+import { normalizarCnpj } from "@/lib/cnpj";
+import { formatCNPJ } from "@/lib/format";
 import { createDefaultExpenseCategories } from "./expense-categories";
 import { createDefaultPackagingTypes } from "./embalagens.service";
 
@@ -76,8 +78,19 @@ export async function cnpjEmUso(
   exceto?: string,
 ): Promise<boolean> {
   if (!cnpj) return false;
+  // O schema passou a gravar só dígitos, mas linhas antigas guardam o texto
+  // como foi digitado — em geral com a máscara. Comparar as duas formas é o
+  // que impede o mesmo CNPJ de entrar de novo só por vir sem pontuação.
+  const digitos = normalizarCnpj(cnpj);
+  const formas = [
+    ...new Set([cnpj, digitos, ...(digitos.length === 14 ? [formatCNPJ(digitos)] : [])]),
+  ].filter(Boolean);
   const existing = await prisma.tenant.findFirst({
-    where: { cnpj, deletedAt: null, ...(exceto ? { id: { not: exceto } } : {}) },
+    where: {
+      cnpj: { in: formas },
+      deletedAt: null,
+      ...(exceto ? { id: { not: exceto } } : {}),
+    },
     select: { id: true },
   });
   return existing !== null;

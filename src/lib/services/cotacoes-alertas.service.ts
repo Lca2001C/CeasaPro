@@ -116,18 +116,34 @@ export const CotacoesAlertasService = {
       Vínculo sem embalagem escolhida (`unit` nulo) segue casando todas — é o
       significado de "qualquer embalagem", e é o que todo vínculo antigo herdou.
     */
-    const vinculoPorChave = new Map<string, { id: string; name: string }>();
-    const vinculoPorItem = new Map<string, { id: string; name: string }>();
+    /*
+      LISTAS de produtos por chave, e não um produto só.
+
+      Dois produtos da empresa podem apontar para o mesmo item do boletim
+      ("Tomate caixa" e "Tomate kg", ambos em "qualquer embalagem"). Com um Map
+      de um valor, o segundo `set` sobrescrevia o primeiro: o cartão do Início e
+      o "estoque parado com preço em queda" (que procura por `meuProdutoId`)
+      enxergavam um só, e o outro produto perdia o aviso calado.
+    */
+    const vinculoPorChave = new Map<string, { id: string; name: string }[]>();
+    const vinculoPorItem = new Map<string, { id: string; name: string }[]>();
+    const empilhar = (m: Map<string, { id: string; name: string }[]>, k: string, p: { id: string; name: string }) =>
+      m.set(k, [...(m.get(k) ?? []), p]);
     for (const v of vinculos) {
-      if (v.unit === null) vinculoPorItem.set(v.ceasaProductId, v.product);
-      else vinculoPorChave.set(`${v.ceasaProductId}|${v.unit}`, v.product);
+      if (v.unit === null) empilhar(vinculoPorItem, v.ceasaProductId, v.product);
+      else empilhar(vinculoPorChave, `${v.ceasaProductId}|${v.unit}`, v.product);
     }
     const porChave = new Map(alertas.map((a) => [`${a.ceasaProductId}|${a.unit}`, a]));
 
     const itens: ItemDeInteresse[] = cotacoes.linhas.flatMap((l) => {
       const chave = `${l.ceasaProductId}|${l.unit}`;
       const alerta = porChave.get(chave) ?? null;
-      const meuProduto = vinculoPorChave.get(chave) ?? vinculoPorItem.get(l.ceasaProductId) ?? null;
+      // Embalagem exata primeiro, depois "qualquer embalagem" — mesma ordem de
+      // preferência do LATERAL da tela de cotações.
+      const meusProdutos = [
+        ...(vinculoPorChave.get(chave) ?? []),
+        ...(vinculoPorItem.get(l.ceasaProductId) ?? []),
+      ];
 
       /*
         Linha que não é nem vínculo desta embalagem nem alerta sai fora.
@@ -136,27 +152,35 @@ export const CotacoesAlertasService = {
         todas as embalagens de um item que interessa numa delas. Sem este corte,
         a embalagem não escolhida voltaria pela porta de trás.
       */
-      if (!meuProduto && !alerta) return [];
+      if (meusProdutos.length === 0 && !alerta) return [];
 
-      return [
-        {
-          ceasaProductId: l.ceasaProductId,
-          nome: l.nome,
-          unit: l.unit,
-          refPrice: l.refPrice,
-          anterior: l.anterior,
-          variacao: variacaoPercentual(l.refPrice, l.anterior),
-          meuProdutoNome: meuProduto?.name ?? null,
-          meuProdutoId: meuProduto?.id ?? null,
-          alerta: alerta
-            ? {
-                variacaoMinima: alerta.variacaoMinima,
-                precoTeto: alerta.precoTeto,
-                precoPiso: alerta.precoPiso,
-              }
-            : null,
-        },
-      ];
+      const base = {
+        ceasaProductId: l.ceasaProductId,
+        nome: l.nome,
+        unit: l.unit,
+        refPrice: l.refPrice,
+        anterior: l.anterior,
+        variacao: variacaoPercentual(l.refPrice, l.anterior),
+      };
+      const alertaDaLinha = alerta
+        ? {
+            variacaoMinima: alerta.variacaoMinima,
+            precoTeto: alerta.precoTeto,
+            precoPiso: alerta.precoPiso,
+          }
+        : null;
+      const produtos: ({ id: string; name: string } | null)[] =
+        meusProdutos.length > 0 ? meusProdutos : [null];
+
+      // Um item por produto. O alerta vai só no PRIMEIRO: ele é da linha do
+      // boletim, não do produto, e repeti-lo faria o mesmo disparo sair duas
+      // vezes no resumo diário.
+      return produtos.map((p, i) => ({
+        ...base,
+        meuProdutoNome: p?.name ?? null,
+        meuProdutoId: p?.id ?? null,
+        alerta: i === 0 ? alertaDaLinha : null,
+      }));
     });
     // Todo interesse pode ter sumido do boletim mais recente (embalagem que a
     // praça não publicou hoje). Sem linha nenhuma não há cartão a mostrar.

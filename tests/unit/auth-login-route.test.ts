@@ -257,3 +257,31 @@ describe("entrada malformada", () => {
     expect(setAuthCookies).not.toHaveBeenCalled();
   });
 });
+
+describe("falha inesperada", () => {
+  it("banco fora vira o envelope padrão (500 INTERNAL), não um 500 cru", async () => {
+    /*
+      Sem o try/catch a rota lançava, e o Next devolvia um 500 sem corpo JSON —
+      o formulário de login não tinha o que mostrar. Com o envelope, a pessoa lê
+      uma mensagem e o suporte recebe a referência que casa com o log.
+    */
+    findFirst.mockRejectedValue(new Error("connection terminated unexpectedly"));
+
+    const r = await entrar();
+
+    expect(r.status).toBe(500);
+    const corpo = await r.json();
+    expect(corpo).toMatchObject({ ok: false, error: { code: "INTERNAL" } });
+    expect(corpo.error.message).toMatch(/ref: /);
+    // Nada do erro interno vai para o navegador.
+    expect(JSON.stringify(corpo)).not.toContain("connection terminated");
+    expect(setAuthCookies).not.toHaveBeenCalled();
+  });
+
+  it("rate limit sem conexão também sai no envelope", async () => {
+    rateLimitDb.mockRejectedValue(new Error("pool esgotado"));
+    const r = await entrar();
+    expect(r.status).toBe(500);
+    expect((await r.json()).error.code).toBe("INTERNAL");
+  });
+});

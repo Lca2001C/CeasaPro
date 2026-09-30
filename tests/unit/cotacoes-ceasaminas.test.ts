@@ -148,6 +148,37 @@ describe("fingerprint — a checagem que pega corrupção silenciosa", () => {
   });
 });
 
+describe("ceasaminas.parse — grade com produtos e nenhum preço legível", () => {
+  const ok = fixture("ceasaminas-ok");
+
+  /**
+   * O ScriptCase renomeia os campos de preço e a página continua com o marcador
+   * e as 215 linhas de produto. Devolver "vazio" aqui fazia o importador recuar
+   * a semana inteira e gravar VAZIO ("sem boletim"), sem aviso de falha e sem
+   * conferir o fingerprint — o dia vazio de verdade não tem campo nenhum.
+   */
+  it("campos de preço renomeados é FALHA de formato, não dia sem boletim", () => {
+    const renomeado = ok.replace(/id_sc_field_(pboprcmin|pboprccomum|pboprcmax)_/g, "id_sc_field_$11_");
+    const r = ceasaminas.parse(renomeado);
+    expect(r.ok).toBe(false);
+    expect(r.vazio).toBeFalsy();
+    expect(r.erro).toMatch(/formato mudou/);
+    expect(r.erro).toMatch(/215/);
+  });
+
+  it("campo do nome do produto renomeado também é falha", () => {
+    const r = ceasaminas.parse(ok.replace(/id_sc_field_prdnom_/g, "id_sc_field_prdnome_"));
+    expect(r.ok).toBe(false);
+    expect(r.erro).toMatch(/prdnom/);
+  });
+
+  it("o dia vazio de verdade continua VAZIO", () => {
+    const r = ceasaminas.parse(fixture("ceasaminas-vazio"));
+    expect(r.ok).toBe(true);
+    expect(r.vazio).toBe(true);
+  });
+});
+
 describe("a fonte sobrevive a ser desestruturada", () => {
   /**
    * `buscar` chamava `this.parse(...)`. Bastava alguém escrever

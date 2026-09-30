@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
 
+import { chamarAction } from "@/lib/http/chamar-action";
 export interface HigienizacaoFormInitial {
   id: string;
   cleanerName: string;
@@ -64,8 +65,8 @@ export function HigienizacaoForm({
 
     setSaving(true);
     const res = initial
-      ? await atualizarHigienizacao({ ...values, id: initial.id })
-      : await criarHigienizacao(values);
+      ? await chamarAction(() => atualizarHigienizacao({ ...values, id: initial.id }))
+      : await chamarAction(() => criarHigienizacao(values));
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Envio atualizado." : "Envio registrado.");

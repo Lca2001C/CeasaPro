@@ -159,13 +159,16 @@ describe("Segunda aprovação na mesma competência", () => {
       aposPrimeiro.currentPeriodEnd.toISOString(),
     );
 
-    // A segunda linha fica como estava: o dinheiro entrou no Mercado Pago e o
-    // registro tem de continuar auditável para quem for devolver.
+    // A segunda linha NÃO vira aprovada: o dinheiro entrou no Mercado Pago e o
+    // registro tem de continuar auditável para quem for devolver. Ela já tinha
+    // sido baixada (CANCELADO) quando a primeira aprovou a competência, e fica
+    // marcada como "aprovada e não creditada", que é o que avisa o super-admin.
     const linha = await prisma.subscriptionPayment.findUniqueOrThrow({
       where: { mpPaymentId: segundo },
     });
-    expect(linha.status).toBe("PENDENTE");
+    expect(linha.status).toBe("CANCELADO");
     expect(linha.approvedKey).toBeNull();
+    expect(linha.uncreditedReason).toBe("DUPLICADO");
   });
 
   it("a cobrança aprovada carrega a chave da competência", async () => {

@@ -6,6 +6,7 @@ import { Loader2, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { excluirFiado } from "@/actions/fiado.actions";
 import { Button } from "@/components/ui/button";
+import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
   DialogContent,
@@ -45,12 +46,18 @@ export function ExcluirFiado({
 
   function excluir() {
     start(async () => {
-      const res = await excluirFiado(accountId);
+      const res = await chamarAction(() => excluirFiado(accountId));
       if (!res.ok) {
         toast.error(res.error.message);
         return;
       }
       toast.success("Lançamento excluído e venda desfeita.");
+      if (res.data.caixasNaoEstornadas > 0) {
+        toast.info(
+          `${res.data.caixasNaoEstornadas} caixa(s) desta venda o cliente já havia devolvido — ` +
+            "elas não voltaram ao estoque de novo.",
+        );
+      }
       router.replace("/fiado");
       router.refresh();
     });
@@ -83,7 +90,8 @@ export function ExcluirFiado({
                   )}
                   {caixasDaVenda > 0 && (
                     <li>
-                      {caixasDaVenda} caixa(s) plástica(s) <b>retornam</b> como limpas;
+                      {caixasDaVenda} caixa(s) plástica(s) <b>retornam</b> como limpas
+                      (as que o cliente ainda não devolveu);
                     </li>
                   )}
                   <li>fica registrado na auditoria.</li>
