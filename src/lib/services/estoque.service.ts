@@ -291,14 +291,35 @@ export const EstoqueService = {
    * 100 unidades a R$ 10,00 excluído sumia da tela de Estoque e continuava
    * valendo R$ 1.000 no cartão do painel e no snapshot do PWA — na mesma sessão.
    *
-   * Pelo mesmo motivo é a SOMA das linhas de `getPositions`, e não uma conta
-   * própria: `Σ(qtde com sinal × unitCost)` do livro-razão deixava valor
+   * Pelo mesmo motivo é a soma das MESMAS linhas de `getPositions` (mesma
+   * {@link sqlCustoEstoque}, mesma junção, mesmo `valorDaLinha`), e não uma
+   * conta própria: `Σ(qtde com sinal × unitCost)` do livro-razão deixava valor
    * residual em produto de saldo zero (R$ 3.500 no exemplo de
-   * {@link sqlCustoEstoque}), que a tela escondia e o painel mostrava.
+   * {@link sqlCustoEstoque}), que a tela escondia e o painel mostrava. Só não
+   * busca nome, unidade nem data: o painel quer o total.
    */
   async getTotalValue(tenantId: string): Promise<Prisma.Decimal> {
-    const posicoes = await EstoqueService.getPositions(tenantId);
-    return money(add(...posicoes.map((p) => p.value)));
+    const rows = await prisma.$queryRawUnsafe<
+      { quantity: Prisma.Decimal | string; custo: Prisma.Decimal | string }[]
+    >(
+      `${sqlCustoEstoque(false)}
+       SELECT COALESCE(r.quantidade, 0) AS quantity,
+              COALESCE(r.custo, 0) AS custo
+       FROM products p
+       LEFT JOIN resultado r ON r."productId" = p.id
+       WHERE p."tenantId" = $1 AND p."deletedAt" IS NULL`,
+      tenantId,
+    );
+    return money(
+      add(
+        ...rows.map((r) =>
+          valorDaLinha(
+            toDecimal(r.quantity as Prisma.Decimal.Value),
+            toDecimal(r.custo as Prisma.Decimal.Value),
+          ),
+        ),
+      ),
+    );
   },
 
   /** Ajuste manual de estoque: quebra/perda, doação ou acerto. */

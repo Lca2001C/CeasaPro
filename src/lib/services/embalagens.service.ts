@@ -5,12 +5,12 @@ import { FinancialCalc } from "./financial-calc.service";
 import { money, toDecimal } from "@/lib/money";
 import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
 import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
-import type { Prisma, PrismaClient } from "@prisma/client";
+import type { Prisma } from "@prisma/client";
 import type { TipoEmbalagemInput, VendaEmbalagemInput } from "@/lib/validations/embalagem";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
 
-type DbClient = Pick<PrismaClient, "packagingType">;
+type DbClient = { packagingType: Pick<Prisma.PackagingTypeDelegate, "createMany"> };
 
 /** Cria os tipos de embalagem padrão para um tenant (idempotente). */
 export async function createDefaultPackagingTypes(

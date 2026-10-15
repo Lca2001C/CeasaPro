@@ -848,6 +848,8 @@ describe("Troca agendada para plano que saiu de oferta", () => {
       monthlyAmount: 49.9 as unknown as import("@/lib/money").Decimal,
       currentPeriodEnd: daquiA(2),
       pendingPlanFrom: daquiA(2),
+      // Agendamento de antes do snapshot de preço: segue no preço vivo.
+      pendingPriceMonthly: null,
       pendingPlan: { priceMonthly: 99.9 as unknown as import("@/lib/money").Decimal, active: false },
     };
     expect(valorDevido(sub, new Date()).toString()).toBe("49.9");

@@ -171,6 +171,8 @@ Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403)
 
 **Com a competência do mês já paga a troca é AGENDADA**, não aplicada: grava `pendingPlanId`/`pendingPlanFrom = currentPeriodEnd` e o plano vigente continua valendo até lá. A mensalidade compra o mês, e aplicar na hora entregava o plano caro ao preço do barato (ou tirava módulos já pagos, no downgrade). Quem faz valer é `aplicarTrocaProgramada`, chamada em `buildAccessPayload`, `prepareCharge`, `getPlanoView` e no cron.
 
+**O período pago congela preço e módulos.** Quais módulos a empresa tem é decidido **só** por `featuresVigentes` (`src/lib/plan/features-vigentes.ts`), usado pelo token, por `/plano` e pelos avisos push: pagamento APROVADO que gravou `SubscriptionPayment.features` e cobre agora → `TenantSubscription.heldFeatures` até `heldFeaturesUntil` → `plan.features` vivo. Trial e período vencido ficam no catálogo vivo. `AdminService.updatePlan` congela os módulos antigos de quem já pagou o período (sem estender congelamento existente); o agendamento grava `pendingPriceMonthly`/`pendingFeatures` e é isso que a renovação cobra e a virada aplica. Reajuste do catálogo **nunca** muda `monthlyAmount` de quem já assinou — só `updateMonthlyAmount`. Troca de plano, edição/exclusão de plano e aprovação de pagamento travam as linhas (`src/lib/billing/travas.ts`); a conferência do valor devido roda dentro da transação que aprova.
+
 Não há limite de usuários/produtos por plano nesta versão.
 
 ---

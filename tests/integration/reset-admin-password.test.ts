@@ -29,7 +29,10 @@ describe("reset-admin-password", () => {
     const n = await redefinirSenhaDoSuperAdmin(prisma, email, "novo-hash");
     expect(n).toBe(1);
 
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: admin.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: admin.id },
+      omit: { passwordHash: false },
+    });
     expect(depois.passwordHash).toBe("novo-hash");
     expect(depois.mustChangePassword).toBe(true);
     expect(depois.sessionEpoch).toBe(admin.sessionEpoch + 1);

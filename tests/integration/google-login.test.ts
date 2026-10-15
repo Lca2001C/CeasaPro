@@ -58,6 +58,7 @@ describe("resolverLoginGoogle", () => {
     const user = await prisma.user.findUniqueOrThrow({
       where: { id: res.userId },
       include: { tenant: { include: { subscription: true } } },
+      omit: { googleSub: false },
     });
     tenants.push(user.tenantId!);
     expect(res.criado).toBe(true);
@@ -107,7 +108,10 @@ describe("resolverLoginGoogle", () => {
       role: "OWNER",
       criado: false,
     });
-    const atualizado = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    const atualizado = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      omit: { googleSub: false },
+    });
     expect(atualizado.googleSub).toBe(p.sub);
   });
 
@@ -152,7 +156,10 @@ describe("resolverLoginGoogle", () => {
       where: { emailIdentity: emailIdentity(apelido), deletedAt: null },
     });
     expect(mesmaCaixa).toBe(1);
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+      omit: { googleSub: false },
+    });
     expect(depois.googleSub).toBe(p.sub);
   });
 
@@ -314,7 +321,10 @@ describe("resolverLoginGoogle", () => {
 
       await resolverLoginGoogle(p, { ip: "203.0.113.30" });
 
-      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      const depois = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        omit: { passwordHash: false },
+      });
       expect(await verifyPassword(depois.passwordHash, "senhaDoImpostor1")).toBe(false);
       // E-mail confirmado: o dono real entra pelo Google, ou define senha nova
       // em /recuperar-senha — que agora chega no endereço certo.
@@ -326,7 +336,10 @@ describe("resolverLoginGoogle", () => {
 
       await resolverLoginGoogle(p, { ip: null });
 
-      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      const depois = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        omit: { verifyTokenHash: false, resetTokenHash: false },
+      });
       expect(depois.verifyTokenHash).toBeNull();
       expect(depois.resetTokenHash).toBeNull();
       expect(depois.resetTokenExpiresAt).toBeNull();
@@ -354,7 +367,10 @@ describe("resolverLoginGoogle", () => {
 
       await resolverLoginGoogle(p, { ip: null });
 
-      const depois = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+      const depois = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        omit: { passwordHash: false, googleSub: false },
+      });
       expect(await verifyPassword(depois.passwordHash, "senhaLegitima1")).toBe(true);
       expect(depois.googleSub).toBe(p.sub);
     });
@@ -430,11 +446,17 @@ describe("resolverLoginGoogle", () => {
     if (!res.ok) return;
     expect(res.criado).toBe(true);
 
-    const novo = await prisma.user.findUniqueOrThrow({ where: { id: res.userId } });
+    const novo = await prisma.user.findUniqueOrThrow({
+      where: { id: res.userId },
+      omit: { googleSub: false },
+    });
     tenants.push(novo.tenantId!);
     expect(novo.googleSub).toBe(p.sub);
     // A linha velha continua excluída, agora sem o vínculo.
-    const velha = await prisma.user.findUniqueOrThrow({ where: { id: antigo.id } });
+    const velha = await prisma.user.findUniqueOrThrow({
+      where: { id: antigo.id },
+      omit: { googleSub: false },
+    });
     expect(velha.googleSub).toBeNull();
     expect(velha.deletedAt).not.toBeNull();
   });
@@ -486,7 +508,10 @@ describe("resolverLoginGoogle", () => {
     const res = await resolverLoginGoogle(p, { ip: null });
     expect(res.ok && res.userId).toBe(vivo.id);
 
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: vivo.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: vivo.id },
+      omit: { googleSub: false },
+    });
     expect(depois.googleSub).toBe(p.sub);
   });
 });

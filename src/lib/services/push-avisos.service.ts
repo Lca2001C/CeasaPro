@@ -1,6 +1,6 @@
 import { prisma } from "@/lib/db/prisma";
 import { AvisosService } from "./avisos.service";
-import { planModules } from "@/lib/plan/modules";
+import { modulosVigentes } from "@/lib/plan/features-vigentes";
 import type { Prisma } from "@prisma/client";
 import { accessDecision, computeStatus } from "@/lib/billing/status";
 import { enviarPushParaUsuario, isPushConfigured } from "@/lib/pwa/push-server";
@@ -191,6 +191,7 @@ export const PushAvisosService = {
             deletedAt: true,
             subscription: {
               select: {
+                id: true,
                 status: true,
                 statusSource: true,
                 activatedAt: true,
@@ -199,6 +200,9 @@ export const PushAvisosService = {
                 graceDays: true,
                 cancelledAt: true,
                 pendingPlanFrom: true,
+                pendingFeatures: true,
+                heldFeatures: true,
+                heldFeaturesUntil: true,
                 plan: { select: { features: true } },
                 pendingPlan: { select: { features: true, active: true } },
               },
@@ -230,10 +234,20 @@ export const PushAvisosService = {
         // `aplicarTrocaProgramada` descarta o agendamento de plano inativo, e
         // aqui o mesmo critério mantém o vigente). Só leitura — quem aplica é o
         // login ou o cron de billing, não o de avisos.
+        //
+        // O plano (vigente, ou o agendado que já venceu) é só o último recurso:
+        // `modulosVigentes` olha antes o que o período pago comprou, como o
+        // login. Da troca agendada valem os módulos da hora do agendamento
+        // enquanto há período pago correndo — é o que a virada congela.
         const trocaVenceu =
           !!sub?.pendingPlan?.active && !!sub.pendingPlanFrom && sub.pendingPlanFrom <= agora;
-        const features = trocaVenceu ? sub!.pendingPlan!.features : sub?.plan?.features;
-        const avisos = await AvisosService.get(tenantId, planModules(features), agora);
+        const features = trocaVenceu
+          ? sub!.currentPeriodEnd > agora
+            ? (sub!.pendingFeatures ?? sub!.pendingPlan!.features)
+            : sub!.pendingPlan!.features
+          : sub?.plan?.features;
+        const modulos = sub ? await modulosVigentes(sub, features, agora) : [];
+        const avisos = await AvisosService.get(tenantId, modulos, agora);
         if (avisos.length === 0) {
           resultado.pulados += 1;
           continue;

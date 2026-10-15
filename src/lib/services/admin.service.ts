@@ -17,7 +17,9 @@ import {
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
 import { ADMIN_PLAN_SLUG } from "./plano.service";
-import { ALL_OPTIONAL_KEYS, isOptionalModuleKey } from "@/lib/plan/modules";
+import { ALL_OPTIONAL_KEYS, isOptionalModuleKey, planModules } from "@/lib/plan/modules";
+import { snapshotDeModulos } from "@/lib/plan/features-vigentes";
+import { travarPlano } from "@/lib/billing/travas";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { inicioDaJanelaOnline } from "@/lib/auth/presence";
 import { situacaoCobranca, type SituacaoCobrancaDetalhe } from "@/lib/billing/status";
@@ -107,7 +109,7 @@ async function recusarAmbienteAdmin(tenantId: string): Promise<void> {
  * precisa continuar existindo e valendo.
  */
 async function recusarSeHaTrocaAgendada(
-  db: Pick<Prisma.TransactionClient, "tenantSubscription">,
+  db: { tenantSubscription: Pick<Prisma.TenantSubscriptionDelegate, "count"> },
   planId: string,
   acao: "desativado" | "excluído",
 ): Promise<void> {
@@ -121,6 +123,74 @@ async function recusarSeHaTrocaAgendada(
         "preço deste plano e continua no antigo.",
     );
   }
+}
+
+/** O plano gravado libera exatamente estes módulos (ordem não importa)? */
+function mesmosModulos(features: unknown, modules: string[]): boolean {
+  const antes = new Set<string>(planModules(features));
+  const depois = new Set(modules);
+  return antes.size === depois.size && [...antes].every((m) => depois.has(m));
+}
+
+/**
+ * Congela os módulos ANTIGOS do plano para quem já pagou o período corrente.
+ *
+ * Editar o plano trocava os módulos de todo mundo no refresh seguinte do token
+ * (o claim era lido de `plan.features` ao vivo): quem pagou o mês com Cotações
+ * perdia Cotações no meio dele. A troca de plano pelo cliente já esperava o fim
+ * do período; a edição do admin passa a esperar o mesmo.
+ *
+ * Só entra quem tem período PAGO correndo (`activatedAt` e `currentPeriodEnd`
+ * no futuro — trial e vencido ficam no catálogo vivo) e ainda não tem quem
+ * responda pelo mês: nem congelamento vigente (não estende nem sobrescreve —
+ * a primeira edição do período é a que vale) nem pagamento cobrindo agora que
+ * já gravou os módulos que comprou (`featuresVigentes` lê esse antes).
+ *
+ * Um UPDATE só, porque `heldFeaturesUntil` é o `currentPeriodEnd` de cada linha.
+ */
+async function congelarModulosDoPeriodoPago(
+  tx: Prisma.TransactionClient,
+  planId: string,
+  featuresAntigas: unknown,
+  now: Date,
+): Promise<{ id: string; tenantId: string }[]> {
+  const snapshot = snapshotDeModulos(featuresAntigas);
+  const linhas = await tx.$queryRaw<{ id: string; tenantId: string; ate: Date }[]>`
+    UPDATE tenant_subscriptions s
+       SET "heldFeatures" = ${JSON.stringify(snapshot)}::jsonb,
+           "heldFeaturesUntil" = s."currentPeriodEnd",
+           "updatedAt" = ${now}
+     WHERE s."planId" = ${planId}
+       AND s."activatedAt" IS NOT NULL
+       AND s."currentPeriodEnd" > ${now}
+       AND (s."heldFeaturesUntil" IS NULL OR s."heldFeaturesUntil" <= ${now})
+       AND NOT EXISTS (
+         SELECT 1 FROM subscription_payments p
+          WHERE p."subscriptionId" = s.id
+            AND p.status = 'APROVADO'
+            AND p.features IS NOT NULL
+            AND p."periodStart" <= ${now}
+            AND p."periodEnd" > ${now}
+       )
+    RETURNING s.id, s."tenantId", s."heldFeaturesUntil" AS ate
+  `;
+  for (const l of linhas) {
+    await audit(
+      {
+        tenantId: l.tenantId,
+        action: "UPDATE",
+        entity: "TenantSubscription",
+        entityId: l.id,
+        newData: {
+          heldFeatures: snapshot,
+          heldFeaturesUntil: l.ate.toISOString(),
+          motivo: "plano-editado-no-periodo-pago",
+        },
+      },
+      tx,
+    );
+  }
+  return linhas;
 }
 
 /** Recortes da lista de `/admin/usuarios`. */
@@ -562,21 +632,36 @@ export const AdminService = {
 
   async updatePlan(input: PlanoUpdateInput, ctx: AdminCtx) {
     const modules = modulosDoPlano(input);
-    // Buscar antes: sem isto, id inexistente virava P2025 do Prisma e chegava
-    // ao usuário como "erro inesperado" em vez de "plano não encontrado".
-    const before = await prisma.plan.findUnique({ where: { id: input.id } });
-    if (!before) throw new NotFoundError("Plano não encontrado");
-    if (before.slug === ADMIN_PLAN_SLUG) {
-      throw new BusinessRuleError(
-        "Este é o plano interno do ambiente do administrador e não deve ser editado.",
-      );
-    }
-
-    if (before.active && !input.active) {
-      await recusarSeHaTrocaAgendada(prisma, input.id, "desativado");
-    }
+    const now = new Date();
 
     const plan = await prisma.$transaction(async (tx) => {
+      // Trava o plano antes de ler e de contar agendamentos. A contagem rodava
+      // fora da transação: nesse intervalo o cliente agendava a troca para
+      // este plano, a desativação passava e a virada descartava o agendamento —
+      // o caso que `recusarSeHaTrocaAgendada` existe para impedir. A troca lê o
+      // plano com `FOR SHARE` (`changePlan`), então uma das duas espera a outra.
+      await travarPlano(tx, input.id, "UPDATE");
+      // Buscar antes: sem isto, id inexistente virava P2025 do Prisma e chegava
+      // ao usuário como "erro inesperado" em vez de "plano não encontrado".
+      const before = await tx.plan.findUnique({ where: { id: input.id } });
+      if (!before) throw new NotFoundError("Plano não encontrado");
+      if (before.slug === ADMIN_PLAN_SLUG) {
+        throw new BusinessRuleError(
+          "Este é o plano interno do ambiente do administrador e não deve ser editado.",
+        );
+      }
+
+      if (before.active && !input.active) {
+        await recusarSeHaTrocaAgendada(tx, input.id, "desativado");
+      }
+
+      // Quem já pagou o período corrente continua com os módulos que pagou
+      // até o fim dele. Tem de ser antes do `update`, que é o que muda o que
+      // o token lê (`featuresVigentes`).
+      const congeladas = mesmosModulos(before.features, modules)
+        ? []
+        : await congelarModulosDoPeriodoPago(tx, before.id, before.features, now);
+
       const atualizado = await tx.plan.update({
         where: { id: input.id },
         data: {
@@ -597,11 +682,14 @@ export const AdminService = {
             name: before.name,
             priceMonthly: before.priceMonthly.toString(),
             active: before.active,
+            modules: planModules(before.features),
           },
           newData: {
             name: atualizado.name,
             priceMonthly: atualizado.priceMonthly.toString(),
             active: atualizado.active,
+            modules,
+            ...(congeladas.length ? { modulosCongeladosEm: congeladas.length } : {}),
           },
           ip: ctx.ip,
         },
@@ -645,6 +733,9 @@ export const AdminService = {
     // `plan.delete` recusado pela FK (assinatura nova criada no meio) deixava o
     // histórico já apagado e auditado sem o plano ter saído.
     await prisma.$transaction(async (tx) => {
+      // Mesma trava de `updatePlan`, antes de contar: sem ela, um agendamento
+      // gravado entre a contagem e o `delete` some pela FK (SET NULL).
+      await travarPlano(tx, id, "UPDATE");
       // Troca AGENDADA para este plano (em empresa viva) também impede: a FK de
       // `pendingPlanId` é SET NULL, e o agendamento sumiria em silêncio — com
       // a renovação possivelmente já cobrada pelo preço deste plano.

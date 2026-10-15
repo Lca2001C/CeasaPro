@@ -164,7 +164,10 @@ describe("Reset de senha pelo super-admin", () => {
     const r = await AdminService.resetUserPassword(u.id, ctx);
 
     expect(r.tempPassword.length).toBeGreaterThan(6);
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: u.id },
+      omit: { passwordHash: false },
+    });
     expect(depois.mustChangePassword).toBe(true);
     // A senha entregue precisa realmente funcionar.
     expect(await verifyPassword(depois.passwordHash, r.tempPassword)).toBe(true);
@@ -186,7 +189,10 @@ describe("Reset de senha pelo super-admin", () => {
 
     await AdminService.resetUserPassword(u.id, ctx);
 
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: u.id },
+      omit: { resetTokenHash: false },
+    });
     // Se o motivo do reset foi conta comprometida, deixar o link antigo válido
     // devolveria o acesso a quem invadiu.
     expect(depois.resetTokenHash).toBeNull();
@@ -336,7 +342,10 @@ describe("Recadastro de empresa com o mesmo e-mail do dono", () => {
 
     await AdminService.deleteTenant(tenantId, ctx);
 
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: dono.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: dono.id },
+      omit: { googleSub: false },
+    });
     expect(depois.googleSub).toBeNull();
   });
 
@@ -723,7 +732,10 @@ describe("Ações do super-admin são atômicas", () => {
     await expect(
       comAuditoriaQuebrada(() => AdminService.resetUserPassword(u.id, ctx)),
     ).rejects.toThrow(/auditoria/);
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: u.id } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: u.id },
+      omit: { passwordHash: false },
+    });
     expect(depois.passwordHash).toBe("hash-antigo");
     expect(depois.sessionEpoch).toBe(u.sessionEpoch);
   });

@@ -34,7 +34,7 @@ export interface CobrancaBaixada {
  * quais foram — para o chamador cancelá-las também no gateway depois do commit.
  */
 export async function baixarPendentes(
-  tx: Pick<Prisma.TransactionClient, "subscriptionPayment">,
+  tx: { subscriptionPayment: Pick<Prisma.SubscriptionPaymentDelegate, "findMany" | "updateMany"> },
   where: Prisma.SubscriptionPaymentWhereInput,
 ): Promise<CobrancaBaixada[]> {
   const alvo = await tx.subscriptionPayment.findMany({

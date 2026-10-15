@@ -65,6 +65,8 @@ async function entrar(req: Request): Promise<Response> {
 
   const user = await prisma.user.findFirst({
     where: { email, active: true, deletedAt: null },
+    // O Argon2 precisa do hash; é a única leitura dele no login.
+    omit: { passwordHash: false },
   });
 
   // Mensagem genérica — nunca revelar se o e-mail existe.

@@ -16,7 +16,7 @@ import { hashPassword } from "../src/lib/auth/password";
  * Exportada (e com o client como parâmetro) para o teste de integração.
  */
 export async function redefinirSenhaDoSuperAdmin(
-  db: PrismaClient,
+  db: Pick<PrismaClient, "$transaction">,
   email: string,
   passwordHash: string,
 ): Promise<number> {

@@ -118,7 +118,10 @@ describe("POST /api/auth/signup (via SignupService)", () => {
     expect(sub?.trialEndsAt).toBeNull();
     expect(sub?.activatedAt).toBeNull();
 
-    const user = await prisma.user.findFirst({ where: { email: input.email } });
+    const user = await prisma.user.findFirst({
+      where: { email: input.email },
+      omit: { verifyTokenHash: false },
+    });
     expect(user?.role).toBe("OWNER");
     expect(user?.emailVerifiedAt).toBeNull();
     expect(user?.verifyTokenHash).toBeTruthy();

@@ -1,9 +1,9 @@
-import type {
-  ChargeMethod,
-  PaymentStatus,
+import {
   Prisma,
-  SubscriptionPayment,
-  SubscriptionStatus,
+  type ChargeMethod,
+  type PaymentStatus,
+  type SubscriptionPayment,
+  type SubscriptionStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
@@ -39,6 +39,8 @@ import {
   type CobrancaBaixada,
 } from "@/lib/payments/cobrancas-pendentes";
 import { PlanoService } from "./plano.service";
+import { snapshotDeModulos } from "@/lib/plan/features-vigentes";
+import { travarAssinatura } from "@/lib/billing/travas";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { sendEmail, paymentApprovedEmail, subscriptionDueSoonEmail } from "@/lib/email";
 import { describeError, logger } from "@/lib/logger";
@@ -314,16 +316,32 @@ function periodoSemOEstornado(
  * receber. O painel já recusa desativar plano com troca agendada, mas há dado
  * gravado antes dessa trava — e para ele a única resposta segura é o plano que
  * de fato vai valer.
+ *
+ * O preço do agendado é o GRAVADO no agendamento (`pendingPriceMonthly`), não o
+ * do catálogo: reajuste depois de agendado não muda o que o cliente contratou.
+ * Agendamento de antes da coluna (nula) segue no preço vivo — é o dado que havia.
  */
-export function valorDevido(
-  sub: {
-    monthlyAmount: Decimal;
-    currentPeriodEnd: Date;
-    pendingPlanFrom: Date | null;
-    pendingPlan: { priceMonthly: Decimal; active: boolean } | null;
-  },
+export function valorDevido(sub: AssinaturaParaCobranca, now: Date): Decimal {
+  return cobrancaDevida(sub, now).valor;
+}
+
+interface AssinaturaParaCobranca {
+  monthlyAmount: Decimal;
+  currentPeriodEnd: Date;
+  pendingPlanFrom: Date | null;
+  pendingPriceMonthly: Decimal | null;
+  pendingPlan: { priceMonthly: Decimal; active: boolean } | null;
+}
+
+/**
+ * `valorDevido` dizendo também DE ONDE veio o valor: `doAgendado` é verdadeiro
+ * quando o período cobrado é o do plano agendado. A aprovação precisa saber
+ * para gravar no pagamento os módulos que ele comprou.
+ */
+function cobrancaDevida(
+  sub: AssinaturaParaCobranca,
   now: Date,
-): Decimal {
+): { valor: Decimal; doAgendado: boolean } {
   const inicio = sub.currentPeriodEnd > now ? sub.currentPeriodEnd : now;
   if (
     sub.pendingPlan &&
@@ -331,9 +349,12 @@ export function valorDevido(
     sub.pendingPlanFrom &&
     sub.pendingPlanFrom <= inicio
   ) {
-    return money(sub.pendingPlan.priceMonthly);
+    return {
+      valor: money(sub.pendingPriceMonthly ?? sub.pendingPlan.priceMonthly),
+      doAgendado: true,
+    };
   }
-  return money(sub.monthlyAmount);
+  return { valor: money(sub.monthlyAmount), doAgendado: false };
 }
 
 /**
@@ -949,50 +970,6 @@ export const BillingService = {
       return "ignorado";
     }
 
-    // O valor que ENTROU tem de cobrir a mensalidade DEVIDA.
-    //
-    // Trocar de plano marca a cobrança anterior como CANCELADO no nosso banco
-    // e tenta cancelá-la no gateway — mas o cancelamento lá é de melhor
-    // esforço, e o código antigo pode ter sido pago antes dele. Pagando o
-    // código antigo — justamente o que já estava copiado no app do banco — o
-    // mês era creditado por inteiro e a assinatura ficava ATIVA no plano NOVO,
-    // mais caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
-    // MENSALIDADE_JA_PAGA bloqueava a cobrança correta do mês.
-    //
-    // Conferir contra `payment.amount` não pegaria nada: a linha antiga foi
-    // cobrada em 49,90 e foi 49,90 que entrou. Quem decide é o valor devido.
-    //
-    // A checagem fica FORA da transação de propósito: abortá-la lá dentro não
-    // desfaria o `updateMany` já aplicado. O mês não é creditado, a tela
-    // continua oferecendo o pagamento certo — o cliente não fica com "já pago
-    // neste mês" e sem acesso, que seria outro beco sem saída — e o super-admin
-    // recebe o caso para resolver (crédito ou devolução).
-    if (newStatus === "APROVADO") {
-      const cobrado = await prisma.tenantSubscription.findUnique({
-        where: { id: payment.subscriptionId },
-        select: {
-          monthlyAmount: true,
-          currentPeriodEnd: true,
-          pendingPlanFrom: true,
-          pendingPlan: { select: { priceMonthly: true, active: true } },
-        },
-      });
-      const devido = cobrado ? valorDevido(cobrado, new Date()) : null;
-      if (devido && !gte(money(mp.amount), devido)) {
-        logger.error(
-          {
-            mpPaymentId: mp.id,
-            tenantId: payment.tenantId,
-            pago: String(mp.amount),
-            devido: devido.toString(),
-          },
-          "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
-        );
-        await registrarNaoCreditado(payment, mp, "VALOR_MENOR", { devido });
-        return "ignorado";
-      }
-    }
-
     const now = new Date();
     // Estorno, chargeback ou cancelamento de uma cobrança que já estava aprovada:
     // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
@@ -1008,10 +985,75 @@ export const BillingService = {
       bloqueioDesfeito?: { status: SubscriptionStatus; motivo: string | null } | null;
       /** Outras cobranças abertas da competência, baixadas por esta aprovação. */
       outrasPendentes?: CobrancaBaixada[];
+      /** Valor devido que o pagamento não cobriu — o mês não foi creditado. */
+      valorMenor?: Decimal;
     }
     const NADA: Resultado = { aplicado: false, bloqueou: false, duplicado: false };
 
     const resultado = await prisma.$transaction(async (tx): Promise<Resultado> => {
+      // A assinatura fica travada até o commit. A troca de plano trava a mesma
+      // linha: ou ela commitou antes (e o valor devido relido abaixo já é o do
+      // plano novo), ou espera esta aprovação terminar (e o mês creditado é o
+      // do plano antigo, com a troca virando agendamento). A conferência lia o
+      // valor ANTES da transação, e a troca cabia no meio.
+      await travarAssinatura(tx, { id: payment.subscriptionId });
+
+      /*
+        O valor que ENTROU tem de cobrir a mensalidade DEVIDA.
+
+        Trocar de plano marca a cobrança anterior como CANCELADO no nosso banco
+        e tenta cancelá-la no gateway — mas o cancelamento lá é de melhor
+        esforço, e o código antigo pode ter sido pago antes dele. Pagando o
+        código antigo — justamente o que já estava copiado no app do banco — o
+        mês era creditado por inteiro e a assinatura ficava ATIVA no plano NOVO,
+        mais caro, tendo entrado o valor do ANTIGO. Depois disso a guarda
+        MENSALIDADE_JA_PAGA bloqueava a cobrança correta do mês.
+
+        Conferir contra `payment.amount` não pegaria nada: a linha antiga foi
+        cobrada em 49,90 e foi 49,90 que entrou. Quem decide é o valor devido.
+
+        Não cobrindo, a transação sai ANTES do `updateMany`: nada é aprovado e
+        `currentPeriodEnd` não anda. A tela continua oferecendo o pagamento
+        certo — o cliente não fica com "já pago neste mês" e sem acesso — e o
+        super-admin recebe o caso (`registrarNaoCreditado`, depois do commit).
+        Isso vale também para a cobrança que nós CANCELAMOS e o Mercado Pago
+        confirmou: ela ainda credita, mas só se cobre o devido de agora.
+      */
+      let featuresComprados: Prisma.InputJsonObject | null = null;
+      if (newStatus === "APROVADO") {
+        const cobrado = await tx.tenantSubscription.findUnique({
+          where: { id: payment.subscriptionId },
+          include: {
+            plan: { select: { features: true } },
+            pendingPlan: { select: { priceMonthly: true, active: true, features: true } },
+          },
+        });
+        if (cobrado) {
+          const devida = cobrancaDevida(cobrado, now);
+          if (!gte(money(mp.amount), devida.valor)) {
+            logger.error(
+              {
+                mpPaymentId: mp.id,
+                tenantId: payment.tenantId,
+                pago: String(mp.amount),
+                devido: devida.valor.toString(),
+              },
+              "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
+            );
+            return { ...NADA, valorMenor: devida.valor };
+          }
+          // Os módulos que este dinheiro compra: os do plano agendado (da hora
+          // do agendamento) quando é ele que o valor cobriu, senão os do plano
+          // vigente. Gravados no pagamento, valem pelo período dele mesmo que
+          // o catálogo mude (`featuresVigentes`).
+          featuresComprados = snapshotDeModulos(
+            devida.doAgendado
+              ? (cobrado.pendingFeatures ?? cobrado.pendingPlan?.features)
+              : cobrado.plan.features,
+          );
+        }
+      }
+
       /*
         Uma única cobrança APROVADA por competência.
 
@@ -1131,9 +1173,16 @@ export const BillingService = {
               cancelledAt: null,
             },
           });
+          // `heldFeatures` não é tocado: na renovação adiantada o período
+          // corrente ainda corre, e um congelamento dele continua valendo até
+          // o fim. O período novo responde por este pagamento.
           await tx.subscriptionPayment.update({
             where: { id: payment.id },
-            data: { periodStart, periodEnd },
+            data: {
+              periodStart,
+              periodEnd,
+              ...(featuresComprados ? { features: featuresComprados } : {}),
+            },
           });
         }
       }
@@ -1265,6 +1314,11 @@ export const BillingService = {
         );
         return { ...NADA, duplicado: true };
       });
+
+    if (resultado.valorMenor) {
+      await registrarNaoCreditado(payment, mp, "VALOR_MENOR", { devido: resultado.valorMenor });
+      return "ignorado";
+    }
 
     if (resultado.duplicado) {
       // O dinheiro entrou e não comprou nada: não pode sumir no log.
@@ -1786,6 +1840,8 @@ export const BillingService = {
           // encerrada, sozinho, dias depois.
           pendingPlanId: null,
           pendingPlanFrom: null,
+          pendingPriceMonthly: null,
+          pendingFeatures: Prisma.DbNull,
         },
       });
       await audit(

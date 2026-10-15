@@ -577,6 +577,20 @@ model TenantSubscription {
   /// Quando a troca agendada passa a valer — sempre o `currentPeriodEnd` do
   /// momento da contratação, isto é, o primeiro instante da competência seguinte.
   pendingPlanFrom  DateTime?
+  /// Preço do plano agendado NO INSTANTE do agendamento. É o que a renovação
+  /// cobra (`valorDevido`) e o que vira `monthlyAmount` na virada: reajuste do
+  /// catálogo depois de agendado não muda o que o cliente contratou. Nulo em
+  /// agendamento anterior a esta coluna — aí vale o preço vivo do plano.
+  pendingPriceMonthly Decimal?         @db.Decimal(10, 2)
+  /// Módulos do plano agendado no instante do agendamento (mesmo formato de
+  /// `Plan.features`). Pela mesma razão do preço.
+  pendingFeatures  Json?
+  /// Módulos que o período JÁ PAGO entrega, congelados quando o super-admin
+  /// edita o plano no meio dele (ou quando a troca agendada vira com a
+  /// renovação já paga). Valem até `heldFeaturesUntil`, nunca depois.
+  /// Quem lê: `featuresVigentes` (src/lib/plan/features-vigentes.ts).
+  heldFeatures     Json?
+  heldFeaturesUntil DateTime?
   cancelledAt      DateTime?
   createdAt        DateTime              @default(now())
   updatedAt        DateTime              @updatedAt
@@ -610,6 +624,11 @@ model SubscriptionPayment {
   paidAt         DateTime?
   periodStart    DateTime?
   periodEnd      DateTime?
+  /// Módulos que esta aprovação comprou para `periodStart`–`periodEnd` (formato
+  /// de `Plan.features`). Gravado só na aprovação que credita o mês; editar o
+  /// plano depois não muda o que este período entrega. Nulo em pagamento
+  /// anterior a esta coluna ou que não creditou.
+  features       Json?
   rawPayload     Json?
   /// `<tenantId>:<referenceMonth>` ENQUANTO esta cobrança está APROVADA; `null`
   /// em qualquer outro status. Sendo `@unique`, é o banco — e não a corrida
@@ -887,6 +906,9 @@ model StockMovement {
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, productId, movedAt])
+  // A janela do custo médio (`sqlCustoEstoque`) ordena por gravação, não por
+  // `movedAt`; o índice acima não serve a ela.
+  @@index([tenantId, productId, createdAt])
   @@index([tenantId, type])
   // Detalhe da venda e exclusão de fiado buscam os movimentos pela ORIGEM;
   // sem isto, varriam o livro-razão inteiro da empresa.

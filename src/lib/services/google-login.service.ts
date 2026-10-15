@@ -67,10 +67,13 @@ export async function resolverLoginGoogle(
   const porEmail =
     (await prisma.user.findFirst({
       where: { email: perfil.email, deletedAt: null },
+      // `googleSub` de volta para recusar um segundo Google na mesma conta.
+      omit: { googleSub: false },
     })) ??
     (await prisma.user.findFirst({
       where: { emailIdentity: emailIdentity(perfil.email), deletedAt: null },
       orderBy: { createdAt: "asc" },
+      omit: { googleSub: false },
     }));
   if (porEmail) {
     if (!porEmail.active) return { ok: false, code: "google-inativo" };

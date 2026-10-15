@@ -92,7 +92,10 @@ describe("Fluxo de redefinição de senha", () => {
 
   it("grava só o hash do token — o token cru nunca vai para o banco", async () => {
     const { raw } = await issueResetToken(userId);
-    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { resetTokenHash: false },
+    });
 
     expect(row.resetTokenHash).toBe(hashResetToken(raw));
     expect(row.resetTokenHash).not.toBe(raw);
@@ -124,7 +127,10 @@ describe("Fluxo de redefinição de senha", () => {
     });
     expect(aplicou).toBe(false);
 
-    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { passwordHash: false },
+    });
     expect(await verifyPassword(row.passwordHash, SENHA_ANTIGA)).toBe(true);
   });
 
@@ -141,7 +147,10 @@ describe("Fluxo de redefinição de senha", () => {
     });
     expect(aplicou).toBe(true);
 
-    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { passwordHash: false, resetTokenHash: false },
+    });
     expect(await verifyPassword(row.passwordHash, SENHA_NOVA)).toBe(true);
     expect(await verifyPassword(row.passwordHash, SENHA_ANTIGA)).toBe(false);
     expect(row.resetTokenHash).toBeNull();
@@ -170,7 +179,10 @@ describe("Fluxo de redefinição de senha", () => {
       }),
     ).toBe(false);
 
-    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { passwordHash: false },
+    });
     expect(await verifyPassword(row.passwordHash, SENHA_NOVA)).toBe(true);
   });
 
@@ -246,7 +258,10 @@ describe("Fluxo de redefinição de senha", () => {
     expect(await findUserByResetToken("../../etc/passwd")).toBeNull();
     expect(await findUserByResetToken("")).toBeNull();
 
-    const row = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const row = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { resetTokenHash: false },
+    });
     expect(row.resetTokenHash).not.toBeNull(); // o token legítimo continua de pé
   });
 });
@@ -299,7 +314,10 @@ describe("regra 5: senha, revogação e auditoria num commit só", () => {
       }),
     ).rejects.toThrow();
 
-    const depois = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: userId },
+      omit: { passwordHash: false },
+    });
     expect(await verifyPassword(depois.passwordHash, SENHA_ANTIGA)).toBe(true);
     expect(depois.sessionEpoch).toBe(antes.sessionEpoch);
     expect(await sessoesAtivas()).toBe(1);

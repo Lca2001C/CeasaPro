@@ -51,6 +51,8 @@ async function trocarSenha(req: Request): Promise<Response> {
 
   const user = await prisma.user.findFirst({
     where: { id: session.sub, active: true, deletedAt: null },
+    // Conferir a senha atual exige o hash de volta.
+    omit: { passwordHash: false },
   });
   if (!user) {
     return Response.json(

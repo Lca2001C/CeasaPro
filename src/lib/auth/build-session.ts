@@ -1,7 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { computeStatus } from "@/lib/billing/status";
-import { planModules, ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
+import { ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
+import { modulosVigentes } from "@/lib/plan/features-vigentes";
 import { PlanoService } from "@/lib/services/plano.service";
 import type { AccessPayload } from "./jwt";
 
@@ -51,12 +52,24 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     // que isso tem consequência, porque o claim `modules` deste token é o que
     // libera ou barra o módulo pelas próximas horas. Esperar o cron da tarde
     // deixaria o cliente pagando o plano novo e usando o antigo.
-    const vigente = await PlanoService.aplicarTrocaProgramada(sub);
-    const plan = vigente ?? sub.plan;
+    // Relê quando HAVIA agendamento: a virada troca o plano e pode congelar os
+    // módulos do período já pago (`heldFeatures`), e a linha em memória é de
+    // antes dela.
+    const now = new Date();
+    const tinhaAgendamento = sub.pendingPlanId !== null;
+    await PlanoService.aplicarTrocaProgramada(sub, now);
+    const atual = tinhaAgendamento
+      ? await prisma.tenantSubscription.findUnique({
+          where: { id: sub.id },
+          include: { plan: true },
+        })
+      : sub;
     // `plan` é obrigatório por FK; o fallback cobre só leitura incompleta — e é
     // fail-closed pela mesma razão que `planModules`: não saber qual plano a
     // empresa tem nunca pode significar "tem todos".
-    modules = plan ? planModules(plan.features) : [];
+    // O módulo do mês pago vem do que aquele mês comprou, não do catálogo de
+    // hoje (`featuresVigentes`).
+    modules = atual?.plan ? await modulosVigentes(atual, atual.plan.features, now) : [];
   } else {
     // Empresa sem assinatura não deveria existir — `provisionTenant` sempre
     // cria uma. Se aparecer, é anomalia de dados: nenhum módulo pago, e o log
