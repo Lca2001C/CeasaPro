@@ -125,3 +125,4 @@ export const convidadoNoServidor = () => true;
  * propósito.
  */
 export const semMudanca = () => () => {};
+  
