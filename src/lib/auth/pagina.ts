@@ -32,6 +32,11 @@ export async function requirePagina(opts?: {
   /** Exige que o plano inclua este módulo. */
   modulo?: OptionalModuleKey;
   /**
+   * Exige ao menos UM destes módulos — para tela que serve a mais de um
+   * (`TELAS_COMPARTILHADAS`). As subtelas continuam com `modulo`.
+   */
+  algumModulo?: readonly OptionalModuleKey[];
+  /**
    * Deixa passar mesmo com a assinatura bloqueada.
    *
    * Só para as telas de regularização — as mesmas que o proxy lista em
@@ -49,6 +54,12 @@ export async function requirePagina(opts?: {
 
   if (opts?.modulo && !isModuleEnabled(session.modules, opts.modulo)) {
     redirect(`/plano?bloqueado=${opts.modulo}`);
+  }
+
+  const algum = opts?.algumModulo;
+  if (algum && !algum.some((m) => isModuleEnabled(session.modules, m))) {
+    // Lista vazia também cai aqui: `some` de nada é falso — nega por padrão.
+    redirect(`/plano?bloqueado=${algum[0] ?? ""}`);
   }
 
   return { session, tenantId };

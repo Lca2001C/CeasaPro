@@ -107,6 +107,36 @@ export function planModules(features: unknown): OptionalModuleKey[] {
   return [];
 }
 
+/**
+ * Telas que servem a MAIS DE UM módulo: entra quem tiver qualquer um deles.
+ *
+ * Só o caminho EXATO. `/caixas-plasticas` reúne a aba de caixas e a de
+ * embalagens, mas as subtelas (`/caixas-plasticas/novo`) continuam do módulo
+ * dono, pelo prefixo dele — uma tela nova embaixo daqui nasce exigindo
+ * `caixas`, e não "qualquer um dos dois". As chaves NÃO se juntam: quem
+ * contratou só embalagens continua sem caixas.
+ */
+export const TELAS_COMPARTILHADAS: Readonly<Record<string, readonly OptionalModuleKey[]>> = {
+  "/caixas-plasticas": ["caixas", "embalagens"],
+};
+
+/**
+ * Os módulos que abrem um caminho — basta UM deles — ou null se for núcleo.
+ * É a pergunta que o proxy e o menu fazem; `moduleForPath` responde só pelo
+ * prefixo de cada módulo.
+ */
+export function modulosDaRota(pathname: string): readonly OptionalModuleKey[] | null {
+  if (Object.hasOwn(TELAS_COMPARTILHADAS, pathname)) return TELAS_COMPARTILHADAS[pathname]!;
+  const mod = moduleForPath(pathname);
+  return mod ? [mod] : null;
+}
+
+/** O plano da sessão abre este caminho? (núcleo: sempre) */
+export function rotaLiberada(modules: string[] | undefined, pathname: string): boolean {
+  const mods = modulosDaRota(pathname);
+  return !mods || mods.some((m) => isModuleEnabled(modules, m));
+}
+
 /** Mapeia um caminho a um módulo opcional (ou null se for núcleo). */
 export function moduleForPath(pathname: string): OptionalModuleKey | null {
   for (const mod of Object.values(OPTIONAL_MODULES)) {

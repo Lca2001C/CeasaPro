@@ -171,7 +171,7 @@ Rotas `/higienizacao`, `/higienizacao/nova`, `/higienizacao/[id]`. **Módulo opc
 
 ## Venda de embalagens
 
-Rotas `/embalagens`, `/embalagens/nova`. **Módulo opcional**.
+Aba **Embalagens** de `/caixas-plasticas` (`?aba=embalagens`); `/embalagens` e `/embalagens/nova` redirecionam para ela. **Módulo opcional**, separado do de caixas no plano.
 
 - **Tipos** cadastráveis (caixa plástica, papelão, madeira, sacaria… — os padrões vêm no cadastro da empresa).
 - Venda: tipo, cliente (opcional), data, quantidade, valor unitário (→ total).

@@ -1,18 +1,21 @@
 import { requirePagina } from "@/lib/auth/pagina";
 
 /**
- * Gate de módulo da subárvore inteira.
+ * Gate de módulo da tela Caixas e embalagens.
  *
- * Mora num layout de SEGMENTO, e não em cada página, porque o layout é
- * executado ao entrar na subárvore vindo de fora e cobre tudo que estiver
- * abaixo — inclusive as telas que alguém acrescentar amanhã. Repetir a checagem
- * página a página garantiria que uma delas ficasse de fora.
+ * Esta tela serve a DOIS módulos (`TELAS_COMPARTILHADAS` em `lib/plan/modules`):
+ * entra quem tiver qualquer um deles, e a página mostra só a aba de cada um. As
+ * chaves continuam separadas no plano.
+ *
+ * Como o layout cobre a subárvore, isto sozinho afrouxaria as subtelas — por
+ * isso cada uma (`novo/`) tem o próprio layout exigindo o módulo dono, e
+ * `paginas-module-gate.test.ts` recusa uma subtela nova sem ele.
  *
  * Não sobe para `(app)/layout.tsx`: aquele é o segmento COMUM, e o Next não o
  * reexecuta numa navegação que não cruze o segmento dele — o gate seria
  * avaliado uma vez na entrada do grupo e nunca mais.
  */
 export default async function Layout({ children }: { children: React.ReactNode }) {
-  await requirePagina({ modulo: "caixas" });
+  await requirePagina({ algumModulo: ["caixas", "embalagens"] });
   return children;
 }

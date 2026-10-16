@@ -210,7 +210,7 @@ O núcleo do sistema (produtos, fornecedores, compras, vendas, fiado, estoque, d
 |---|---|---|
 | `caixas` | Caixas plásticas | Prefixo de rota `/caixas-plasticas` |
 | `higienizacao` | Higienização | Prefixo de rota `/higienizacao` |
-| `embalagens` | Venda de embalagens | Prefixo de rota `/embalagens` |
+| `embalagens` | Venda de embalagens | Prefixo `/embalagens` (redirect) + aba de `/caixas-plasticas` (tela compartilhada com `caixas`) |
 | `relatorios_avancados` | Relatórios avançados | Por **tipo de relatório**, não por rota |
 
 `src/lib/plan/modules.ts` é a fonte única da verdade — o catálogo é lido pelo token, pelo proxy, pela navegação, pelos guards de servidor, pelos relatórios e pelo painel do super-admin.
@@ -460,7 +460,7 @@ Os route groups `(auth)`, `(app)` e `(admin)` organizam os arquivos sem aparecer
 | Despesas | `/despesas`, `/despesas/nova`, `/despesas/[id]` |
 | Caixas *(módulo)* | `/caixas-plasticas`, `/caixas-plasticas/novo` |
 | Higienização *(módulo)* | `/higienizacao`, `/higienizacao/nova`, `/higienizacao/[id]`, `/higienizacao/[id]/editar` |
-| Embalagens *(módulo)* | `/embalagens`, `/embalagens/nova` |
+| Embalagens *(módulo)* | `/caixas-plasticas?aba=embalagens` (`/embalagens` e `/embalagens/nova` redirecionam) |
 | Relatórios | `/relatorios`, `/relatorios/[tipo]` |
 
 ### Super-admin — `(admin)`

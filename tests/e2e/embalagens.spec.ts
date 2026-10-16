@@ -55,7 +55,10 @@ test.describe("Embalagens", () => {
   test("vender embalagem: o total fecha na tela e entra no histórico", async ({ page }) => {
     // Venda avulsa. O total aparece ANTES de salvar: 12 × R$ 2,50 = R$ 30,00 —
     // é o número que o operador confere com o cliente antes de fechar.
+    // O endereço antigo abre a aba Embalagens com a venda já aberta, em folha.
     await page.goto("/embalagens/nova");
+    await expect(page).toHaveURL(/\/caixas-plasticas\?aba=embalagens&nova=1$/);
+    await expect(page.getByRole("dialog", { name: "Nova venda de embalagem" })).toBeVisible();
     await page.getByLabel("Tipo de embalagem").selectOption({ label: TIPO });
     await page.getByLabel("Cliente", { exact: true }).fill(CLIENTE);
     await page.getByLabel("Quantidade").fill(String(QUANTIDADE));
@@ -70,7 +73,9 @@ test.describe("Embalagens", () => {
     await expect(page.getByText(TOTAL).first()).toBeVisible();
 
     await page.getByRole("button", { name: "Salvar" }).click();
-    await page.waitForURL(/\/embalagens$/, { timeout: 15_000 });
+    // A folha fecha e a venda entra na lista da aba, sem trocar de tela.
+    await expect(page.getByRole("dialog")).toBeHidden({ timeout: 15_000 });
+    await expect(page).toHaveURL(/\/caixas-plasticas\?aba=embalagens$/);
 
     // 3. O efeito: a venda está no histórico, com cliente e valor.
     const linha = page.locator('main [data-slot="card"]').filter({ hasText: CLIENTE });

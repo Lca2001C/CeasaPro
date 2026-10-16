@@ -1,6 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
-import { OPTIONAL_MODULES, OPTIONAL_MODULE_KEYS } from "@/lib/plan/modules";
+import { readFileSync, existsSync, readdirSync } from "node:fs";
+import {
+  OPTIONAL_MODULES,
+  OPTIONAL_MODULE_KEYS,
+  TELAS_COMPARTILHADAS,
+  moduleForPath,
+} from "@/lib/plan/modules";
 
 /**
  * As PÁGINAS da área da empresa decidem assinatura e módulo por conta própria?
@@ -50,6 +55,35 @@ describe("gate de módulo nas páginas", () => {
     for (const chave of OPTIONAL_MODULE_KEYS) {
       for (const prefixo of OPTIONAL_MODULES[chave].pathPrefixes) {
         expect(existsSync(`${APP}${prefixo}/layout.tsx`), `${prefixo}/layout.tsx`).toBe(true);
+      }
+    }
+  });
+
+  it("tela compartilhada: o layout aceita os módulos dela, e cada subtela exige o seu", () => {
+    /*
+      `/caixas-plasticas` é a tela de Caixas e embalagens: o layout do segmento
+      deixa entrar quem tem QUALQUER um dos dois. Como layout cobre a subárvore,
+      isso afrouxaria as subtelas — por isso cada pasta de rota abaixo dela
+      precisa do próprio layout, exigindo o módulo que o prefixo diz ser o dono.
+    */
+    for (const [tela, modulos] of Object.entries(TELAS_COMPARTILHADAS)) {
+      const layout = readFileSync(`${APP}${tela}/layout.tsx`, "utf8");
+      expect(layout).toContain("algumModulo");
+      for (const m of modulos) expect(layout, `${tela} não aceita "${m}"`).toContain(`"${m}"`);
+
+      const subtelas = readdirSync(`${APP}${tela}`, { withFileTypes: true }).filter(
+        (d) => d.isDirectory() && !d.name.startsWith("_") && !d.name.startsWith("("),
+      );
+      expect(subtelas.length).toBeGreaterThan(0);
+      for (const d of subtelas) {
+        const dono = moduleForPath(`${tela}/${d.name}`);
+        expect(dono, `${tela}/${d.name} sem módulo dono`).not.toBeNull();
+        const arquivo = `${APP}${tela}/${d.name}/layout.tsx`;
+        expect(existsSync(arquivo), `${arquivo} (ausente)`).toBe(true);
+        const src = readFileSync(arquivo, "utf8");
+        expect(src.includes("requirePagina") && src.includes(`modulo: "${dono}"`), arquivo).toBe(
+          true,
+        );
       }
     }
   });

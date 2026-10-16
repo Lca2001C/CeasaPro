@@ -41,6 +41,12 @@ export interface PassoTour {
   texto: string;
   /** Lado do elemento em que o balão aparece. Padrão do motor: embaixo. */
   lado?: "top" | "right" | "bottom" | "left";
+  /**
+   * Definido = o passo só existe se o plano incluir este módulo. É o que deixa
+   * uma tela que serve a dois módulos (Caixas e embalagens) ter um capítulo só,
+   * mostrando a cada cliente apenas a parte que ele contratou.
+   */
+  modulo?: OptionalModuleKey;
 }
 
 /** Uma tela do tour. */
@@ -213,16 +219,28 @@ export const CAPITULOS: CapituloTour[] = [
     ],
   },
   {
+    // Caixas e embalagens dividem a tela, em abas. O capítulo não tem módulo:
+    // cada passo tem o seu, e sem nenhum dos dois o capítulo some.
     rota: "/caixas-plasticas",
-    modulo: "caixas",
     passos: [
       {
+        modulo: "caixas",
         alvo: TITULO,
         titulo: "Suas caixas retornáveis",
         texto:
           "As que saem com a mercadoria e precisam voltar. Aqui você vê onde elas estão " +
           "e quantas não voltaram. A que volta do cliente volta SUJA: só conta como " +
           "limpa depois da higienização, e caixa suja não sai em nova venda.",
+      },
+      {
+        modulo: "embalagens",
+        // A aba só existe para quem tem os dois módulos; com só embalagens a
+        // tela inteira é dela, e o destaque vai para o título.
+        alvo: '[data-tour="aba-embalagens"], ' + TITULO,
+        titulo: "Papelão e sacaria vendidos à parte",
+        texto:
+          "Embalagem é vendida e não volta — diferente da caixa plástica, que é sua. " +
+          "Registrar aqui evita que essa receita fique fora do resultado.",
       },
     ],
   },
@@ -236,19 +254,6 @@ export const CAPITULOS: CapituloTour[] = [
         texto:
           "Quem lava, quantas caixas e o preço por caixa. Na devolução elas voltam ao " +
           "estoque de limpas, e o pagamento do serviço entra nas suas contas a pagar.",
-      },
-    ],
-  },
-  {
-    rota: "/embalagens",
-    modulo: "embalagens",
-    passos: [
-      {
-        alvo: TITULO,
-        titulo: "Papelão e sacaria vendidos à parte",
-        texto:
-          "Embalagem é vendida e não volta — diferente da caixa plástica, que é sua. " +
-          "Registrar aqui evita que essa receita fique fora do resultado.",
       },
     ],
   },
@@ -297,7 +302,14 @@ export const ROTA_INICIAL = CAPITULOS[0].rota;
 
 /** Os capítulos que o plano do cliente libera, na ordem do roteiro. */
 export function capitulosDoPlano(modules: string[] | undefined): CapituloTour[] {
-  return CAPITULOS.filter((c) => !c.modulo || isModuleEnabled(modules, c.modulo));
+  const liberado = (modulo?: OptionalModuleKey) => !modulo || isModuleEnabled(modules, modulo);
+  return CAPITULOS.filter((c) => liberado(c.modulo))
+    .map((c) =>
+      c.passos.every((p) => liberado(p.modulo))
+        ? c
+        : { ...c, passos: c.passos.filter((p) => liberado(p.modulo)) },
+    )
+    .filter((c) => c.passos.length > 0);
 }
 
 /** Onde a tela atual fica dentro do tour inteiro. */

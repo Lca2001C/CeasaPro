@@ -167,6 +167,8 @@ Catálogo **único**: `src/lib/plan/modules.ts`.
 
 Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403) → `module:` nos wrappers.
 
+**Tela de dois módulos:** `TELAS_COMPARTILHADAS` (em `modules.ts`) lista caminhos EXATOS que abrem com qualquer um de vários módulos — hoje só `/caixas-plasticas` (caixas **ou** embalagens). Proxy e menu perguntam por `modulosDaRota`/`rotaLiberada`, não por `moduleForPath`. As subtelas continuam do módulo dono pelo prefixo, cada uma com o próprio `layout.tsx` (`paginas-module-gate.test.ts` recusa subtela sem ele). As chaves **não** se juntam.
+
 **Troca de plano:** `PlanoService.changePlan` no servidor; depois `/api/auth/refresh` para reemitir o claim `modules`. Recusa o plano atual, plano inativo e o **plano interno do super-admin** (por slug, não por `active`). Novo preço vale na **próxima** cobrança (sem pró-rata).
 
 **Com a competência do mês já paga a troca é AGENDADA**, não aplicada: grava `pendingPlanId`/`pendingPlanFrom = currentPeriodEnd` e o plano vigente continua valendo até lá. A mensalidade compra o mês, e aplicar na hora entregava o plano caro ao preço do barato (ou tirava módulos já pagos, no downgrade). Quem faz valer é `aplicarTrocaProgramada`, chamada em `buildAccessPayload`, `prepareCharge`, `getPlanoView` e no cron.
@@ -227,17 +229,17 @@ Fixa/variável, categorias (seed no provisionamento do tenant), pendente/pago, f
 - `COMPRA` (gerada pela compra; índice único parcial `expenses_compra_unica`) e `FRETE_COMPRA` (frete lançado à parte antes desta versão): o custo **já está no CMV**, então ficam **fora** de lucro, Fixas/Variáveis, `totais`, `replicarMes` e "nova igual à última", e **dentro** de Contas a Pagar, vencidas, avisos/push, `CONTAS_PAGAS` e **fluxo de caixa** (que não lê mais `purchases.totalAmount` — a compra sai do caixa pela `paidDate` da conta). Filtro: `SO_OPERACIONAIS` / `ORIGENS_DE_COMPRA` em `despesas.service.ts`.
 - Conta de compra: valor/descrição/fornecedor travados, não exclui, não duplica. Compras antigas ganharam a conta no backfill da migration `20261016120000_estoque_unificado_compra_despesa` (PAGA na data da compra; sem o frete se ele já tinha despesa própria).
 
-### Caixas plásticas (módulo `caixas`)
+### Caixas e embalagens (`/caixas-plasticas`, módulos `caixas` e `embalagens`)
 
-Movimentos: ENTRADA, SAÍDA, RETORNO, QUEBRA. Saldos derivados (vazias, com clientes, perdidas). Não deixar saída > vazias nem retorno > com clientes.
+Uma tela com duas abas (Radix Tabs, aba na URL: `?aba=embalagens`). Quem tem só um dos módulos vê só a aba dele, sem lista de abas; sem nenhum, não entra. `/embalagens` e `/embalagens/nova` só redirecionam (a segunda abre a venda em folha, `&nova=1`). Menu: um item, "Caixas e embalagens". O tour tem um capítulo só, com passos marcados por `modulo`.
+
+**Caixas plásticas** — movimentos: ENTRADA, SAÍDA, RETORNO, QUEBRA. Saldos derivados (vazias, com clientes, perdidas). Não deixar saída > vazias nem retorno > com clientes.
+
+**Embalagens** — tipos + vendas avulsas (papelão, sacaria etc.), estoque por tipo opcional. Componentes em `caixas-plasticas/_components/embalagens/`.
 
 ### Higienização (módulo `higienizacao`)
 
 Envio → devolução parcial → pagamento parcial. Status ENVIADO → DEVOLVIDO → PAGO.
-
-### Embalagens (módulo `embalagens`)
-
-Tipos + vendas avulsas (caixa, sacaria, etc.).
 
 ### Cotações do CEASA (módulo `cotacoes`)
 

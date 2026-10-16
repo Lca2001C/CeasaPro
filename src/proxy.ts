@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { verifyAccess, ACCESS_COOKIE, REFRESH_COOKIE } from "@/lib/auth/jwt";
 import { COOKIE_TENTATIVA_RENOVACAO } from "@/lib/auth/renovacao";
 import { accessDecision } from "@/lib/billing/status";
-import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
+import { modulosDaRota, isModuleEnabled } from "@/lib/plan/modules";
 
 // Rotas publicas (sem sessao).
 const PUBLIC_PREFIXES = [
@@ -315,9 +315,10 @@ export async function proxy(req: NextRequest) {
     }
   }
 
-  // Bloqueio por módulo do plano (recurso fora do plano contratado).
-  const mod = moduleForPath(pathname);
-  if (mod && !isModuleEnabled(session.modules, mod)) {
+  // Bloqueio por módulo do plano (recurso fora do plano contratado). Tela
+  // compartilhada (caixas + embalagens) abre com qualquer um dos módulos dela.
+  const mods = modulosDaRota(pathname);
+  if (mods && !mods.some((m) => isModuleEnabled(session.modules, m))) {
     if (isApi) {
       return comCsp(
         NextResponse.json(
@@ -326,7 +327,7 @@ export async function proxy(req: NextRequest) {
         ),
       );
     }
-    return redirecionar(`/plano?bloqueado=${mod}`);
+    return redirecionar(`/plano?bloqueado=${mods[0]}`);
   }
 
   return seguir();

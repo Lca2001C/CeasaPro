@@ -2,6 +2,8 @@ import { describe, it, expect } from "vitest";
 import {
   planModules,
   moduleForPath,
+  modulosDaRota,
+  rotaLiberada,
   isModuleEnabled,
   requireModule,
   ALL_OPTIONAL_KEYS,
@@ -43,6 +45,31 @@ describe("planModules", () => {
 
   it("lista vazia = nenhum opcional", () => {
     expect(planModules({ modules: [] })).toEqual([]);
+  });
+});
+
+describe("modulosDaRota / rotaLiberada — tela compartilhada", () => {
+  it("Caixas e embalagens abre com qualquer um dos dois módulos", () => {
+    expect(modulosDaRota("/caixas-plasticas")).toEqual(["caixas", "embalagens"]);
+    expect(rotaLiberada(["caixas"], "/caixas-plasticas")).toBe(true);
+    expect(rotaLiberada(["embalagens"], "/caixas-plasticas")).toBe(true);
+    expect(rotaLiberada([], "/caixas-plasticas")).toBe(false);
+    expect(rotaLiberada(undefined, "/caixas-plasticas")).toBe(false);
+  });
+
+  it("as subtelas continuam do módulo dono — juntar a tela não junta as chaves", () => {
+    // Só embalagens não dá acesso ao formulário de movimento de caixas.
+    expect(modulosDaRota("/caixas-plasticas/novo")).toEqual(["caixas"]);
+    expect(rotaLiberada(["embalagens"], "/caixas-plasticas/novo")).toBe(false);
+    expect(rotaLiberada(["embalagens"], "/caixas-plasticas/qualquer-tela-nova")).toBe(false);
+    // E a rota antiga de embalagens segue exigindo embalagens.
+    expect(rotaLiberada(["caixas"], "/embalagens")).toBe(false);
+  });
+
+  it("núcleo é sempre liberado, e nome de propriedade não vira tela", () => {
+    expect(modulosDaRota("/dashboard")).toBeNull();
+    expect(rotaLiberada([], "/estoque")).toBe(true);
+    expect(modulosDaRota("constructor")).toBeNull();
   });
 });
 

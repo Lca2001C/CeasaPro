@@ -158,10 +158,26 @@ describe("capitulosDoPlano", () => {
 
   it("preserva a ordem do roteiro", () => {
     const parcial = capitulosDoPlano(["higienizacao"]);
+    const vale = (m?: string) => !m || m === "higienizacao";
     const esperada = CAPITULOS.filter(
-      (c) => !c.modulo || c.modulo === "higienizacao",
+      (c) => vale(c.modulo) && c.passos.some((p) => vale(p.modulo)),
     ).map((c) => c.rota);
     expect(parcial.map((c) => c.rota)).toEqual(esperada);
+  });
+
+  it("Caixas e embalagens: um capítulo, só com os passos do módulo contratado", () => {
+    // A tela é uma só, em abas, mas os módulos seguem separados no plano.
+    const modulosDosPassos = (mods: string[]) =>
+      localizar(capitulosDoPlano(mods), "/caixas-plasticas")?.capitulo.passos.map(
+        (p) => p.modulo,
+      ) ?? null;
+
+    expect(modulosDosPassos(["caixas", "embalagens"])).toEqual(["caixas", "embalagens"]);
+    expect(modulosDosPassos(["caixas"])).toEqual(["caixas"]);
+    expect(modulosDosPassos(["embalagens"])).toEqual(["embalagens"]);
+    expect(modulosDosPassos([])).toBeNull();
+    // A rota antiga não é mais capítulo: o tour não navega para um redirect.
+    expect(CAPITULOS.map((c) => c.rota)).not.toContain("/embalagens");
   });
 });
 
@@ -212,6 +228,7 @@ describe("localizar", () => {
     // Com o módulo, o capítulo existe; sem ele, some. Se `localizar` devolvesse
     // qualquer coisa aqui, o tour insistiria numa tela que o middleware bloqueia.
     expect(localizar(capitulosDoPlano(["caixas"]), "/caixas-plasticas")).not.toBeNull();
+    expect(localizar(capitulosDoPlano(["embalagens"]), "/caixas-plasticas")).not.toBeNull();
     expect(localizar(capitulosDoPlano([]), "/caixas-plasticas")).toBeNull();
   });
 

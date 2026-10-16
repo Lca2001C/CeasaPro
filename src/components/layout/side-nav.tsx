@@ -14,14 +14,13 @@ import {
   Settings,
   Container,
   Droplets,
-  PackageOpen,
   BadgeCheck,
   TrendingUp,
   LogOut,
   Sprout,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
-import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
+import { rotaLiberada } from "@/lib/plan/modules";
 import { toast } from "sonner";
 import { sair } from "@/lib/sair";
 import { hrefAtual } from "./item-atual";
@@ -37,9 +36,9 @@ const items = [
   { href: "/fiado", label: "Fiado", icon: HandCoins },
   { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
   { href: "/despesas", label: "Despesas", icon: Wallet },
-  { href: "/caixas-plasticas", label: "Caixas plásticas", icon: Container },
+  // Caixas e embalagens são uma tela só, em abas; os módulos seguem separados.
+  { href: "/caixas-plasticas", label: "Caixas e embalagens", icon: Container },
   { href: "/higienizacao", label: "Higienização", icon: Droplets },
-  { href: "/embalagens", label: "Embalagens", icon: PackageOpen },
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
   // Auditoria é da administração da plataforma (`/admin/auditoria`), não do
   // dia a dia do box: mistura eventos técnicos com operação e não tem ação
@@ -62,10 +61,7 @@ export function SideNav({
   trialLabel?: string | null;
 }) {
   const pathname = usePathname();
-  const visible = items.filter((item) => {
-    const m = moduleForPath(item.href);
-    return !m || isModuleEnabled(modules, m);
-  });
+  const visible = items.filter((item) => rotaLiberada(modules, item.href));
   // Um item ativo só: ver `hrefAtual` (em /vendas/nova, "Vendas" também casava).
   const atual = hrefAtual(
     visible.map((i) => i.href),

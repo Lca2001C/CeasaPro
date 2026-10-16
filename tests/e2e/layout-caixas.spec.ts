@@ -29,7 +29,7 @@ const PAGINAS = [
   { url: "/despesas", nome: "Despesas" },
   { url: "/estoque", nome: "Estoque" },
   { url: "/fiado", nome: "Fiado" },
-  { url: "/embalagens", nome: "Embalagens" },
+  { url: "/caixas-plasticas?aba=embalagens", nome: "Embalagens" },
   { url: "/caixas-plasticas", nome: "Caixas plásticas" },
   { url: "/higienizacao", nome: "Higienização" },
   { url: "/plano", nome: "Meu plano" },
@@ -203,7 +203,9 @@ const OUTRAS_PAGINAS = [
   { url: "/estoque/compra", nome: "Registrar compra" },
   { url: "/fornecedores/novo", nome: "Novo fornecedor" },
   { url: "/estoque/ajuste", nome: "Ajuste de estoque" },
-  { url: "/embalagens/nova", nome: "Nova embalagem" },
+  // A venda de embalagem abre em folha sobre a aba (o endereço antigo
+  // `/embalagens/nova` cai aqui).
+  { url: "/caixas-plasticas?aba=embalagens&nova=1", nome: "Nova venda de embalagem (folha)" },
   { url: "/caixas-plasticas/novo", nome: "Nova movimentação de caixas" },
   { url: "/higienizacao/nova", nome: "Nova higienização" },
 ];

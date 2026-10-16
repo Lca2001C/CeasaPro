@@ -190,7 +190,7 @@ export const AREAS: AreaGuia[] = [
   },
   {
     titulo: "Venda de embalagens",
-    href: "/embalagens",
+    href: "/caixas-plasticas?aba=embalagens",
     resumo: "Caixa de papelão, sacaria e afins vendidos à parte da mercadoria.",
     comoUsar: [
       "Cadastre os tipos de embalagem que você revende.",

@@ -42,11 +42,9 @@ test.describe("Navegação (botões do menu)", () => {
     const opcionais: [string, string][] = [
       ["Vendas", "Vendas"],
       ["Cotações", "Cotações"],
-      ["Caixas plásticas", "Caixas plásticas"],
+      // Caixas e embalagens são uma tela só, em abas (a demo tem os dois módulos).
+      ["Caixas e embalagens", "Caixas e embalagens"],
       ["Higienização", "Higienização"],
-      // O link diz "Embalagens" e a tela se chama "Venda de embalagens" — é o
-      // par que o teste tem de casar, não uma repetição do mesmo texto.
-      ["Embalagens", "Venda de embalagens"],
     ];
 
     for (const [link, heading] of opcionais) {
@@ -55,5 +53,26 @@ test.describe("Navegação (botões do menu)", () => {
         page.getByRole("heading", { name: heading, exact: true }),
       ).toBeVisible();
     }
+  });
+
+  test("Caixas e embalagens: a aba fica na URL e o endereço antigo cai nela", async ({ page }) => {
+    await page.goto("/caixas-plasticas");
+    await page.getByRole("tab", { name: "Embalagens" }).click();
+    await expect(page).toHaveURL(/\/caixas-plasticas\?aba=embalagens$/);
+    await expect(page.getByRole("tab", { name: "Embalagens" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+
+    await page.getByRole("tab", { name: "Caixas plásticas" }).click();
+    await expect(page).toHaveURL(/\/caixas-plasticas$/);
+
+    // Favoritos e o tour antigo apontavam para /embalagens.
+    await page.goto("/embalagens");
+    await expect(page).toHaveURL(/\/caixas-plasticas\?aba=embalagens$/);
+    await expect(page.getByRole("tab", { name: "Embalagens" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
   });
 });

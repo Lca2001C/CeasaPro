@@ -2,7 +2,6 @@
 
 import { isoDateTz } from "@/lib/tz";
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { criarVendaEmbalagem } from "@/actions/embalagens.actions";
@@ -13,9 +12,18 @@ import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
+import { DialogFooter } from "@/components/ui/dialog";
 
-export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: string }[] }) {
-  const router = useRouter();
+/** O formulário da venda de embalagem — mora na folha de `NovaVendaEmbalagem`. */
+export function VendaEmbalagemForm({
+  tipos,
+  onSalvo,
+  onCancelar,
+}: {
+  tipos: { id: string; name: string }[];
+  onSalvo: () => void;
+  onCancelar: () => void;
+}) {
   const [packagingTypeId, setPackagingTypeId] = useState(tipos[0]?.id ?? "");
   const [customerName, setCustomerName] = useState("");
   const [saleDate, setSaleDate] = useState(isoDateTz());
@@ -40,7 +48,7 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
     setSaving(false);
     if (res.ok) {
       toast.success("Venda de embalagem registrada.");
-      router.push("/embalagens");
+      onSalvo();
     } else {
       toast.error(res.error.message);
     }
@@ -94,20 +102,20 @@ export function VendaEmbalagemForm({ tipos }: { tipos: { id: string; name: strin
         <CurrencyInput aria-label="Valor unitário" value={unitPrice} onChange={setUnitPrice} />
       </div>
 
-      <Card className="flex items-center justify-between p-3">
+      <Card className="flex items-center justify-between p-4">
         <span className="text-sm text-muted-foreground">Valor total</span>
-        <span className="font-semibold tabular-nums">{formatBRL(total)}</span>
+        <span className="text-xl font-bold tabular-nums">{formatBRL(total)}</span>
       </Card>
 
-      <div className="flex gap-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>
+      <DialogFooter>
+        <Button type="button" variant="outline" className="sm:flex-1" onClick={onCancelar}>
           Cancelar
         </Button>
-        <Button className="flex-1" onClick={submit} disabled={saving}>
+        <Button variant="success" className="sm:flex-1" onClick={submit} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           Salvar
         </Button>
-      </div>
+      </DialogFooter>
     </div>
   );
 }

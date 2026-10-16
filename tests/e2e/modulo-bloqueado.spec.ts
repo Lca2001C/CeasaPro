@@ -86,7 +86,7 @@ test.describe("Módulo fora do plano", () => {
   test("o menu não oferece os módulos que o plano não inclui", async ({ page }) => {
     await entrar(page);
     const side = page.locator("aside");
-    for (const item of ["Cotações", "Caixas plásticas", "Higienização", "Embalagens"]) {
+    for (const item of ["Cotações", "Caixas e embalagens", "Higienização"]) {
       await expect(side.getByRole("link", { name: item, exact: true })).toHaveCount(0);
     }
     // E o que é núcleo continua lá — o bloqueio é do módulo, não da conta.
@@ -103,6 +103,13 @@ test.describe("Módulo fora do plano", () => {
     await page.goto("/cotacoes");
     await expect(page).toHaveURL(/\/plano\?bloqueado=cotacoes/);
     await expect(page.getByRole("heading", { name: "Meu plano" })).toBeVisible();
+
+    // A tela de caixas e embalagens abre com QUALQUER um dos dois módulos — e
+    // por isso mesmo sem nenhum dos dois ela não abre.
+    await page.goto("/caixas-plasticas?aba=embalagens");
+    await expect(page).toHaveURL(/\/plano\?bloqueado=caixas/);
+    await page.goto("/embalagens/nova");
+    await expect(page).toHaveURL(/\/plano\?bloqueado=embalagens/);
   });
 
   test("relatório avançado também cai no plano, e o básico abre", async ({ page }) => {

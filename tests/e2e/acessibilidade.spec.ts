@@ -41,7 +41,7 @@ const TELAS = [
   "/cotacoes",
   "/caixas-plasticas",
   "/higienizacao",
-  "/embalagens",
+  "/caixas-plasticas?aba=embalagens",
   // Formulários — onde estavam as violações críticas
   // O cadastro de produto agora é um modal sobre o Estoque, aberto pela URL.
   "/estoque?novo=1",
