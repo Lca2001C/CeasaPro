@@ -28,15 +28,15 @@ export function NovaFoto() {
     setPreparando(true);
     try {
       setFoto(await comprimirFoto(arquivo));
-      // Sugestão de nome a partir do arquivo ("tomate-italiano.jpg").
-      if (!nome) {
-        setNome(
-          arquivo.name
-            .replace(/\.[^.]+$/, "")
-            .replace(/[-_]+/g, " ")
-            .replace(/^\w/, (c) => c.toUpperCase()),
-        );
-      }
+      // Sugestão de nome a partir do arquivo ("tomate-italiano.jpg") — só se o
+      // campo AINDA estiver vazio. A compressão leva um instante, e quem
+      // digitou o nome enquanto ela rodava tinha o texto trocado pelo do
+      // arquivo: o `nome` desta função é o de quando a foto foi escolhida.
+      const sugestao = arquivo.name
+        .replace(/\.[^.]+$/, "")
+        .replace(/[-_]+/g, " ")
+        .replace(/^\w/, (c) => c.toUpperCase());
+      setNome((atual) => atual || sugestao);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível usar esta foto.");
     } finally {
