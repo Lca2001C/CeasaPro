@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { Loader2, ArrowRight, Check } from "lucide-react";
+import { Loader2, ArrowRight, Check, Package, Sprout, Store, Truck } from "lucide-react";
 import { salvarEmpresa, concluirOnboarding } from "@/actions/config.actions";
 import { criarFornecedor } from "@/actions/fornecedores.actions";
 import { criarProduto } from "@/actions/produtos.actions";
@@ -13,11 +13,14 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { cn } from "@/lib/cn";
 
 import { chamarAction } from "@/lib/http/chamar-action";
 /** Empresa → fornecedor → produto. */
 const TOTAL_PASSOS = 3;
+/** Nome curto de cada passo, no indicador do topo. */
+const PASSOS = ["Empresa", "Fornecedor", "Produto"] as const;
 
 export function OnboardingWizard({
   initialName,
@@ -118,44 +121,92 @@ export function OnboardingWizard({
   }
 
   return (
-    <div className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-primary">Bem-vindo!</h1>
+    // `main`: esta tela fica fora do AppShell e não herda marco nenhum.
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-5 px-4 py-8">
+      <div className="flex flex-col items-center text-center">
+        <div className="mb-4 flex items-center gap-2 text-lg font-bold tracking-tight">
+          <Sprout aria-hidden className="size-6 text-primary" />
+          <span>
+            Ceasa<span className="text-primary">Pro</span>
+          </span>
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight">Bem-vindo!</h1>
         {/* São 3 passos — o texto dizia "de 4" e deixava quem está começando
             esperando uma etapa que nunca vinha. */}
-        <p className="text-sm text-muted-foreground">
+        <p className="mt-1 text-sm text-muted-foreground">
           Passo {step} de {TOTAL_PASSOS}
         </p>
+        {/*
+          Indicador numerado: cada passo com o seu nome, o feito ganha um ✓ e o
+          atual um anel. O leitor de tela lê só o `aria-label` (os filhos de um
+          `progressbar` são apresentacionais).
+        */}
         <div
-          className="mx-auto mt-2 flex max-w-[12rem] gap-1.5"
+          className="mt-4 flex w-full max-w-xs items-start"
           role="progressbar"
           aria-valuemin={1}
           aria-valuemax={TOTAL_PASSOS}
           aria-valuenow={step}
           aria-label={`Passo ${step} de ${TOTAL_PASSOS}`}
         >
-          {Array.from({ length: TOTAL_PASSOS }, (_, i) => (
-            <span
-              key={i}
-              className={cn(
-                "h-1.5 flex-1 rounded-full transition-colors",
-                i < step ? "bg-primary" : "bg-muted",
-              )}
-            />
-          ))}
+          {PASSOS.map((rotulo, i) => {
+            const n = i + 1;
+            const feito = n < step;
+            const atual = n === step;
+            return (
+              <Fragment key={rotulo}>
+                {i > 0 && (
+                  <span
+                    className={cn(
+                      "mt-[17px] h-0.5 flex-1 rounded-full motion-safe:transition-colors",
+                      n <= step ? "bg-primary" : "bg-border",
+                    )}
+                  />
+                )}
+                <span className="flex w-20 shrink-0 flex-col items-center gap-1.5">
+                  <span
+                    className={cn(
+                      "flex size-9 items-center justify-center rounded-full text-sm font-bold motion-safe:transition-colors",
+                      feito && "bg-primary text-primary-foreground",
+                      atual && "bg-primary/10 text-primary ring-2 ring-primary",
+                      !feito && !atual && "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {feito ? <Check className="size-4" /> : n}
+                  </span>
+                  <span
+                    className={cn(
+                      "text-xs font-semibold",
+                      atual ? "text-foreground" : "text-muted-foreground",
+                    )}
+                  >
+                    {rotulo}
+                  </span>
+                </span>
+              </Fragment>
+            );
+          })}
         </div>
       </div>
 
       <Card>
-        <CardContent className="flex flex-col gap-4 pt-6">
+        <CardContent className="flex flex-col gap-4 p-5 sm:p-7">
           {step === 1 && (
             <>
-              <p className="font-medium">Confirme os dados da sua empresa</p>
+              <div className="flex items-center gap-3">
+                <IconeRedondo>
+                  <Store />
+                </IconeRedondo>
+                <h2 className="text-lg font-bold leading-tight tracking-tight">
+                  Confirme os dados da sua empresa
+                </h2>
+              </div>
               {/* Os `<Label>` deste passo não apontam para os campos; sem
                   `aria-label` nenhum deles tem nome acessível. */}
               <div className="flex flex-col gap-1.5">
-                <Label>Nome da empresa</Label>
+                <Label htmlFor="onb-empresa">Nome da empresa</Label>
                 <Input
+                  id="onb-empresa"
                   aria-label="Nome da empresa"
                   value={tradeName}
                   onChange={(e) => setTradeName(e.target.value)}
@@ -163,44 +214,54 @@ export function OnboardingWizard({
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Telefone</Label>
+                <Label htmlFor="onb-telefone">Telefone</Label>
                 <Input
+                  id="onb-telefone"
                   aria-label="Telefone da empresa"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Endereço / Box</Label>
+                <Label htmlFor="onb-endereco">Endereço / Box</Label>
                 <Input
+                  id="onb-endereco"
                   aria-label="Endereço ou box"
                   value={address}
                   onChange={(e) => setAddress(e.target.value)}
                 />
               </div>
-              <Button onClick={saveCompany} disabled={busy}>
-                {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} Continuar
+              <Button size="lg" onClick={saveCompany} disabled={busy} className="mt-1 w-full">
+                {busy ? <Loader2 className="motion-safe:animate-spin" /> : <ArrowRight />} Continuar
               </Button>
             </>
           )}
 
           {step === 2 && (
             <>
-              <p className="font-medium">Cadastre um fornecedor (opcional)</p>
+              <div className="flex items-center gap-3">
+                <IconeRedondo>
+                  <Truck />
+                </IconeRedondo>
+                <h2 className="text-lg font-bold leading-tight tracking-tight">
+                  Cadastre um fornecedor (opcional)
+                </h2>
+              </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Nome do fornecedor</Label>
+                <Label htmlFor="onb-fornecedor">Nome do fornecedor</Label>
                 <Input
+                  id="onb-fornecedor"
                   value={supplierName}
                   onChange={(e) => setSupplierName(e.target.value)}
                   autoFocus
                 />
               </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" className="flex-1" onClick={() => saveSupplier(true)} disabled={busy}>
+              <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row">
+                <Button variant="outline" size="lg" className="sm:flex-1" onClick={() => saveSupplier(true)} disabled={busy}>
                   Pular
                 </Button>
-                <Button className="flex-1" onClick={() => saveSupplier()} disabled={busy}>
-                  {busy ? <Loader2 className="animate-spin" /> : <ArrowRight />} Continuar
+                <Button size="lg" className="sm:flex-1" onClick={() => saveSupplier()} disabled={busy}>
+                  {busy ? <Loader2 className="motion-safe:animate-spin" /> : <ArrowRight />} Continuar
                 </Button>
               </div>
             </>
@@ -208,18 +269,26 @@ export function OnboardingWizard({
 
           {step === 3 && (
             <>
-              <p className="font-medium">Cadastre um produto (opcional)</p>
+              <div className="flex items-center gap-3">
+                <IconeRedondo>
+                  <Package />
+                </IconeRedondo>
+                <h2 className="text-lg font-bold leading-tight tracking-tight">
+                  Cadastre um produto (opcional)
+                </h2>
+              </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Nome do produto</Label>
+                <Label htmlFor="onb-produto">Nome do produto</Label>
                 <Input
+                  id="onb-produto"
                   value={productName}
                   onChange={(e) => setProductName(e.target.value)}
                   autoFocus
                 />
               </div>
               <div className="flex flex-col gap-1.5">
-                <Label>Unidade de venda</Label>
-                <Select value={saleUnit} onChange={(e) => setSaleUnit(e.target.value)}>
+                <Label htmlFor="onb-unidade">Unidade de venda</Label>
+                <Select id="onb-unidade" value={saleUnit} onChange={(e) => setSaleUnit(e.target.value)}>
                   {toOptions(SALE_UNIT_LABELS).map((o) => (
                     <option key={o.value} value={o.value}>
                       {o.label}
@@ -227,18 +296,18 @@ export function OnboardingWizard({
                   ))}
                 </Select>
               </div>
-              <div className="flex gap-2">
-                <Button variant="ghost" className="flex-1" onClick={() => saveProduct(true)} disabled={busy}>
+              <div className="mt-1 flex flex-col-reverse gap-2 sm:flex-row">
+                <Button variant="outline" size="lg" className="sm:flex-1" onClick={() => saveProduct(true)} disabled={busy}>
                   Pular
                 </Button>
-                <Button className="flex-1" onClick={() => saveProduct()} disabled={busy}>
-                  {busy ? <Loader2 className="animate-spin" /> : <Check />} Concluir
+                <Button size="lg" className="sm:flex-1" onClick={() => saveProduct()} disabled={busy}>
+                  {busy ? <Loader2 className="motion-safe:animate-spin" /> : <Check />} Concluir
                 </Button>
               </div>
             </>
           )}
         </CardContent>
       </Card>
-    </div>
+    </main>
   );
 }

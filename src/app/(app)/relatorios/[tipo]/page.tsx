@@ -1,4 +1,5 @@
 import { notFound, redirect } from "next/navigation";
+import { FileBarChart } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
@@ -7,8 +8,18 @@ import { REPORT_TYPES, isAdvancedReport, type ReportKind } from "@/lib/reports/r
 import { formatCell } from "@/lib/reports/format-cell";
 import { formatDate } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { Table, TableHeader, TableBody, TableRow, TableHead, TableCell, TableFooter } from "@/components/ui/table";
+import {
+  Table,
+  TableHeader,
+  TableBody,
+  TableRow,
+  TableHead,
+  TableCell,
+  TableFooter,
+} from "@/components/ui/table";
 import { EmptyState } from "@/components/data/empty-state";
+import { PageHeader } from "@/components/data/page-header";
+import { Card } from "@/components/ui/card";
 import { ReportToolbar } from "./_components/report-toolbar";
 
 export const dynamic = "force-dynamic";
@@ -58,56 +69,87 @@ export default async function RelatorioViewPage({
 
   return (
     <div>
-      <div className="mb-1 flex items-baseline justify-between">
-        <h1 className="text-xl font-bold">{report.title}</h1>
-      </div>
-      <p className="mb-4 text-sm text-muted-foreground">
-        Periodo: {formatDate(report.period.from)} a {formatDate(report.period.to)}
-      </p>
-
-      <ReportToolbar
-        kind={kind.toLowerCase()}
-        mostrarOpcoesDeDespesa={kind === "DESPESAS" || kind === "CONTAS_PAGAS"}
-        permiteEscolherData={kind === "DESPESAS"}
+      <PageHeader
+        title={report.title}
+        description={`Período: ${formatDate(report.period.from)} a ${formatDate(report.period.to)}`}
       />
 
-      {report.rows.length === 0 ? (
-        <EmptyState title="Nenhum dado no periodo" description="Ajuste o periodo no seletor acima." />
-      ) : (
-        <Table>
-          <TableHeader>
-            <TableRow>
-              {report.columns.map((c) => (
-                <TableHead key={c.key} className={cn(c.align === "right" && "text-right")}>
-                  {c.label}
-                </TableHead>
-              ))}
-            </TableRow>
-          </TableHeader>
-          <TableBody>
-            {report.rows.map((row, i) => (
-              <TableRow key={i}>
-                {report.columns.map((c) => (
-                  <TableCell key={c.key} className={cn(c.align === "right" && "text-right tabular-nums")}>
-                    {formatCell(row[c.key], c.format)}
-                  </TableCell>
+      <div className="flex flex-col gap-5">
+        <ReportToolbar
+          kind={kind.toLowerCase()}
+          mostrarOpcoesDeDespesa={kind === "DESPESAS" || kind === "CONTAS_PAGAS"}
+          permiteEscolherData={kind === "DESPESAS"}
+        />
+
+        {report.rows.length === 0 ? (
+          <EmptyState
+            icon={<FileBarChart />}
+            title="Nenhum dado no período"
+            description="Ajuste o período no seletor acima."
+          />
+        ) : (
+          /*
+            Na impressão o cartão some: papel não tem sombra nem fundo de tema
+            (no tema escuro, o fundo do cartão sairia como um bloco escuro na
+            folha), e a tabela ocupa a largura toda.
+          */
+          <Card className="overflow-hidden print:overflow-visible print:rounded-none print:border-0 print:bg-transparent print:text-inherit print:shadow-none">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  {report.columns.map((c) => (
+                    <TableHead
+                      key={c.key}
+                      className={cn(
+                        "whitespace-nowrap first:pl-4 last:pr-4",
+                        c.align === "right" && "text-right",
+                      )}
+                    >
+                      {c.label}
+                    </TableHead>
+                  ))}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {report.rows.map((row, i) => (
+                  <TableRow key={i}>
+                    {report.columns.map((c) => (
+                      <TableCell
+                        key={c.key}
+                        className={cn(
+                          "first:pl-4 last:pr-4",
+                          c.align === "right" && "text-right tabular-nums",
+                        )}
+                      >
+                        {formatCell(row[c.key], c.format)}
+                      </TableCell>
+                    ))}
+                  </TableRow>
                 ))}
-              </TableRow>
-            ))}
-          </TableBody>
-          {report.totals && (
-            <TableFooter>
-              <TableRow>
-                {report.columns.map((c) => (
-                  <TableCell key={c.key} className={cn(c.align === "right" && "text-right tabular-nums")}>
-                    {report.totals![c.key] !== undefined ? formatCell(report.totals![c.key], c.format) : ""}
-                  </TableCell>
-                ))}
-              </TableRow>
-            </TableFooter>
-          )}
-        </Table>
-      )}
+              </TableBody>
+              {report.totals && (
+                <TableFooter>
+                  <TableRow>
+                    {report.columns.map((c) => (
+                      <TableCell
+                        key={c.key}
+                        className={cn(
+                          "font-bold first:pl-4 last:pr-4",
+                          c.align === "right" && "text-right tabular-nums",
+                        )}
+                      >
+                        {report.totals![c.key] !== undefined
+                          ? formatCell(report.totals![c.key], c.format)
+                          : ""}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                </TableFooter>
+              )}
+            </Table>
+          </Card>
+        )}
+      </div>
     </div>
   );
 }

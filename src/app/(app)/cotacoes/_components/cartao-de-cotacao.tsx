@@ -31,6 +31,9 @@ export function CartaoDeCotacao({ linha }: { linha: LinhaDeCotacao }) {
     E a R$ 4,20 o quilo", que é uma pergunta que o comerciante faz.
   */
   const outraEmbalagem = linha.vinculo === "outra_embalagem";
+  // Mesma família (primeira palavra) de um produto seu, sem vínculo gravado:
+  // marca o parentesco sem a estrela, que promete "é exatamente o que você vende".
+  const daFamilia = linha.vinculo === "palavra";
   const temSaldo =
     euVendo && linha.meuSaldo !== null && nivelEstoque(linha.meuSaldo) !== "zerado";
   // Só quando a embalagem não é o próprio quilo, e só quando o boletim declara
@@ -47,6 +50,7 @@ export function CartaoDeCotacao({ linha }: { linha: LinhaDeCotacao }) {
           "flex h-full flex-col rounded-lg border bg-card p-3 shadow-sm transition-colors",
           "hover:border-primary/60 hover:bg-accent/40",
           euVendo && "border-success/50 bg-success/5 hover:border-success",
+          daFamilia && "border-success/30",
         )}
       >
         <div className="flex items-start justify-between gap-2">
@@ -61,6 +65,10 @@ export function CartaoDeCotacao({ linha }: { linha: LinhaDeCotacao }) {
               <span className="truncate">
                 sua embalagem: {rotuloDeEmbalagem(linha.minhaEmbalagem)}
               </span>
+            </span>
+          ) : daFamilia ? (
+            <span className="inline-flex min-w-0 items-center gap-1 rounded-full bg-success/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-success">
+              <span className="truncate">pelo nome: {linha.meuProdutoNome}</span>
             </span>
           ) : (
             <span />

@@ -59,15 +59,57 @@ describe("linha do carrinho", () => {
     await user.clear(qtd);
     await user.type(qtd, "2,01");
     // Em float, 2.01 * 1.5 = 3.0149999… e a linha mostrava R$ 3,01. Linha e
-    // rodapé têm de dizer o mesmo valor que o servidor grava.
-    // Linha, rodapé e o "Total da venda" da caixa de troco (Dinheiro é o padrão).
+    // resumo têm de dizer o mesmo valor que o servidor grava.
+    expect(screen.getByTestId("pdv-total")).toHaveTextContent("R$ 3,02");
+    // Linha do carrinho, subtotal e total do resumo.
     expect(screen.getAllByText("R$ 3,02")).toHaveLength(3);
     expect(screen.queryByText("R$ 3,01")).not.toBeInTheDocument();
   });
 });
 
-describe("troco em pagamento dividido", () => {
-  it("compara o recebido com a parte em dinheiro, não com o total", async () => {
+describe("pagamento em dinheiro", () => {
+  it("não pergunta quanto o cliente pagou nem calcula troco", async () => {
+    const user = userEvent.setup();
+    render(
+      <Pdv
+        produtos={produtos}
+        caixasLimpas={0}
+        produtoInicial="limao"
+        ultimosPrecos={{ limao: 100 }}
+        estoquePorProduto={{ limao: 10 }}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "Dinheiro" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.queryByLabelText("Cliente pagou com")).not.toBeInTheDocument();
+    expect(screen.queryByTestId("pdv-troco")).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Dividir em mais de uma forma" }));
+    expect(screen.queryByLabelText("Cliente pagou com")).not.toBeInTheDocument();
+  });
+
+  it("não manda valor recebido para o servidor", async () => {
+    apiPost.mockResolvedValue({ ok: true, data: { id: "v1", jaRegistrada: false } });
+    const user = userEvent.setup();
+    render(
+      <Pdv
+        produtos={produtos}
+        caixasLimpas={0}
+        produtoInicial="limao"
+        ultimosPrecos={{ limao: 10 }}
+        estoquePorProduto={{ limao: 10 }}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Finalizar venda" }));
+    const corpo = apiPost.mock.calls[0]![1] as Record<string, unknown>;
+    expect(corpo.paymentMethod).toBe("DINHEIRO");
+    expect(corpo).not.toHaveProperty("amountReceived");
+    expect(await screen.findByText(/Venda registrada/)).toBeInTheDocument();
+    expect(screen.queryByText(/Troco/)).not.toBeInTheDocument();
+  });
+});
+
+describe("pagamento dividido", () => {
+  it("a segunda forma nasce com o que falta e a próxima forma livre", async () => {
     const user = userEvent.setup();
     render(
       <Pdv
@@ -90,15 +132,77 @@ describe("troco em pagamento dividido", () => {
     });
     expect(primeira).toHaveValue("R$ 60,00");
     await user.click(screen.getByRole("button", { name: /Adicionar forma/ }));
-    // A segunda forma nasce com o que falta (R$ 40) — e a próxima livre é Dinheiro.
+    expect(screen.getByLabelText("Forma de pagamento 1")).toHaveValue("PIX");
     expect(screen.getByLabelText("Forma de pagamento 2")).toHaveValue("DINHEIRO");
+    expect(screen.getByLabelText("Valor da forma de pagamento 2")).toHaveValue("R$ 40,00");
+    expect(screen.getByText("Fecha com o total")).toBeInTheDocument();
+  });
+});
 
-    expect(screen.getByText("Parte em dinheiro")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Cliente pagou com"), "50");
+describe("grade de produtos", () => {
+  const comFoto = [
+    { id: "tomate", name: "Tomate Italiano", saleUnit: "CAIXA", imageUrl: "https://cdn.test/tomate.jpg" },
+    { id: "tomate-cereja", name: "Tomate Cereja", saleUnit: "BANDEJA", imageUrl: null },
+    { id: "uva", name: "Uva Niágara", saleUnit: "CAIXA", minStock: 5 },
+  ];
 
-    const caixa = screen.getByTestId("pdv-troco");
-    expect(within(caixa).getByText("Troco")).toBeInTheDocument();
-    expect(within(caixa).getByText("R$ 10,00")).toBeInTheDocument();
+  it("mostra a foto, o saldo e o preço sugerido de cada produto", () => {
+    const { container } = render(
+      <Pdv
+        produtos={comFoto}
+        caixasLimpas={0}
+        ultimosPrecos={{ tomate: 120 }}
+        estoquePorProduto={{ tomate: 183, uva: 2 }}
+        maisVendidos={["tomate"]}
+      />,
+    );
+    const cartao = screen.getByRole("button", { name: "Adicionar Tomate Italiano" });
+    expect(cartao.querySelector("img")).toHaveAttribute("src", "https://cdn.test/tomate.jpg");
+    expect(within(cartao).getByText("183 em estoque")).toBeInTheDocument();
+    expect(within(cartao).getByText("Mais vendido")).toBeInTheDocument();
+    expect(within(cartao).getByText("R$ 120,00")).toBeInTheDocument();
+
+    const semFoto = screen.getByRole("button", { name: "Adicionar Tomate Cereja" });
+    expect(semFoto.querySelector("img")).toBeNull();
+    expect(within(semFoto).getByText("sem estoque")).toBeInTheDocument();
+
+    const uva = screen.getByRole("button", { name: "Adicionar Uva Niágara" });
+    expect(within(uva).getByText(/acabando/)).toBeInTheDocument();
+    // Mais vendido primeiro.
+    const nomes = [...container.querySelectorAll("button[aria-label^='Adicionar ']")].map((b) =>
+      b.getAttribute("aria-label"),
+    );
+    expect(nomes[0]).toBe("Adicionar Tomate Italiano");
+  });
+
+  it("tocar no cartão põe no carrinho e o −/+ do cartão ajusta a quantidade", async () => {
+    const user = userEvent.setup();
+    render(
+      <Pdv produtos={comFoto} caixasLimpas={0} ultimosPrecos={{ tomate: 10 }} estoquePorProduto={{ tomate: 10 }} />,
+    );
+    await user.click(screen.getByRole("button", { name: "Adicionar Tomate Italiano" }));
+    const qtd = screen.getByLabelText("Quantidade de Tomate Italiano");
+    expect(qtd).toHaveValue(1);
+
+    await user.click(screen.getByRole("button", { name: "Mais 1 de Tomate Italiano" }));
+    expect(qtd).toHaveValue(2);
+    expect(screen.getByTestId("pdv-total")).toHaveTextContent("R$ 20,00");
+
+    await user.click(screen.getByRole("button", { name: "Tirar 1 de Tomate Italiano" }));
+    await user.click(screen.getByRole("button", { name: "Tirar 1 de Tomate Italiano" }));
+    expect(screen.queryByLabelText("Quantidade de Tomate Italiano")).not.toBeInTheDocument();
+  });
+
+  it("filtra pela primeira palavra do nome", async () => {
+    const user = userEvent.setup();
+    render(<Pdv produtos={comFoto} caixasLimpas={0} />);
+    await user.click(screen.getByRole("button", { name: "TOMATE" }));
+    expect(screen.getByRole("button", { name: "Adicionar Tomate Italiano" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Adicionar Tomate Cereja" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Adicionar Uva Niágara" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Todos" }));
+    expect(screen.getByRole("button", { name: "Adicionar Uva Niágara" })).toBeInTheDocument();
   });
 });
 

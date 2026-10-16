@@ -5,12 +5,16 @@ import Link from "next/link";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { Loader2, MailCheck } from "lucide-react";
+import { KeyRound, Loader2, MailCheck } from "lucide-react";
 import { forgotSchema, type ForgotInput } from "@/lib/validations/auth";
 import { apiPost } from "@/lib/api-client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
+
+const linkDiscreto =
+  "inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 
 export function ForgotForm() {
   const [loading, setLoading] = useState(false);
@@ -36,27 +40,30 @@ export function ForgotForm() {
   if (sentTo) {
     return (
       <div className="flex flex-col items-center gap-4 text-center">
-        <MailCheck className="size-8 text-primary" />
-        <div className="flex flex-col gap-1">
-          <p className="font-medium">Verifique seu e-mail</p>
-          <p className="text-sm text-muted-foreground">
+        <IconeRedondo tamanho="lg">
+          <MailCheck />
+        </IconeRedondo>
+        <div className="flex flex-col gap-1.5">
+          <h2 className="text-xl font-bold tracking-tight">Verifique seu e-mail</h2>
+          <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
             Se <strong className="text-foreground">{sentTo}</strong> tiver uma conta
             ativa, o link de redefinição chega em instantes. Ele vale por 1 hora.
           </p>
-          <p className="text-xs text-muted-foreground">
+          <p className="text-sm text-muted-foreground">
             Não achou? Confira a caixa de spam / lixo eletrônico.
           </p>
         </div>
         <Button
           variant="outline"
+          size="lg"
           className="w-full"
           onClick={() => void onSubmit({ email: sentTo })}
           disabled={loading}
         >
-          {loading && <Loader2 className="animate-spin" />}
+          {loading && <Loader2 className="motion-safe:animate-spin" />}
           Enviar novamente
         </Button>
-        <Link href="/login" className="text-sm font-medium text-primary underline">
+        <Link href="/login" className={linkDiscreto}>
           Voltar para o login
         </Link>
       </div>
@@ -65,6 +72,12 @@ export function ForgotForm() {
 
   return (
     <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+      <div className="flex items-center gap-3">
+        <IconeRedondo>
+          <KeyRound />
+        </IconeRedondo>
+        <h2 className="text-xl font-bold tracking-tight">Esqueceu a senha?</h2>
+      </div>
       <p className="text-sm text-muted-foreground">
         Informe o e-mail da conta. Enviaremos um link para você criar uma senha nova.
       </p>
@@ -78,16 +91,16 @@ export function ForgotForm() {
           {...register("email")}
         />
         {errors.email && (
-          <span className="text-xs text-destructive">{errors.email.message}</span>
+          <span className="text-sm text-destructive">{errors.email.message}</span>
         )}
       </div>
-      <Button type="submit" size="lg" disabled={loading}>
-        {loading && <Loader2 className="animate-spin" />}
+      <Button type="submit" size="lg" disabled={loading} className="mt-1 w-full">
+        {loading && <Loader2 className="motion-safe:animate-spin" />}
         Enviar link
       </Button>
       <Link
         href="/login"
-        className="text-center text-sm text-muted-foreground hover:text-foreground"
+        className={`mx-auto ${linkDiscreto}`}
       >
         Voltar para o login
       </Link>

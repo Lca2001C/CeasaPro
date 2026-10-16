@@ -1,5 +1,12 @@
 import { describe, it, expect } from "vitest";
-import { normalizarNome, slugProduto, sugerirVinculos } from "@/lib/cotacoes/nome";
+import {
+  agruparPorPrimeiraPalavra,
+  casaPelaPrimeiraPalavra,
+  normalizarNome,
+  primeiraPalavra,
+  slugProduto,
+  sugerirVinculos,
+} from "@/lib/cotacoes/nome";
 
 /**
  * A normalização existe para dar IDENTIDADE ao produto do boletim, e para
@@ -42,6 +49,52 @@ describe("slugProduto", () => {
   it("é estável entre grafias — é o que impede o catálogo de duplicar por dia", () => {
     expect(slugProduto("TOMATE  SALADA")).toBe("tomate-salada");
     expect(slugProduto("Tomate Salada")).toBe(slugProduto("TOMATE   SALADA"));
+  });
+});
+
+describe("primeiraPalavra", () => {
+  it("agrupa grafias diferentes da mesma família", () => {
+    expect(primeiraPalavra("Tomate Italiano")).toBe("tomate");
+    expect(primeiraPalavra("TOMATE SALADA LONGA VIDA")).toBe("tomate");
+    expect(primeiraPalavra("  uva  niágara ")).toBe("uva");
+    expect(primeiraPalavra("Batata-doce")).toBe("batata");
+  });
+
+  it("pula palavras vazias no começo", () => {
+    expect(primeiraPalavra("de Tomate")).toBe("tomate");
+  });
+
+  it("nome vazio devolve string vazia", () => {
+    expect(primeiraPalavra("")).toBe("");
+    expect(primeiraPalavra(" -- ")).toBe("");
+  });
+});
+
+describe("agruparPorPrimeiraPalavra", () => {
+  it("junta a família e mantém a grafia do cliente no rótulo", () => {
+    const grupos = agruparPorPrimeiraPalavra(
+      ["Tomate Italiano", "uva niágara", "TOMATE cereja", "Maçã Fuji", "  "],
+      (n) => n,
+    );
+    expect(grupos.map((g) => g.rotulo)).toEqual(["MAÇÃ", "TOMATE", "UVA"]);
+    expect(grupos.find((g) => g.chave === "tomate")!.itens).toEqual([
+      "Tomate Italiano",
+      "TOMATE cereja",
+    ]);
+  });
+});
+
+describe("casaPelaPrimeiraPalavra", () => {
+  it("compara só a primeira palavra, pelo começo", () => {
+    expect(casaPelaPrimeiraPalavra("Tomate Italiano", "tom")).toBe(true);
+    expect(casaPelaPrimeiraPalavra("Tomate Italiano", "tomate cereja")).toBe(true);
+    expect(casaPelaPrimeiraPalavra("Tomate Italiano", "uva")).toBe(false);
+    // "italiano" está no nome, mas não é a primeira palavra.
+    expect(casaPelaPrimeiraPalavra("Tomate Italiano", "italiano")).toBe(false);
+  });
+
+  it("sem nada digitado, tudo casa", () => {
+    expect(casaPelaPrimeiraPalavra("Uva", "")).toBe(true);
   });
 });
 

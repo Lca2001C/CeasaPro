@@ -38,9 +38,7 @@ export function HigienizacaoForm({
 }) {
   const router = useRouter();
   const [cleanerName, setCleanerName] = useState(initial?.cleanerName ?? "");
-  const [sentDate, setSentDate] = useState(
-    initial?.sentDate ?? isoDateTz(),
-  );
+  const [sentDate, setSentDate] = useState(initial?.sentDate ?? isoDateTz());
   const [sentQty, setSentQty] = useState(
     initial ? String(initial.sentQty) : (quantidadeSugerida ?? ""),
   );
@@ -78,68 +76,72 @@ export function HigienizacaoForm({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="cleanerName">Higienizador responsável</Label>
-        <Input
-          id="cleanerName"
-          autoFocus
-          value={cleanerName}
-          onChange={(e) => setCleanerName(e.target.value)}
-          list="higienizadores-conhecidos"
-        />
-        {/* O histórico por higienizador é agrupado pelo nome digitado: sem
+    <div className="flex flex-col gap-5">
+      <Card className="flex flex-col gap-4 p-4 sm:p-5">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="cleanerName">Higienizador responsável</Label>
+          <Input
+            id="cleanerName"
+            autoFocus
+            value={cleanerName}
+            onChange={(e) => setCleanerName(e.target.value)}
+            list="higienizadores-conhecidos"
+          />
+          {/* O histórico por higienizador é agrupado pelo nome digitado: sem
             autocomplete, "Silva" e "silva" viram dois prestadores. */}
-        <datalist id="higienizadores-conhecidos">
-          {higienizadoresConhecidos.map((nome) => (
-            <option key={nome} value={nome} />
-          ))}
-        </datalist>
-      </div>
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sentDate">Data de envio</Label>
-          <Input
-            id="sentDate"
-            type="date"
-            value={sentDate}
-            onChange={(e) => setSentDate(e.target.value)}
-          />
+          <datalist id="higienizadores-conhecidos">
+            {higienizadoresConhecidos.map((nome) => (
+              <option key={nome} value={nome} />
+            ))}
+          </datalist>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="sentDate">Data de envio</Label>
+            <Input
+              id="sentDate"
+              type="date"
+              value={sentDate}
+              onChange={(e) => setSentDate(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="sentQty">Qtd. enviada</Label>
+            <Input
+              id="sentQty"
+              type="number"
+              inputMode="numeric"
+              min={1}
+              value={sentQty}
+              onChange={(e) => setSentQty(e.target.value)}
+            />
+            <span className="text-sm text-muted-foreground">
+              {caixasSujas} caixa(s) suja(s) em estoque
+            </span>
+          </div>
         </div>
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="sentQty">Qtd. enviada</Label>
-          <Input
-            id="sentQty"
-            type="number"
-            inputMode="numeric"
-            min={1}
-            value={sentQty}
-            onChange={(e) => setSentQty(e.target.value)}
-          />
-          <span className="text-xs text-muted-foreground">
-            {caixasSujas} caixa(s) suja(s) em estoque
-          </span>
+          <Label htmlFor="unitPrice">Valor por caixa</Label>
+          <CurrencyInput id="unitPrice" value={unitPrice} onChange={setUnitPrice} />
         </div>
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="unitPrice">Valor por caixa</Label>
-        <CurrencyInput id="unitPrice" value={unitPrice} onChange={setUnitPrice} />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="notes">Observações (opcional)</Label>
-        <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
-      </div>
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="notes">Observações (opcional)</Label>
+          <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
+        </div>
+      </Card>
 
-      <Card className="flex items-center justify-between p-3">
-        <span className="text-sm text-muted-foreground">Valor total do serviço</span>
-        <span className="font-semibold tabular-nums">{formatBRL(total)}</span>
+      <Card className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 p-4">
+        <span className="text-sm font-medium text-muted-foreground">Valor total do serviço</span>
+        <span className="text-xl font-bold tabular-nums [overflow-wrap:anywhere]">
+          {formatBRL(total)}
+        </span>
       </Card>
 
       <div className="flex gap-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>
+        <Button type="button" variant="outline" className="flex-1" onClick={() => router.back()}>
           Cancelar
         </Button>
-        <Button className="flex-1" onClick={submit} disabled={saving}>
+        <Button variant="success" className="flex-1" onClick={submit} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           {initial ? "Salvar alterações" : "Registrar envio"}
         </Button>

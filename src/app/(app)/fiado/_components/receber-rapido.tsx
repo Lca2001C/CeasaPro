@@ -68,7 +68,7 @@ export function ReceberRapido({
     <>
       <Button
         size="sm"
-        variant="outline"
+        variant="success"
         // `preventDefault` porque o botão vive dentro do link da linha: sem
         // isso, tocar em "Receber" navegaria para o detalhe.
         onClick={(e) => {
@@ -79,7 +79,7 @@ export function ReceberRapido({
         }}
       >
         <HandCoins className="size-4" />
-        <span className="hidden sm:inline">Receber</span>
+        Receber
       </Button>
 
       {/* No celular este componente mora DENTRO do `<Link>` do card. O diálogo
@@ -127,7 +127,7 @@ export function ReceberRapido({
             <Button variant="outline" onClick={() => setAberto(false)} disabled={saving}>
               Cancelar
             </Button>
-            <Button onClick={submit} disabled={saving}>
+            <Button variant="success" onClick={submit} disabled={saving}>
               {saving && <Loader2 className="size-4 animate-spin" />}
               Confirmar
             </Button>

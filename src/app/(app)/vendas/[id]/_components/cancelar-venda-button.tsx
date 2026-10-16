@@ -68,8 +68,8 @@ export function CancelarVendaButton({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button variant="outline" onClick={() => setOpen(true)}>
-        <Ban className="size-4 text-destructive" /> Cancelar venda
+      <Button variant="destructive" className="sm:self-start" onClick={() => setOpen(true)}>
+        <Ban className="size-4" /> Cancelar venda
       </Button>
       <DialogContent>
         <DialogHeader>

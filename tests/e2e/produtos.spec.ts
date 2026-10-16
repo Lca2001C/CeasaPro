@@ -110,12 +110,12 @@ test.describe("Produtos — cadastro, edição e exclusão no Estoque", () => {
     await expect(novo.getByLabel("Embalagem")).toHaveValue("CAIXA");
 
     // O custo só é pedido quando há estoque inicial.
-    await expect(novo.getByLabel(/Quanto custou cada/)).toHaveCount(0);
+    await expect(novo.getByLabel(/Custo da mercadoria/)).toHaveCount(0);
     await novo.getByLabel("Estoque Inicial").fill("10");
 
     // `fill` num campo de moeda: digitar sobre a máscara depende de onde o
     // cursor parou — a mesma armadilha documentada em `pdv.spec.ts`.
-    const custo = novo.getByLabel(/Quanto custou cada caixa/);
+    const custo = novo.getByLabel(/Custo da mercadoria \(R\$ por caixa\)/);
     await expect(custo).toBeVisible();
     await custo.fill("45,50");
     await expect(custo).toHaveValue("R$ 45,50");

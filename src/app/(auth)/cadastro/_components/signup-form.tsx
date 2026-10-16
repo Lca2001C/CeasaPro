@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { Select } from "@/components/ui/select";
 import { UFS } from "@/lib/constants";
 import { BotaoGoogle } from "@/components/auth/botao-google";
@@ -114,34 +115,37 @@ export function SignupForm({
   if (sentTo) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center gap-4 pt-6 text-center">
-          <MailCheck className="size-8 text-primary" />
-          <div className="flex flex-col gap-1">
-            <p className="font-medium">Verifique seu e-mail</p>
-            <p className="text-sm text-muted-foreground">
+        <CardContent className="flex flex-col items-center gap-4 p-5 text-center sm:p-7">
+          <IconeRedondo tamanho="lg">
+            <MailCheck />
+          </IconeRedondo>
+          <div className="flex flex-col gap-1.5">
+            <h2 className="text-xl font-bold tracking-tight">Verifique seu e-mail</h2>
+            <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
               Enviamos um link de confirmação para{" "}
               <strong className="text-foreground">{sentTo}</strong>. Confirme para liberar
               seus {trialDays} dias de teste.
             </p>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-sm text-muted-foreground">
               Não achou? Confira a caixa de spam / lixo eletrônico. O link vale por 24 horas.
             </p>
           </div>
-          <Link href="/login" className="text-sm font-medium text-primary underline">
-            Ir para o login
-          </Link>
+          <Button asChild variant="outline" size="lg" className="w-full">
+            <Link href="/login">Ir para o login</Link>
+          </Button>
         </CardContent>
       </Card>
     );
   }
 
   return (
-    <Card className="border-primary/15 shadow-md">
-      <CardContent className="pt-6">
+    <Card>
+      <CardContent className="p-5 sm:p-7">
+        <h2 className="mb-5 text-xl font-bold tracking-tight">Crie sua conta</h2>
         <div className="mb-5">
           <BotaoGoogle />
         </div>
-        <div className="mb-5 flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="mb-5 flex items-center gap-3 text-sm text-muted-foreground">
           <span className="h-px flex-1 bg-border" />
           ou cadastre com e-mail
           <span className="h-px flex-1 bg-border" />
@@ -162,7 +166,7 @@ export function SignupForm({
               {...register("email")}
             />
             {errors.email && (
-              <span className="text-xs text-destructive">{errors.email.message}</span>
+              <span className="text-sm text-destructive">{errors.email.message}</span>
             )}
           </div>
 
@@ -228,7 +232,7 @@ export function SignupForm({
                 )}
               </Select>
               {uf && daUf.length === 0 && (
-                <span className="text-xs text-muted-foreground">
+                <span className="text-sm text-muted-foreground">
                   Ainda não temos central cadastrada neste estado. Fale com o suporte que
                   incluímos a sua.
                 </span>
@@ -245,22 +249,22 @@ export function SignupForm({
                 id="password"
                 type={show ? "text" : "password"}
                 autoComplete="new-password"
-                className="pr-10"
+                className="pr-12"
                 {...register("password")}
               />
               <button
                 type="button"
                 onClick={() => setShow((v) => !v)}
-                className="absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground hover:text-foreground"
+                className="absolute inset-y-0 right-0 flex w-12 items-center justify-center rounded-r-md text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                 aria-label={show ? "Ocultar senha" : "Mostrar senha"}
               >
                 {show ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
               </button>
             </div>
             {errors.password ? (
-              <span className="text-xs text-destructive">{errors.password.message}</span>
+              <span className="text-sm text-destructive">{errors.password.message}</span>
             ) : (
-              <span className="text-xs text-muted-foreground">
+              <span className="text-sm text-muted-foreground">
                 Ao menos 8 caracteres, com uma letra e um número.
               </span>
             )}
@@ -275,16 +279,21 @@ export function SignupForm({
               {...register("confirm")}
             />
             {errors.confirm && (
-              <span className="text-xs text-destructive">{errors.confirm.message}</span>
+              <span className="text-sm text-destructive">{errors.confirm.message}</span>
             )}
           </div>
 
-          <Button type="submit" size="lg" disabled={loading} className="shadow-md">
-            {loading && <Loader2 className="animate-spin" />}
+          <Button
+            type="submit"
+            size="lg"
+            disabled={loading}
+            className="mt-1 h-auto min-h-14 w-full whitespace-normal py-3 text-center"
+          >
+            {loading && <Loader2 className="motion-safe:animate-spin" />}
             Criar conta e testar grátis
           </Button>
 
-          <p className="text-center text-xs text-muted-foreground">
+          <p className="text-center text-sm text-muted-foreground">
             Ao criar a conta você aceita os{" "}
             <Link href="/termos" className="underline hover:text-foreground">
               Termos de Uso
@@ -298,7 +307,7 @@ export function SignupForm({
 
           <Link
             href="/login"
-            className="text-center text-sm text-muted-foreground hover:text-foreground"
+            className="mx-auto inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             Já tenho conta
           </Link>

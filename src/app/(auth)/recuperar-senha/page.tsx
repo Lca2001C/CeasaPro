@@ -13,7 +13,7 @@ export const dynamic = "force-dynamic";
 export default function ForgotPage() {
   return (
     <Card>
-      <CardContent className="pt-6">
+      <CardContent className="p-5 sm:p-7">
         <ForgotForm />
       </CardContent>
     </Card>

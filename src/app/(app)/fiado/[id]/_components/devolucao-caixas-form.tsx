@@ -41,8 +41,8 @@ export function DevolucaoCaixasForm({
   }
 
   return (
-    <div className="flex flex-col gap-3 border-t pt-3">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="flex flex-col gap-4 border-t border-border/60 pt-4">
+      <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="devolucao-qty">Caixas devolvidas</Label>
           <Input
@@ -65,7 +65,7 @@ export function DevolucaoCaixasForm({
           />
         </div>
       </div>
-      <Button variant="outline" onClick={submit} disabled={saving}>
+      <Button variant="info" onClick={submit} disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
         Registrar devolução
       </Button>

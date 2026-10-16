@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { toast } from "sonner";
-import { AlertTriangle, Loader2 } from "lucide-react";
+import { AlertTriangle, Info, Loader2 } from "lucide-react";
 import { despesaSchema, type DespesaInput } from "@/lib/validations/despesa";
 import { criarDespesa, atualizarDespesa } from "@/actions/despesas.actions";
 import {
@@ -16,6 +16,7 @@ import {
 } from "@/lib/labels";
 import { isoDateTz } from "@/lib/tz";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -98,158 +99,173 @@ export function DespesaForm({ categories, fornecedores = [], initial, preenchido
   const nullIfEmpty = { setValueAs: (v: string) => (v === "" ? null : v) };
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+    <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-5">
       {compra && (
-        <p className="rounded-md border border-info/40 bg-info/10 p-2 text-xs">
-          Esta conta veio de uma <b>compra</b>
-          {compra.fornecedor ? (
-            <>
-              {" "}
-              de <b>{compra.fornecedor}</b>
-            </>
-          ) : null}
-          . O valor é o da compra; aqui você marca o pagamento, muda o vencimento e a forma de
-          pagar.
-        </p>
+        <Card className="flex items-start gap-3 border-info/40 bg-info/10 p-4 text-sm">
+          <Info aria-hidden className="mt-0.5 size-5 shrink-0 text-info" />
+          <p>
+            Esta conta veio de uma <b>compra</b>
+            {compra.fornecedor ? (
+              <>
+                {" "}
+                de <b>{compra.fornecedor}</b>
+              </>
+            ) : null}
+            . O valor é o da compra; aqui você marca o pagamento, muda o vencimento e a forma de
+            pagar.
+          </p>
+        </Card>
       )}
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="description">Descrição</Label>
-        <Input
-          id="description"
-          autoFocus={!compra}
-          readOnly={Boolean(compra)}
-          {...register("description")}
-        />
-        {errors.description && (
-          <span className="text-xs text-destructive">{errors.description.message}</span>
-        )}
-      </div>
-
-      <div className="flex flex-col gap-1.5">
-        {/* Era o único campo desta tela sem `htmlFor` — e é o do VALOR. */}
-        <Label htmlFor="amount">Valor</Label>
-        <Controller
-          control={control}
-          name="amount"
-          render={({ field }) => (
-            <CurrencyInput
-              id="amount"
-              value={field.value}
-              onChange={field.onChange}
-              onBlur={field.onBlur}
-              disabled={Boolean(compra)}
-            />
-          )}
-        />
-        {errors.amount && <span className="text-xs text-destructive">{errors.amount.message}</span>}
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
+      <Card className="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="type">Tipo</Label>
-          {compra ? (
-            <>
-              {/* Campo nativo desabilitado sai do submit do RHF; o tipo vai escondido. */}
-              <input type="hidden" {...register("type")} />
-              <Input id="type" value="Compra de mercadoria" readOnly />
-            </>
-          ) : (
-            <Select id="type" {...register("type")}>
-              {toOptions(EXPENSE_TYPE_LABELS).map((o) => (
+          <Label htmlFor="description">Descrição</Label>
+          <Input
+            id="description"
+            autoFocus={!compra}
+            readOnly={Boolean(compra)}
+            {...register("description")}
+          />
+          {errors.description && (
+            <span className="text-sm text-destructive">{errors.description.message}</span>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-1.5">
+          {/* Era o único campo desta tela sem `htmlFor` — e é o do VALOR. */}
+          <Label htmlFor="amount">Valor</Label>
+          <Controller
+            control={control}
+            name="amount"
+            render={({ field }) => (
+              <CurrencyInput
+                id="amount"
+                value={field.value}
+                onChange={field.onChange}
+                onBlur={field.onBlur}
+                disabled={Boolean(compra)}
+              />
+            )}
+          />
+          {errors.amount && (
+            <span className="text-sm text-destructive">{errors.amount.message}</span>
+          )}
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="type">Tipo</Label>
+            {compra ? (
+              <>
+                {/* Campo nativo desabilitado sai do submit do RHF; o tipo vai escondido. */}
+                <input type="hidden" {...register("type")} />
+                <Input id="type" value="Compra de mercadoria" readOnly />
+              </>
+            ) : (
+              <Select id="type" {...register("type")}>
+                {toOptions(EXPENSE_TYPE_LABELS).map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            )}
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="status">Situação</Label>
+            <Select id="status" {...register("status")}>
+              {toOptions(EXPENSE_STATUS_LABELS).map((o) => (
                 <option key={o.value} value={o.value}>
                   {o.label}
                 </option>
               ))}
             </Select>
-          )}
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="status">Situação</Label>
-          <Select id="status" {...register("status")}>
-            {toOptions(EXPENSE_STATUS_LABELS).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
+      </Card>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="categoryId">Categoria</Label>
-          <Select id="categoryId" defaultValue="" {...register("categoryId", nullIfEmpty)}>
-            <option value="">— Sem categoria —</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
+      <Card className="flex flex-col gap-4 p-4 sm:p-5">
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="categoryId">Categoria</Label>
+            <Select id="categoryId" defaultValue="" {...register("categoryId", nullIfEmpty)}>
+              <option value="">— Sem categoria —</option>
+              {categories.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="paymentMethod">Forma de pagamento</Label>
+            <Select id="paymentMethod" defaultValue="" {...register("paymentMethod", nullIfEmpty)}>
+              <option value="">— Não informado —</option>
+              {toOptions(EXPENSE_PAYMENT_METHOD_LABELS).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="paymentMethod">Forma de pagamento</Label>
-          <Select id="paymentMethod" defaultValue="" {...register("paymentMethod", nullIfEmpty)}>
-            <option value="">— Não informado —</option>
-            {toOptions(EXPENSE_PAYMENT_METHOD_LABELS).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
 
-      <div className="grid grid-cols-2 gap-3">
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="dueDate">Vencimento</Label>
-          <Input id="dueDate" type="date" {...register("dueDate", nullIfEmpty)} />
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="dueDate">Vencimento</Label>
+            <Input id="dueDate" type="date" {...register("dueDate", nullIfEmpty)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="paidDate">Pagamento</Label>
+            <Input
+              id="paidDate"
+              type="date"
+              disabled={status === "PENDENTE"}
+              {...register("paidDate", nullIfEmpty)}
+            />
+            {errors.paidDate && (
+              <span className="text-sm text-destructive">{errors.paidDate.message}</span>
+            )}
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="paidDate">Pagamento</Label>
-          <Input
-            id="paidDate"
-            type="date"
-            disabled={status === "PENDENTE"}
-            {...register("paidDate", nullIfEmpty)}
-          />
-          {errors.paidDate && (
-            <span className="text-xs text-destructive">{errors.paidDate.message}</span>
-          )}
-        </div>
-      </div>
 
-      {!compra && fornecedores.length > 0 && (
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="supplierId">Fornecedor (opcional)</Label>
-          <Select id="supplierId" defaultValue="" {...register("supplierId", nullIfEmpty)}>
-            <option value="">— Nenhum —</option>
-            {fornecedores.map((f) => (
-              <option key={f.id} value={f.id}>
-                {f.name}
-              </option>
-            ))}
-          </Select>
-        </div>
-      )}
+        {!compra && fornecedores.length > 0 && (
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="supplierId">Fornecedor (opcional)</Label>
+            <Select id="supplierId" defaultValue="" {...register("supplierId", nullIfEmpty)}>
+              <option value="">— Nenhum —</option>
+              {fornecedores.map((f) => (
+                <option key={f.id} value={f.id}>
+                  {f.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
+      </Card>
 
       {vencimentoNoPassado && (
-        <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />O vencimento escolhido já
-          passou. A conta vai nascer como <b>vencida</b> — se for uma conta antiga que você está
-          registrando agora, está tudo certo.
-        </p>
+        <Card className="flex items-start gap-3 border-warning/40 bg-warning/10 p-4 text-sm">
+          <AlertTriangle aria-hidden className="mt-0.5 size-5 shrink-0 text-warning" />
+          <p>
+            O vencimento escolhido já passou. A conta vai nascer como <b>vencida</b> — se for uma
+            conta antiga que você está registrando agora, está tudo certo.
+          </p>
+        </Card>
       )}
 
       {/* Fixa de verdade: aluguel, INSS e pró-labore não deveriam ser
           relançados à mão todo mês. */}
       {!compra && (
-        <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
-          <input type="checkbox" className="mt-0.5 size-4" {...register("recurring")} />
-          <span>
-            <b>Repetir todo mês</b>
-            <span className="mt-0.5 block text-xs text-muted-foreground">
+        <label className="flex min-h-16 cursor-pointer items-start gap-3 rounded-lg border border-border/60 bg-card p-4 text-card-foreground shadow-suave motion-safe:transition-colors hover:bg-muted/60">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-5 shrink-0 accent-primary"
+            {...register("recurring")}
+          />
+          <span className="min-w-0">
+            <b className="font-semibold">Repetir todo mês</b>
+            <span className="mt-0.5 block text-sm text-muted-foreground">
               Ao quitar esta conta, a do mês seguinte é criada automaticamente como pendente, no
               mesmo dia do vencimento. Precisa de um vencimento informado.
               {type === "FIXA" ? "" : " Comum em contas fixas (aluguel, INSS, pró-labore)."}
@@ -258,11 +274,11 @@ export function DespesaForm({ categories, fornecedores = [], initial, preenchido
         </label>
       )}
 
-      <div className="flex gap-2 pt-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>
+      <div className="flex gap-2">
+        <Button type="button" variant="outline" className="flex-1" onClick={() => router.back()}>
           Cancelar
         </Button>
-        <Button type="submit" className="flex-1" disabled={saving}>
+        <Button type="submit" variant="success" className="flex-1" disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           Salvar
         </Button>

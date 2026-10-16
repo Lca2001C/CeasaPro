@@ -55,7 +55,8 @@ export function AppShell({
 }: Props) {
   const pathname = usePathname();
   // Na frente de caixa o botão de WhatsApp cobria o "Finalizar venda".
-  const mostrarSuporte = !pathname.startsWith("/vendas/nova");
+  const frenteDeCaixa = pathname.startsWith("/vendas/nova");
+  const mostrarSuporte = !frenteDeCaixa;
   return (
     <div className="flex min-h-screen">
       {/*
@@ -155,7 +156,8 @@ export function AppShell({
           // navegação — o link pareceria funcionar para quem olha e não
           // funcionaria para quem usa teclado.
           tabIndex={-1}
-          className="mx-auto w-full max-w-3xl flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] outline-none md:pb-8"
+          // A frente de caixa usa a largura toda: grade de produtos e pedido lado a lado.
+          className={`mx-auto w-full ${frenteDeCaixa ? "max-w-7xl" : "max-w-3xl"} flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] outline-none md:pb-8`}
         >
           {children}
         </main>

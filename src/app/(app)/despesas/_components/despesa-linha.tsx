@@ -9,9 +9,11 @@ import {
   ExternalLink,
   Loader2,
   Pencil,
+  Receipt,
   Repeat,
   RotateCcw,
   ShoppingBag,
+  Sparkles,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -29,6 +31,7 @@ import type { ContaUnificada } from "@/lib/despesas/contas-unificadas";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import {
   Dialog,
   DialogClose,
@@ -130,40 +133,59 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
     <div>
       <Card
         className={cn(
-          "flex flex-col gap-3 p-3 md:flex-row md:items-center md:justify-between md:gap-3",
+          "flex flex-col gap-3 p-4 md:flex-row md:items-center md:gap-4",
           d.vencida && "border-destructive/50 bg-destructive/5",
         )}
       >
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium [overflow-wrap:anywhere]">{d.description}</span>
-            {d.vencida ? (
-              <Badge variant="destructive">Vencida</Badge>
-            ) : (
-              <Badge variant={pago ? "success" : "warning"}>{pago ? "Pago" : "Pendente"}</Badge>
-            )}
-            {d.recurring && (
-              <Badge variant="secondary" className="gap-1">
-                <Repeat className="size-3" /> Todo mês
-              </Badge>
-            )}
-            {ehHigienizacao && <Badge variant="secondary">Higienização</Badge>}
-            {daCompra && (
-              <Link href="/estoque?aba=compras" title="Ver a compra no Estoque">
-                <Badge variant="secondary" className="gap-1">
-                  <ShoppingBag className="size-3" /> Compra
-                </Badge>
-              </Link>
-            )}
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{meta}</p>
-        </div>
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          {/* O ícone diz de onde a conta veio; a cor, só o estado (vencida /
+              paga). Some no celular estreito: ali cada pixel vai para o nome
+              da conta, que precisa ser lido inteiro. */}
+          <IconeRedondo
+            tom={d.vencida ? "destructive" : pago ? "success" : "neutro"}
+            className="hidden sm:inline-flex"
+          >
+            {daCompra ? <ShoppingBag /> : ehHigienizacao ? <Sparkles /> : <Receipt />}
+          </IconeRedondo>
 
-        <span className="shrink-0 font-semibold tabular-nums">{formatBRL(d.amount)}</span>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-3">
+              <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">
+                {d.description}
+              </span>
+              <span className="shrink-0 font-bold tabular-nums">{formatBRL(d.amount)}</span>
+            </div>
+            <p className="mt-0.5 text-sm text-muted-foreground [overflow-wrap:anywhere]">{meta}</p>
+            <div className="mt-2 flex flex-wrap items-center gap-1.5">
+              {d.vencida ? (
+                <Badge variant="destructive">Vencida</Badge>
+              ) : (
+                <Badge variant={pago ? "success" : "warning"}>{pago ? "Pago" : "Pendente"}</Badge>
+              )}
+              {d.recurring && (
+                <Badge variant="secondary" className="gap-1">
+                  <Repeat aria-hidden className="size-3" /> Todo mês
+                </Badge>
+              )}
+              {ehHigienizacao && <Badge variant="secondary">Higienização</Badge>}
+              {daCompra && (
+                <Link
+                  href="/estoque?aba=compras"
+                  title="Ver a compra no Estoque"
+                  className="rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                >
+                  <Badge variant="info" className="gap-1">
+                    <ShoppingBag aria-hidden className="size-3" /> Compra
+                  </Badge>
+                </Link>
+              )}
+            </div>
+          </div>
+        </div>
 
         {/* Ações escritas e coloridas em todos os tamanhos de tela: os ícones
             soltos do desktop (lápis, lixeira, cópia) exigiam adivinhar. */}
-        <div className="flex shrink-0 flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 md:max-w-[22rem] md:shrink-0 md:justify-end">
           <Acoes
             d={d}
             pending={pending}

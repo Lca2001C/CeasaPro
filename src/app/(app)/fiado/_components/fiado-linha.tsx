@@ -23,7 +23,7 @@ export interface FiadoItemResumo {
  */
 export function ProdutosResumo({ itens }: { itens: FiadoItemResumo[] }) {
   if (itens.length === 0) {
-    return <span className="text-xs text-muted-foreground">Sem itens vinculados</span>;
+    return <span className="text-muted-foreground">Sem itens vinculados</span>;
   }
 
   const [primeiro, ...resto] = itens;
@@ -31,7 +31,7 @@ export function ProdutosResumo({ itens }: { itens: FiadoItemResumo[] }) {
     <span className="min-w-0">
       <span className="block truncate">{primeiro.productName}</span>
       {resto.length > 0 && (
-        <span className="block text-xs text-muted-foreground">
+        <span className="block text-muted-foreground">
           e mais {resto.length} produto(s)
         </span>
       )}

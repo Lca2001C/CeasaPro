@@ -48,38 +48,38 @@ export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
         <Label htmlFor="tradeName">Nome fantasia</Label>
         <Input id="tradeName" {...register("tradeName")} />
         {errors.tradeName && (
-          <span className="text-xs text-destructive">{errors.tradeName.message}</span>
+          <span className="text-sm text-destructive">{errors.tradeName.message}</span>
         )}
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="legalName">Razão social</Label>
         <Input id="legalName" {...register("legalName")} />
         {errors.legalName && (
-          <span className="text-xs text-destructive">{errors.legalName.message}</span>
+          <span className="text-sm text-destructive">{errors.legalName.message}</span>
         )}
       </div>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="cnpj">CNPJ</Label>
           <Input id="cnpj" inputMode="numeric" {...register("cnpj")} />
           {errors.cnpj && (
-            <span className="text-xs text-destructive">{errors.cnpj.message}</span>
+            <span className="text-sm text-destructive">{errors.cnpj.message}</span>
           )}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="phone">Telefone</Label>
           <Input id="phone" {...register("phone")} />
           {errors.phone && (
-            <span className="text-xs text-destructive">{errors.phone.message}</span>
+            <span className="text-sm text-destructive">{errors.phone.message}</span>
           )}
         </div>
       </div>
-      <div className="grid grid-cols-[1fr_7rem] gap-3">
+      <div className="grid grid-cols-[minmax(0,1fr)_6.5rem] gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="address">Endereço</Label>
           <Input id="address" {...register("address")} />
           {errors.address && (
-            <span className="text-xs text-destructive">{errors.address.message}</span>
+            <span className="text-sm text-destructive">{errors.address.message}</span>
           )}
         </div>
         <div className="flex flex-col gap-1.5">
@@ -92,14 +92,14 @@ export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
               </option>
             ))}
           </Select>
-          {errors.uf && <span className="text-xs text-destructive">{errors.uf.message}</span>}
+          {errors.uf && <span className="text-sm text-destructive">{errors.uf.message}</span>}
         </div>
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="businessHours">Horário de funcionamento</Label>
         <Input id="businessHours" placeholder="Ex.: Seg a Sáb, 4h às 12h" {...register("businessHours")} />
         {errors.businessHours && (
-          <span className="text-xs text-destructive">{errors.businessHours.message}</span>
+          <span className="text-sm text-destructive">{errors.businessHours.message}</span>
         )}
       </div>
       {/*
@@ -115,11 +115,11 @@ export function EmpresaConfigForm({ initial }: { initial: EmpresaInput }) {
           {...register("establishmentType")}
         />
         {errors.establishmentType && (
-          <span className="text-xs text-destructive">{errors.establishmentType.message}</span>
+          <span className="text-sm text-destructive">{errors.establishmentType.message}</span>
         )}
       </div>
-      <Button type="submit" disabled={saving}>
-        {saving && <Loader2 className="animate-spin" />}
+      <Button type="submit" variant="success" disabled={saving} className="w-full sm:w-auto sm:self-start">
+        {saving && <Loader2 className="motion-safe:animate-spin" />}
         Salvar
       </Button>
     </form>

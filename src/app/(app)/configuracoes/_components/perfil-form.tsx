@@ -45,21 +45,21 @@ export function PerfilConfigForm({ initial, email }: { initial: PerfilInput; ema
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="name">Seu nome</Label>
         <Input id="name" {...register("name")} />
-        <span className="text-xs text-muted-foreground">
+        <span className="text-sm text-muted-foreground">
           É o nome que aparece aqui no sistema e no comprovante da mensalidade.
         </span>
-        {errors.name && <span className="text-xs text-destructive">{errors.name.message}</span>}
+        {errors.name && <span className="text-sm text-destructive">{errors.name.message}</span>}
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="email">E-mail de acesso</Label>
         <Input id="email" value={email} readOnly disabled />
-        <span className="text-xs text-muted-foreground">
+        <span className="text-sm text-muted-foreground">
           Para trocar o e-mail de acesso, fale com o suporte.
         </span>
       </div>
       <div className="flex flex-wrap items-center gap-3">
-        <Button type="submit" disabled={saving}>
-          {saving && <Loader2 className="animate-spin" />}
+        <Button type="submit" variant="success" disabled={saving}>
+          {saving && <Loader2 className="motion-safe:animate-spin" />}
           Salvar
         </Button>
         <Button asChild variant="outline">

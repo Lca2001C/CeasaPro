@@ -1,7 +1,7 @@
 import { paginaDaUrl } from "@/lib/paginacao";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { ArrowDown, ArrowUp, Minus, Plus, Tags } from "lucide-react";
+import { ArrowDown, ArrowUp, Minus, Plus, Receipt, Tags } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import {
   DespesasService,
@@ -18,7 +18,7 @@ import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { StatCard } from "@/components/data/stat-card";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { DespesaLinha } from "./_components/despesa-linha";
 import { DespesasFiltros } from "./_components/despesas-filtros";
 import { ReplicarMesButton } from "./_components/replicar-mes-button";
@@ -61,7 +61,11 @@ function variacao(atual: unknown, anterior: unknown): number | null {
   const a = toDecimal(anterior as number);
   // Sem base de comparação o certo é dizer "—", não inventar 100%.
   if (a.isZero()) return null;
-  return toDecimal(atual as number).minus(a).dividedBy(a).times(100).toNumber();
+  return toDecimal(atual as number)
+    .minus(a)
+    .dividedBy(a)
+    .times(100)
+    .toNumber();
 }
 
 function Comparativo({
@@ -77,18 +81,18 @@ function Comparativo({
   const caiu = variacaoPct !== null && variacaoPct < -0.5;
   const Icone = subiu ? ArrowUp : caiu ? ArrowDown : Minus;
   return (
-    <div className="flex items-center justify-between gap-2 py-1.5">
-      <span className="min-w-0 truncate text-sm text-muted-foreground">{label}</span>
-      <span className="flex shrink-0 items-center gap-2">
-        <span className="font-semibold tabular-nums">{valor}</span>
+    <div className="flex items-center justify-between gap-3 py-2.5 first:pt-0 last:pb-0">
+      <span className="min-w-0 truncate font-semibold">{label}</span>
+      <span className="flex min-w-0 flex-wrap items-center justify-end gap-x-2 gap-y-0.5">
+        <span className="font-bold tabular-nums [overflow-wrap:anywhere]">{valor}</span>
         <span
           className={cn(
-            "flex items-center gap-0.5 text-xs tabular-nums",
+            "flex shrink-0 items-center gap-0.5 text-sm font-medium tabular-nums",
             // Em despesa, subir é ruim: a cor segue o bolso, não o número.
             subiu ? "text-destructive" : caiu ? "text-success" : "text-muted-foreground",
           )}
         >
-          <Icone className="size-3" />
+          <Icone aria-hidden className="size-4" />
           {variacaoPct === null ? "—" : `${formatQty(Math.abs(variacaoPct))}%`}
         </span>
       </span>
@@ -96,11 +100,7 @@ function Comparativo({
   );
 }
 
-export default async function DespesasPage({
-  searchParams,
-}: {
-  searchParams: Promise<Query>;
-}) {
+export default async function DespesasPage({ searchParams }: { searchParams: Promise<Query> }) {
   const sp = await searchParams;
 
   // `vencidas=1` na URL (usado pelos avisos e pelo push) equivale à aba Vencidas.
@@ -196,166 +196,173 @@ export default async function DespesasPage({
         }
       />
 
-      {/*
-        Cards do MÊS, e não do histórico.
-        Antes eles somavam todas as despesas de todos os tempos enquanto a lista
-        embaixo mostrava um filtro — o número do topo nunca fechava com o de
-        baixo. Agora cada card diz de qual data ele fala.
-      */}
-      <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
-        <StatCard
-          label="A pagar no mês"
-          value={formatBRL(resumo.aPagar)}
-          hint={`${resumo.aPagarCount} conta(s) pendente(s)`}
-          tone="warning"
-        />
-        <StatCard
-          label="Já paguei no mês"
-          value={formatBRL(resumo.pagas)}
-          hint={`${resumo.pagasCount} conta(s) quitada(s)`}
-          tone="success"
-        />
-        <StatCard
-          label="Vencidas"
-          value={formatBRL(resumo.vencidas)}
-          hint={`${resumo.vencidasCount} conta(s) atrasada(s)`}
-          tone={resumo.vencidasCount > 0 ? "destructive" : "default"}
-        />
-      </div>
-
-      {/* "Estou gastando mais que mês passado?" é a pergunta que vem logo depois
-          de olhar os totais. */}
-      <Card className="mb-4">
-        <CardContent className="pt-4">
-          <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
-            <span className="text-sm font-semibold [overflow-wrap:anywhere]">
-              Contas operacionais de {resumo.referencia} vs. mês anterior
-            </span>
-            <Button asChild variant="ghost" size="sm" className="shrink-0">
-              <Link href="/despesas/categorias">
-                <Tags className="size-4" /> Categorias
-              </Link>
-            </Button>
-          </div>
-          <div className="divide-y">
-            <Comparativo
-              label="Fixas"
-              valor={formatBRL(resumo.fixas)}
-              variacaoPct={variacao(resumo.fixas, resumo.fixasMesAnterior)}
-            />
-            <Comparativo
-              label="Variáveis"
-              valor={formatBRL(resumo.variaveis)}
-              variacaoPct={variacao(resumo.variaveis, resumo.variaveisMesAnterior)}
-            />
-          </div>
-          <p className="mt-2 text-xs text-muted-foreground">
-            {/* Sem as compras de mercadoria: o custo delas já sai do lucro
-                pelo custo do que foi vendido. */}
-            As contas operacionais do mês consumiram{" "}
-            <b className="tabular-nums">{formatQty(resumo.percentualDoFaturamento)}%</b> do que
-            você vendeu ({formatBRL(resumo.faturamento)}).
-          </p>
-          <div className="mt-3">
-            {/*
-              O mês de ORIGEM é o ANTERIOR ao de referência.
-
-              Passando `resumo.referencia` (o mês corrente), o botão fazia o
-              oposto do que promete: no dia 1º, com a lista vazia, respondia
-              "não há despesas com vencimento em <mês corrente> para replicar"
-              — sem nenhum caminho na tela para pedir o mês passado; e com o
-              mês já preenchido, criava as contas do mês SEGUINTE, um mês
-              adiantadas e invisíveis nos cartões, com o toast dizendo que
-              copiou.
-            */}
-            <ReplicarMesButton mesOrigem={mesAnterior(resumo.referencia)} />
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="mb-3 flex flex-wrap gap-2">
-        {FILTROS.map((f) => (
-          <Button
-            key={f.value}
-            asChild
-            size="sm"
-            variant={aba === f.value ? "default" : "outline"}
-          >
-            <Link href={linkAba(f.value)}>{f.label}</Link>
-          </Button>
-        ))}
-      </div>
-
-      <DespesasFiltros
-        atuais={{
-          status: aba === "VENCIDAS" ? "PENDENTE" : aba,
-          vencidas: aba === "VENCIDAS",
-          q: sp.q ?? "",
-          type: sp.type ?? "",
-          categoryId: sp.categoria ?? "",
-          dateField: sp.campo ?? "dueDate",
-          from: sp.de ?? "",
-          to: sp.ate ?? "",
-          origem: sp.origem ?? "",
-          supplierId: sp.fornecedor ?? "",
-        }}
-        categorias={categorias.map((c) => ({ id: c.id, name: c.name }))}
-        fornecedores={fornecedores.map((s) => ({ id: s.id, name: s.name }))}
-      />
-
-      {linhas.length === 0 ? (
-        <EmptyState
-          title={
-            aba === "PAGO"
-              ? "Nenhuma despesa paga"
-              : aba === "VENCIDAS"
-                ? "Nenhuma conta atrasada"
-                : aba === "PENDENTE"
-                  ? "Nenhuma conta pendente"
-                  : "Nenhuma despesa cadastrada"
-          }
-          description={
-            aba === "VENCIDAS"
-              ? "Tudo em dia por aqui."
-              : "Toque em Nova para lançar sua primeira despesa."
-          }
-          action={
-            <Button asChild variant="outline">
-              <Link href="/despesas/nova?duplicar=ultima">
-                <Plus /> Nova igual à última
-              </Link>
-            </Button>
-          }
-        />
-      ) : (
-        <div className="flex flex-col gap-2 pb-4">
-          {linhas.map((d) => (
-            <DespesaLinha key={`${d.origem}-${d.id}`} d={d} />
-          ))}
+      <div className="flex flex-col gap-5">
+        {/*
+          Cards do MÊS, e não do histórico.
+          Antes eles somavam todas as despesas de todos os tempos enquanto a lista
+          embaixo mostrava um filtro — o número do topo nunca fechava com o de
+          baixo. Agora cada card diz de qual data ele fala.
+        */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          <StatCard
+            label="A pagar no mês"
+            value={formatBRL(resumo.aPagar)}
+            hint={`${resumo.aPagarCount} conta(s) pendente(s)`}
+            tone="warning"
+          />
+          <StatCard
+            label="Já paguei no mês"
+            value={formatBRL(resumo.pagas)}
+            hint={`${resumo.pagasCount} conta(s) quitada(s)`}
+            tone="success"
+          />
+          <StatCard
+            label="Vencidas"
+            value={formatBRL(resumo.vencidas)}
+            hint={`${resumo.vencidasCount} conta(s) atrasada(s)`}
+            tone={resumo.vencidasCount > 0 ? "destructive" : "default"}
+          />
         </div>
-      )}
 
-      {ultimaPagina > 1 && (
-        <div className="mt-4 flex items-center justify-between gap-2">
-          {pagina > 1 ? (
-            <Button asChild variant="outline" size="sm">
-              <Link href={comFiltros({ pagina: String(pagina - 1) })}>Anterior</Link>
-            </Button>
+        {/* "Estou gastando mais que mês passado?" é a pergunta que vem logo depois
+            de olhar os totais. */}
+        <section>
+          <h2 className="mb-2 px-1 text-sm font-semibold text-muted-foreground [overflow-wrap:anywhere]">
+            Contas operacionais de {resumo.referencia} vs. mês anterior
+          </h2>
+          <Card className="flex flex-col gap-3 p-4">
+            <div className="divide-y divide-border/70">
+              <Comparativo
+                label="Fixas"
+                valor={formatBRL(resumo.fixas)}
+                variacaoPct={variacao(resumo.fixas, resumo.fixasMesAnterior)}
+              />
+              <Comparativo
+                label="Variáveis"
+                valor={formatBRL(resumo.variaveis)}
+                variacaoPct={variacao(resumo.variaveis, resumo.variaveisMesAnterior)}
+              />
+            </div>
+            <p className="text-sm text-muted-foreground">
+              {/* Sem as compras de mercadoria: o custo delas já sai do lucro
+                  pelo custo do que foi vendido. */}
+              As contas operacionais do mês consumiram{" "}
+              <b className="font-semibold tabular-nums text-foreground">
+                {formatQty(resumo.percentualDoFaturamento)}%
+              </b>{" "}
+              do que você vendeu ({formatBRL(resumo.faturamento)}).
+            </p>
+            <div className="flex flex-wrap gap-2 border-t border-border/70 pt-3">
+              {/*
+                O mês de ORIGEM é o ANTERIOR ao de referência.
+
+                Passando `resumo.referencia` (o mês corrente), o botão fazia o
+                oposto do que promete: no dia 1º, com a lista vazia, respondia
+                "não há despesas com vencimento em <mês corrente> para replicar"
+                — sem nenhum caminho na tela para pedir o mês passado; e com o
+                mês já preenchido, criava as contas do mês SEGUINTE, um mês
+                adiantadas e invisíveis nos cartões, com o toast dizendo que
+                copiou.
+              */}
+              <ReplicarMesButton mesOrigem={mesAnterior(resumo.referencia)} />
+              <Button asChild variant="outline" size="sm">
+                <Link href="/despesas/categorias">
+                  <Tags className="size-4" /> Categorias
+                </Link>
+              </Button>
+            </div>
+          </Card>
+        </section>
+
+        <section className="flex flex-col gap-3">
+          <nav aria-label="Situação das contas" className="flex flex-wrap gap-2">
+            {FILTROS.map((f) => (
+              <Button
+                key={f.value}
+                asChild
+                size="sm"
+                variant={aba === f.value ? "default" : "outline"}
+              >
+                <Link href={linkAba(f.value)} aria-current={aba === f.value ? "page" : undefined}>
+                  {f.label}
+                </Link>
+              </Button>
+            ))}
+          </nav>
+
+          <DespesasFiltros
+            atuais={{
+              status: aba === "VENCIDAS" ? "PENDENTE" : aba,
+              vencidas: aba === "VENCIDAS",
+              q: sp.q ?? "",
+              type: sp.type ?? "",
+              categoryId: sp.categoria ?? "",
+              dateField: sp.campo ?? "dueDate",
+              from: sp.de ?? "",
+              to: sp.ate ?? "",
+              origem: sp.origem ?? "",
+              supplierId: sp.fornecedor ?? "",
+            }}
+            categorias={categorias.map((c) => ({ id: c.id, name: c.name }))}
+            fornecedores={fornecedores.map((s) => ({ id: s.id, name: s.name }))}
+          />
+
+          {linhas.length === 0 ? (
+            <EmptyState
+              icon={<Receipt />}
+              title={
+                aba === "PAGO"
+                  ? "Nenhuma despesa paga"
+                  : aba === "VENCIDAS"
+                    ? "Nenhuma conta atrasada"
+                    : aba === "PENDENTE"
+                      ? "Nenhuma conta pendente"
+                      : "Nenhuma despesa cadastrada"
+              }
+              description={
+                aba === "VENCIDAS"
+                  ? "Tudo em dia por aqui."
+                  : "Toque em Nova para lançar sua primeira despesa."
+              }
+              action={
+                <Button asChild variant="outline">
+                  <Link href="/despesas/nova?duplicar=ultima">
+                    <Plus /> Nova igual à última
+                  </Link>
+                </Button>
+              }
+            />
           ) : (
-            <span />
+            <div className="flex flex-col gap-2">
+              {linhas.map((d) => (
+                <DespesaLinha key={`${d.origem}-${d.id}`} d={d} />
+              ))}
+            </div>
           )}
-          <span className="text-xs text-muted-foreground">
-            Página {pagina} de {ultimaPagina} · {total} despesa{total === 1 ? "" : "s"}
-          </span>
-          {pagina < ultimaPagina ? (
-            <Button asChild variant="outline" size="sm">
-              <Link href={comFiltros({ pagina: String(pagina + 1) })}>Próxima</Link>
-            </Button>
-          ) : (
-            <span />
+
+          {ultimaPagina > 1 && (
+            <div className="flex items-center justify-between gap-2 pb-4">
+              {pagina > 1 ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={comFiltros({ pagina: String(pagina - 1) })}>Anterior</Link>
+                </Button>
+              ) : (
+                <span />
+              )}
+              <span className="min-w-0 text-center text-sm text-muted-foreground tabular-nums">
+                Página {pagina} de {ultimaPagina} · {total} despesa{total === 1 ? "" : "s"}
+              </span>
+              {pagina < ultimaPagina ? (
+                <Button asChild variant="outline" size="sm">
+                  <Link href={comFiltros({ pagina: String(pagina + 1) })}>Próxima</Link>
+                </Button>
+              ) : (
+                <span />
+              )}
+            </div>
           )}
-        </div>
-      )}
+        </section>
+      </div>
     </div>
   );
 }

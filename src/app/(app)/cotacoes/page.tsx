@@ -10,6 +10,7 @@ import {
   rotuloDeFrescor,
 } from "@/lib/cotacoes/frescor";
 import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem";
+import { casaPelaPrimeiraPalavra, primeiraPalavra } from "@/lib/cotacoes/nome";
 import { formatDateOnly } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
@@ -53,7 +54,8 @@ export default async function CotacoesPage({
     Só com central: sem ela a própria grade já virou o formulário de escolha
     (abaixo), que é a mesma pergunta em menos cliques.
   */
-  if (painel.central && !painel.temVinculo && painel.semVinculo.length > 0) {
+  const temPorPalavra = painel.linhas.some((l) => l.vinculo === "palavra");
+  if (painel.central && !painel.temVinculo && !temPorPalavra && painel.semVinculo.length > 0) {
     redirect("/cotacoes/comecar");
   }
 
@@ -88,14 +90,17 @@ export default async function CotacoesPage({
   */
   const filtro: Filtro = FILTROS.some((f) => f.value === rawFiltro)
     ? (rawFiltro as Filtro)
-    : painel.temVinculo
+    : painel.temVinculo || temPorPalavra
       ? "MEUS"
       : "TODOS";
 
+  // Pela PRIMEIRA palavra: "tomate" traz todos os tomates do boletim, e
+  // "salada" não traz "TOMATE SALADA" — é a família que a pessoa procura.
   const casaComBusca = (l: LinhaDeCotacao) =>
     !busca ||
-    l.ceasaProductName.toLowerCase().includes(busca) ||
-    (l.meuProdutoNome?.toLowerCase().includes(busca) ?? false);
+    casaPelaPrimeiraPalavra(l.ceasaProductName, busca) ||
+    (l.meuProdutoNome !== null && casaPelaPrimeiraPalavra(l.meuProdutoNome, busca));
+  const familiaBuscada = primeiraPalavra(busca);
 
   /*
     As duas seções da tela.
@@ -112,11 +117,14 @@ export default async function CotacoesPage({
     quem esta mudança quer ajudar. Ela não desaparece: continua em "Todos", com a
     marca discreta de "sua embalagem é X".
   */
-  const meus = painel.linhas.filter((l) => l.vinculo === "exato").filter(casaComBusca);
+  /*
+    A família pela primeira palavra também é "meus": quem vende "Tomate
+    Italiano" vê ali todos os tomates do boletim, sem precisar vincular.
+  */
+  const ehMeu = (l: LinhaDeCotacao) => l.vinculo === "exato" || l.vinculo === "palavra";
+  const meus = painel.linhas.filter(ehMeu).filter(casaComBusca);
   const outros =
-    filtro === "MEUS"
-      ? []
-      : painel.linhas.filter((l) => l.vinculo !== "exato").filter(casaComBusca);
+    filtro === "MEUS" ? [] : painel.linhas.filter((l) => !ehMeu(l)).filter(casaComBusca);
   const nenhum = meus.length === 0 && outros.length === 0;
 
   const frescor = frescorDoBoletim(
@@ -265,6 +273,33 @@ export default async function CotacoesPage({
         </Card>
       )}
 
+      {painel.familias.length > 0 && (
+        <nav aria-label="Seus produtos" className="flex flex-col gap-1.5">
+          <span className="text-xs font-medium text-muted-foreground">Seus produtos</span>
+          <div className="flex flex-wrap gap-1.5">
+            {painel.familias.map((f) => {
+              const ativa = familiaBuscada === f.chave;
+              const q = ativa ? "" : `&q=${encodeURIComponent(f.chave)}`;
+              return (
+                <Link
+                  key={f.chave}
+                  href={`/cotacoes?filtro=${filtro}${q}`}
+                  aria-current={ativa ? "true" : undefined}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 text-xs font-semibold",
+                    ativa
+                      ? "border-success bg-success text-success-foreground"
+                      : "bg-background hover:bg-muted",
+                  )}
+                >
+                  {f.rotulo}
+                </Link>
+              );
+            })}
+          </div>
+        </nav>
+      )}
+
       <BuscaCotacoes />
 
       <div className="flex gap-2">
@@ -291,7 +326,7 @@ export default async function CotacoesPage({
             busca
               ? "Nenhum produto do boletim casa com essa busca."
               : filtro === "MEUS"
-                ? "Vincule seus produtos às cotações para vê-los aqui."
+                ? "Nenhum produto seu saiu neste boletim. Veja em Todos."
                 : "O boletim desta central ainda não trouxe produtos."
           }
         />

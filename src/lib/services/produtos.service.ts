@@ -4,6 +4,8 @@ import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { ProdutoInput, ProdutoUpdateInput } from "@/lib/validations/produto";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { ProdutoImagemService } from "./produto-imagem.service";
+import { CotacoesService } from "./cotacoes.service";
+import { describeError, logger } from "@/lib/logger";
 
 /** `sourceType` do movimento de ENTRADA gravado pelo cadastro do produto. */
 export const SOURCE_ESTOQUE_INICIAL = "ESTOQUE_INICIAL";
@@ -62,7 +64,7 @@ export const ProdutosService = {
       throw new BusinessRuleError("Informe quanto custou cada unidade do estoque inicial.");
     }
 
-    return db.$transaction(async (tx) => {
+    const criado = await db.$transaction(async (tx) => {
       const product = await tx.product.create({
         data: {
           tenantId: ctx.tenantId,
@@ -111,6 +113,16 @@ export const ProdutosService = {
       );
       return product;
     });
+
+    // Fora da transação: o produto já está gravado, e o vínculo com a cotação
+    // é conveniência — falhar aqui não pode desfazer o cadastro.
+    await CotacoesService.autoVincularIdenticos(ctx.tenantId).catch((e) =>
+      logger.error(
+        { err: describeError(e), tenantId: ctx.tenantId },
+        "Falha no vínculo automático de cotações",
+      ),
+    );
+    return criado;
   },
 
   async update(input: ProdutoUpdateInput, ctx: TenantCtx) {

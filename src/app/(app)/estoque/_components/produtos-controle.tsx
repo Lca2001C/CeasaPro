@@ -44,6 +44,7 @@ export function ProdutosControle({
       }}
       produto={produto}
       fotosDisponiveis={fotosDisponiveis}
+      meusProdutos={produtos}
       onSalvo={() => router.refresh()}
     />
   );

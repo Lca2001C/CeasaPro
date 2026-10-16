@@ -3,7 +3,8 @@ import type { CeasaSerie, Prisma, SaleUnit } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
-import { sugerirVinculos } from "@/lib/cotacoes/nome";
+import { agruparPorPrimeiraPalavra, primeiraPalavra, sugerirVinculos } from "@/lib/cotacoes/nome";
+import { describeError, logger } from "@/lib/logger";
 import {
   embalagemCasaComVenda,
   precoPorKg,
@@ -54,9 +55,14 @@ export interface LinhaDeCotacao {
    *    que ele escolheu. Não pode carregar a estrela verde no mesmo peso — mas
    *    também não pode desaparecer: é o que responde "meu tomate está a R$ 85 a
    *    caixa e a R$ 4,20 o quilo".
+   *  - `"palavra"`: sem vínculo gravado, mas a primeira palavra do item é a de
+   *    um produto do cliente ("TOMATE SALADA" para quem vende "Tomate
+   *    Italiano"). Entra em "Meus produtos" com marca própria, sem a estrela:
+   *    é a família que ele vende, não necessariamente o item. `meuProdutoNome`
+   *    traz o produto que casou; `meuProdutoId` e `meuSaldo` ficam nulos.
    *  - `null`: item que ele não vende.
    */
-  vinculo: "exato" | "outra_embalagem" | null;
+  vinculo: "exato" | "outra_embalagem" | "palavra" | null;
   /** Saldo do produto vinculado. Null quando não há vínculo. */
   meuSaldo: Prisma.Decimal | null;
   /**
@@ -128,6 +134,8 @@ export interface PainelDeCotacoes {
    * filtro "Todos" e a seção verde desaparece inteira, para quem vinculou tudo.
    */
   temVinculo: boolean;
+  /** As famílias (primeira palavra) dos produtos ativos da empresa, para os atalhos da busca. */
+  familias: { chave: string; rotulo: string }[];
   /**
    * Vínculos que NÃO encontraram preço no boletim de hoje.
    *
@@ -260,6 +268,7 @@ export const CotacoesService = {
         semVinculo: [],
         semVinculoComNomeIdentico: 0,
         temVinculo: false,
+        familias: [],
         vinculosSemCotacao: [],
         vinculosNaMesmaCotacao: [],
       };
@@ -268,6 +277,20 @@ export const CotacoesService = {
     const central = { ...dadosDaCentral, automatica: sourceKey !== "manual" };
     // A série que ESTA central usa. Ver o comentário do `aggregate` abaixo.
     const serie = serieDaFonte(sourceKey);
+
+    // Antes de ler: produto antigo ou item novo no boletim com o MESMO nome
+    // ganha o vínculo aqui. Falhar não pode derrubar a tela de preços.
+    await autoVincularIdenticos(tenantId, { centralCode: central.code, serie }).catch((e) =>
+      logger.error({ err: describeError(e), tenantId }, "Falha no vínculo automático de cotações"),
+    );
+    const ativos = await prisma.product.findMany({
+      where: { tenantId, deletedAt: null, active: true },
+      orderBy: { name: "asc" },
+      select: { name: true },
+    });
+    const grupos = agruparPorPrimeiraPalavra(ativos, (p) => p.name);
+    const familias = grupos.map(({ chave, rotulo }) => ({ chave, rotulo }));
+    const produtoDaFamilia = new Map(grupos.map((g) => [g.chave, g.itens[0]!.name]));
 
     /*
       A data do boletim MAIS RECENTE desta central, DENTRO DA SÉRIE que ela usa.
@@ -303,6 +326,7 @@ export const CotacoesService = {
         // Sem boletim não há com o que casar nome.
         semVinculoComNomeIdentico: 0,
         temVinculo: vinculos.length > 0,
+        familias,
         vinculosSemCotacao: [],
         vinculosNaMesmaCotacao: [],
       };
@@ -386,6 +410,7 @@ export const CotacoesService = {
       semVinculo: sem,
       semVinculoComNomeIdentico: comNomeIdentico(sem, rows),
       temVinculo: vinculos.length > 0,
+      familias,
       vinculosSemCotacao: vinculosSemCotacao(vinculos, rows),
       vinculosNaMesmaCotacao: vinculosNaMesmaCotacao(vinculos, rows),
       linhas: rows.map((r) => {
@@ -401,6 +426,9 @@ export const CotacoesService = {
         // conta como exato: é o comportamento de antes da coluna existir, e é o
         // que todo vínculo já gravado herda.
         const exato = r.minhaEmbalagem === null || r.minhaEmbalagem === r.unit;
+        const daFamilia = r.meuProdutoId
+          ? null
+          : (produtoDaFamilia.get(primeiraPalavra(r.ceasaProductName)) ?? null);
 
         return {
           ceasaProductId: r.ceasaProductId,
@@ -410,9 +438,15 @@ export const CotacoesService = {
           minPrice: dec(r.minPrice),
           maxPrice: dec(r.maxPrice),
           meuProdutoId: r.meuProdutoId,
-          meuProdutoNome: r.meuProdutoNome,
+          meuProdutoNome: r.meuProdutoNome ?? daFamilia,
           minhaEmbalagem: r.minhaEmbalagem,
-          vinculo: r.meuProdutoId ? (exato ? "exato" : "outra_embalagem") : null,
+          vinculo: r.meuProdutoId
+            ? exato
+              ? "exato"
+              : "outra_embalagem"
+            : daFamilia
+              ? "palavra"
+              : null,
           meuSaldo: r.meuProdutoId ? (dec(r.meuSaldo) ?? null) : null,
           anterior: anterior
             ? { quoteDate: new Date(anterior.quoteDate), refPrice: anterior.refPrice }
@@ -428,9 +462,13 @@ export const CotacoesService = {
    * Tela de vínculo: os produtos do cliente, o vínculo atual de cada um e as
    * sugestões ordenadas.
    *
-   * As sugestões NUNCA são aplicadas sozinhas — ver `sugerirVinculos`.
+   * Nome idêntico já chega vinculado (`autoVincularIdenticos`); as demais
+   * sugestões só são gravadas com a confirmação do cliente.
    */
   async getTelaDeVinculo(tenantId: string) {
+    await autoVincularIdenticos(tenantId).catch((e) =>
+      logger.error({ err: describeError(e), tenantId }, "Falha no vínculo automático de cotações"),
+    );
     const tenant = await prisma.tenant.findUnique({
       where: { id: tenantId },
       select: {
@@ -506,11 +544,10 @@ export const CotacoesService = {
         /*
           O ESCORE vai junto, e antes ele era descartado aqui.
 
-          Não é para a tela decidir sozinha — `sugerirVinculos` documenta que o
-          escore só ordena. É para a tela poder pré-MARCAR o caso em que não há
-          dúvida (escore 1 = nome normalizado idêntico) e deixar o cliente
-          confirmar a lista inteira num clique, em vez de repetir 40 vezes uma
-          decisão que já está tomada. Nada é gravado sem esse clique.
+          É para a tela poder pré-MARCAR o caso em que não há dúvida (escore 1 =
+          nome normalizado idêntico). Na prática esse caso já chega vinculado por
+          `autoVincularIdenticos`; a pré-marcação cobre a corrida em que ele
+          falhou, e o resto só é gravado com o clique do cliente.
 
           Que só existe um candidato com escore 1 é garantido pelo banco, não pela
           sorte: `@@unique([serie, slug])` em `ceasa_products`, com o slug sendo o
@@ -992,6 +1029,11 @@ export const CotacoesService = {
     return { vinculados: input.itens.length };
   },
 
+  /** Vínculo automático por nome idêntico — ver `autoVincularIdenticos`. */
+  autoVincularIdenticos(tenantId: string): Promise<number> {
+    return autoVincularIdenticos(tenantId);
+  },
+
   async desvincular(input: { productId: string }, ctx: TenantCtx) {
     const r = await prisma.tenantCeasaLink.deleteMany({
       where: { tenantId: ctx.tenantId, productId: input.productId },
@@ -1085,6 +1127,73 @@ async function semVinculo(tenantId: string) {
     where: { tenantId, deletedAt: null, active: true, ceasaLinks: { none: { tenantId } } },
     orderBy: { name: "asc" },
     select: { id: true, name: true },
+  });
+}
+
+/**
+ * Grava sozinho o vínculo dos produtos sem vínculo cujo nome normalizado é
+ * IDÊNTICO a um item que a praça cota. Devolve quantos gravou.
+ *
+ * Só o escore 1 de `sugerirVinculos`: prefixo e palavras em comum casariam
+ * "Tomate" com "TOMATE CEREJA", que é outro preço. A embalagem só é gravada
+ * quando a praça cota o item numa só; com mais de uma fica "qualquer".
+ *
+ * `skipDuplicates` porque a chave é (tenantId, productId): vínculo que já existe
+ * — manual ou gravado por outra requisição ao mesmo tempo — nunca é trocado.
+ */
+async function autoVincularIdenticos(
+  tenantId: string,
+  contexto?: CentralDaEmpresa | null,
+): Promise<number> {
+  const c = contexto ?? (await centralESerie(tenantId));
+  if (!c) return 0;
+  const sem = await semVinculo(tenantId);
+  if (sem.length === 0) return 0;
+  const itens = await unidadesPorProdutoDoBoletim(c.centralCode, c.serie);
+  if (itens.length === 0) return 0;
+
+  const novos = sem.flatMap((p) => {
+    const melhor = sugerirVinculos(p.name, itens, (i) => i.name, 1)[0];
+    if (!melhor || melhor.escore < ESCORE_NOME_IDENTICO) return [];
+    const unidades = melhor.item.unidades;
+    return [
+      {
+        productId: p.id,
+        nome: p.name,
+        ceasaProductId: melhor.item.id,
+        unit: unidades.length === 1 ? unidades[0]! : null,
+      },
+    ];
+  });
+  if (novos.length === 0) return 0;
+
+  return prisma.$transaction(async (tx) => {
+    const r = await tx.tenantCeasaLink.createMany({
+      data: novos.map(({ productId, ceasaProductId, unit }) => ({
+        tenantId,
+        productId,
+        ceasaProductId,
+        unit,
+      })),
+      skipDuplicates: true,
+    });
+    if (r.count > 0) {
+      await audit(
+        {
+          tenantId,
+          action: "UPDATE",
+          entity: "TenantCeasaLink",
+          entityId: tenantId,
+          newData: {
+            automatico: true,
+            quantidade: r.count,
+            produtos: novos.map((n) => n.nome),
+          },
+        },
+        tx,
+      );
+    }
+    return r.count;
   });
 }
 

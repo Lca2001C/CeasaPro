@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { Search, SlidersHorizontal, X } from "lucide-react";
 import { EXPENSE_TYPE_LABELS, toOptions } from "@/lib/labels";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -41,11 +42,11 @@ export function DespesasFiltros({
   const [aberto, setAberto] = useState(
     Boolean(
       atuais.type ||
-        atuais.categoryId ||
-        atuais.from ||
-        atuais.to ||
-        atuais.origem ||
-        atuais.supplierId,
+      atuais.categoryId ||
+      atuais.from ||
+      atuais.to ||
+      atuais.origem ||
+      atuais.supplierId,
     ),
   );
   const [f, setF] = useState<FiltrosAtuais>(atuais);
@@ -75,12 +76,15 @@ export function DespesasFiltros({
   );
 
   return (
-    <div className="mb-4 flex flex-col gap-2">
+    <div className="flex flex-col gap-3">
       <div className="flex gap-2">
-        <div className="relative flex-1">
-          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+        <div className="relative min-w-0 flex-1">
+          <Search
+            aria-hidden
+            className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+          />
           <Input
-            className="pl-9"
+            className="pl-10"
             placeholder="Buscar por descrição..."
             value={f.q}
             onChange={(e) => setF({ ...f, q: e.target.value })}
@@ -90,7 +94,12 @@ export function DespesasFiltros({
             aria-label="Buscar despesa por descrição"
           />
         </div>
-        <Button variant="outline" onClick={() => aplicar()} aria-label="Buscar" className="px-3 sm:px-5">
+        <Button
+          variant="outline"
+          onClick={() => aplicar()}
+          aria-label="Buscar"
+          className="px-3 sm:px-5"
+        >
           <Search className="size-4 sm:hidden" />
           <span className="hidden sm:inline">Buscar</span>
         </Button>
@@ -107,7 +116,7 @@ export function DespesasFiltros({
       </div>
 
       {aberto && (
-        <div className="grid grid-cols-2 gap-2 rounded-lg border p-3">
+        <Card className="grid grid-cols-2 gap-x-3 gap-y-4 p-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="filtro-tipo">Tipo</Label>
             <Select
@@ -203,7 +212,7 @@ export function DespesasFiltros({
             />
           </div>
 
-          <div className="col-span-2 flex gap-2">
+          <div className="col-span-2 flex flex-wrap gap-2 pt-1">
             {temFiltro && (
               <Button variant="ghost" className="flex-1" onClick={limpar}>
                 <X className="size-4" /> Limpar
@@ -213,7 +222,7 @@ export function DespesasFiltros({
               Aplicar filtros
             </Button>
           </div>
-        </div>
+        </Card>
       )}
     </div>
   );

@@ -2,14 +2,15 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, ArrowLeftRight, CalendarClock, Undo2 } from "lucide-react";
+import { Check, Loader2, ArrowLeftRight, CalendarClock, Layers, Undo2 } from "lucide-react";
 import { toast } from "sonner";
 import type { AvailablePlan, PlanoView } from "@/lib/services/plano.service";
 import { trocarPlano, cancelarTrocaDePlano } from "@/actions/plano.actions";
 import { apiPost } from "@/lib/api-client";
 import { formatBRL, formatDate } from "@/lib/format";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { chamarAction } from "@/lib/http/chamar-action";
 import {
   Dialog,
@@ -76,61 +77,68 @@ export function TrocarPlano({
   }
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base">Trocar de plano</CardTitle>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-3">
+    <section>
+      <h2 className="mb-2 px-1 text-sm font-semibold text-muted-foreground">Trocar de plano</h2>
+      <div className="flex flex-col gap-2">
         {pendingPlan && (
-          <div className="flex flex-col gap-2 rounded-lg border border-info/40 bg-info/5 p-3 sm:flex-row sm:items-center sm:justify-between">
-            <p className="min-w-0 text-sm [overflow-wrap:anywhere]">
-              <CalendarClock className="mr-1 inline size-4 text-info" />
-              Agendado: <b>{pendingPlan.name}</b> a partir de{" "}
-              <b>{formatDate(pendingPlan.from)}</b>.
-            </p>
-            <Button
-              size="sm"
-              variant="outline"
-              className="shrink-0"
-              onClick={desfazerAgendamento}
-              disabled={pending}
-            >
-              <Undo2 className="size-4" /> Cancelar troca
-            </Button>
-          </div>
-        )}
-
-        {outros.map((plan) => (
-          <div
-            key={plan.id}
-            className="flex flex-col gap-3 rounded-lg border p-3 sm:flex-row sm:items-center sm:justify-between"
-          >
-            <div className="min-w-0">
-              <div className="flex min-w-0 flex-col gap-0.5">
-                <p className="min-w-0 font-semibold [overflow-wrap:anywhere]">{plan.name}</p>
-                <span className="text-sm text-muted-foreground">
-                  {formatBRL(plan.priceMonthly)}/mês
-                </span>
-              </div>
-              <p className="mt-0.5 text-xs text-muted-foreground [overflow-wrap:anywhere]">
-                {plan.modules.length > 0
-                  ? `Inclui: ${plan.modules.join(", ")}`
-                  : "Somente recursos básicos"}
+          <Card className="flex flex-col gap-3 border-info/40 bg-info/10 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <IconeRedondo tom="info" tamanho="sm">
+                <CalendarClock />
+              </IconeRedondo>
+              <p className="min-w-0 self-center text-sm [overflow-wrap:anywhere]">
+                Agendado: <b>{pendingPlan.name}</b> a partir de{" "}
+                <b>{formatDate(pendingPlan.from)}</b>.
               </p>
             </div>
             <Button
               size="sm"
               variant="outline"
-              className="shrink-0"
+              className="w-full shrink-0 sm:w-auto"
+              onClick={desfazerAgendamento}
+              disabled={pending}
+            >
+              <Undo2 className="size-4" /> Cancelar troca
+            </Button>
+          </Card>
+        )}
+
+        {outros.map((plan) => (
+          <Card
+            key={plan.id}
+            className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+          >
+            <div className="flex min-w-0 items-start gap-3">
+              <IconeRedondo tom="neutro">
+                <Layers />
+              </IconeRedondo>
+              <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="flex min-w-0 flex-wrap items-baseline justify-between gap-x-3">
+                  <p className="min-w-0 font-semibold [overflow-wrap:anywhere]">{plan.name}</p>
+                  <span className="font-bold tabular-nums">
+                    {formatBRL(plan.priceMonthly)}/mês
+                  </span>
+                </div>
+                <p className="text-sm text-muted-foreground [overflow-wrap:anywhere]">
+                  {plan.modules.length > 0
+                    ? `Inclui: ${plan.modules.join(", ")}`
+                    : "Somente recursos básicos"}
+                </p>
+              </div>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="w-full shrink-0 sm:w-auto"
               onClick={() => setSelected(plan)}
               disabled={pending || plan.id === pendingPlan?.id}
             >
               <ArrowLeftRight className="size-4" />
               {plan.id === pendingPlan?.id ? "Já agendado" : "Trocar para este"}
             </Button>
-          </div>
+          </Card>
         ))}
-      </CardContent>
+      </div>
 
       <Dialog open={selected !== null} onOpenChange={(o) => !o && setSelected(null)}>
         <DialogContent>
@@ -155,12 +163,12 @@ export function TrocarPlano({
               Cancelar
             </Button>
             <Button onClick={confirmar} disabled={pending}>
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
+              {pending ? <Loader2 className="size-4 motion-safe:animate-spin" /> : <Check className="size-4" />}
               Confirmar troca
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
-    </Card>
+    </section>
   );
 }

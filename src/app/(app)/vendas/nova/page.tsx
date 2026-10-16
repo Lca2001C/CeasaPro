@@ -6,6 +6,7 @@ import { EstoqueService } from "@/lib/services/estoque.service";
 import { ComprasService } from "@/lib/services/compras.service";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { publicUrl } from "@/lib/storage/r2";
 import { Pdv } from "./_components/pdv";
 
 export const dynamic = "force-dynamic";
@@ -65,6 +66,7 @@ export default async function NovaVendaPage({
       name: p.name,
       saleUnit: p.saleUnit,
       minStock: p.minStock == null ? null : Number(p.minStock),
+      imageUrl: publicUrl(p.imageKey),
     }));
 
   // Preço de venda cadastrado no produto vence o sugerido pela compra, mas não

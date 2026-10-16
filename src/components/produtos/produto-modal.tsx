@@ -24,6 +24,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { ImagemProduto, type FotoEscolhida } from "./imagem-produto";
+import { CustosDaCarga } from "./custos-da-carga";
+import { SeusProdutos, type ProdutoSugerido } from "./seus-produtos";
+import { calcularCustoDaCarga } from "@/lib/estoque/custo-carga";
 
 /** Produto como o modal precisa para EDITAR (números simples: Decimal não atravessa). */
 export interface ProdutoEditavel {
@@ -58,12 +61,15 @@ export function ProdutoModal({
   onOpenChange,
   produto,
   fotosDisponiveis,
+  meusProdutos = [],
   onSalvo,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   produto?: ProdutoEditavel | null;
   fotosDisponiveis: boolean;
+  /** Produtos já cadastrados, para a lista "Seus produtos" do cadastro. */
+  meusProdutos?: ProdutoSugerido[];
   onSalvo?: (p: { id: string; name: string; saleUnit: string }) => void;
 }) {
   return (
@@ -88,6 +94,7 @@ export function ProdutoModal({
             key={produto?.id ?? "novo"}
             produto={produto ?? null}
             fotosDisponiveis={fotosDisponiveis}
+            meusProdutos={meusProdutos}
             onSalvo={(p) => {
               onSalvo?.(p);
               onOpenChange(false);
@@ -102,10 +109,12 @@ export function ProdutoModal({
 function FormularioProduto({
   produto,
   fotosDisponiveis,
+  meusProdutos,
   onSalvo,
 }: {
   produto: ProdutoEditavel | null;
   fotosDisponiveis: boolean;
+  meusProdutos: ProdutoSugerido[];
   onSalvo: (p: { id: string; name: string; saleUnit: string }) => void;
 }) {
   const editando = Boolean(produto);
@@ -116,6 +125,8 @@ function FormularioProduto({
     produto?.imageKey ? { imageKey: produto.imageKey, url: produto.imageUrl } : null,
   );
   const [maisOpcoes, setMaisOpcoes] = useState(false);
+  const [custoMercadoria, setCustoMercadoria] = useState<number | null>(null);
+  const [custoDescarga, setCustoDescarga] = useState<number | null>(null);
 
   const {
     register,
@@ -157,7 +168,22 @@ function FormularioProduto({
   const nome = useWatch({ control, name: "name" }) ?? "";
   const saleUnit = useWatch({ control, name: "saleUnit" });
   const estoqueInicial = useWatch({ control, name: "estoqueInicial" });
-  const unidade = (SALE_UNIT_LABELS[saleUnit] ?? "").toLowerCase();
+
+  function mudarCustos(mercadoria: number | null, descarga: number | null) {
+    setCustoMercadoria(mercadoria);
+    setCustoDescarga(descarga);
+    setValue("custoInicial", calcularCustoDaCarga(1, mercadoria, descarga).custoUnitario, {
+      shouldValidate: Boolean(errors.custoInicial),
+    });
+  }
+
+  function preencherCom(p: ProdutoSugerido) {
+    setValue("name", p.name, { shouldValidate: true });
+    if (p.saleUnit && !unidadeTravada) {
+      setValue("saleUnit", p.saleUnit as ProdutoInput["saleUnit"]);
+    }
+    if (p.salePrice !== undefined) setValue("salePrice", p.salePrice);
+  }
 
   async function onSubmit(values: ProdutoInput) {
     setSaving(true);
@@ -190,6 +216,10 @@ function FormularioProduto({
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col">
       <div className="flex flex-col gap-4 px-4 py-4">
+        {!editando && (
+          <SeusProdutos produtos={meusProdutos} nomeDigitado={nome} onEscolher={preencherCom} />
+        )}
+
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="produto-nome">Nome do Produto *</Label>
           <Input
@@ -284,7 +314,7 @@ function FormularioProduto({
                     value={field.value}
                     onChange={(v) => {
                       field.onChange(v ?? null);
-                      if (!v) setValue("custoInicial", null);
+                      if (!v) mudarCustos(null, null);
                     }}
                     onBlur={field.onBlur}
                   />
@@ -295,28 +325,15 @@ function FormularioProduto({
         </div>
 
         {!editando && estoqueInicial != null && estoqueInicial > 0 && (
-          <div className="flex flex-col gap-1.5">
-            <Label htmlFor="produto-custo">Quanto custou cada {unidade || "unidade"}? *</Label>
-            <Controller
-              control={control}
-              name="custoInicial"
-              render={({ field }) => (
-                <CurrencyInput
-                  id="produto-custo"
-                  placeholder="R$ 0,00"
-                  value={field.value}
-                  onChange={(v) => field.onChange(v ?? null)}
-                  onBlur={field.onBlur}
-                />
-              )}
-            />
-            <span className="text-xs text-muted-foreground">
-              É com esse custo que o sistema calcula o lucro das primeiras vendas.
-            </span>
-            {errors.custoInicial && (
-              <span className="text-xs text-destructive">{errors.custoInicial.message}</span>
-            )}
-          </div>
+          <CustosDaCarga
+            quantidade={estoqueInicial}
+            saleUnit={saleUnit}
+            mercadoria={custoMercadoria}
+            descarga={custoDescarga}
+            onMercadoria={(v) => mudarCustos(v, custoDescarga)}
+            onDescarga={(v) => mudarCustos(custoMercadoria, v)}
+            erro={errors.custoInicial?.message}
+          />
         )}
 
         {!editando && (

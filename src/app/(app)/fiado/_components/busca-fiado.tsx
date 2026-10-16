@@ -46,13 +46,16 @@ export function BuscaFiado() {
 
   return (
     <div className="relative">
-      <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+      <Search
+        aria-hidden
+        className="pointer-events-none absolute left-4 top-1/2 size-5 -translate-y-1/2 text-muted-foreground"
+      />
       <Input
         value={termo}
         onChange={(e) => setTermo(e.target.value)}
         placeholder="Buscar cliente pelo nome"
         aria-label="Buscar cliente pelo nome"
-        className="h-12 pl-9 pr-24"
+        className="h-12 pl-11 pr-28"
       />
       {termo && (
         <Button
@@ -60,7 +63,7 @@ export function BuscaFiado() {
           variant="outline"
           size="sm"
           aria-label="Limpar busca"
-          className="absolute right-1.5 top-1/2 h-9 -translate-y-1/2"
+          className="absolute right-0.5 top-1/2 h-11 -translate-y-1/2"
           onClick={() => setTermo("")}
         >
           <X /> Limpar

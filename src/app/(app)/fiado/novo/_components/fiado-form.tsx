@@ -109,66 +109,58 @@ export function FiadoForm({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="cliente">Cliente</Label>
-        <Input
-          id="cliente"
-          autoFocus
-          value={customerName}
-          onChange={(e) => setCustomerName(e.target.value)}
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-3">
+    <div className="flex flex-col gap-5">
+      {/* Quem leva e quando paga. */}
+      <Card className="flex flex-col gap-4 p-4 sm:p-5">
         <div className="flex flex-col gap-1.5">
-          <Label htmlFor="telefone">Telefone (opcional)</Label>
-          <PhoneInput id="telefone" value={customerPhone} onChange={setCustomerPhone} />
-        </div>
-        <div className="flex flex-col gap-1.5">
-          <Label htmlFor="saleDate">Data da venda</Label>
+          <Label htmlFor="cliente">Cliente</Label>
           <Input
-            id="saleDate"
-            type="date"
-            value={saleDate}
-            onChange={(e) => setSaleDate(e.target.value)}
+            id="cliente"
+            autoFocus
+            value={customerName}
+            onChange={(e) => setCustomerName(e.target.value)}
           />
         </div>
-      </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="dueDate">Vencimento (opcional)</Label>
-        <Input
-          id="dueDate"
-          type="date"
-          value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
-        />
-      </div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 sm:gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="telefone">Telefone (opcional)</Label>
+            <PhoneInput id="telefone" value={customerPhone} onChange={setCustomerPhone} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="saleDate">Data da venda</Label>
+            <Input
+              id="saleDate"
+              type="date"
+              value={saleDate}
+              onChange={(e) => setSaleDate(e.target.value)}
+            />
+          </div>
+        </div>
 
-      <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="dueDate">Vencimento (opcional)</Label>
+          <Input
+            id="dueDate"
+            type="date"
+            value={dueDate}
+            onChange={(e) => setDueDate(e.target.value)}
+          />
+        </div>
+      </Card>
+
+      <section className="flex flex-col gap-2">
         {/*
           Campos que se repetem por item: `id` colidiria entre as linhas, então
           cada controle leva `aria-label` com o número do item. Sem isso, quem
           usa leitor de tela ouve uma sequência de controles sem nome e não
           distingue o preço do item 1 do preço do item 4.
         */}
-        <Label>Produtos vendidos</Label>
+        <h2 className="px-1 text-sm font-semibold text-muted-foreground">Produtos vendidos</h2>
         {items.map((it, idx) => (
-          <Card key={idx} className="flex flex-col gap-2 p-3">
-            <div className="flex items-center gap-2">
-              <Select
-                aria-label={`Produto do item ${idx + 1}`}
-                className="flex-1"
-                value={it.productId}
-                onChange={(e) => setItem(idx, { productId: e.target.value })}
-              >
-                {produtos.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} ({SALE_UNIT_LABELS[p.saleUnit]})
-                  </option>
-                ))}
-              </Select>
+          <Card key={idx} className="flex flex-col gap-3 p-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-semibold">Item {idx + 1}</span>
               <Button
                 type="button"
                 variant="destructive"
@@ -180,17 +172,28 @@ export function FiadoForm({
                 <Trash2 /> Remover
               </Button>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-xs text-muted-foreground">Quantidade</span>
+            <Select
+              aria-label={`Produto do item ${idx + 1}`}
+              value={it.productId}
+              onChange={(e) => setItem(idx, { productId: e.target.value })}
+            >
+              {produtos.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} ({SALE_UNIT_LABELS[p.saleUnit]})
+                </option>
+              ))}
+            </Select>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <span className="mb-1.5 block text-sm text-muted-foreground">Quantidade</span>
                 <QuantityInput
                   aria-label={`Quantidade do item ${idx + 1}`}
                   value={it.quantity}
                   onChange={(v) => setItem(idx, { quantity: v ?? 0 })}
                 />
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">Preço unitário</span>
+              <div className="min-w-0">
+                <span className="mb-1.5 block text-sm text-muted-foreground">Preço unitário</span>
                 <CurrencyInput
                   aria-label={`Preço unitário do item ${idx + 1}`}
                   value={it.unitPrice}
@@ -198,9 +201,11 @@ export function FiadoForm({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2">
-              <div>
-                <span className="text-xs text-muted-foreground">Vasilhame (opcional)</span>
+            <div className="grid grid-cols-2 gap-3">
+              <div className="min-w-0">
+                <span className="mb-1.5 block text-sm text-muted-foreground">
+                  Vasilhame (opcional)
+                </span>
                 <Select
                   aria-label={`Vasilhame do item ${idx + 1}`}
                   value={it.recipientType}
@@ -214,8 +219,10 @@ export function FiadoForm({
                   ))}
                 </Select>
               </div>
-              <div>
-                <span className="text-xs text-muted-foreground">Vasilhames do item</span>
+              <div className="min-w-0">
+                <span className="mb-1.5 block text-sm text-muted-foreground">
+                  Vasilhames do item
+                </span>
                 <Input
                   aria-label={`Vasilhames do item ${idx + 1}`}
                   type="number"
@@ -229,24 +236,29 @@ export function FiadoForm({
                 />
               </div>
             </div>
-            <div className="flex justify-between text-sm">
-              <span className="text-muted-foreground">Subtotal</span>
-              <span className="font-medium tabular-nums">
+            <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3">
+              <span className="text-sm text-muted-foreground">Subtotal</span>
+              <span className="font-bold tabular-nums">
                 {formatBRL(it.quantity * (it.unitPrice || 0))}
               </span>
             </div>
           </Card>
         ))}
-        <Button type="button" variant="outline" onClick={() => setItems((s) => [...s, novoItem(produtos)])}>
+        <Button
+          type="button"
+          variant="outline"
+          onClick={() => setItems((s) => [...s, novoItem(produtos)])}
+        >
           <Plus /> Adicionar produto
         </Button>
-      </div>
+      </section>
 
-      <Card className="flex flex-col gap-3 p-3">
-        <label className="flex items-center gap-2 text-sm font-medium">
+      <Card className="flex flex-col gap-3 p-4 sm:p-5">
+        {/* A linha inteira é o alvo do toque (≥ 44px), não só o quadradinho. */}
+        <label className="flex min-h-11 cursor-pointer items-center gap-3 font-medium">
           <input
             type="checkbox"
-            className="size-4"
+            className="size-5 accent-primary"
             checked={usaCaixaPlastica}
             onChange={(e) => setUsaCaixaPlastica(e.target.checked)}
           />
@@ -263,7 +275,7 @@ export function FiadoForm({
               value={plasticCrateQty}
               onChange={(e) => setPlasticCrateQty(e.target.value)}
             />
-            <span className="text-xs text-muted-foreground">
+            <span className="text-sm text-muted-foreground">
               {caixasLimpas} caixa(s) limpa(s) em estoque. As caixas ficam registradas como
               pendentes com o cliente.
             </span>
@@ -276,18 +288,18 @@ export function FiadoForm({
         <Input id="notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
       </div>
 
-      <Card className="p-3">
-        <div className="flex justify-between font-semibold">
-          <span>Total da compra</span>
-          <span className="text-xl tabular-nums">{formatBRL(total)}</span>
-        </div>
+      <Card className="flex items-center justify-between gap-3 p-4 sm:p-5">
+        <span className="font-semibold">Total da compra</span>
+        <span className="min-w-0 text-2xl font-bold tabular-nums [overflow-wrap:anywhere]">
+          {formatBRL(total)}
+        </span>
       </Card>
 
-      <div className="flex gap-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>
+      <div className="flex flex-wrap gap-2">
+        <Button type="button" variant="outline" className="flex-1" onClick={() => router.back()}>
           Cancelar
         </Button>
-        <Button className="flex-1" onClick={submit} disabled={saving}>
+        <Button variant="success" className="flex-1" onClick={submit} disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           Lançar fiado
         </Button>

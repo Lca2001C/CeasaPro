@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Plus, Pencil } from "lucide-react";
+import { Plus, Pencil, Truck } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { FornecedoresService } from "@/lib/services/fornecedores.service";
 import { excluirFornecedor } from "@/actions/fornecedores.actions";
@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/data/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { DeleteButton } from "@/components/crud/delete-button";
 
 export const dynamic = "force-dynamic";
@@ -35,6 +36,7 @@ export default async function FornecedoresPage() {
         <EmptyState
           title="Nenhum fornecedor cadastrado"
           description="Toque em Novo para cadastrar seu primeiro fornecedor."
+          icon={<Truck />}
           action={
             <Button asChild>
               <Link href="/fornecedores/novo">
@@ -48,16 +50,25 @@ export default async function FornecedoresPage() {
           {fornecedores.map((f) => (
             <Card
               key={f.id}
-              className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
+              className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
             >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <span className="truncate font-medium">{f.name}</span>
-                  {!f.active && <Badge variant="secondary">Inativo</Badge>}
+              <div className="flex min-w-0 items-center gap-3">
+                <IconeRedondo tom={f.active ? "primary" : "neutro"}>
+                  <Truck />
+                </IconeRedondo>
+                <div className="min-w-0">
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                    <span className="min-w-0 font-semibold [overflow-wrap:anywhere]">
+                      {f.name}
+                    </span>
+                    {!f.active && <Badge variant="secondary">Inativo</Badge>}
+                  </div>
+                  {f.phone && (
+                    <span className="block text-sm text-muted-foreground tabular-nums">
+                      {formatPhone(f.phone)}
+                    </span>
+                  )}
                 </div>
-                {f.phone && (
-                  <span className="text-xs text-muted-foreground">{formatPhone(f.phone)}</span>
-                )}
               </div>
               <div className="flex shrink-0 flex-wrap items-center gap-2">
                 <Button asChild variant="info" size="sm">

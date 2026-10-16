@@ -102,29 +102,73 @@ describe("ProdutoModal — embalagem", () => {
 });
 
 describe("ProdutoModal — cadastro", () => {
-  it("o custo só aparece com estoque inicial, e é obrigatório", async () => {
+  it("o card de custos só aparece com estoque inicial, e o custo é obrigatório", async () => {
     const user = userEvent.setup();
     abrir();
-    expect(screen.queryByLabelText(/Quanto custou/)).toBeNull();
+    expect(screen.queryByText("Custos desta carga inicial")).toBeNull();
 
     await user.type(screen.getByLabelText(/Nome do Produto/), "Batata");
     await user.type(screen.getByLabelText("Estoque Inicial"), "10");
-    expect(screen.getByLabelText(/Quanto custou cada caixa/)).toBeInTheDocument();
+    expect(screen.getByText("Custos desta carga inicial")).toBeInTheDocument();
+    expect(screen.getByLabelText(/Custo da mercadoria \(R\$ por caixa\)/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Salvar Produto" }));
     expect(await screen.findByText(/Informe quanto custou/)).toBeInTheDocument();
     expect(criarProduto).not.toHaveBeenCalled();
 
-    await user.type(screen.getByLabelText(/Quanto custou/), "45,50");
+    await user.type(screen.getByLabelText(/Custo da mercadoria/), "45,50");
+    await user.type(screen.getByLabelText(/Custo de descarregamento/), "1,00");
+    expect(screen.getByTestId("custo-carga-unitario")).toHaveTextContent(/46,50/);
+    expect(screen.getByTestId("custo-carga-total")).toHaveTextContent(/465,00/);
+
     await user.click(screen.getByRole("button", { name: "Salvar Produto" }));
     await waitFor(() => expect(criarProduto).toHaveBeenCalledTimes(1));
     expect(criarProduto.mock.calls[0]![0]).toMatchObject({
       name: "Batata",
       saleUnit: "CAIXA",
       estoqueInicial: 10,
-      custoInicial: 45.5,
+      custoInicial: 46.5,
       imageKey: null,
     });
+  });
+
+  it("zerar o estoque esconde o card e limpa o custo", async () => {
+    const user = userEvent.setup();
+    abrir();
+    const estoque = screen.getByLabelText("Estoque Inicial");
+    await user.type(estoque, "5");
+    await user.type(screen.getByLabelText(/Custo da mercadoria/), "10,00");
+    await user.clear(estoque);
+    expect(screen.queryByText("Custos desta carga inicial")).toBeNull();
+
+    await user.type(screen.getByLabelText(/Nome do Produto/), "Batata");
+    await user.click(screen.getByRole("button", { name: "Salvar Produto" }));
+    await waitFor(() => expect(criarProduto).toHaveBeenCalledTimes(1));
+    expect(criarProduto.mock.calls[0]![0].custoInicial).toBeNull();
+  });
+
+  it("Seus produtos: famílias pela primeira palavra e filtro pelo nome digitado", async () => {
+    const user = userEvent.setup();
+    abrir({
+      meusProdutos: [
+        { id: "a", name: "Tomate Italiano", saleUnit: "CAIXA", salePrice: 15 },
+        { id: "b", name: "Tomate Cereja", saleUnit: "BANDEJA", salePrice: 8 },
+        { id: "c", name: "Uva Niágara", saleUnit: "CAIXA", salePrice: null },
+      ],
+    });
+    const lista = screen.getByRole("region", { name: "Seus produtos" });
+    expect(lista).toHaveTextContent("TOMATE (2)");
+    expect(lista).toHaveTextContent("UVA (1)");
+
+    await user.type(screen.getByLabelText(/Nome do Produto/), "uva");
+    expect(screen.getByRole("button", { name: /Uva Niágara/ })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Tomate Italiano/ })).toBeNull();
+
+    await user.clear(screen.getByLabelText(/Nome do Produto/));
+    await user.click(screen.getByRole("button", { name: /TOMATE/ }));
+    await user.click(screen.getByRole("button", { name: /Tomate Cereja/ }));
+    expect(screen.getByLabelText(/Nome do Produto/)).toHaveValue("Tomate Cereja");
+    expect(screen.getByLabelText("Embalagem")).toHaveValue("BANDEJA");
   });
 
   it("sem armazenamento, os botões de foto ficam desabilitados com aviso", () => {

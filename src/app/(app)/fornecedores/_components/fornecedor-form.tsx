@@ -56,7 +56,7 @@ export function FornecedorForm({ initial }: Props) {
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="name">Nome</Label>
         <Input id="name" autoFocus {...register("name")} />
-        {errors.name && <span className="text-xs text-destructive">{errors.name.message}</span>}
+        {errors.name && <span className="text-sm text-destructive">{errors.name.message}</span>}
       </div>
 
       <div className="flex flex-col gap-1.5">
@@ -68,33 +68,34 @@ export function FornecedorForm({ initial }: Props) {
             <PhoneInput value={field.value} onChange={field.onChange} onBlur={field.onBlur} id="phone" />
           )}
         />
-        {errors.phone && <span className="text-xs text-destructive">{errors.phone.message}</span>}
+        {errors.phone && <span className="text-sm text-destructive">{errors.phone.message}</span>}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="address">Endereço</Label>
         <Input id="address" {...register("address")} />
         {errors.address && (
-          <span className="text-xs text-destructive">{errors.address.message}</span>
+          <span className="text-sm text-destructive">{errors.address.message}</span>
         )}
       </div>
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="notes">Observações</Label>
         <Textarea id="notes" {...register("notes")} />
-        {errors.notes && <span className="text-xs text-destructive">{errors.notes.message}</span>}
+        {errors.notes && <span className="text-sm text-destructive">{errors.notes.message}</span>}
       </div>
 
-      <label className="flex items-center gap-2 text-sm">
-        <input type="checkbox" className="size-4" {...register("active")} />
+      {/* A linha inteira é o alvo do toque (≥ 44px), não só o quadradinho. */}
+      <label className="flex min-h-11 cursor-pointer items-center gap-3 font-medium">
+        <input type="checkbox" className="size-5 accent-primary" {...register("active")} />
         Fornecedor ativo
       </label>
 
-      <div className="flex gap-2 pt-2">
-        <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>
+      <div className="flex flex-wrap gap-2 pt-2">
+        <Button type="button" variant="outline" className="flex-1" onClick={() => router.back()}>
           Cancelar
         </Button>
-        <Button type="submit" className="flex-1" disabled={saving}>
+        <Button type="submit" variant="success" className="flex-1" disabled={saving}>
           {saving && <Loader2 className="animate-spin" />}
           Salvar
         </Button>

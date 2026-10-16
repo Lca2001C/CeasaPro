@@ -36,7 +36,7 @@ export function PagamentoForm({
   }
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-col gap-1.5">
         <Label>Valor recebido</Label>
         {/* Os `<Label>` daqui não apontam para os campos. Sem `aria-label`, o
@@ -55,7 +55,7 @@ export function PagamentoForm({
           <option value="CARTAO">Cartão</option>
         </Select>
       </div>
-      <Button onClick={submit} disabled={saving}>
+      <Button variant="success" size="lg" onClick={submit} disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
         Registrar pagamento
       </Button>

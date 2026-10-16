@@ -2,23 +2,28 @@
  * Nomes de produto entre o boletim do CEASA e o cadastro do cliente.
  *
  * O cliente escreve "Tomate". O boletim imprime "TOMATE SALADA LONGA VIDA".
- * Nenhuma normalização faz esses dois virarem o mesmo texto, e é por isso que o
- * vínculo entre eles é MANUAL — feito uma vez pelo dono, guardado em
- * `TenantCeasaLink`.
+ * Nenhuma normalização faz esses dois virarem o mesmo texto.
  *
- * O que existe aqui, então, é o que ajuda essa escolha sem tomá-la:
+ * O vínculo gravado (`TenantCeasaLink`) nasce sozinho em UM caso só: nome
+ * normalizado IDÊNTICO (escore 1 em `sugerirVinculos`), que é único no catálogo
+ * por `@@unique([serie, slug])`. Fora disso ele continua manual.
+ *
+ * O que existe aqui:
  *
  *   1. `slugProduto` dá identidade estável ao produto do boletim, para o
  *      catálogo não ganhar uma linha nova todo dia porque a fonte imprimiu dois
  *      espaços ou trocou a caixa.
  *   2. `sugerirVinculos` ordena candidatos para a tela mostrar os mais
  *      prováveis primeiro. Ela devolve uma LISTA, sempre — nunca "o certo".
+ *   3. `primeiraPalavra` agrupa por família ("tomate", "uva"). Serve para
+ *      EXIBIR — "Meus produtos" mostra todos os tomates do boletim para quem
+ *      vende tomate — e nunca para gravar vínculo.
  *
- * A tentação óbvia é casar por similaridade (trigrama, distância de edição) e
- * poupar o clique. Isso casaria "TOMATE CEREJA" com "TOMATE SALADA", que são
- * produtos diferentes com preços diferentes, e o cliente repassaria o preço
- * errado achando que era o certo. Num módulo cujo propósito é orientar preço,
- * errar em silêncio é pior que não responder.
+ * Gravar por similaridade (trigrama, distância de edição, primeira palavra)
+ * casaria "TOMATE CEREJA" com "TOMATE SALADA", que são produtos diferentes com
+ * preços diferentes, e o cliente repassaria o preço errado achando que era o
+ * certo. Num módulo cujo propósito é orientar preço, errar em silêncio é pior
+ * que não responder.
  *
  * Sem imports: roda no servidor e no navegador.
  */
@@ -60,6 +65,53 @@ function tokens(nome: string): string[] {
   return normalizarNome(nome)
     .split(" ")
     .filter((t) => t.length > 0 && !VAZIAS.has(t));
+}
+
+/**
+ * A família do produto: a primeira palavra significativa, normalizada.
+ * "Tomate Italiano" e "TOMATE SALADA" → "tomate"; "Batata-doce" → "batata".
+ */
+export function primeiraPalavra(nome: string): string {
+  return tokens(nome)[0] ?? "";
+}
+
+export interface GrupoPorPalavra<T> {
+  /** `primeiraPalavra` — a chave de comparação. */
+  chave: string;
+  /** A palavra como o cliente escreveu, em maiúsculas: "TOMATE", "MAÇÃ". */
+  rotulo: string;
+  itens: T[];
+}
+
+/** Agrupa por `primeiraPalavra`, em ordem alfabética. Nomes sem palavra ficam de fora. */
+export function agruparPorPrimeiraPalavra<T>(
+  itens: T[],
+  nomeDe: (item: T) => string,
+): GrupoPorPalavra<T>[] {
+  const grupos = new Map<string, GrupoPorPalavra<T>>();
+  for (const item of itens) {
+    const nome = nomeDe(item);
+    const chave = primeiraPalavra(nome);
+    if (!chave) continue;
+    let grupo = grupos.get(chave);
+    if (!grupo) {
+      const original = nome
+        .trim()
+        .split(/[\s-]+/)
+        .find((p) => normalizarNome(p) === chave);
+      grupo = { chave, rotulo: (original ?? chave).toUpperCase(), itens: [] };
+      grupos.set(chave, grupo);
+    }
+    grupo.itens.push(item);
+  }
+  return [...grupos.values()].sort((a, b) => a.chave.localeCompare(b.chave));
+}
+
+/** A família do nome bate com o começo do que foi digitado? ("tom" casa com "Tomate Italiano"). */
+export function casaPelaPrimeiraPalavra(nome: string, digitado: string): boolean {
+  const alvo = primeiraPalavra(digitado);
+  if (!alvo) return true;
+  return primeiraPalavra(nome).startsWith(alvo);
 }
 
 export interface CandidatoDeVinculo<T> {

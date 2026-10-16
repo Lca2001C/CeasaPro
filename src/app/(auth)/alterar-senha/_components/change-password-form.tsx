@@ -6,13 +6,14 @@ import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
 import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import { KeyRound, Loader2 } from "lucide-react";
 import { apiPost } from "@/lib/api-client";
 import { passwordPolicy } from "@/lib/validations/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 
 const schema = z
   .object({
@@ -55,7 +56,13 @@ export function ChangePasswordForm() {
 
   return (
     <Card>
-      <CardContent className="pt-6">
+      <CardContent className="p-5 sm:p-7">
+        <div className="mb-5 flex items-center gap-3">
+          <IconeRedondo>
+            <KeyRound />
+          </IconeRedondo>
+          <h2 className="text-xl font-bold tracking-tight">Troque sua senha</h2>
+        </div>
         <form method="post" onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="currentPassword">Senha atual</Label>
@@ -67,7 +74,7 @@ export function ChangePasswordForm() {
               {...register("currentPassword")}
             />
             {errors.currentPassword && (
-              <span className="text-xs text-destructive">{errors.currentPassword.message}</span>
+              <span className="text-sm text-destructive">{errors.currentPassword.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
@@ -79,18 +86,18 @@ export function ChangePasswordForm() {
               {...register("newPassword")}
             />
             {errors.newPassword && (
-              <span className="text-xs text-destructive">{errors.newPassword.message}</span>
+              <span className="text-sm text-destructive">{errors.newPassword.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="confirm">Confirmar nova senha</Label>
             <Input id="confirm" type="password" autoComplete="new-password" {...register("confirm")} />
             {errors.confirm && (
-              <span className="text-xs text-destructive">{errors.confirm.message}</span>
+              <span className="text-sm text-destructive">{errors.confirm.message}</span>
             )}
           </div>
-          <Button type="submit" size="lg" disabled={loading}>
-            {loading && <Loader2 className="animate-spin" />}
+          <Button type="submit" variant="success" size="lg" disabled={loading} className="mt-1 w-full">
+            {loading && <Loader2 className="motion-safe:animate-spin" />}
             Alterar senha
           </Button>
         </form>

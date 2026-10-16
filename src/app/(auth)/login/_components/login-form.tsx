@@ -61,17 +61,18 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
   }
 
   return (
-    <Card className="border-primary/15 shadow-md">
-      <CardContent className="pt-6">
+    <Card>
+      <CardContent className="p-5 sm:p-7">
+        <h2 className="mb-5 text-xl font-bold tracking-tight">Entre na sua conta</h2>
         {avisoGoogle && (
-          <p className="mb-4 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          <p className="mb-4 rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
             {avisoGoogle}
           </p>
         )}
         <div className="mb-5">
           <BotaoGoogle next={next} />
         </div>
-        <div className="mb-5 flex items-center gap-3 text-xs text-muted-foreground">
+        <div className="mb-5 flex items-center gap-3 text-sm text-muted-foreground">
           <span className="h-px flex-1 bg-border" />
           ou com e-mail
           <span className="h-px flex-1 bg-border" />
@@ -84,7 +85,7 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
             <Label htmlFor="email">E-mail</Label>
             <Input id="email" type="email" autoComplete="email" autoFocus {...register("email")} />
             {errors.email && (
-              <span className="text-xs text-destructive">{errors.email.message}</span>
+              <span className="text-sm text-destructive">{errors.email.message}</span>
             )}
           </div>
           <div className="flex flex-col gap-1.5">
@@ -96,16 +97,16 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
               {...register("password")}
             />
             {errors.password && (
-              <span className="text-xs text-destructive">{errors.password.message}</span>
+              <span className="text-sm text-destructive">{errors.password.message}</span>
             )}
           </div>
-          <Button type="submit" size="lg" disabled={loading} className="bg-primary shadow-md">
-            {loading && <Loader2 className="animate-spin" />}
+          <Button type="submit" size="lg" disabled={loading} className="mt-1 w-full">
+            {loading && <Loader2 className="motion-safe:animate-spin" />}
             Entrar
           </Button>
           <Link
             href="/recuperar-senha"
-            className="text-center text-sm text-muted-foreground hover:text-foreground"
+            className="mx-auto inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             Esqueci minha senha
           </Link>
@@ -115,14 +116,20 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
             para o login assim que existe sessão, e o link que circula por
             WhatsApp costuma ser o da tela de entrada. Sem estas duas saídas o
             visitante só teria o caminho de volta pelo botão do navegador. */}
-        <div className="mt-6 flex flex-col gap-2 border-t pt-5">
+        <div className="mt-5 flex flex-col gap-2 border-t border-border/60 pt-5">
           <p className="text-center text-sm text-muted-foreground">
             Ainda não tem conta?
           </p>
-          <Button asChild variant="info" size="lg">
+          {/* Em 320px o texto não cabe numa linha: quebra e o botão cresce. */}
+          <Button
+            asChild
+            variant="info"
+            size="lg"
+            className="h-auto min-h-14 w-full whitespace-normal py-3 text-center"
+          >
             <Link href="/cadastro">Criar conta — {trialDays} dias grátis</Link>
           </Button>
-          <Button asChild variant="ghost">
+          <Button asChild variant="ghost" className="w-full">
             <Link href="/">Conhecer o CeasaPro</Link>
           </Button>
         </div>

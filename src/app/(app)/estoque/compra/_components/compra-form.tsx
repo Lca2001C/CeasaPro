@@ -419,6 +419,7 @@ export function CompraForm({
           if (!v) setModalProduto(null);
         }}
         fotosDisponiveis={fotosDisponiveis}
+        meusProdutos={produtos}
         onSalvo={(p) => {
           setNovosProdutos((s) => [...s, { id: p.id, name: p.name }]);
           // O produto novo vai para o item de onde o cadastro foi aberto.

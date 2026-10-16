@@ -48,11 +48,13 @@ export function AcoesHigienizacao({
     const qty = parseInt(perdaQty, 10);
     if (!qty || qty <= 0) return toast.error("Informe quantas caixas se perderam.");
     setPerdaBusy(true);
-    const res = await chamarAction(() => registrarPerdaHigienizacao({
-      id,
-      quantity: qty,
-      movementDate: perdaDate,
-    }));
+    const res = await chamarAction(() =>
+      registrarPerdaHigienizacao({
+        id,
+        quantity: qty,
+        movementDate: perdaDate,
+      }),
+    );
     setPerdaBusy(false);
     if (res.ok) {
       toast.success(`${qty} caixa(s) registrada(s) como perdida(s).`);
@@ -65,7 +67,9 @@ export function AcoesHigienizacao({
     const qty = parseInt(devQty, 10);
     if (!qty || qty <= 0) return toast.error("Informe a quantidade devolvida.");
     setDevBusy(true);
-    const res = await chamarAction(() => registrarDevolucaoHigienizacao({ id, quantity: qty, returnedDate: devDate }));
+    const res = await chamarAction(() =>
+      registrarDevolucaoHigienizacao({ id, quantity: qty, returnedDate: devDate }),
+    );
     setDevBusy(false);
     if (res.ok) {
       toast.success("Devolução registrada.");
@@ -77,7 +81,9 @@ export function AcoesHigienizacao({
   async function pagar() {
     if (!payAmount || payAmount <= 0) return toast.error("Informe o valor pago.");
     setPayBusy(true);
-    const res = await chamarAction(() => registrarPagamentoHigienizacao({ id, amount: payAmount, paidDate: payDate }));
+    const res = await chamarAction(() =>
+      registrarPagamentoHigienizacao({ id, amount: payAmount, paidDate: payDate }),
+    );
     setPayBusy(false);
     if (res.ok) {
       toast.success("Pagamento registrado.");
@@ -86,13 +92,13 @@ export function AcoesHigienizacao({
   }
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {caixasAReceber > 0 && (
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4 pb-3 sm:p-5 sm:pb-3">
             <CardTitle className="text-base">Registrar devolução de caixas</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          <CardContent className="flex flex-col gap-3 p-4 pt-0 sm:p-5 sm:pt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Qtd. devolvida</Label>
@@ -122,8 +128,8 @@ export function AcoesHigienizacao({
             {/* Enviou 50, voltaram 47: sem isto as 3 restantes ficariam para
                 sempre "aguardando devolução" — o painel cobrando uma devolução
                 que não vai acontecer, e o lote nunca fechando. */}
-            <div className="border-t pt-3">
-              <p className="mb-2 text-xs text-muted-foreground">
+            <div className="mt-1 border-t border-border/70 pt-4">
+              <p className="mb-3 text-sm text-muted-foreground">
                 Faltou caixa voltar? Se {cleanerName ? <b>{cleanerName}</b> : "o higienizador"}{" "}
                 perdeu ou quebrou alguma, registre a perda para o lote fechar.
               </p>
@@ -151,7 +157,7 @@ export function AcoesHigienizacao({
               </div>
               <Button
                 variant="outline"
-                className="mt-2 w-full text-destructive"
+                className="mt-3 w-full text-destructive"
                 onClick={registrarPerda}
                 disabled={perdaBusy}
               >
@@ -169,25 +175,21 @@ export function AcoesHigienizacao({
 
       {valorAPagar > 0 && (
         <Card>
-          <CardHeader>
+          <CardHeader className="p-4 pb-3 sm:p-5 sm:pb-3">
             <CardTitle className="text-base">Registrar pagamento ao higienizador</CardTitle>
           </CardHeader>
-          <CardContent className="flex flex-col gap-3">
+          <CardContent className="flex flex-col gap-3 p-4 pt-0 sm:p-5 sm:pt-0">
             <div className="grid grid-cols-2 gap-3">
               <div className="flex flex-col gap-1.5">
                 <Label>Valor pago</Label>
-                <CurrencyInput
-                  aria-label="Valor pago"
-                  value={payAmount}
-                  onChange={setPayAmount}
-                />
+                <CurrencyInput aria-label="Valor pago" value={payAmount} onChange={setPayAmount} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <Label>Data</Label>
                 <Input type="date" value={payDate} onChange={(e) => setPayDate(e.target.value)} />
               </div>
             </div>
-            <Button onClick={pagar} disabled={payBusy}>
+            <Button variant="success" onClick={pagar} disabled={payBusy}>
               {payBusy && <Loader2 className="animate-spin" />}
               Registrar pagamento
             </Button>

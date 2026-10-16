@@ -66,9 +66,9 @@ export function ExcluirFiado({
   return (
     <>
       <Button
-        variant="outline"
+        variant="destructive"
         size="sm"
-        className="self-start text-destructive"
+        className="self-start"
         onClick={() => setAberto(true)}
       >
         <Trash2 className="size-4" /> Excluir lançamento

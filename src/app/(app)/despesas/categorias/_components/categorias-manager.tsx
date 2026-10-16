@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Loader2, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, Loader2, Pencil, Plus, Tag, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import {
   criarCategoriaDespesa,
@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -94,13 +95,13 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card className="flex flex-col gap-2 p-3">
+    <div className="flex flex-col gap-5">
+      <Card className="flex flex-col gap-2 p-4">
         <Label htmlFor="nova-categoria">Nova categoria</Label>
         <div className="flex gap-2">
           <Input
             id="nova-categoria"
-            className="flex-1"
+            className="min-w-0 flex-1"
             placeholder="Ex.: Frete, Gás, Embalagem descartável"
             value={nova}
             onChange={(e) => setNova(e.target.value)}
@@ -115,86 +116,99 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
         </div>
       </Card>
 
-      <div className="flex flex-col gap-2">
-        {categorias.map((c) => (
-          <Card key={c.id} className="flex items-center justify-between gap-2 p-3">
-            {editandoId === c.id ? (
-              <>
-                <Input
-                  className="flex-1"
-                  value={editandoNome}
-                  onChange={(e) => setEditandoNome(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") salvarNome(c.id);
-                    if (e.key === "Escape") setEditandoId(null);
-                  }}
-                  autoFocus
-                  aria-label={`Novo nome para ${c.name}`}
-                />
-                <Button
-                  variant="success"
-                  size="sm"
-                  aria-label="Salvar nome"
-                  onClick={() => salvarNome(c.id)}
-                  disabled={pending}
-                >
-                  {pending ? <Loader2 className="animate-spin" /> : <Check />}
-                  Salvar
-                </Button>
-                <Button variant="outline" size="sm" onClick={() => setEditandoId(null)}>
-                  <X /> Cancelar
-                </Button>
-              </>
-            ) : (
-              <>
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="truncate font-medium">{c.name}</span>
-                    {c.isDefault && <Badge variant="secondary">Padrão</Badge>}
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {c.despesas === 0
-                      ? "Nenhuma despesa usa esta categoria"
-                      : `${c.despesas} despesa(s)`}
-                  </span>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <Button
-                    variant="info"
-                    size="sm"
-                    aria-label={`Renomear ${c.name}`}
-                    title="Renomear"
-                    onClick={() => {
-                      setEditandoId(c.id);
-                      setEditandoNome(c.name);
+      <section>
+        <h2 className="mb-2 px-1 text-sm font-semibold text-muted-foreground">Suas categorias</h2>
+        <div className="flex flex-col gap-2">
+          {categorias.map((c) => (
+            <Card
+              key={c.id}
+              className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between"
+            >
+              {editandoId === c.id ? (
+                <>
+                  <Input
+                    className="min-w-0 sm:flex-1"
+                    value={editandoNome}
+                    onChange={(e) => setEditandoNome(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") salvarNome(c.id);
+                      if (e.key === "Escape") setEditandoId(null);
                     }}
-                  >
-                    <Pencil /> Renomear
-                  </Button>
-                  {/* Padrão e em uso não podem sair: o botão fica desabilitado
+                    autoFocus
+                    aria-label={`Novo nome para ${c.name}`}
+                  />
+                  <div className="flex shrink-0 flex-wrap gap-2">
+                    <Button
+                      variant="success"
+                      size="sm"
+                      aria-label="Salvar nome"
+                      onClick={() => salvarNome(c.id)}
+                      disabled={pending}
+                    >
+                      {pending ? <Loader2 className="animate-spin" /> : <Check />}
+                      Salvar
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={() => setEditandoId(null)}>
+                      <X /> Cancelar
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex min-w-0 items-center gap-3">
+                    <IconeRedondo tom="neutro">
+                      <Tag />
+                    </IconeRedondo>
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-semibold [overflow-wrap:anywhere]">{c.name}</span>
+                        {c.isDefault && <Badge variant="secondary">Padrão</Badge>}
+                      </div>
+                      <span className="text-sm text-muted-foreground">
+                        {c.despesas === 0
+                          ? "Nenhuma despesa usa esta categoria"
+                          : `${c.despesas} despesa(s)`}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                    <Button
+                      variant="info"
+                      size="sm"
+                      aria-label={`Renomear ${c.name}`}
+                      title="Renomear"
+                      onClick={() => {
+                        setEditandoId(c.id);
+                        setEditandoNome(c.name);
+                      }}
+                    >
+                      <Pencil /> Renomear
+                    </Button>
+                    {/* Padrão e em uso não podem sair: o botão fica desabilitado
                       com o motivo no title, em vez de falhar depois do clique. */}
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    aria-label={`Excluir ${c.name}`}
-                    title={
-                      c.isDefault
-                        ? "Categoria padrão — pode ser renomeada, não excluída"
-                        : c.despesas > 0
-                          ? "Em uso por despesas — troque a categoria delas antes"
-                          : "Excluir"
-                    }
-                    disabled={c.isDefault || c.despesas > 0}
-                    onClick={() => setAExcluir(c)}
-                  >
-                    <Trash2 /> Excluir
-                  </Button>
-                </div>
-              </>
-            )}
-          </Card>
-        ))}
-      </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      aria-label={`Excluir ${c.name}`}
+                      title={
+                        c.isDefault
+                          ? "Categoria padrão — pode ser renomeada, não excluída"
+                          : c.despesas > 0
+                            ? "Em uso por despesas — troque a categoria delas antes"
+                            : "Excluir"
+                      }
+                      disabled={c.isDefault || c.despesas > 0}
+                      onClick={() => setAExcluir(c)}
+                    >
+                      <Trash2 /> Excluir
+                    </Button>
+                  </div>
+                </>
+              )}
+            </Card>
+          ))}
+        </div>
+      </section>
 
       <Dialog open={aExcluir !== null} onOpenChange={(o) => !o && setAExcluir(null)}>
         <DialogContent>

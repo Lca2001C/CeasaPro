@@ -12,6 +12,8 @@ import { requireTenant } from "@/lib/auth/session";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { ProdutosService } from "@/lib/services/produtos.service";
 import { ComprasService } from "@/lib/services/compras.service";
+import { FornecedoresService } from "@/lib/services/fornecedores.service";
+import { toNumber } from "@/lib/money";
 import { excluirProduto } from "@/actions/produtos.actions";
 import { publicUrl, r2Configurado } from "@/lib/storage/r2";
 import { formatBRL, formatQty } from "@/lib/format";
@@ -30,6 +32,7 @@ import { add } from "@/lib/money";
 import { BuscaEstoque } from "./_components/busca-estoque";
 import { ProdutosControle } from "./_components/produtos-controle";
 import { ComprasLista } from "./_components/compras-lista";
+import { AcoesRapidas } from "./_components/acoes-rapidas";
 
 export const dynamic = "force-dynamic";
 
@@ -71,11 +74,15 @@ export default async function EstoquePage({
   const busca = sp.q?.trim().toLowerCase() || "";
 
   const { tenantId } = await requireTenant();
-  const [todas, produtos, compras] = await Promise.all([
+  const [todas, produtos, compras, todosFornecedores] = await Promise.all([
     EstoqueService.getPositions(tenantId),
     ProdutosService.list(tenantId),
     aba === "compras" ? ComprasService.list(tenantId) : Promise.resolve(null),
+    aba === "compras" ? Promise.resolve([]) : FornecedoresService.list(tenantId),
   ]);
+  const fornecedores = todosFornecedores
+    .filter((f) => f.active)
+    .map((f) => ({ id: f.id, name: f.name }));
   const porId = new Map(produtos.map((p) => [p.id, p]));
   const fotosDisponiveis = r2Configurado();
 
@@ -338,6 +345,15 @@ export default async function EstoquePage({
                         </span>
                       </div>
                     </div>
+
+                    <AcoesRapidas
+                      productId={p.productId}
+                      nome={p.name}
+                      saleUnit={p.saleUnit}
+                      saldo={toNumber(p.quantity)}
+                      fornecedores={fornecedores}
+                      podeEntrar={!inativo}
+                    />
 
                     {/* Ações escritas e coloridas, numa linha própria: no
                         celular, três botões com texto não cabem ao lado do nome. */}

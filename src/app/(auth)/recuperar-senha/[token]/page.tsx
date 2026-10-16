@@ -5,6 +5,7 @@ import { findUserByResetToken } from "@/lib/auth/password-reset";
 import { maskEmail } from "@/lib/auth/reset-token";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { ResetForm } from "./_components/reset-form";
 
 // O token vem na URL e é consultado no banco: nunca pode ser pré-renderizado
@@ -26,14 +27,16 @@ export default async function ResetPage({ params }: { params: Promise<{ token: s
 
   return (
     <Card>
-      <CardContent className="pt-6">
+      <CardContent className="p-5 sm:p-7">
         {user ? (
           <ResetForm token={token} maskedEmail={maskEmail(user.email)} />
         ) : (
           <div className="flex flex-col items-center gap-4 text-center">
-            <TriangleAlert className="size-8 text-destructive" />
-            <div className="flex flex-col gap-1">
-              <p className="font-medium">Link inválido ou expirado</p>
+            <IconeRedondo tom="destructive" tamanho="lg">
+              <TriangleAlert />
+            </IconeRedondo>
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-xl font-bold tracking-tight">Link inválido ou expirado</h2>
               <p className="text-sm text-muted-foreground">
                 O link de redefinição vale por 1 hora e só pode ser usado uma vez. Peça
                 um novo para continuar.
@@ -47,7 +50,7 @@ export default async function ResetPage({ params }: { params: Promise<{ token: s
             </Button>
             <Link
               href="/login"
-              className="text-sm text-muted-foreground hover:text-foreground"
+              className="inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
             >
               Voltar para o login
             </Link>

@@ -120,9 +120,12 @@ describe("isolamento do vínculo", () => {
 
     expect(saladaEmA.meuProdutoId).toBe(produtoA);
     // A empresa B tem um produto com o MESMO NOME e vê a mesma cotação pública,
-    // mas não herda o vínculo de A.
+    // mas não herda o vínculo de A — só casa pela primeira palavra com o
+    // PRÓPRIO produto, que não tem id nem saldo na linha.
     expect(saladaEmB.meuProdutoId).toBeNull();
-    expect(saladaEmB.meuProdutoNome).toBeNull();
+    expect(saladaEmB.meuSaldo).toBeNull();
+    expect(saladaEmB.vinculo).toBe("palavra");
+    expect(saladaEmB.meuProdutoNome).toBe("Tomate");
   });
 
   it("desvincular de uma empresa não mexe na outra", async () => {
@@ -497,30 +500,65 @@ describe("quantos produtos sem vínculo já têm nome exato no boletim", () => {
     });
   });
 
-  it("conta só o nome IDÊNTICO, não o parecido", async () => {
+  it("nome IDÊNTICO é vinculado sozinho; o parecido continua sem vínculo", async () => {
     /*
-      A distinção é a razão do número existir. "Abobrinha" e "ABOBRINHA" são o
-      mesmo produto — o slug normalizado é igual, e o vínculo sai em um clique.
-      "Tomate" e "TOMATE SALADA LONGA VIDA" compartilham prefixo e NÃO são o
-      mesmo preço: contar esse como "nome exato" seria prometer na tela um clique
-      que na verdade é uma decisão.
+      "Abobrinha" e "ABOBRINHA" são o mesmo produto — o slug normalizado é
+      igual —, então o vínculo é gravado ao abrir a tela. "Tomate" e "TOMATE
+      SALADA LONGA VIDA" compartilham prefixo e NÃO são o mesmo preço: esse só
+      aparece em "Meus produtos" pela primeira palavra, sem vínculo gravado.
     */
     const nome = `ABOBRINHA ${uniq()}`.toUpperCase();
     const doBoletim = await criarProdutoDoBoletim(nome);
     await cotar(doBoletim, "KG", "3.00");
 
     // Nome idêntico ao do boletim (a normalização ignora caixa e acento).
-    await prisma.product.create({
+    const abobrinha = await prisma.product.create({
       data: { tenantId: contaTenant, name: nome.toLowerCase(), saleUnit: "KG" },
     });
     // Só parecido: prefixo comum com o tomate criado no beforeAll do arquivo.
-    await prisma.product.create({
+    const tomate = await prisma.product.create({
       data: { tenantId: contaTenant, name: "Tomate", saleUnit: "CAIXA" },
     });
 
     const painel = await CotacoesService.getPainel(contaTenant);
-    expect(painel.semVinculo).toHaveLength(2);
-    expect(painel.semVinculoComNomeIdentico).toBe(1);
+    expect(painel.semVinculo.map((p) => p.id)).toEqual([tomate.id]);
+    expect(painel.semVinculoComNomeIdentico).toBe(0);
+
+    const links = await prisma.tenantCeasaLink.findMany({ where: { tenantId: contaTenant } });
+    expect(links).toHaveLength(1);
+    expect(links[0]).toMatchObject({
+      productId: abobrinha.id,
+      ceasaProductId: doBoletim,
+      // A praça cota em uma embalagem só: é ela.
+      unit: "KG",
+    });
+
+    const linhaDaAbobrinha = painel.linhas.find((l) => l.ceasaProductId === doBoletim)!;
+    expect(linhaDaAbobrinha.vinculo).toBe("exato");
+    const salada = painel.linhas.find((l) => l.ceasaProductId === tomateSalada)!;
+    expect(salada.vinculo).toBe("palavra");
+    expect(salada.meuProdutoId).toBeNull();
+    expect(painel.familias.map((f) => f.chave)).toEqual(
+      expect.arrayContaining(["abobrinha", "tomate"]),
+    );
+  });
+
+  it("o vínculo automático nunca troca um vínculo já feito", async () => {
+    const nome = `BERINJELA ${uniq()}`.toUpperCase();
+    const identico = await criarProdutoDoBoletim(nome);
+    await cotar(identico, "KG", "4.00");
+    const produto = await prisma.product.create({
+      data: { tenantId: contaTenant, name: nome, saleUnit: "KG" },
+    });
+    // O dono escolheu outro item à mão antes de o idêntico existir no boletim.
+    await CotacoesService.vincular(
+      { productId: produto.id, ceasaProductId: tomateCereja },
+      makeCtx(contaTenant),
+    );
+
+    expect(await CotacoesService.autoVincularIdenticos(contaTenant)).toBe(0);
+    const link = await prisma.tenantCeasaLink.findFirst({ where: { productId: produto.id } });
+    expect(link!.ceasaProductId).toBe(tomateCereja);
   });
 
   it("sem boletim, o número é zero em vez de uma promessa", async () => {

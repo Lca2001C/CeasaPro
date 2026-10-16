@@ -7,6 +7,7 @@ import { AppError } from "@/lib/http/app-error";
 import { logger } from "@/lib/logger";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 
 // O token vem na URL e é consultado no banco: nunca pode ser pré-renderizado
 // nem ficar em cache (nem no CDN). Também é o que garante o nonce do CSP.
@@ -16,6 +17,9 @@ export const metadata: Metadata = {
   title: "Confirmar e-mail",
   robots: { index: false, follow: false },
 };
+
+const linkDiscreto =
+  "inline-flex min-h-11 items-center rounded-full px-3 text-sm font-medium text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring";
 
 const dataBR = (d: Date) =>
   new Intl.DateTimeFormat("pt-BR", {
@@ -63,19 +67,21 @@ export default async function ConfirmarPage({
 
   return (
     <Card>
-      <CardContent className="pt-6">
+      <CardContent className="p-5 sm:p-7">
         {confirmado ? (
           <div className="flex flex-col items-center gap-4 text-center">
-            <CheckCircle2 className="size-8 text-primary" />
-            <div className="flex flex-col gap-1">
-              <p className="font-medium">E-mail confirmado!</p>
+            <IconeRedondo tom="success" tamanho="lg">
+              <CheckCircle2 />
+            </IconeRedondo>
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-xl font-bold tracking-tight">E-mail confirmado!</h2>
               {trialEndsAt ? (
                 <>
                   <p className="text-sm text-muted-foreground">
                     Seus {TRIAL_DAYS} dias de teste começaram. Você tem acesso completo até{" "}
                     <strong className="text-foreground">{dataBR(trialEndsAt)}</strong>.
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="text-sm text-muted-foreground">
                     Sem cobrança automática: nada acontece se você não contratar.
                   </p>
                 </>
@@ -105,11 +111,13 @@ export default async function ConfirmarPage({
           </div>
         ) : (
           <div className="flex flex-col items-center gap-4 text-center">
-            <TriangleAlert className="size-8 text-destructive" />
-            <div className="flex flex-col gap-1">
-              <p className="font-medium">
+            <IconeRedondo tom="destructive" tamanho="lg">
+              <TriangleAlert />
+            </IconeRedondo>
+            <div className="flex flex-col gap-1.5">
+              <h2 className="text-xl font-bold tracking-tight">
                 {codigo === "TOKEN_REENVIADO" ? "Esse link expirou" : "Não foi possível confirmar"}
-              </p>
+              </h2>
               <p className="text-sm text-muted-foreground">{erro}</p>
             </div>
             {/*
@@ -119,7 +127,7 @@ export default async function ConfirmarPage({
               O que resta é abrir o e-mail que acabou de chegar.
             */}
             {codigo === "TOKEN_REENVIADO" ? (
-              <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
+              <Link href="/login" className={linkDiscreto}>
                 Já tenho conta
               </Link>
             ) : (
@@ -130,7 +138,7 @@ export default async function ConfirmarPage({
                     Fazer o cadastro
                   </Link>
                 </Button>
-                <Link href="/login" className="text-sm text-muted-foreground hover:text-foreground">
+                <Link href="/login" className={linkDiscreto}>
                   Já tenho conta
                 </Link>
               </>

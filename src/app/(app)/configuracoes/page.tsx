@@ -1,11 +1,15 @@
 import Link from "next/link";
+import type { ReactNode } from "react";
+import { BadgeCheck, Bell, Palette, Store, TrendingUp, UserRound } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { ConfigService } from "@/lib/services/config.service";
 import { formatBRL, formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS_LABELS } from "@/lib/labels";
 import { PageHeader } from "@/components/data/page-header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Badge, type BadgeProps } from "@/components/ui/badge";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { PushOptIn } from "@/components/pwa/push-opt-in";
@@ -19,6 +23,51 @@ import { EscolherCentral } from "../cotacoes/_components/escolher-central";
 import { SeletorDeTema } from "@/components/tema/controles-de-tema";
 
 export const dynamic = "force-dynamic";
+
+/** Cor do selo da situação: tom semântico porque é ESTADO da assinatura. */
+const TOM_DA_SITUACAO: Record<string, BadgeProps["variant"]> = {
+  ATIVO: "success",
+  TRIAL: "info",
+  VENCIDO: "warning",
+  SUSPENSO: "destructive",
+  BLOQUEADO: "destructive",
+  CANCELADO: "destructive",
+};
+
+/** Cabeçalho de cartão com ícone redondo — o mesmo desenho em todas as abas. */
+function TituloDoCartao({
+  icone,
+  titulo,
+  descricao,
+}: {
+  icone: ReactNode;
+  titulo: string;
+  descricao?: string;
+}) {
+  return (
+    <CardHeader>
+      <div className="flex items-center gap-3">
+        <IconeRedondo>{icone}</IconeRedondo>
+        <div className="flex min-w-0 flex-col gap-0.5">
+          <CardTitle className="text-base">{titulo}</CardTitle>
+          {descricao && <CardDescription>{descricao}</CardDescription>}
+        </div>
+      </div>
+    </CardHeader>
+  );
+}
+
+/** Linha "rótulo → valor" do resumo da assinatura. */
+function Linha({ rotulo, children }: { rotulo: string; children: ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-3">
+      <dt className="text-sm text-muted-foreground">{rotulo}</dt>
+      <dd className="min-w-0 text-right font-semibold tabular-nums [overflow-wrap:anywhere]">
+        {children}
+      </dd>
+    </div>
+  );
+}
 
 export default async function ConfiguracoesPage() {
   const { tenantId, session } = await requireTenant();
@@ -44,115 +93,108 @@ export default async function ConfiguracoesPage() {
         title="Configurações"
         description="Seus dados, os da empresa e a assinatura."
       />
-      <Tabs defaultValue="empresa">
-        <TabsList>
-          <TabsTrigger value="empresa">Empresa</TabsTrigger>
-          <TabsTrigger value="perfil">Meu perfil</TabsTrigger>
-          <TabsTrigger value="assinatura">Assinatura</TabsTrigger>
-        </TabsList>
-        <TabsContent value="empresa">
-          <EmpresaConfigForm
-            initial={{
-              // O nome de partida não é pré-preenchido: deixá-lo no campo faria a
-              // pessoa clicar "Salvar" e carimbá-lo como se fosse escolha dela —
-              // e aí o aviso de cadastro incompleto sumiria sem nada ter sido
-              // preenchido.
-              tradeName: empresaSemNome(t?.tradeName) ? "" : (t?.tradeName ?? ""),
-              legalName: t?.legalName ?? "",
-              cnpj: t?.cnpj ?? "",
-              phone: t?.phone ?? "",
-              address: t?.address ?? "",
-              businessHours: t?.businessHours ?? "",
-              establishmentType: t?.establishmentType ?? "",
-              uf: t?.uf ?? "",
-            }}
-          />
-          {/*
-            A central do CEASA é dado da EMPRESA — onde ela compra —, então mora
-            nesta aba e não em "Meu perfil", que é sobre a pessoa. Ver
-            `mostrarCentral` acima para quando ela aparece.
-          */}
-          {mostrarCentral && (
-            <Card className="mt-4">
-              <CardHeader>
-                <CardTitle className="text-base">Cotações do CEASA</CardTitle>
-              </CardHeader>
+      <div className="flex flex-col gap-5">
+        <Tabs defaultValue="empresa">
+          <TabsList>
+            <TabsTrigger value="empresa">Empresa</TabsTrigger>
+            <TabsTrigger value="perfil">Meu perfil</TabsTrigger>
+            <TabsTrigger value="assinatura">Assinatura</TabsTrigger>
+          </TabsList>
+          <TabsContent value="empresa" className="flex flex-col gap-5">
+            <Card>
+              <TituloDoCartao icone={<Store />} titulo="Dados da empresa" />
               <CardContent>
-                <EscolherCentral centrais={centrais} atual={t?.ceasaCentralCode ?? null} />
+                <EmpresaConfigForm
+                  initial={{
+                    // O nome de partida não é pré-preenchido: deixá-lo no campo faria a
+                    // pessoa clicar "Salvar" e carimbá-lo como se fosse escolha dela —
+                    // e aí o aviso de cadastro incompleto sumiria sem nada ter sido
+                    // preenchido.
+                    tradeName: empresaSemNome(t?.tradeName) ? "" : (t?.tradeName ?? ""),
+                    legalName: t?.legalName ?? "",
+                    cnpj: t?.cnpj ?? "",
+                    phone: t?.phone ?? "",
+                    address: t?.address ?? "",
+                    businessHours: t?.businessHours ?? "",
+                    establishmentType: t?.establishmentType ?? "",
+                    uf: t?.uf ?? "",
+                  }}
+                />
               </CardContent>
             </Card>
-          )}
-        </TabsContent>
-        <TabsContent value="perfil" className="flex flex-col gap-4">
-          <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
-          {/* Preferência do APARELHO (fica no navegador), não da conta. */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-base">Aparência</CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Automático segue o celular ou computador. A escolha vale para este aparelho.
-              </p>
-            </CardHeader>
-            <CardContent>
-              <SeletorDeTema />
-            </CardContent>
-          </Card>
-        </TabsContent>
-        <TabsContent value="assinatura">
-          <div className="flex flex-col gap-4">
+            {/*
+              A central do CEASA é dado da EMPRESA — onde ela compra —, então mora
+              nesta aba e não em "Meu perfil", que é sobre a pessoa. Ver
+              `mostrarCentral` acima para quando ela aparece.
+            */}
+            {mostrarCentral && (
+              <Card>
+                <TituloDoCartao icone={<TrendingUp />} titulo="Cotações do CEASA" />
+                <CardContent>
+                  <EscolherCentral centrais={centrais} atual={t?.ceasaCentralCode ?? null} />
+                </CardContent>
+              </Card>
+            )}
+          </TabsContent>
+          <TabsContent value="perfil" className="flex flex-col gap-5">
             <Card>
-              <CardHeader>
-                <CardTitle className="text-base">Sua assinatura</CardTitle>
-              </CardHeader>
-              <CardContent className="flex flex-col gap-2 text-sm">
+              <TituloDoCartao icone={<UserRound />} titulo="Seus dados" />
+              <CardContent>
+                <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
+              </CardContent>
+            </Card>
+            {/* Preferência do APARELHO (fica no navegador), não da conta. */}
+            <Card>
+              <TituloDoCartao
+                icone={<Palette />}
+                titulo="Aparência"
+                descricao="Automático segue o celular ou computador. A escolha vale para este aparelho."
+              />
+              <CardContent>
+                <SeletorDeTema />
+              </CardContent>
+            </Card>
+          </TabsContent>
+          <TabsContent value="assinatura" className="flex flex-col gap-5">
+            <Card>
+              <TituloDoCartao icone={<BadgeCheck />} titulo="Sua assinatura" />
+              <CardContent className="flex flex-col gap-4">
                 {sub ? (
                   <>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Plano</span>
-                      <span>{sub.plan.name}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Situação</span>
-                      <span>{SUBSCRIPTION_STATUS_LABELS[sub.status]}</span>
-                    </div>
-                    {/*
-                      Quem NUNCA pagou tem `currentPeriodEnd` no passado — é a
-                      data do cadastro. Mostrar "Vencimento <data já passada>" e
-                      "Mensalidade R$ X" durante o teste grátis fazia a tela
-                      afirmar que a assinatura venceu e que havia mensalidade a
-                      pagar, contradizendo a faixa do topo ("seu teste termina em
-                      N dias") — justamente na janela em que o cliente decide se
-                      fica. A tela de /assinatura já se protege disso com a mesma
-                      regra (`primeiraAtivacao`).
-                    */}
-                    {sub.activatedAt ? (
-                      <>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Mensalidade</span>
-                          <span>{formatBRL(sub.monthlyAmount)}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-muted-foreground">Vencimento</span>
-                          <span>{formatDate(sub.currentPeriodEnd)}</span>
-                        </div>
-                      </>
-                    ) : sub.trialEndsAt ? (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Teste grátis até</span>
-                        <span>{formatDate(sub.trialEndsAt)}</span>
-                      </div>
-                    ) : (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Mensalidade</span>
-                        <span>{formatBRL(sub.monthlyAmount)}</span>
-                      </div>
-                    )}
-                    <Button asChild className="mt-2">
+                    <dl className="divide-y divide-border/60 border-y border-border/60">
+                      <Linha rotulo="Plano">{sub.plan.name}</Linha>
+                      <Linha rotulo="Situação">
+                        <Badge variant={TOM_DA_SITUACAO[sub.status] ?? "secondary"}>
+                          {SUBSCRIPTION_STATUS_LABELS[sub.status]}
+                        </Badge>
+                      </Linha>
+                      {/*
+                        Quem NUNCA pagou tem `currentPeriodEnd` no passado — é a
+                        data do cadastro. Mostrar "Vencimento <data já passada>" e
+                        "Mensalidade R$ X" durante o teste grátis fazia a tela
+                        afirmar que a assinatura venceu e que havia mensalidade a
+                        pagar, contradizendo a faixa do topo ("seu teste termina em
+                        N dias") — justamente na janela em que o cliente decide se
+                        fica. A tela de /assinatura já se protege disso com a mesma
+                        regra (`primeiraAtivacao`).
+                      */}
+                      {sub.activatedAt ? (
+                        <>
+                          <Linha rotulo="Mensalidade">{formatBRL(sub.monthlyAmount)}</Linha>
+                          <Linha rotulo="Vencimento">{formatDate(sub.currentPeriodEnd)}</Linha>
+                        </>
+                      ) : sub.trialEndsAt ? (
+                        <Linha rotulo="Teste grátis até">{formatDate(sub.trialEndsAt)}</Linha>
+                      ) : (
+                        <Linha rotulo="Mensalidade">{formatBRL(sub.monthlyAmount)}</Linha>
+                      )}
+                    </dl>
+                    <Button asChild variant="success" className="w-full sm:w-auto sm:self-start">
                       <Link href="/assinatura">Ver / pagar mensalidade</Link>
                     </Button>
                   </>
                 ) : (
-                  <p className="text-muted-foreground">Nenhuma assinatura ativa.</p>
+                  <p className="text-sm text-muted-foreground">Nenhuma assinatura ativa.</p>
                 )}
               </CardContent>
             </Card>
@@ -163,34 +205,32 @@ export default async function ConfiguracoesPage() {
                 status={sub.status}
               />
             )}
-          </div>
-        </TabsContent>
-      </Tabs>
+          </TabsContent>
+        </Tabs>
 
-      <Card className="mt-6">
-        <CardHeader>
-          <CardTitle className="text-base">Aplicativo e avisos</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-5">
-          {/*
-            Caminho permanente para o atalho na tela inicial. O convite automatico
-            aparece uma vez e respeita "Agora nao" por 7 dias — sem esta entrada,
-            quem dispensou (ou trocou de celular) nao teria como voltar a instalar.
-            O componente se esconde sozinho quando o app JA esta instalado.
-          */}
-          <InstallPrompt triggerLabel="Instalar app / atalho na tela inicial" />
+        <Card>
+          <TituloDoCartao icone={<Bell />} titulo="Aplicativo e avisos" />
+          <CardContent className="flex flex-col gap-5">
+            {/*
+              Caminho permanente para o atalho na tela inicial. O convite automatico
+              aparece uma vez e respeita "Agora nao" por 7 dias — sem esta entrada,
+              quem dispensou (ou trocou de celular) nao teria como voltar a instalar.
+              O componente se esconde sozinho quando o app JA esta instalado.
+            */}
+            <InstallPrompt triggerLabel="Instalar app / atalho na tela inicial" />
 
-          {/*
-            Opt-in de notificacao SEPARADO da instalacao, de proposito: sao dois
-            pedidos, e junta-los derruba a aceitacao dos dois. Pior: a permissao de
-            notificacao negada nao pode ser pedida de novo pelo site.
+            {/*
+              Opt-in de notificacao SEPARADO da instalacao, de proposito: sao dois
+              pedidos, e junta-los derruba a aceitacao dos dois. Pior: a permissao de
+              notificacao negada nao pode ser pedida de novo pelo site.
 
-            A chave publica VAPID vem do servidor. Sem ela configurada o componente
-            se anuncia como sem suporte em vez de oferecer um botao que falharia.
-          */}
-          <PushOptIn vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null} />
-        </CardContent>
-      </Card>
+              A chave publica VAPID vem do servidor. Sem ela configurada o componente
+              se anuncia como sem suporte em vez de oferecer um botao que falharia.
+            */}
+            <PushOptIn vapidPublicKey={process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY ?? null} />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }

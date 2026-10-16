@@ -41,7 +41,7 @@ export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="dueDate">Vencimento</Label>
           <Input
@@ -50,7 +50,7 @@ export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
             {...register("dueDate", { setValueAs: (v) => (v === "" ? null : v) })}
           />
           {errors.dueDate && (
-            <span className="text-xs text-destructive">{errors.dueDate.message}</span>
+            <span className="text-sm text-destructive">{errors.dueDate.message}</span>
           )}
         </div>
         <div className="flex flex-col gap-1.5">
@@ -68,7 +68,7 @@ export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
             )}
           />
           {errors.customerPhone && (
-            <span className="text-xs text-destructive">{errors.customerPhone.message}</span>
+            <span className="text-sm text-destructive">{errors.customerPhone.message}</span>
           )}
         </div>
       </div>
@@ -80,11 +80,11 @@ export function FiadoEditarForm({ initial }: { initial: FiadoUpdateInput }) {
           {...register("notes", { setValueAs: (v) => (v === "" ? null : v) })}
         />
         {errors.notes && (
-          <span className="text-xs text-destructive">{errors.notes.message}</span>
+          <span className="text-sm text-destructive">{errors.notes.message}</span>
         )}
       </div>
 
-      <Button type="submit" variant="outline" disabled={saving}>
+      <Button type="submit" variant="success" disabled={saving}>
         {saving && <Loader2 className="animate-spin" />}
         Salvar dados da conta
       </Button>

@@ -5,7 +5,10 @@ import { PlanoService } from "@/lib/services/plano.service";
 import { formatBRL, formatDate } from "@/lib/format";
 import { SUBSCRIPTION_STATUS_LABELS } from "@/lib/labels";
 import { TERMS_VERSION } from "@/lib/legal";
+import { AlertTriangle, Sprout } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Card } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { LogoutButton } from "@/components/logout-button";
 import { AssinaturaClient } from "./_components/assinatura-client";
 import { NOME_EMPRESA_PADRAO, empresaSemNome } from "@/lib/tenant-defaults";
@@ -40,9 +43,17 @@ export default async function AssinaturaPage() {
     // fica fora do AppShell e não herda marco nenhum. O axe acusava
     // `landmark-one-main` e `region` aqui — e esta é a tela por onde entra o
     // pagamento, a última em que se quer alguém perdido.
-    <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-4">
-      <div className="text-center">
-        <h1 className="text-2xl font-bold text-primary">Assinatura</h1>
+    <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center gap-5 px-4 py-8">
+      <div className="flex flex-col items-center text-center">
+        {/* A marca, como no menu lateral: esta tela fica fora do AppShell e,
+            com a conta bloqueada, é a única do sistema que a pessoa vê. */}
+        <div className="mb-4 flex items-center gap-2 text-lg font-bold tracking-tight">
+          <Sprout aria-hidden className="size-6 text-primary" />
+          <span>
+            Ceasa<span className="text-primary">Pro</span>
+          </span>
+        </div>
+        <h1 className="text-2xl font-bold tracking-tight">Assinatura</h1>
         {sub && (
           <p className="mt-1 text-sm text-muted-foreground">
             {primeiraAtivacao ? (
@@ -79,23 +90,28 @@ export default async function AssinaturaPage() {
         decisão de "completar depois, sem obrigar" exige.
       */}
       {empresaSemNome(sub?.tenant.tradeName) && (
-        <div className="rounded-lg border border-warning/50 bg-warning/5 p-3 text-sm">
-          <p>
-            Sua empresa ainda está cadastrada como{" "}
-            <strong>{NOME_EMPRESA_PADRAO}</strong> — é esse nome que vai aparecer no
-            comprovante do pagamento.
-          </p>
-          {acessoBloqueado ? (
-            <p className="mt-2 text-muted-foreground">
-              Depois que o pagamento for aprovado, você pode trocar o nome em
-              Configurações.
+        <Card className="flex items-start gap-3 border-warning/40 bg-warning/10 p-4 text-sm">
+          <IconeRedondo tom="warning" tamanho="sm">
+            <AlertTriangle />
+          </IconeRedondo>
+          <div className="min-w-0 [overflow-wrap:anywhere]">
+            <p>
+              Sua empresa ainda está cadastrada como{" "}
+              <strong>{NOME_EMPRESA_PADRAO}</strong> — é esse nome que vai aparecer no
+              comprovante do pagamento.
             </p>
-          ) : (
-            <Button asChild variant="outline" size="sm" className="mt-2">
-              <Link href="/configuracoes">Ajustar em Configurações</Link>
-            </Button>
-          )}
-        </div>
+            {acessoBloqueado ? (
+              <p className="mt-2 text-muted-foreground">
+                Depois que o pagamento for aprovado, você pode trocar o nome em
+                Configurações.
+              </p>
+            ) : (
+              <Button asChild variant="outline" size="sm" className="mt-3">
+                <Link href="/configuracoes">Ajustar em Configurações</Link>
+              </Button>
+            )}
+          </div>
+        </Card>
       )}
 
       <AssinaturaClient
@@ -122,7 +138,7 @@ export default async function AssinaturaPage() {
         }
       />
 
-      <div className="flex justify-between">
+      <div className="flex flex-wrap items-center justify-between gap-2">
         <Button asChild variant="ghost">
           <Link href="/dashboard">Voltar ao sistema</Link>
         </Button>

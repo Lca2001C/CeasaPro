@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { apiGet, apiPost } from "@/lib/api-client";
 import { Card, CardContent } from "@/components/ui/card";
+import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { PaymentBrick } from "@/components/billing/payment-brick";
 import { PixCheckout } from "@/components/billing/pix-checkout";
 import { PlanSelector } from "@/components/billing/plan-selector";
@@ -91,7 +92,7 @@ export function AssinaturaClient({
   if (!mpConfigured) {
     return (
       <Card>
-        <CardContent className="pt-6 text-sm text-muted-foreground">
+        <CardContent className="p-5 text-sm text-muted-foreground">
           O pagamento online (Mercado Pago) ainda não está configurado nesta instalação.
           Assim que o token for configurado, o pagamento aparecerá aqui automaticamente.
         </CardContent>
@@ -102,9 +103,11 @@ export function AssinaturaClient({
   if (paid) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
-          <CheckCircle2 className="size-12 text-success" />
-          <p className="font-medium">Pagamento confirmado!</p>
+        <CardContent className="flex flex-col items-center gap-3 p-5 text-center sm:p-7">
+          <IconeRedondo tom="success" tamanho="lg">
+            <CheckCircle2 />
+          </IconeRedondo>
+          <p className="text-xl font-bold tracking-tight">Pagamento confirmado!</p>
           <p className="text-sm text-muted-foreground">Liberando o seu acesso...</p>
         </CardContent>
       </Card>
@@ -116,9 +119,11 @@ export function AssinaturaClient({
   if (jaPagoNesteMes) {
     return (
       <Card>
-        <CardContent className="flex flex-col items-center gap-3 pt-6 text-center">
-          <CheckCircle2 className="size-12 text-success" />
-          <p className="font-medium">
+        <CardContent className="flex flex-col items-center gap-3 p-5 text-center sm:p-7">
+          <IconeRedondo tom="success" tamanho="lg">
+            <CheckCircle2 />
+          </IconeRedondo>
+          <p className="text-xl font-bold tracking-tight">
             Mensalidade{referenceMonth ? ` de ${referenceMonth}` : " deste mês"} já paga
           </p>
           <p className="text-sm text-muted-foreground">
@@ -150,14 +155,16 @@ export function AssinaturaClient({
     selectedPlan && !selectedPlan.isCurrent ? selectedPlan.id : undefined;
 
   return (
-    <div className="flex flex-col gap-4">
+    <div className="flex flex-col gap-5">
       {/* O motivo da recusa fica NA TELA, não só num toast que some. Sem isto,
           a única pista era o status HTTP no console do navegador. */}
       {erro && (
-        <Card className="border-destructive/40 bg-destructive/10">
-          <CardContent className="flex items-start gap-2 pt-4 text-sm">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0 text-destructive" />
-            <span>
+        <Card role="alert" className="border-destructive/40 bg-destructive/10">
+          <CardContent className="flex items-start gap-3 p-4 text-sm">
+            <IconeRedondo tom="destructive" tamanho="sm">
+              <AlertTriangle />
+            </IconeRedondo>
+            <span className="min-w-0 self-center [overflow-wrap:anywhere]">
               <b className="block">Não foi possível gerar a cobrança</b>
               {erro}
             </span>
