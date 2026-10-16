@@ -48,8 +48,10 @@ Rota `/dashboard`. Pensado para "entender tudo em menos de 10 segundos".
 - **Avisos** (topo, quando houver): fiado vencido, despesas vencidas, despesas a vencer em 7 dias, higienização a pagar — cada aviso leva à tela correspondente.
 - **4 números principais:** *Hoje vendi*, *Tenho para receber* (fiado em aberto), *Estoque* (valor total), *Lucro do mês*.
 - **Gráfico** de vendas dos últimos 30 dias.
-- Botão grande **Nova venda**.
-- **Mais indicadores:** vendas na semana/mês, margem líquida do mês, contas a pagar; e listas de **mais vendidos**, **produtos com prejuízo** e **estoque parado** (30+ dias sem venda).
+- Botões grandes, escritos e coloridos: **Nova venda** (verde), **Novo produto** (azul), **Novo fiado** (roxo).
+- Duas abas, pela URL:
+  - **Visão Geral** (`/dashboard`): avisos, os 4 números, contas a pagar, cotações e as listas de **mais vendidos**, **mais lucrativos**, **com prejuízo** e **estoque parado** (30+ dias sem venda).
+  - **Financeiro** (`/dashboard?aba=financeiro`): vendas da semana/mês, compras, lucro bruto e líquido, margem, contas fixas/variáveis e os gráficos — **Resultado do mês** (vendi → custo da mercadoria → contas → sobrou), **vendas dos últimos 30 dias**, **últimos 6 meses** (vendas × compras × contas), **como recebi** (formas de pagamento) e **contas por categoria** (só operacionais). Cada gráfico tem dica ao tocar e "Ver em tabela".
 
 ## Produtos (dentro do Estoque)
 

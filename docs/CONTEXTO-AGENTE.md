@@ -187,7 +187,7 @@ Primeiro acesso do OWNER enquanto `onboardingCompletedAt` é nulo. Passos: dados
 
 ### Dashboard (`/dashboard`)
 
-Números: hoje vendi, a receber, valor em estoque, lucro do mês. Gráfico 30 dias. Avisos (fiado vencido, despesas, higienização). CTAs: Nova venda, Novo produto (`/estoque?novo=1`), Novo fiado. Mais vendidos, prejuízo, estoque parado.
+Duas abas por URL: **Visão Geral** (números do dia, avisos, contas a pagar, listas de produtos) e **Financeiro** (`?aba=financeiro`: fechamento do mês + gráficos). CTAs: Nova venda, Novo produto (`/estoque?novo=1`), Novo fiado. A série do Financeiro vem de `PainelFinanceiroService` (mesmas janelas e filtros do resumo — só despesa `origem = 'MANUAL'`; o teste `painel-financeiro.test.ts` garante que fecha com os cartões). Gráficos em `src/components/financeiro/graficos.tsx`, HTML/CSS no servidor, sem biblioteca; cores `viz-1/2/3` (Vendas/Compras/Contas, ordem fixa, validadas para daltonismo) em `globals.css`.
 
 ### Estoque = Produtos + Compras + Estoque
 
@@ -358,7 +358,7 @@ Módulo pago: chave em `OPTIONAL_MODULES` + `module:` nas actions/rotas. O form 
 
 Relatório: `REPORT_TYPES` + `buildReport`. Avançado → `ADVANCED_REPORTS`.
 
-UI: tokens em `globals.css`. Variantes de botão existentes incluem `info` e `violet`. Listas no celular = cards; desktop = tabela + sidebar.
+UI: tokens em `globals.css`. Variantes de botão: `default` (verde), `success`, `info` (azul), `violet`, `warning`, `destructive`, `outline`. **Ação é botão escrito e colorido, não ícone solto**: Editar = `info`, Excluir/Remover = `destructive`, Pagar/Vender/Salvar = `success`. Exceção: o + e − de quantidade do PDV. Listas no celular = cards; desktop = tabela + sidebar.
 
 ---
 
