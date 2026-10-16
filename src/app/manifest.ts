@@ -16,8 +16,11 @@ export default function manifest(): MetadataRoute.Manifest {
     // para evitar.
     display_override: ["standalone", "minimal-ui"],
     orientation: "portrait",
-    background_color: "#ffffff",
-    theme_color: "#1a7a3f",
+    // O manifesto só aceita UMA cor; a do tema escuro (#0B130F) chega pela
+    // `<meta name="theme-color">` com `media`, que o navegador prefere à do
+    // manifesto com a página aberta. Ver `app/layout.tsx` e `lib/tema.ts`.
+    background_color: "#FFFFFF",
+    theme_color: "#FFFFFF",
     lang: "pt-BR",
     dir: "ltr",
     categories: ["business", "productivity"],

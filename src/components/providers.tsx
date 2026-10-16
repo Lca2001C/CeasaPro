@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/sonner";
+import { SincronizadorDeTema } from "@/components/tema/controles-de-tema";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [client] = useState(
@@ -15,6 +16,7 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
   return (
     <QueryClientProvider client={client}>
+      <SincronizadorDeTema />
       {children}
       <Toaster />
     </QueryClientProvider>

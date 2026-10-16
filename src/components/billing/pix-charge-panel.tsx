@@ -50,6 +50,8 @@ export function PixChargePanel({ charge }: { charge: PixCharge }) {
 
         {charge.qrCodeBase64 ? (
           <>
+            {/* `bg-white` fixo de propósito, também no tema escuro: o QR precisa
+                de margem clara para o leitor do banco encontrar o código. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={`data:image/png;base64,${charge.qrCodeBase64}`}

@@ -25,6 +25,7 @@ import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
 import { toast } from "sonner";
 import { sair } from "@/lib/sair";
+import { AtalhoDeTema } from "@/components/tema/controles-de-tema";
 import {
   Sheet,
   SheetContent,
@@ -139,6 +140,7 @@ export function BottomNav({
               })}
             </div>
             <div className="border-t pt-3">
+              <AtalhoDeTema className="mb-2" />
               {userName && (
                 <p className="mb-2 truncate px-1 text-sm font-medium">{userName}</p>
               )}

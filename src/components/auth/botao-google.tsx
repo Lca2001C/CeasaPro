@@ -41,7 +41,7 @@ export function BotaoGoogle({ next }: { next?: string | null }) {
   return (
     <a
       href={href}
-      className="inline-flex h-14 w-full items-center justify-center gap-3 rounded-lg border border-input bg-white px-6 text-base font-medium text-foreground shadow-sm transition-colors hover:bg-secondary active:scale-[0.99]"
+      className="inline-flex h-14 w-full items-center justify-center gap-3 rounded-full border border-input bg-superficie px-6 text-base font-semibold text-foreground shadow-suave hover:bg-secondary motion-safe:transition-colors motion-safe:active:scale-[0.99]"
     >
       <LogoGoogle />
       Entrar com Google

@@ -16,6 +16,7 @@ import { empresaSemNome } from "@/lib/tenant-defaults";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { CotacoesService } from "@/lib/services/cotacoes.service";
 import { EscolherCentral } from "../cotacoes/_components/escolher-central";
+import { SeletorDeTema } from "@/components/tema/controles-de-tema";
 
 export const dynamic = "force-dynamic";
 
@@ -82,8 +83,20 @@ export default async function ConfiguracoesPage() {
             </Card>
           )}
         </TabsContent>
-        <TabsContent value="perfil">
+        <TabsContent value="perfil" className="flex flex-col gap-4">
           <PerfilConfigForm initial={{ name: session.name }} email={session.email} />
+          {/* Preferência do APARELHO (fica no navegador), não da conta. */}
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">Aparência</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                Automático segue o celular ou computador. A escolha vale para este aparelho.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <SeletorDeTema />
+            </CardContent>
+          </Card>
         </TabsContent>
         <TabsContent value="assinatura">
           <div className="flex flex-col gap-4">

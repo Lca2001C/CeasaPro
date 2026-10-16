@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import { headers } from "next/headers";
+import { COR_DA_BARRA, SCRIPT_DO_TEMA } from "@/lib/tema";
 import { Geist } from "next/font/google";
 import "./globals.css";
 import { Providers } from "@/components/providers";
@@ -78,7 +80,15 @@ export const viewport: Viewport = {
     resolvido na raiz — `Input`, `Textarea` e `Select` usam `text-base`, que é
     16px. Travar a escala era pagar o preço sem ter a doença.
   */
-  themeColor: "#1a7a3f",
+  /*
+    Cor da barra do sistema em cada tema. Em "automático" o navegador escolhe
+    pela faixa (`media`); com o tema escolhido à mão, `aplicarTema`
+    (`src/lib/tema.ts`) reescreve as duas para a cor do tema escolhido.
+  */
+  themeColor: [
+    { media: "(prefers-color-scheme: light)", color: COR_DA_BARRA.claro },
+    { media: "(prefers-color-scheme: dark)", color: COR_DA_BARRA.escuro },
+  ],
   /**
    * `cover` faz o app instalado ocupar a tela INTEIRA do iPhone, inclusive sob a
    * barra de status e a barra de gestos — é o que tira a moldura branca e dá a
@@ -93,11 +103,26 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  /*
+    O nonce da CSP desta requisição (gerado em `src/proxy.ts`). O script do
+    tema é inline e roda antes da primeira pintura; sem o nonce a CSP o
+    bloquearia e a tela escura piscaria branca a cada carga.
+  */
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
   return (
-    <html lang="pt-BR" className={`${geistSans.variable} h-full antialiased`}>
+    // `suppressHydrationWarning`: o script do tema põe a classe `dark` antes
+    // de o React hidratar — a diferença é esperada, não um erro.
+    <html
+      lang="pt-BR"
+      className={`${geistSans.variable} h-full antialiased`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script nonce={nonce} dangerouslySetInnerHTML={{ __html: SCRIPT_DO_TEMA }} />
+      </head>
       <body className="min-h-full">
         {/* Splash screens do iOS (React 19 faz o hoist para o <head>). */}
         {iosSplashLinks.map((s) => (

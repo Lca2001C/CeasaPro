@@ -204,3 +204,84 @@ describe("dívida registrada, com número", () => {
     expect(atual, "a borda não pode ficar ainda mais fraca").toBeGreaterThanOrEqual(1.3);
   });
 });
+
+/*
+  ─────────────── Tema escuro ("Ceasa à noite") ───────────────
+
+  O mesmo cuidado do claro, sobre o bloco `.dark`. O `.dark` anterior nem
+  definia --success e --warning (herdavam os tons escuros do claro e sumiam no
+  fundo) e punha texto branco sobre um verde claro, abaixo de AA. Aqui os tons
+  são claros e o texto por cima é ESCURO.
+*/
+const BLOCO_ESCURO = /\n\.dark\s*\{([\s\S]*?)\n\}/.exec(css)?.[1] ?? "";
+
+function tokenEscuro(nome: string): [number, number, number] {
+  const m = new RegExp(`--${nome}:\\s*([\\d.]+)\\s+([\\d.]+)%\\s+([\\d.]+)%`).exec(BLOCO_ESCURO);
+  if (!m) throw new Error(`token --${nome} não encontrado em .dark`);
+  return hslParaRgb(Number(m[1]), Number(m[2]), Number(m[3]));
+}
+
+describe("tema escuro: texto sobre as superfícies", () => {
+  for (const fundo of ["background", "card", "popover"]) {
+    it(`texto sobre ${fundo}`, () => {
+      expect(razao(tokenEscuro("foreground"), tokenEscuro(fundo))).toBeGreaterThanOrEqual(AA_TEXTO);
+    });
+    it(`texto secundário sobre ${fundo}`, () => {
+      expect(razao(tokenEscuro("muted-foreground"), tokenEscuro(fundo))).toBeGreaterThanOrEqual(
+        AA_TEXTO,
+      );
+    });
+  }
+});
+
+describe("tema escuro: cada cor com o texto que vai por cima dela", () => {
+  for (const cor of [
+    "primary",
+    "secondary",
+    "accent",
+    "success",
+    "warning",
+    "destructive",
+    "info",
+    "violet",
+  ]) {
+    it(`${cor}-foreground sobre ${cor}`, () => {
+      expect(razao(tokenEscuro(`${cor}-foreground`), tokenEscuro(cor))).toBeGreaterThanOrEqual(
+        AA_TEXTO,
+      );
+    });
+  }
+
+  it("o texto dos tons claros é escuro, nunca branco", () => {
+    // A regra que o `.dark` antigo quebrava: branco sobre verde aceso.
+    for (const cor of ["primary", "success", "warning", "destructive", "info", "violet"]) {
+      expect(luminancia(tokenEscuro(`${cor}-foreground`))).toBeLessThan(luminancia(tokenEscuro(cor)));
+    }
+  });
+});
+
+describe("tema escuro: selos e textos de estado sobre o card", () => {
+  for (const cor of ["success", "warning", "destructive", "info", "violet", "primary"]) {
+    it(`selo bg-${cor}/10 + text-${cor}`, () => {
+      const c = tokenEscuro(cor);
+      expect(razao(c, sobre(c, 0.1, tokenEscuro("card")))).toBeGreaterThanOrEqual(AA_TEXTO);
+    });
+    it(`text-${cor} direto no card`, () => {
+      expect(razao(tokenEscuro(cor), tokenEscuro("card"))).toBeGreaterThanOrEqual(AA_TEXTO);
+    });
+  }
+
+  it("selo de VENCIDA dentro do cartão de conta vencida (duas tintas somadas)", () => {
+    // O cartão já é `bg-destructive/5`; o selo põe mais `/10` por cima. Era o
+    // par que reprovava (4,36:1) antes de clarear o tomate.
+    const d = tokenEscuro("destructive");
+    const cartaoTingido = sobre(d, 0.05, tokenEscuro("card"));
+    expect(razao(d, sobre(d, 0.1, cartaoTingido))).toBeGreaterThanOrEqual(AA_TEXTO);
+  });
+
+  it("as superfícies sobem em degraus: página < card < modal", () => {
+    const l = (n: string) => luminancia(tokenEscuro(n));
+    expect(l("superficie-pagina")).toBeLessThan(l("superficie-card"));
+    expect(l("superficie-card")).toBeLessThan(l("superficie-elevada"));
+  });
+});

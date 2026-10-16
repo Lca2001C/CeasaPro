@@ -78,44 +78,69 @@
   --viz-3: #1baf7a;
 }
 
+/*
+  "Ceasa à noite" — o tema escuro.
+
+  Fundo verde-floresta quase preto, como o galpão do Ceasa de madrugada; as
+  cores de estado vêm da feira: alface (sucesso), manga/abóbora (aviso), tomate
+  (perigo), céu da manhã (informação), uva (roxo).
+
+  Regra que o tema claro não tinha de seguir e este tem: nos tons CLAROS, o
+  texto por cima é ESCURO, nunca branco. O `.dark` anterior não definia
+  --success nem --warning (herdavam os tons escuros do claro e sumiam no fundo)
+  e o primary com texto branco ficava abaixo de AA.
+
+  Contrastes medidos em `tests/unit/contraste-de-cor.test.ts` (bloco do tema
+  escuro). O par mais justo é o selo de perigo dentro do cartão já tingido de
+  vermelho — ver o comentário de --destructive.
+*/
 .dark {
+  --background: 150 25% 6%; /* #0B130F galpão de madrugada */
+  --foreground: 60 20% 95%; /* #F5F5F0 */
+  --card: 150 18% 10%; /* #151E19 caixote */
+  --card-foreground: 60 20% 95%;
+  --popover: 150 15% 13%; /* #1C2621 modal / card elevado */
+  --popover-foreground: 60 20% 95%;
+  --primary: 145 63% 49%; /* #2ECC70 verde CEASA aceso */
+  --primary-foreground: 150 45% 7%;
+  --secondary: 150 12% 16%;
+  --secondary-foreground: 60 20% 95%;
+  --muted: 150 12% 16%;
+  --muted-foreground: 140 8% 68%; /* #A7B4AB */
+  --accent: 145 35% 16%;
+  --accent-foreground: 142 60% 78%;
+  --success: 142 60% 52%; /* alface */
+  --success-foreground: 150 45% 7%;
+  --warning: 38 92% 58%; /* manga / abóbora */
+  --warning-foreground: 30 60% 10%;
   /*
-    Superfícies e sombras do escuro. Provisório: a paleta "Ceasa à noite" (Fase
-    2) reescreve este bloco; aqui só o mínimo para o tema escuro não quebrar
-    com os componentes novos.
+    Tomate. Era `6 80% 62%` (o tom da paleta original): o selo "Vencida"
+    (`bg-destructive/10`) DENTRO do cartão de conta vencida, que já é tingido
+    de vermelho (`bg-destructive/5`), somava as duas tintas e o texto caía para
+    4,36:1 — o axe acusou em /despesas. 66% leva esse par a 4,76:1 e, como o
+    texto do botão destrutivo é escuro, melhora ele também (5,55 → 6,26:1).
   */
-  --superficie-pagina: 240 10% 6%;
-  --superficie-card: 240 8% 10%;
-  --superficie-elevada: 240 8% 13%;
+  --destructive: 6 80% 66%;
+  --destructive-foreground: 0 50% 10%;
+  --info: 205 85% 64%; /* céu da manhã */
+  --info-foreground: 210 50% 10%;
+  --violet: 270 70% 72%; /* uva */
+  --violet-foreground: 270 40% 12%;
+  --border: 150 12% 20%;
+  --input: 150 12% 22%;
+  --ring: 145 63% 49%;
+  /* Superfícies: a página é o fundo; o card e o modal sobem um degrau cada. */
+  --superficie-pagina: 150 25% 6%;
+  --superficie-card: 150 18% 10%;
+  --superficie-elevada: 150 15% 13%;
+  /* No escuro a sombra quase não se vê — é o degrau de superfície que separa. */
   --sombra-suave: 0 1px 2px hsl(0 0% 0% / 0.4), 0 4px 18px -6px hsl(0 0% 0% / 0.5);
   --sombra-elevada: 0 2px 6px hsl(0 0% 0% / 0.5), 0 18px 44px -12px hsl(0 0% 0% / 0.7);
-  /* Os mesmos três tons, nos passos validados para o fundo escuro. */
+  /* Os mesmos três tons dos gráficos, nos passos validados para o fundo escuro. */
   --viz-1: #3987e5;
   --viz-2: #d95926;
   --viz-3: #199e70;
-  --background: 240 10% 6%;
-  --foreground: 0 0% 96%;
-  --card: 240 8% 10%;
-  --card-foreground: 0 0% 96%;
-  --popover: 240 8% 10%;
-  --popover-foreground: 0 0% 96%;
-  --primary: 142 60% 42%;
-  --primary-foreground: 0 0% 100%;
-  --secondary: 240 5% 16%;
-  --secondary-foreground: 0 0% 96%;
-  --muted: 240 5% 16%;
-  --muted-foreground: 240 5% 65%;
-  --accent: 142 30% 18%;
-  --accent-foreground: 142 55% 75%;
-  --destructive: 0 62% 50%;
-  --destructive-foreground: 0 0% 100%;
-  --info: 217 91% 60%;
-  --info-foreground: 0 0% 100%;
-  --violet: 263 70% 58%;
-  --violet-foreground: 0 0% 100%;
-  --border: 240 5% 20%;
-  --input: 240 5% 22%;
-  --ring: 142 60% 42%;
+  color-scheme: dark;
 }
 
 @theme inline {

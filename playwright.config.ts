@@ -18,6 +18,12 @@ export default defineConfig({
   use: {
     baseURL,
     locale: "pt-BR",
+    /*
+      `E2E_TEMA=escuro npx playwright test` roda a suíte no tema escuro: o tema
+      padrão do app é "Automático", que segue o sistema — e aqui o sistema é
+      emulado escuro. Sem a variável, claro (o comportamento de sempre).
+    */
+    colorScheme: process.env.E2E_TEMA === "escuro" ? "dark" : "light",
     trace: "on-first-retry",
     screenshot: "only-on-failure",
   },
