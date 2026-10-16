@@ -132,25 +132,17 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
                   aria-label={`Novo nome para ${c.name}`}
                 />
                 <Button
-                  variant="ghost"
-                  size="icon"
+                  variant="success"
+                  size="sm"
                   aria-label="Salvar nome"
                   onClick={() => salvarNome(c.id)}
                   disabled={pending}
                 >
-                  {pending ? (
-                    <Loader2 className="size-4 animate-spin" />
-                  ) : (
-                    <Check className="size-4 text-success" />
-                  )}
+                  {pending ? <Loader2 className="animate-spin" /> : <Check />}
+                  Salvar
                 </Button>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  aria-label="Cancelar"
-                  onClick={() => setEditandoId(null)}
-                >
-                  <X className="size-4" />
+                <Button variant="outline" size="sm" onClick={() => setEditandoId(null)}>
+                  <X /> Cancelar
                 </Button>
               </>
             ) : (
@@ -166,10 +158,10 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
                       : `${c.despesas} despesa(s)`}
                   </span>
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
                   <Button
-                    variant="ghost"
-                    size="icon"
+                    variant="info"
+                    size="sm"
                     aria-label={`Renomear ${c.name}`}
                     title="Renomear"
                     onClick={() => {
@@ -177,13 +169,13 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
                       setEditandoNome(c.name);
                     }}
                   >
-                    <Pencil className="size-4" />
+                    <Pencil /> Renomear
                   </Button>
                   {/* Padrão e em uso não podem sair: o botão fica desabilitado
                       com o motivo no title, em vez de falhar depois do clique. */}
                   <Button
-                    variant="ghost"
-                    size="icon"
+                    variant="destructive"
+                    size="sm"
                     aria-label={`Excluir ${c.name}`}
                     title={
                       c.isDefault
@@ -195,7 +187,7 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
                     disabled={c.isDefault || c.despesas > 0}
                     onClick={() => setAExcluir(c)}
                   >
-                    <Trash2 className="size-4 text-destructive" />
+                    <Trash2 /> Excluir
                   </Button>
                 </div>
               </>

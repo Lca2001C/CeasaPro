@@ -36,9 +36,9 @@ export default async function HigienizacaoDetailPage({
               {CRATE_CLEANING_STATUS_LABELS[c.status]}
             </Badge>
             {editavel && (
-              <Button asChild variant="ghost" size="icon" aria-label="Editar envio">
+              <Button asChild variant="info" size="sm" aria-label="Editar envio">
                 <Link href={`/higienizacao/${c.id}/editar`}>
-                  <Pencil className="size-4" />
+                  <Pencil /> Editar
                 </Link>
               </Button>
             )}

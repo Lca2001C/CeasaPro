@@ -161,19 +161,10 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
 
         <span className="shrink-0 font-semibold tabular-nums">{formatBRL(d.amount)}</span>
 
-        <div className="hidden shrink-0 items-center gap-1 md:flex">
-          <AcoesIcone
-            d={d}
-            pending={pending}
-            onPagar={pagar}
-            onDesfazer={desfazerPagamento}
-            onExcluir={() => setConfirmarExclusao(true)}
-            hrefHigienizacao={hrefHigienizacao}
-          />
-        </div>
-
-        <div className="flex flex-wrap gap-2 md:hidden">
-          <AcoesMobile
+        {/* Ações escritas e coloridas em todos os tamanhos de tela: os ícones
+            soltos do desktop (lápis, lixeira, cópia) exigiam adivinhar. */}
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <Acoes
             d={d}
             pending={pending}
             onPagar={pagar}
@@ -207,7 +198,7 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
   );
 }
 
-function AcoesIcone({
+function Acoes({
   d,
   pending,
   onPagar,
@@ -230,111 +221,12 @@ function AcoesIcone({
       {ehHigienizacao ? (
         <>
           {!pago && (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Marcar ${d.description} como paga`}
-              title="Marcar como paga"
-              onClick={onPagar}
-              disabled={pending}
-            >
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 text-success" />}
-            </Button>
-          )}
-          <Button asChild variant="ghost" size="icon" aria-label="Ver higienização" title="Ver higienização">
-            <Link href={hrefHigienizacao}>
-              <ExternalLink className="size-4 text-muted-foreground" />
-            </Link>
-          </Button>
-        </>
-      ) : (
-        <>
-          {pago ? (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label="Voltar para pendente"
-              title="Voltar para pendente"
-              onClick={onDesfazer}
-              disabled={pending}
-            >
-              {pending ? (
-                <Loader2 className="size-4 animate-spin" />
-              ) : (
-                <RotateCcw className="size-4 text-muted-foreground" />
-              )}
-            </Button>
-          ) : (
-            <Button
-              variant="ghost"
-              size="icon"
-              aria-label={`Marcar ${d.description} como paga`}
-              title="Marcar como paga"
-              onClick={onPagar}
-              disabled={pending}
-            >
-              {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 text-success" />}
-            </Button>
-          )}
-          {/* Conta de compra não se duplica nem se exclui: ela é a dívida
-              da compra, e o valor vem dela. */}
-          {!d.purchaseId && (
-            <Button asChild variant="ghost" size="icon" aria-label="Duplicar" title="Duplicar">
-              <Link href={`/despesas/nova?duplicar=${d.id}`}>
-                <Copy className="size-4 text-muted-foreground" />
-              </Link>
-            </Button>
-          )}
-          <Button asChild variant="ghost" size="icon" aria-label="Editar" title="Editar">
-            <Link href={`/despesas/${d.id}`}>
-              <Pencil className="size-4" />
-            </Link>
-          </Button>
-          {!d.purchaseId && (
-            <Button variant="ghost" size="icon" aria-label="Excluir" title="Excluir" onClick={onExcluir}>
-              <Trash2 className="size-4 text-destructive" />
-            </Button>
-          )}
-        </>
-      )}
-    </>
-  );
-}
-
-function AcoesMobile({
-  d,
-  pending,
-  onPagar,
-  onDesfazer,
-  onExcluir,
-  hrefHigienizacao,
-}: {
-  d: DespesaLinhaDados;
-  pending: boolean;
-  onPagar: () => void;
-  onDesfazer: () => void;
-  onExcluir: () => void;
-  hrefHigienizacao: string;
-}) {
-  const pago = d.status === "PAGO";
-  const ehHigienizacao = d.origem === "higienizacao";
-
-  return (
-    <>
-      {ehHigienizacao ? (
-        <>
-          {!pago && (
-            <Button
-              size="sm"
-              className="bg-success text-success-foreground hover:bg-success/90"
-              onClick={onPagar}
-              disabled={pending}
-            >
+            <Button size="sm" variant="success" onClick={onPagar} disabled={pending}>
               {pending ? <Loader2 className="animate-spin" /> : <Check />}
               Pagar
             </Button>
           )}
-          <Button asChild size="sm" variant="outline">
+          <Button asChild size="sm" variant="info">
             <Link href={hrefHigienizacao}>
               <ExternalLink /> Ver
             </Link>
@@ -348,24 +240,19 @@ function AcoesMobile({
               Desfazer
             </Button>
           ) : (
-            <Button
-              size="sm"
-              className="bg-success text-success-foreground hover:bg-success/90"
-              onClick={onPagar}
-              disabled={pending}
-            >
+            <Button size="sm" variant="success" onClick={onPagar} disabled={pending}>
               {pending ? <Loader2 className="animate-spin" /> : <Check />}
               Pagar
             </Button>
           )}
           {!d.purchaseId && (
-            <Button asChild size="sm" variant="outline">
+            <Button asChild size="sm" variant="violet">
               <Link href={`/despesas/nova?duplicar=${d.id}`}>
                 <Copy /> Duplicar
               </Link>
             </Button>
           )}
-          <Button asChild size="sm" variant="outline">
+          <Button asChild size="sm" variant="info">
             <Link href={`/despesas/${d.id}`}>
               <Pencil /> Editar
             </Link>

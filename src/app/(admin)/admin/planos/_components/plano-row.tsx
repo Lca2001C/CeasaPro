@@ -66,16 +66,16 @@ export function PlanoRow({ plano }: { plano: PlanoInput & { id: string } }) {
         </div>
         <div className="flex items-center gap-2">
           <span className="font-semibold tabular-nums">{formatBRL(plano.priceMonthly)}/mês</span>
-          <Button variant="ghost" size="icon" aria-label="Editar" onClick={() => setEditing((v) => !v)}>
-            <Pencil className="size-4" />
+          <Button variant="info" size="sm" onClick={() => setEditing((v) => !v)}>
+            <Pencil /> Editar
           </Button>
           <Button
-            variant="ghost"
-            size="icon"
+            variant="destructive"
+            size="sm"
             aria-label={`Excluir plano ${plano.name}`}
             onClick={() => setConfirming(true)}
           >
-            <Trash2 className="size-4 text-destructive" />
+            <Trash2 /> Excluir
           </Button>
         </div>
       </div>

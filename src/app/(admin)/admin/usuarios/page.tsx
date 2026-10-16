@@ -200,7 +200,7 @@ export default async function AdminUsuariosPage({
               <li key={u.id}>
                 <Card
                   className={cn(
-                    "flex items-center justify-between gap-2 p-3",
+                    "flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between sm:gap-2",
                     !u.active && "opacity-70",
                   )}
                 >

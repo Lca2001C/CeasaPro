@@ -46,7 +46,10 @@ export default async function FornecedoresPage() {
       ) : (
         <div className="flex flex-col gap-2">
           {fornecedores.map((f) => (
-            <Card key={f.id} className="flex items-center justify-between p-3">
+            <Card
+              key={f.id}
+              className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:justify-between"
+            >
               <div className="min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="truncate font-medium">{f.name}</span>
@@ -56,10 +59,10 @@ export default async function FornecedoresPage() {
                   <span className="text-xs text-muted-foreground">{formatPhone(f.phone)}</span>
                 )}
               </div>
-              <div className="flex shrink-0 items-center gap-1">
-                <Button asChild variant="ghost" size="icon" aria-label="Editar">
+              <div className="flex shrink-0 flex-wrap items-center gap-2">
+                <Button asChild variant="info" size="sm">
                   <Link href={`/fornecedores/${f.id}`}>
-                    <Pencil className="size-4" />
+                    <Pencil /> Editar
                   </Link>
                 </Button>
                 <DeleteButton

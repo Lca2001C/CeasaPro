@@ -77,11 +77,11 @@ export function FotoDoBanco({
           {foto.emUso} produto{foto.emUso === 1 ? "" : "s"}
         </span>
       </div>
-      <div className="flex gap-1">
+      <div className="flex flex-wrap gap-2">
         <Button
           type="button"
           size="sm"
-          variant="outline"
+          variant={foto.ativo ? "outline" : "success"}
           className="flex-1"
           disabled={pending}
           onClick={() => salvar({ ativo: !foto.ativo })}
@@ -91,14 +91,14 @@ export function FotoDoBanco({
         </Button>
         <Button
           type="button"
-          size="icon"
-          variant="ghost"
+          size="sm"
+          variant="destructive"
           disabled={pending || foto.emUso > 0}
           title={foto.emUso > 0 ? "Em uso — desative em vez de excluir" : "Excluir"}
           aria-label={`Excluir a foto ${foto.nome}`}
           onClick={excluir}
         >
-          <Trash2 className="size-4 text-destructive" />
+          <Trash2 /> Excluir
         </Button>
       </div>
     </Card>

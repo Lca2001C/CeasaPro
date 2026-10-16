@@ -846,12 +846,12 @@ export function Pdv({
                 <div className="flex items-center justify-between gap-2">
                   <span className="min-w-0 flex-1 truncate font-medium">{i.name}</span>
                   <Button
-                    variant="ghost"
-                    size="icon"
+                    variant="destructive"
+                    size="sm"
                     aria-label={`Remover ${i.name}`}
                     onClick={() => removeItem(i.productId)}
                   >
-                    <Trash2 className="size-4 text-destructive" />
+                    <Trash2 /> Remover
                   </Button>
                 </div>
 
@@ -1215,14 +1215,14 @@ export function Pdv({
                 </div>
                 <Button
                   type="button"
-                  variant="ghost"
-                  size="icon"
+                  variant="destructive"
+                  size="sm"
                   className="shrink-0"
                   aria-label="Remover forma de pagamento"
                   onClick={() => removeParcela(idx)}
                   disabled={parcelas.length === 1}
                 >
-                  <Trash2 className="size-4 text-destructive" />
+                  <Trash2 /> Remover
                 </Button>
               </div>
             </div>

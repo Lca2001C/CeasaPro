@@ -87,40 +87,37 @@ export function AcoesUsuario({
 
   return (
     <>
-      <div className="flex shrink-0 gap-1">
+      <div className="flex shrink-0 flex-wrap gap-2">
         <Button
-          size="icon"
-          variant="ghost"
+          size="sm"
+          variant="warning"
           aria-label={`Resetar senha de ${nome}`}
           title="Resetar senha"
           onClick={() => setConfirmando(true)}
           disabled={pending}
         >
-          <KeyRound className="size-4" />
+          <KeyRound /> Resetar senha
         </Button>
         <Button
-          size="icon"
-          variant="ghost"
+          size="sm"
+          variant={ativo ? "outline" : "success"}
           aria-label={ativo ? `Desativar ${nome}` : `Reativar ${nome}`}
           title={ativo ? "Desativar acesso" : "Reativar acesso"}
           onClick={alternar}
           disabled={pending || ehVoce}
         >
-          {pending ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : (
-            <Power className={ativo ? "size-4 text-destructive" : "size-4 text-success"} />
-          )}
+          {pending ? <Loader2 className="animate-spin" /> : <Power />}
+          {ativo ? "Desativar" : "Reativar"}
         </Button>
         <Button
-          size="icon"
-          variant="ghost"
+          size="sm"
+          variant="destructive"
           aria-label={`Excluir ${nome}`}
           title="Excluir usuário"
           onClick={() => setExcluindo(true)}
           disabled={pending || ehVoce}
         >
-          <Trash2 className="size-4 text-destructive" />
+          <Trash2 /> Excluir
         </Button>
       </div>
 

@@ -105,9 +105,9 @@ export default async function AjudaPage() {
                 <p className="font-medium">{p.titulo}</p>
                 <p className="text-sm text-muted-foreground">{p.texto}</p>
               </div>
-              <Button asChild variant="ghost" size="icon" aria-label={`Ir para ${p.titulo}`}>
+              <Button asChild variant="info" size="sm" aria-label={`Ir para ${p.titulo}`}>
                 <Link href={p.href}>
-                  <ArrowRight className="size-4" />
+                  Abrir <ArrowRight />
                 </Link>
               </Button>
             </CardContent>

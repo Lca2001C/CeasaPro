@@ -171,13 +171,13 @@ export function FiadoForm({
               </Select>
               <Button
                 type="button"
-                variant="ghost"
-                size="icon"
+                variant="destructive"
+                size="sm"
                 onClick={() => setItems((s) => s.filter((_, i) => i !== idx))}
                 disabled={items.length === 1}
                 aria-label={`Remover item ${idx + 1}`}
               >
-                <Trash2 className="size-4 text-destructive" />
+                <Trash2 /> Remover
               </Button>
             </div>
             <div className="grid grid-cols-2 gap-2">

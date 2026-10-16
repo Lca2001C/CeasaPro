@@ -225,16 +225,15 @@ export function CompraForm({
               </Select>
               <Button
                 type="button"
-                variant="ghost"
-                size="icon"
-                // Só o ícone da lixeira: sem nome acessível o axe acusava
-                // `button-name` (crítico), e o leitor de tela anunciava apenas
-                // "botão" — num controle que APAGA uma linha da compra.
+                variant="destructive"
+                size="sm"
+                // O `aria-label` diz QUAL item: numa compra com uma dúzia de
+                // produtos, "Remover" sozinho não diz qual linha some.
                 aria-label={`Remover item ${idx + 1}`}
                 onClick={() => removeItem(idx)}
                 disabled={items.length === 1}
               >
-                <Trash2 className="size-4 text-destructive" />
+                <Trash2 /> Remover
               </Button>
             </div>
             <div className="grid grid-cols-2 gap-2">

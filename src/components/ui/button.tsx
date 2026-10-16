@@ -13,6 +13,10 @@ const buttonVariants = cva(
           "bg-destructive text-destructive-foreground hover:bg-destructive/90 shadow-sm",
         info: "bg-info text-info-foreground hover:bg-info/90 shadow-sm",
         violet: "bg-violet text-violet-foreground hover:bg-violet/90 shadow-sm",
+        // Ações com texto e cor que já dizem o que fazem: verde confirma
+        // (pagar, vender, salvar), âmbar pede atenção (resetar, desativar).
+        success: "bg-success text-success-foreground hover:bg-success/90 shadow-sm",
+        warning: "bg-warning text-warning-foreground hover:bg-warning/90 shadow-sm",
         outline:
           "border border-input bg-background hover:bg-accent hover:text-accent-foreground",
         secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80",

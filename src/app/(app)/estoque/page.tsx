@@ -295,33 +295,6 @@ export default async function EstoquePage({
                             : ""}
                         </span>
                       </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        {nivel !== "zerado" && !inativo && (
-                          <Button asChild size="sm" variant="outline">
-                            <Link
-                              href={`/vendas/nova?produto=${p.productId}`}
-                              aria-label={`Vender ${p.name}`}
-                            >
-                              <ShoppingCart className="size-4" />
-                              <span className="hidden sm:inline">Vender</span>
-                            </Link>
-                          </Button>
-                        )}
-                        <Button asChild size="icon" variant="ghost">
-                          <Link
-                            href={`/estoque?editar=${p.productId}`}
-                            scroll={false}
-                            aria-label={`Editar ${p.name}`}
-                          >
-                            <Pencil className="size-4" />
-                          </Link>
-                        </Button>
-                        <DeleteButton
-                          action={excluirProduto}
-                          id={p.productId}
-                          entityLabel={`o produto ${p.name}`}
-                        />
-                      </div>
                     </div>
 
                     {/* Três leituras: quanto tem, quanto custou, quanto vale. */}
@@ -364,6 +337,35 @@ export default async function EstoquePage({
                           {formatBRL(p.value)}
                         </span>
                       </div>
+                    </div>
+
+                    {/* Ações escritas e coloridas, numa linha própria: no
+                        celular, três botões com texto não cabem ao lado do nome. */}
+                    <div className="mt-3 flex flex-wrap gap-2 border-t pt-3">
+                      {nivel !== "zerado" && !inativo && (
+                        <Button asChild size="sm" variant="success">
+                          <Link
+                            href={`/vendas/nova?produto=${p.productId}`}
+                            aria-label={`Vender ${p.name}`}
+                          >
+                            <ShoppingCart /> Vender
+                          </Link>
+                        </Button>
+                      )}
+                      <Button asChild size="sm" variant="info">
+                        <Link
+                          href={`/estoque?editar=${p.productId}`}
+                          scroll={false}
+                          aria-label={`Editar ${p.name}`}
+                        >
+                          <Pencil /> Editar
+                        </Link>
+                      </Button>
+                      <DeleteButton
+                        action={excluirProduto}
+                        id={p.productId}
+                        entityLabel={`o produto ${p.name}`}
+                      />
                     </div>
                   </Card>
                 );

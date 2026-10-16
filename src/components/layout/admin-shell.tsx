@@ -65,13 +65,13 @@ export function AdminShell({
             */}
             <Button
               asChild
-              variant="ghost"
-              size="icon"
+              variant="outline"
+              size="sm"
               className="relative"
               aria-label={rotuloCampainha(naoLidas, naoLidasSaturado)}
             >
               <Link href="/admin/notificacoes">
-                <Bell className="size-5" />
+                <Bell /> Avisos
                 {naoLidas > 0 && (
                   <span
                     className="absolute -right-0.5 -top-0.5 min-w-4 rounded-full bg-destructive px-1 text-[10px] font-bold leading-4 text-destructive-foreground"
@@ -84,13 +84,8 @@ export function AdminShell({
             </Button>
             <AbrirAmbienteButton />
             <span className="hidden text-sm text-muted-foreground sm:inline">{userName}</span>
-            <Button
-              variant="ghost"
-              size="icon"
-              onClick={() => void sair(toast.error)}
-              aria-label="Sair"
-            >
-              <LogOut className="size-5" />
+            <Button variant="outline" size="sm" onClick={() => void sair(toast.error)}>
+              <LogOut /> Sair
             </Button>
           </div>
         </div>

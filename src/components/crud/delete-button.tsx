@@ -48,13 +48,10 @@ export function DeleteButton({ action, id, entityLabel, onDeleted }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <Button
-        variant="ghost"
-        size="icon"
-        aria-label="Excluir"
-        onClick={() => setOpen(true)}
-      >
-        <Trash2 className="size-4 text-destructive" />
+      {/* Texto e cor, não só a lixeira: quem usa o sistema no balcão lê
+          "Excluir" na hora, e um ícone solto exige adivinhar. */}
+      <Button variant="destructive" size="sm" onClick={() => setOpen(true)}>
+        <Trash2 /> Excluir
       </Button>
       <DialogContent>
         <DialogHeader>

@@ -95,13 +95,14 @@ export function DespesasFiltros({
           <span className="hidden sm:inline">Buscar</span>
         </Button>
         <Button
-          variant={aberto ? "default" : "outline"}
-          size="icon"
+          variant={aberto ? "default" : "info"}
           onClick={() => setAberto((v) => !v)}
           aria-label="Mais filtros"
           aria-expanded={aberto}
+          className="px-3 sm:px-5"
         >
-          <SlidersHorizontal className="size-4" />
+          <SlidersHorizontal />
+          Filtros
         </Button>
       </div>
 
