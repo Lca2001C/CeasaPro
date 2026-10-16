@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Inbox } from "lucide-react";
+import { EstadoVazio } from "@/components/ui/estado-vazio";
 
 interface Props {
   title: string;
@@ -8,17 +8,10 @@ interface Props {
   action?: React.ReactNode;
 }
 
+/**
+ * Nome antigo, mantido para as telas que já o usam. O visual é o do
+ * `EstadoVazio` (`components/ui/estado-vazio`), que é o componente de verdade.
+ */
 export function EmptyState({ title, description, icon, action }: Props) {
-  return (
-    <div className="flex flex-col items-center justify-center rounded-lg border border-dashed p-10 text-center">
-      <div className="mb-3 text-muted-foreground">
-        {icon ?? <Inbox className="size-10" />}
-      </div>
-      <p className="font-medium">{title}</p>
-      {description && (
-        <p className="mt-1 max-w-sm text-sm text-muted-foreground">{description}</p>
-      )}
-      {action && <div className="mt-4">{action}</div>}
-    </div>
-  );
+  return <EstadoVazio titulo={title} descricao={description} icone={icon} acao={action} />;
 }

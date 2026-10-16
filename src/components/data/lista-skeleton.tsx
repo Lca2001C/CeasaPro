@@ -30,12 +30,13 @@ export function ListaSkeleton({
 }) {
   return (
     <div role="status" aria-label="Carregando" className="flex flex-col gap-4">
-      <div className="mb-4 flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-2" aria-hidden="true">
-          <Skeleton className="h-6 w-40" />
-          <Skeleton className="h-4 w-56" />
+      {/* Mesmo arranjo do PageHeader: empilhado no celular. */}
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex min-w-0 flex-col gap-2" aria-hidden="true">
+          <Skeleton className="h-7 w-40 max-w-full" />
+          <Skeleton className="h-4 w-56 max-w-full" />
         </div>
-        <Skeleton className="h-9 w-28 shrink-0" aria-hidden="true" />
+        <Skeleton className="h-11 w-28 shrink-0 rounded-full" aria-hidden="true" />
       </div>
 
       {comFiltros && <Skeleton className="h-10 w-full" aria-hidden="true" />}

@@ -54,3 +54,6 @@ test
 # e os logs de `npm run dev` chegam a conter o link de redefinição de senha em
 # claro, porque em desenvolvimento ele é impresso de propósito.
 tmp-*
+
+# Capturas de tela geradas na verificação visual (fases do redesenho)
+/capturas/

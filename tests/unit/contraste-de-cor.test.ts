@@ -149,6 +149,39 @@ describe("o resto da paleta continua passando", () => {
   }
 });
 
+describe("a superfície da página (visual com cartão sobre fundo cinza-claro)", () => {
+  /*
+    A página deixou de ser branca: é `--superficie-pagina`, um cinza quase
+    branco, para o cartão branco se destacar pela sombra e não por borda.
+    Texto também é escrito DIRETO na página (títulos, "Ver em tabela", rótulos
+    de seção), então o degrau de fundo não pode custar contraste.
+  */
+  const pares: Array<[string, () => number]> = [
+    ["texto sobre a página", () => razao(token("foreground"), token("superficie-pagina"))],
+    [
+      "texto secundário sobre a página",
+      () => razao(token("muted-foreground"), token("superficie-pagina")),
+    ],
+    ["verde da marca sobre a página", () => razao(token("primary"), token("superficie-pagina"))],
+    [
+      "selo de VENCIDA direto na página",
+      () => {
+        const d = token("destructive");
+        return razao(d, sobre(d, 0.1, token("superficie-pagina")));
+      },
+    ],
+  ];
+
+  for (const [nome, calcular] of pares) {
+    it(nome, () => expect(calcular()).toBeGreaterThanOrEqual(AA_TEXTO));
+  }
+
+  it("o cartão continua branco — é o degrau que o separa da página", () => {
+    expect(token("superficie-card")).toEqual(BRANCO);
+    expect(razao(token("superficie-card"), token("superficie-pagina"))).toBeGreaterThan(1);
+  });
+});
+
 describe("dívida registrada, com número", () => {
   it("a borda dos campos fica abaixo de 3:1, e isso está documentado", () => {
     /*

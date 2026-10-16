@@ -48,7 +48,24 @@
   --border: 240 6% 89%;
   --input: 240 6% 89%;
   --ring: 142 68% 30%;
-  --radius: 0.85rem;
+  /*
+    Visual 2026 (Fase 1): raio maior — cards de 1.25rem, controles derivados
+    em @theme. As CORES acima não mudam; o visual novo vem de forma, espaço,
+    raio e sombra.
+  */
+  --radius: 1.25rem;
+  /*
+    Superfícies. A página fica um cinza quase branco para o cartão branco se
+    destacar sem borda pesada — é a sombra suave e esse degrau de fundo que
+    separam um do outro, não um contorno. Contraste do texto sobre a página
+    medido em `tests/unit/contraste-de-cor.test.ts`.
+  */
+  --superficie-pagina: 240 7% 97%;
+  --superficie-card: 0 0% 100%;
+  --superficie-elevada: 0 0% 100%;
+  /* Sombras: tingidas do próprio texto (frio, levemente azulado), nunca preto puro. */
+  --sombra-suave: 0 1px 2px hsl(240 10% 12% / 0.04), 0 4px 18px -6px hsl(240 10% 12% / 0.1);
+  --sombra-elevada: 0 2px 6px hsl(240 10% 12% / 0.06), 0 18px 44px -12px hsl(240 10% 12% / 0.28);
   /*
     Cores dos gráficos (Financeiro do Início). Três séries categóricas, em
     ordem fixa — a 1ª é sempre Vendas, a 2ª Compras, a 3ª Contas — validadas
@@ -62,6 +79,16 @@
 }
 
 .dark {
+  /*
+    Superfícies e sombras do escuro. Provisório: a paleta "Ceasa à noite" (Fase
+    2) reescreve este bloco; aqui só o mínimo para o tema escuro não quebrar
+    com os componentes novos.
+  */
+  --superficie-pagina: 240 10% 6%;
+  --superficie-card: 240 8% 10%;
+  --superficie-elevada: 240 8% 13%;
+  --sombra-suave: 0 1px 2px hsl(0 0% 0% / 0.4), 0 4px 18px -6px hsl(0 0% 0% / 0.5);
+  --sombra-elevada: 0 2px 6px hsl(0 0% 0% / 0.5), 0 18px 44px -12px hsl(0 0% 0% / 0.7);
   /* Os mesmos três tons, nos passos validados para o fundo escuro. */
   --viz-1: #3987e5;
   --viz-2: #d95926;
@@ -122,9 +149,16 @@
   --color-viz-1: var(--viz-1);
   --color-viz-2: var(--viz-2);
   --color-viz-3: var(--viz-3);
+  --color-pagina: hsl(var(--superficie-pagina));
+  --color-superficie: hsl(var(--superficie-card));
+  --color-elevada: hsl(var(--superficie-elevada));
+  --shadow-suave: var(--sombra-suave);
+  --shadow-elevada: var(--sombra-elevada);
+  /* Card 1.25rem; modal 1.5rem; campos 14px; detalhes 10px. */
+  --radius-xl: calc(var(--radius) + 0.25rem);
   --radius-lg: var(--radius);
-  --radius-md: calc(var(--radius) - 4px);
-  --radius-sm: calc(var(--radius) - 8px);
+  --radius-md: calc(var(--radius) - 6px);
+  --radius-sm: calc(var(--radius) - 10px);
   --font-sans: var(--font-geist-sans), system-ui, sans-serif;
 }
 
@@ -136,7 +170,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   body {
-    background-color: hsl(var(--background));
+    background-color: hsl(var(--superficie-pagina));
     color: hsl(var(--foreground));
     font-family: var(--font-sans);
     -webkit-font-smoothing: antialiased;
@@ -238,6 +272,108 @@
 .tour-ceasapro .driver-popover-arrow-side-bottom {
   border-bottom-color: hsl(var(--popover));
 }
+
+/*
+  Movimento: entrada e saída de modal, folha e sobreposição.
+
+  Sem plugin de animação (as classes `animate-in` que existiam não faziam nada:
+  o pacote nunca foi instalado). Curto e discreto, e SÓ para quem não pediu
+  menos movimento — fora desse `@media` nada anima. O Radix espera o
+  `animationend` da saída antes de desmontar, então o fechamento também anima.
+*/
+@keyframes ceasa-surgir {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes ceasa-sumir {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes ceasa-subir {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+@keyframes ceasa-descer {
+  from { transform: translateY(0); }
+  to { transform: translateY(100%); }
+}
+@keyframes ceasa-entrar-direita {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@keyframes ceasa-sair-direita {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes ceasa-entrar-esquerda {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(0); }
+}
+@keyframes ceasa-sair-esquerda {
+  from { transform: translateX(0); }
+  to { transform: translateX(-100%); }
+}
+@keyframes ceasa-aproximar {
+  from { opacity: 0; transform: scale(0.97); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .anim-sobreposicao[data-state="open"] { animation: ceasa-surgir 160ms ease-out; }
+  .anim-sobreposicao[data-state="closed"] { animation: ceasa-sumir 140ms ease-in; }
+
+  /* Modal: folha que sobe no celular; diálogo que aproxima no desktop. */
+  .anim-modal[data-state="open"] { animation: ceasa-subir 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+  .anim-modal[data-state="closed"] { animation: ceasa-descer 180ms ease-in; }
+  @media (min-width: 40rem) {
+    .anim-modal[data-state="open"] { animation: ceasa-aproximar 180ms ease-out; }
+    .anim-modal[data-state="closed"] { animation: ceasa-sumir 140ms ease-in; }
+  }
+
+  .anim-folha-baixo[data-state="open"] { animation: ceasa-subir 260ms cubic-bezier(0.32, 0.72, 0, 1); }
+  .anim-folha-baixo[data-state="closed"] { animation: ceasa-descer 180ms ease-in; }
+  .anim-folha-direita[data-state="open"] { animation: ceasa-entrar-direita 240ms cubic-bezier(0.32, 0.72, 0, 1); }
+  .anim-folha-direita[data-state="closed"] { animation: ceasa-sair-direita 180ms ease-in; }
+  .anim-folha-esquerda[data-state="open"] { animation: ceasa-entrar-esquerda 240ms cubic-bezier(0.32, 0.72, 0, 1); }
+  .anim-folha-esquerda[data-state="closed"] { animation: ceasa-sair-esquerda 180ms ease-in; }
+}
+
+/*
+  Cartão tingido (`<Card className="bg-destructive/5">` na conta vencida, `bg-warning/10`
+  nas caixas perdidas, `bg-accent/40` na ajuda…).
+
+  A tinta do Tailwind é TRANSLÚCIDA: mistura a cor com o que estiver atrás. Com
+  a página branca, atrás estava o branco; com a página cinza-clara do visual
+  novo, o cartão tingido escurecia e o texto secundário dele caía abaixo de AA
+  (o axe acusou em /despesas). Aqui a mistura é feita com a cor do CARTÃO, não
+  com a página — o mesmo resultado de antes, e os contrastes já medidos em
+  `tests/unit/contraste-de-cor.test.ts` continuam valendo.
+
+  Fora de camada de propósito: regra sem `@layer` vence as utilidades.
+*/
+[data-slot="card"].bg-destructive\/5 { background-color: color-mix(in oklab, var(--color-destructive) 5%, var(--color-card)); }
+[data-slot="card"].bg-destructive\/10 { background-color: color-mix(in oklab, var(--color-destructive) 10%, var(--color-card)); }
+[data-slot="card"].bg-destructive\/15 { background-color: color-mix(in oklab, var(--color-destructive) 15%, var(--color-card)); }
+[data-slot="card"].bg-warning\/5 { background-color: color-mix(in oklab, var(--color-warning) 5%, var(--color-card)); }
+[data-slot="card"].bg-warning\/10 { background-color: color-mix(in oklab, var(--color-warning) 10%, var(--color-card)); }
+[data-slot="card"].bg-warning\/15 { background-color: color-mix(in oklab, var(--color-warning) 15%, var(--color-card)); }
+[data-slot="card"].bg-success\/5 { background-color: color-mix(in oklab, var(--color-success) 5%, var(--color-card)); }
+[data-slot="card"].bg-success\/10 { background-color: color-mix(in oklab, var(--color-success) 10%, var(--color-card)); }
+[data-slot="card"].bg-success\/15 { background-color: color-mix(in oklab, var(--color-success) 15%, var(--color-card)); }
+[data-slot="card"].bg-primary\/5 { background-color: color-mix(in oklab, var(--color-primary) 5%, var(--color-card)); }
+[data-slot="card"].bg-primary\/10 { background-color: color-mix(in oklab, var(--color-primary) 10%, var(--color-card)); }
+[data-slot="card"].bg-primary\/15 { background-color: color-mix(in oklab, var(--color-primary) 15%, var(--color-card)); }
+[data-slot="card"].bg-info\/5 { background-color: color-mix(in oklab, var(--color-info) 5%, var(--color-card)); }
+[data-slot="card"].bg-info\/10 { background-color: color-mix(in oklab, var(--color-info) 10%, var(--color-card)); }
+[data-slot="card"].bg-violet\/5 { background-color: color-mix(in oklab, var(--color-violet) 5%, var(--color-card)); }
+[data-slot="card"].bg-violet\/10 { background-color: color-mix(in oklab, var(--color-violet) 10%, var(--color-card)); }
+[data-slot="card"].bg-accent\/40 { background-color: color-mix(in oklab, var(--color-accent) 40%, var(--color-card)); }
+[data-slot="card"].bg-accent\/60 { background-color: color-mix(in oklab, var(--color-accent) 60%, var(--color-card)); }
+[data-slot="card"].bg-accent\/70 { background-color: color-mix(in oklab, var(--color-accent) 70%, var(--color-card)); }
+[data-slot="card"].bg-muted\/30 { background-color: color-mix(in oklab, var(--color-muted) 30%, var(--color-card)); }
+[data-slot="card"].bg-muted\/40 { background-color: color-mix(in oklab, var(--color-muted) 40%, var(--color-card)); }
+[data-slot="card"].bg-muted\/50 { background-color: color-mix(in oklab, var(--color-muted) 50%, var(--color-card)); }
+[data-slot="card"].bg-muted\/60 { background-color: color-mix(in oklab, var(--color-muted) 60%, var(--color-card)); }
 
 /* Impressão de relatórios */
 @media print {

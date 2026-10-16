@@ -12,12 +12,17 @@ import { cn } from "@/lib/cn";
  * a varredura de vazamento em 320px os ignorava em silêncio — deixando de
  * fora justamente os cartões de destaque, que são os mais cheios de texto.
  */
+/*
+  Visual: raio grande (`rounded-lg` = 1.25rem), contorno quase invisível e
+  sombra suave sobre a página cinza-clara. O contorno fica, mas leve: no tema
+  escuro a sombra não aparece, e é ele que separa o cartão do fundo.
+*/
 function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
   return (
     <div
       data-slot="card"
       className={cn(
-        "rounded-lg border bg-card text-card-foreground shadow-sm",
+        "rounded-lg border border-border/60 bg-card text-card-foreground shadow-suave",
         className,
       )}
       {...props}
@@ -26,7 +31,7 @@ function Card({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
 }
 
 function CardHeader({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex flex-col gap-1 p-4", className)} {...props} />;
+  return <div className={cn("flex flex-col gap-1 p-5", className)} {...props} />;
 }
 
 /**
@@ -60,11 +65,11 @@ function CardDescription({ className, ...props }: React.HTMLAttributes<HTMLParag
 }
 
 function CardContent({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("p-4 pt-0", className)} {...props} />;
+  return <div className={cn("p-5 pt-0", className)} {...props} />;
 }
 
 function CardFooter({ className, ...props }: React.HTMLAttributes<HTMLDivElement>) {
-  return <div className={cn("flex items-center p-4 pt-0", className)} {...props} />;
+  return <div className={cn("flex items-center p-5 pt-0", className)} {...props} />;
 }
 
 export { Card, CardHeader, CardTitle, CardDescription, CardContent, CardFooter };

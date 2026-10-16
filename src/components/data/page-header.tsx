@@ -16,15 +16,17 @@ interface Props {
  */
 export function PageHeader({ title, description, action }: Props) {
   return (
-    <div className="mb-4 flex items-start justify-between gap-3">
-      <div data-tour="titulo-da-tela">
-        <h1 className="text-xl font-bold tracking-tight">{title}</h1>
+    // No celular o título vem em cima e as ações embaixo, livres para quebrar
+    // linha: lado a lado, dois botões em pílula não cabem em 320px.
+    <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+      <div data-tour="titulo-da-tela" className="min-w-0">
+        <h1 className="text-2xl font-bold tracking-tight">{title}</h1>
         {description && (
           <p className="mt-0.5 text-sm text-muted-foreground">{description}</p>
         )}
       </div>
       {action && (
-        <div className="shrink-0" data-tour="acao-da-tela">
+        <div className="flex shrink-0 flex-wrap gap-2" data-tour="acao-da-tela">
           {action}
         </div>
       )}
