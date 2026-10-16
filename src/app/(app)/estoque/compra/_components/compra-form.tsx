@@ -7,6 +7,8 @@ import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
 import { formatBRL, formatDateOnly } from "@/lib/format";
+import { EXPENSE_PAYMENT_METHOD_LABELS, toOptions } from "@/lib/labels";
+import { ProdutoModal } from "@/components/produtos/produto-modal";
 import type { ReferenciaDoBoletim } from "@/lib/services/cotacoes.service";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,13 +29,16 @@ interface Item {
 }
 
 export function CompraForm({
-  produtos,
+  produtos: produtosDoServidor,
   fornecedores,
   ultimosPagos = {},
   boletim = {},
   caixasHabilitado = false,
+  fotosDisponiveis = false,
 }: {
   produtos: Option[];
+  /** O armazenamento de fotos está configurado (modal "+ Novo produto"). */
+  fotosDisponiveis?: boolean;
   fornecedores: Option[];
   /**
    * O plano inclui o módulo `caixas`? Sem ele o bloco "chegou em caixa
@@ -47,10 +52,16 @@ export function CompraForm({
   boletim?: Record<string, ReferenciaDoBoletim>;
 }) {
   const router = useRouter();
+  // Produto cadastrado aqui mesmo ("+ Novo produto") entra na lista na hora,
+  // sem esperar o `router.refresh` trazer a lista nova do servidor.
+  const [novosProdutos, setNovosProdutos] = useState<Option[]>([]);
+  const produtos = [
+    ...produtosDoServidor,
+    ...novosProdutos.filter((n) => !produtosDoServidor.some((p) => p.id === n.id)),
+  ];
+  const [modalProduto, setModalProduto] = useState<{ item: number } | null>(null);
   const [supplierId, setSupplierId] = useState("");
-  const [purchaseDate, setPurchaseDate] = useState(
-    isoDateTz(),
-  );
+  const [purchaseDate, setPurchaseDate] = useState(isoDateTz());
   const [freight, setFreight] = useState(0);
   const [items, setItems] = useState<Item[]>([
     { productId: produtos[0]?.id ?? "", quantity: 1, unitPrice: 0 },
@@ -69,7 +80,11 @@ export function CompraForm({
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
   const [caixasSujas, setCaixasSujas] = useState(false);
-  const [lancarFrete, setLancarFrete] = useState(true);
+  // Toda compra vira uma conta em Despesas, no valor total e com o fornecedor:
+  // paga agora (sai do caixa hoje) ou a prazo (vai para Contas a Pagar).
+  const [pagoAgora, setPagoAgora] = useState(true);
+  const [formaPagamento, setFormaPagamento] = useState("");
+  const [vencimento, setVencimento] = useState("");
 
   const subtotal = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
   const total = subtotal + (freight || 0);
@@ -96,6 +111,9 @@ export function CompraForm({
       return toast.error("Informe quantas caixas plásticas chegaram.");
     if (quebradas > caixas)
       return toast.error("As caixas quebradas não podem passar do total recebido.");
+    if (!pagoAgora && !vencimento) return toast.error("Informe até quando vai pagar a compra.");
+    if (!pagoAgora && vencimento < purchaseDate)
+      return toast.error("O vencimento não pode ser antes da data da compra.");
 
     enviando.current = true;
     setSaving(true);
@@ -108,7 +126,9 @@ export function CompraForm({
       caixasRecebidas: caixas,
       caixasQuebradas: quebradas,
       caixasSujas: veioEmCaixa && caixasSujas,
-      lancarFreteComoDespesa: lancarFrete && (freight || 0) > 0,
+      pagamento: pagoAgora
+        ? { status: "PAGO", paymentMethod: formaPagamento || null }
+        : { status: "PENDENTE", paymentMethod: formaPagamento || null, dueDate: vencimento },
       items: items.map((i) => ({
         productId: i.productId,
         quantity: i.quantity,
@@ -116,16 +136,17 @@ export function CompraForm({
       })),
     });
     if (res.ok) {
-      // No sucesso o botão CONTINUA travado. A ida para /compras é uma
+      // No sucesso o botão CONTINUA travado. A ida para o Estoque é uma
       // transição do App Router: esta tela segue na frente, clicável, até a
       // página nova (force-dynamic) chegar — no 4G do CEASA, segundos. Era
       // `setSaving(false)` antes do `push`, e o segundo toque gravava outra compra.
+      const conta = pagoAgora ? "Conta lançada como paga." : "Conta lançada em Contas a Pagar.";
       toast.success(
         caixas > 0
-          ? `Compra registrada. Estoque atualizado e ${caixas} caixa(s) na entrada.`
-          : "Compra registrada. Estoque atualizado.",
+          ? `Compra registrada. Estoque atualizado e ${caixas} caixa(s) na entrada. ${conta}`
+          : `Compra registrada. Estoque atualizado. ${conta}`,
       );
-      router.push("/compras");
+      router.push("/estoque?aba=compras");
     } else {
       enviando.current = false;
       setSaving(false);
@@ -147,7 +168,11 @@ export function CompraForm({
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="supplierId">Fornecedor</Label>
-          <Select id="supplierId" value={supplierId} onChange={(e) => setSupplierId(e.target.value)}>
+          <Select
+            id="supplierId"
+            value={supplierId}
+            onChange={(e) => setSupplierId(e.target.value)}
+          >
             <option value="">— Sem fornecedor —</option>
             {fornecedores.map((f) => (
               <option key={f.id} value={f.id}>
@@ -166,7 +191,22 @@ export function CompraForm({
           única forma de quem usa leitor de tela saber se está no preço do
           item 1 ou do item 4 numa compra com uma dúzia de produtos.
         */}
-        <Label>Itens</Label>
+        <div className="flex items-center justify-between gap-2">
+          <Label>Itens</Label>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setModalProduto({ item: items.length - 1 })}
+          >
+            <Plus /> Novo produto
+          </Button>
+        </div>
+        {produtos.length === 0 && (
+          <p className="rounded-md border border-dashed p-3 text-sm text-muted-foreground">
+            Nenhum produto cadastrado. Toque em <b>Novo produto</b> para cadastrar o que chegou.
+          </p>
+        )}
         {items.map((it, idx) => (
           <Card key={idx} className="flex flex-col gap-2 p-3">
             <div className="flex items-center gap-2">
@@ -176,6 +216,7 @@ export function CompraForm({
                 value={it.productId}
                 onChange={(e) => setItem(idx, { productId: e.target.value })}
               >
+                {!it.productId && <option value="">— Escolha o produto —</option>}
                 {produtos.map((p) => (
                   <option key={p.id} value={p.id}>
                     {p.name}
@@ -214,10 +255,7 @@ export function CompraForm({
                 />
               </div>
             </div>
-            <Referencia
-              ultimo={ultimosPagos[it.productId]}
-              boletim={boletim[it.productId]}
-            />
+            <Referencia ultimo={ultimosPagos[it.productId]} boletim={boletim[it.productId]} />
           </Card>
         ))}
         <Button type="button" variant="outline" onClick={addItem}>
@@ -229,26 +267,9 @@ export function CompraForm({
         <Label htmlFor="freight">Frete</Label>
         <CurrencyInput id="freight" value={freight} onChange={(v) => setFreight(v ?? 0)} />
         <span className="text-xs text-muted-foreground">
-          O frete entra no custo de cada produto automaticamente, rateado pelo valor.
+          O frete entra no custo de cada produto automaticamente, rateado pelo valor, e na conta da
+          compra em Despesas.
         </span>
-        {(freight || 0) > 0 && (
-          <label className="mt-1 flex items-start gap-2 text-sm">
-            <input
-              type="checkbox"
-              className="mt-0.5 size-4"
-              checked={lancarFrete}
-              onChange={(e) => setLancarFrete(e.target.checked)}
-            />
-            <span>
-              Lançar o frete como despesa
-              <span className="mt-0.5 block text-xs text-muted-foreground">
-                Cria uma conta a pagar de {formatBRL(freight || 0)} em Despesas, para acompanhar
-                o pagamento do caminhão. O custo do produto (CMV) não muda — o frete já entrou
-                no preço de cada item.
-              </span>
-            </span>
-          </label>
-        )}
       </div>
 
       {/* Caixas plásticas que vieram junto: registrar aqui evita o segundo
@@ -305,6 +326,69 @@ export function CompraForm({
         </div>
       )}
 
+      {/* A conta da compra. Fica em Despesas ligada ao fornecedor; não entra
+          no lucro de novo, porque o custo já está no preço de cada produto. */}
+      <div className="flex flex-col gap-3 rounded-lg border p-3">
+        <span className="text-sm font-medium">Pagamento</span>
+        <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Pagamento da compra">
+          <Button
+            type="button"
+            role="radio"
+            aria-checked={pagoAgora}
+            variant={pagoAgora ? "default" : "outline"}
+            onClick={() => setPagoAgora(true)}
+          >
+            Pago agora
+          </Button>
+          <Button
+            type="button"
+            role="radio"
+            aria-checked={!pagoAgora}
+            variant={!pagoAgora ? "default" : "outline"}
+            onClick={() => {
+              setPagoAgora(false);
+              if (!vencimento) setVencimento(purchaseDate);
+            }}
+          >
+            A pagar
+          </Button>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="forma-pagamento">Forma</Label>
+            <Select
+              id="forma-pagamento"
+              value={formaPagamento}
+              onChange={(e) => setFormaPagamento(e.target.value)}
+            >
+              <option value="">— Não informado —</option>
+              {toOptions(EXPENSE_PAYMENT_METHOD_LABELS).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          </div>
+          {!pagoAgora && (
+            <div className="flex flex-col gap-1.5">
+              <Label htmlFor="vencimento">Pagar até</Label>
+              <Input
+                id="vencimento"
+                type="date"
+                min={purchaseDate}
+                value={vencimento}
+                onChange={(e) => setVencimento(e.target.value)}
+              />
+            </div>
+          )}
+        </div>
+        <span className="text-xs text-muted-foreground">
+          {pagoAgora
+            ? "A conta entra em Despesas como paga hoje."
+            : "A conta vai para Contas a Pagar, com o fornecedor, até o vencimento."}
+        </span>
+      </div>
+
       <Card className="p-3">
         <div className="flex justify-between text-sm text-muted-foreground">
           <span>Subtotal dos itens</span>
@@ -329,6 +413,21 @@ export function CompraForm({
           Salvar compra
         </Button>
       </div>
+
+      <ProdutoModal
+        open={modalProduto !== null}
+        onOpenChange={(v) => {
+          if (!v) setModalProduto(null);
+        }}
+        fotosDisponiveis={fotosDisponiveis}
+        onSalvo={(p) => {
+          setNovosProdutos((s) => [...s, { id: p.id, name: p.name }]);
+          // O produto novo vai para o item de onde o cadastro foi aberto.
+          const alvo = modalProduto?.item ?? items.length - 1;
+          setItem(Math.max(0, alvo), { productId: p.id });
+          router.refresh();
+        }}
+      />
     </div>
   );
 }

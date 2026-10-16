@@ -26,8 +26,12 @@ test.describe("404 dentro da área da empresa", () => {
       `notFound()` também é o desfecho de pedir um id de OUTRA empresa — a
       consulta filtra por tenant e não acha. Então esta tela é, na prática, a
       resposta ao isolamento funcionando, e precisa ser tranquila.
+
+      Fornecedor, e não produto: `/produtos/<id>` virou atalho para o modal de
+      edição do Estoque (`/estoque?editar=<id>`), e um id desconhecido ali só
+      abre o Estoque sem modal — não passa mais por `notFound()`.
     */
-    await page.goto("/produtos/id-que-nao-existe-nenhum");
+    await page.goto("/fornecedores/id-que-nao-existe-nenhum");
 
     /*
       Afirma o que a PESSOA vê, e não o código de status.
@@ -67,7 +71,7 @@ test.describe("404 dentro da área da empresa", () => {
 
   test("cabe no celular", async ({ page }) => {
     await page.setViewportSize({ width: 320, height: 720 });
-    await page.goto("/produtos/id-inexistente");
+    await page.goto("/fornecedores/id-inexistente");
     await expect(page.getByRole("heading", { name: /não encontramos/i })).toBeVisible();
     expect(await estouroHorizontalDaPagina(page)).toBe(0);
   });

@@ -1,11 +1,6 @@
-import { PageHeader } from "@/components/data/page-header";
-import { ProdutoForm } from "../_components/produto-form";
+import { redirect } from "next/navigation";
 
+/** O cadastro de produto é o modal "Novo Produto" do Estoque. */
 export default function NovoProdutoPage() {
-  return (
-    <div>
-      <PageHeader title="Novo produto" />
-      <ProdutoForm />
-    </div>
-  );
+  redirect("/estoque?novo=1");
 }

@@ -8,9 +8,7 @@ import {
   Package,
   HandCoins,
   Menu,
-  Boxes,
   Truck,
-  ShoppingBag,
   Receipt,
   Wallet,
   FileBarChart,
@@ -44,9 +42,8 @@ const primary = [
 ];
 
 const more = [
-  { href: "/produtos", label: "Produtos", icon: Boxes },
+  // Produtos e Compras vivem dentro do Estoque (barra de baixo).
   { href: "/fornecedores", label: "Fornecedores", icon: Truck },
-  { href: "/compras", label: "Compras", icon: ShoppingBag },
   { href: "/vendas", label: "Vendas (histórico)", icon: Receipt },
   { href: "/despesas", label: "Despesas", icon: Wallet },
   { href: "/cotacoes", label: "Cotações", icon: TrendingUp },

@@ -181,8 +181,10 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
  */
 const OUTRAS_PAGINAS = [
   { url: "/vendas", nome: "Vendas (histórico)" },
-  { url: "/produtos", nome: "Produtos" },
-  { url: "/compras", nome: "Compras" },
+  // Produtos e Compras viraram o Estoque. A lista de produtos (`/estoque`) já
+  // está na varredura de cartões acima; aqui entra a outra aba, o histórico de
+  // compras — linhas `details` com valor, outra forma de tela.
+  { url: "/estoque?aba=compras", nome: "Compras (aba do Estoque)" },
   { url: "/fornecedores", nome: "Fornecedores" },
   { url: "/relatorios", nome: "Relatórios" },
   { url: "/relatorios/vendas", nome: "Relatório de vendas" },
@@ -194,8 +196,9 @@ const OUTRAS_PAGINAS = [
   // Telas de cadastro. Ficaram fora da lista original e são metade dos
   // formulários da aplicação — é onde campo lado a lado aperta primeiro.
   { url: "/vendas/nova", nome: "Frente de caixa (carrinho vazio)" },
-  { url: "/produtos/novo", nome: "Novo produto" },
-  { url: "/compras/nova", nome: "Nova compra" },
+  // O cadastro de produto é um modal sobre o Estoque, em tela cheia no celular.
+  { url: "/estoque?novo=1", nome: "Novo produto (modal)" },
+  { url: "/estoque/compra", nome: "Registrar compra" },
   { url: "/fornecedores/novo", nome: "Novo fornecedor" },
   { url: "/estoque/ajuste", nome: "Ajuste de estoque" },
   { url: "/embalagens/nova", nome: "Nova embalagem" },
@@ -388,8 +391,18 @@ test.describe("Telas de detalhe em tela estreita (320px)", () => {
     );
   });
 
-  const DETALHES = [
-    { base: "/produtos", nome: "Detalhe do produto" },
+  /*
+    `url` só quando o detalhe NÃO é `<base>/<id>`. O produto deixou de ter
+    página própria: `/produtos/<id>` redireciona para o modal de edição sobre o
+    Estoque, então o teste vai direto ao endereço final em vez de medir um
+    redirecionamento.
+  */
+  const DETALHES: { base: string; nome: string; url?: (id: string) => string }[] = [
+    {
+      base: "/produtos",
+      nome: "Edição do produto (modal)",
+      url: (id) => `/estoque?editar=${id}`,
+    },
     { base: "/fornecedores", nome: "Detalhe do fornecedor" },
     { base: "/despesas", nome: "Detalhe da despesa" },
     { base: "/fiado", nome: "Detalhe do fiado" },
@@ -401,7 +414,7 @@ test.describe("Telas de detalhe em tela estreita (320px)", () => {
       const id = ids[detalhe.base];
       test.skip(!id, `sem registro em ${detalhe.base} na empresa demo`);
 
-      await page.goto(`${detalhe.base}/${id}`);
+      await page.goto(detalhe.url ? detalhe.url(id!) : `${detalhe.base}/${id}`);
       await expect(page.locator("h1, h2").first()).toBeVisible();
 
       expect(await estouroHorizontalDaPagina(page), `${detalhe.nome} rola de lado`).toBe(0);

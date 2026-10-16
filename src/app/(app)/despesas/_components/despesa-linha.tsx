@@ -3,7 +3,17 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Check, Copy, ExternalLink, Loader2, Pencil, Repeat, RotateCcw, Trash2 } from "lucide-react";
+import {
+  Check,
+  Copy,
+  ExternalLink,
+  Loader2,
+  Pencil,
+  Repeat,
+  RotateCcw,
+  ShoppingBag,
+  Trash2,
+} from "lucide-react";
 import { toast } from "sonner";
 import {
   marcarDespesaComoPaga,
@@ -99,8 +109,10 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
     });
   }
 
+  const daCompra = Boolean(d.purchaseId);
   const meta = [
-    EXPENSE_TYPE_LABELS[d.type],
+    d.supplierName,
+    daCompra ? null : EXPENSE_TYPE_LABELS[d.type],
     d.categoryName,
     pago
       ? d.paidDate
@@ -136,6 +148,13 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
               </Badge>
             )}
             {ehHigienizacao && <Badge variant="secondary">Higienização</Badge>}
+            {daCompra && (
+              <Link href="/estoque?aba=compras" title="Ver a compra no Estoque">
+                <Badge variant="secondary" className="gap-1">
+                  <ShoppingBag className="size-3" /> Compra
+                </Badge>
+              </Link>
+            )}
           </div>
           <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{meta}</p>
         </div>
@@ -165,7 +184,7 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
         </div>
       </Card>
 
-      {!ehHigienizacao && (
+      {!ehHigienizacao && !daCompra && (
         <Dialog open={confirmarExclusao} onOpenChange={setConfirmarExclusao}>
           <DialogContent>
             <DialogHeader>
@@ -257,19 +276,25 @@ function AcoesIcone({
               {pending ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4 text-success" />}
             </Button>
           )}
-          <Button asChild variant="ghost" size="icon" aria-label="Duplicar" title="Duplicar">
-            <Link href={`/despesas/nova?duplicar=${d.id}`}>
-              <Copy className="size-4 text-muted-foreground" />
-            </Link>
-          </Button>
+          {/* Conta de compra não se duplica nem se exclui: ela é a dívida
+              da compra, e o valor vem dela. */}
+          {!d.purchaseId && (
+            <Button asChild variant="ghost" size="icon" aria-label="Duplicar" title="Duplicar">
+              <Link href={`/despesas/nova?duplicar=${d.id}`}>
+                <Copy className="size-4 text-muted-foreground" />
+              </Link>
+            </Button>
+          )}
           <Button asChild variant="ghost" size="icon" aria-label="Editar" title="Editar">
             <Link href={`/despesas/${d.id}`}>
               <Pencil className="size-4" />
             </Link>
           </Button>
-          <Button variant="ghost" size="icon" aria-label="Excluir" title="Excluir" onClick={onExcluir}>
-            <Trash2 className="size-4 text-destructive" />
-          </Button>
+          {!d.purchaseId && (
+            <Button variant="ghost" size="icon" aria-label="Excluir" title="Excluir" onClick={onExcluir}>
+              <Trash2 className="size-4 text-destructive" />
+            </Button>
+          )}
         </>
       )}
     </>
@@ -333,19 +358,23 @@ function AcoesMobile({
               Pagar
             </Button>
           )}
-          <Button asChild size="sm" variant="outline">
-            <Link href={`/despesas/nova?duplicar=${d.id}`}>
-              <Copy /> Duplicar
-            </Link>
-          </Button>
+          {!d.purchaseId && (
+            <Button asChild size="sm" variant="outline">
+              <Link href={`/despesas/nova?duplicar=${d.id}`}>
+                <Copy /> Duplicar
+              </Link>
+            </Button>
+          )}
           <Button asChild size="sm" variant="outline">
             <Link href={`/despesas/${d.id}`}>
               <Pencil /> Editar
             </Link>
           </Button>
-          <Button size="sm" variant="destructive" onClick={onExcluir}>
-            <Trash2 /> Excluir
-          </Button>
+          {!d.purchaseId && (
+            <Button size="sm" variant="destructive" onClick={onExcluir}>
+              <Trash2 /> Excluir
+            </Button>
+          )}
         </>
       )}
     </>

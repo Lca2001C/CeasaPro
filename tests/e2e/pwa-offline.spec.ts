@@ -99,7 +99,7 @@ test.describe("Consulta offline", () => {
     // E navegar sem rede tem de FUNCIONAR: quem responde é o service worker, com a
     // página do precache. Vale para QUALQUER rota, não só o link da faixa — abrir o
     // app pelo ícone da tela inicial cai exatamente aqui.
-    await page.goto("/produtos");
+    await page.goto("/estoque");
     await expect(page.getByText(/^Dados de \d{2}\/\d{2}/)).toBeVisible();
     await expect(page.getByText(/somente consulta/i)).toBeVisible();
 
@@ -129,7 +129,7 @@ test.describe("Consulta offline", () => {
     );
 
     await context.setOffline(true);
-    await page.goto("/produtos");
+    await page.goto("/estoque");
 
     // Texto da propria pagina /offline, nao da faixa de rede: e ele que prova
     // qual dos dois destinos o service worker escolheu.

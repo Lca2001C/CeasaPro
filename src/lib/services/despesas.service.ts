@@ -1,5 +1,5 @@
 import { Prisma } from "@prisma/client";
-import type { Expense } from "@prisma/client";
+import type { Expense, ExpenseOrigem } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
@@ -52,6 +52,19 @@ function toDate(v?: string | null): Date | null {
   return parseFormDateTz(v);
 }
 
+async function assertSupplier(
+  db: ReturnType<typeof getTenantPrisma>,
+  supplierId?: string | null,
+) {
+  if (!supplierId) return null;
+  const supplier = await db.supplier.findFirst({
+    where: { id: supplierId },
+    select: { id: true },
+  });
+  if (!supplier) throw new NotFoundError("Fornecedor nao encontrado");
+  return supplier.id;
+}
+
 async function assertCategory(db: ReturnType<typeof getTenantPrisma>, categoryId?: string | null) {
   if (!categoryId) return null;
   const category = await db.expenseCategory.findFirst({
@@ -84,6 +97,9 @@ export function whereDeFiltro(f: DespesaFiltro, agora = new Date()): Prisma.Expe
 
   if (f.type) where.type = f.type;
   if (f.categoryId) where.categoryId = f.categoryId;
+  if (f.supplierId) where.supplierId = f.supplierId;
+  if (f.origem === "COMPRA") where.origem = { in: [...ORIGENS_DE_COMPRA] };
+  if (f.origem === "OPERACIONAL") where.origem = "MANUAL";
   if (f.q) where.description = { contains: f.q, mode: "insensitive" };
 
   const from = toDate(f.from);
@@ -101,6 +117,18 @@ export function whereDeFiltro(f: DespesaFiltro, agora = new Date()): Prisma.Expe
   if (condicoes.length > 0) where.AND = condicoes;
   return where;
 }
+
+/**
+ * Despesas que vieram de uma compra. Já estão no CMV (o `unitCost` das
+ * entradas inclui mercadoria e frete), então ficam FORA de toda métrica de
+ * custo operacional — lucro, Fixas/Variáveis, "% do faturamento", réplica de
+ * mês — e DENTRO de tudo que é dinheiro devido ou pago: Contas a Pagar,
+ * vencidas, avisos e fluxo de caixa.
+ */
+export const ORIGENS_DE_COMPRA: readonly ExpenseOrigem[] = ["COMPRA", "FRETE_COMPRA"];
+
+/** Filtro das despesas operacionais (as que entram no lucro). */
+export const SO_OPERACIONAIS = { origem: "MANUAL" } satisfies Prisma.ExpenseWhereInput;
 
 /** Teto do atalho "vence nos próximos N dias" vindo da URL. */
 export const PROXIMOS_DIAS_MAX = 90;
@@ -311,6 +339,8 @@ function whereDaHigienizacao(
   agora: Date,
 ): Prisma.CrateCleaningWhereInput | null {
   if (filtro.type === "FIXA" || filtro.categoryId) return null;
+  // Higienização não é compra nem tem fornecedor cadastrado.
+  if (filtro.origem === "COMPRA" || filtro.supplierId) return null;
   const e: Prisma.CrateCleaningWhereInput[] = [];
 
   if (filtro.vencidas) {
@@ -553,7 +583,7 @@ export const DespesasService = {
     const db = getTenantPrisma(tenantId);
     return db.expense.findMany({
       where: whereDeFiltro(opts, agora),
-      include: { category: true },
+      include: { category: true, supplier: { select: { name: true } } },
       // A ordem reproduz o que a tela fazia em JS: o que vence primeiro no topo,
       // e sem vencimento no fim (não há prazo correndo). Para as já pagas, o
       // PAGAMENTO mais recente primeiro — ali a ordem de vencimento não diz
@@ -616,6 +646,8 @@ export const DespesasService = {
             categoryName: d.category?.name ?? null,
             dueDate: d.dueDate,
             paidDate: d.paidDate,
+            supplierName: d.supplier?.name ?? null,
+            purchaseId: d.origem === "MANUAL" ? null : d.purchaseId,
           },
           agora,
         ),
@@ -648,6 +680,7 @@ export const DespesasService = {
     const porTipo = await db.expense.groupBy({
       by: ["type"],
       _sum: { amount: true },
+      where: SO_OPERACIONAIS,
     });
     return FinancialCalc.totaisDespesas(
       porTipo.map((g) => ({ type: g.type, amount: g._sum.amount ?? 0 })),
@@ -687,15 +720,17 @@ export const DespesasService = {
         _count: { _all: true },
         where: { status: "PAGO", paidDate: noMes },
       }),
+      // Fixas/Variáveis e o "% do que você vendeu" medem custo OPERACIONAL:
+      // a compra já está no CMV e, aqui, viraria "Variáveis" do mês inteiro.
       db.expense.groupBy({
         by: ["type"],
         _sum: { amount: true },
-        where: { dueDate: noMes },
+        where: { ...SO_OPERACIONAIS, dueDate: noMes },
       }),
       db.expense.groupBy({
         by: ["type"],
         _sum: { amount: true },
-        where: { dueDate: { gte: anterior.inicio, lte: anterior.fim } },
+        where: { ...SO_OPERACIONAIS, dueDate: { gte: anterior.inicio, lte: anterior.fim } },
       }),
       db.expense.aggregate({
         _sum: { amount: true },
@@ -789,9 +824,11 @@ export const DespesasService = {
   async create(input: DespesaInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const categoryId = await assertCategory(db, input.categoryId);
+    const supplierId = await assertSupplier(db, input.supplierId);
     const e = await db.expense.create({
       data: {
         tenantId: ctx.tenantId,
+        supplierId,
         description: input.description,
         amount: input.amount,
         type: input.type,
@@ -828,16 +865,36 @@ export const DespesasService = {
     const before = await db.expense.findFirst({ where: { id: input.id } });
     if (!before) throw new NotFoundError("Despesa não encontrada");
     const categoryId = await assertCategory(db, input.categoryId);
+
+    // Conta de compra: valor, descrição e fornecedor são os DA COMPRA. Mudar o
+    // valor aqui desencontraria a conta a pagar do custo que já entrou no
+    // estoque. Pagamento, vencimento, forma e categoria continuam editáveis.
+    const daCompra = before.origem !== "MANUAL";
+    if (daCompra) {
+      if (!toDecimal(input.amount).equals(before.amount)) {
+        throw new BusinessRuleError(
+          "O valor desta conta vem da compra e não pode ser alterado aqui.",
+        );
+      }
+      if (input.recurring) {
+        throw new BusinessRuleError("Conta de compra não se repete todo mês.");
+      }
+    }
+    const supplierId = daCompra
+      ? before.supplierId
+      : await assertSupplier(db, input.supplierId);
+
     const e = await db.expense.update({
       where: { id: input.id },
       data: {
-        description: input.description,
-        amount: input.amount,
-        type: input.type,
+        description: daCompra ? before.description : input.description,
+        amount: daCompra ? before.amount : input.amount,
+        type: daCompra ? before.type : input.type,
         status: input.status,
         categoryId,
+        supplierId,
         paymentMethod: input.paymentMethod ?? null,
-        recurring: input.recurring ?? false,
+        recurring: daCompra ? false : (input.recurring ?? false),
         dueDate: toDate(input.dueDate),
         paidDate: toDate(input.paidDate),
       },
@@ -947,6 +1004,13 @@ export const DespesasService = {
     const db = getTenantPrisma(ctx.tenantId);
     const before = await db.expense.findFirst({ where: { id } });
     if (!before) throw new NotFoundError("Despesa não encontrada");
+    // Apagar a conta deixaria a compra (e o estoque que ela deu) sem a dívida
+    // correspondente — o fluxo de caixa perderia a saída para sempre.
+    if (before.origem !== "MANUAL") {
+      throw new BusinessRuleError(
+        "Esta conta vem de uma compra e não pode ser excluída. Marque como paga ou ajuste o vencimento.",
+      );
+    }
     await db.expense.update({ where: { id }, data: { deletedAt: new Date() } });
     await audit({
       tenantId: ctx.tenantId,
@@ -1012,6 +1076,7 @@ export const DespesasService = {
           type: atual.type,
           status: "PENDENTE",
           categoryId: atual.categoryId,
+          supplierId: atual.supplierId,
           paymentMethod: atual.paymentMethod,
           dueDate: proximoVencimento(atual.dueDate),
           paidDate: null,
@@ -1076,8 +1141,9 @@ export const DespesasService = {
     const referencia = origemRef ?? mesAnterior(refMes(agora));
     const mes = limitesDoMes(referencia, agora);
 
+    // A compra do mês é um fato daquele mês, não uma conta que se repete.
     const origem = await db.expense.findMany({
-      where: { dueDate: { gte: mes.inicio, lte: mes.fim } },
+      where: { ...SO_OPERACIONAIS, dueDate: { gte: mes.inicio, lte: mes.fim } },
       orderBy: { dueDate: "asc" },
     });
     if (origem.length === 0) {
@@ -1120,6 +1186,7 @@ export const DespesasService = {
           type: o.type,
           status: "PENDENTE",
           categoryId: o.categoryId,
+          supplierId: o.supplierId,
           paymentMethod: o.paymentMethod,
           dueDate: proximoVencimento(o.dueDate!),
           recurring: false,
@@ -1159,9 +1226,16 @@ export const DespesasService = {
     const db = getTenantPrisma(tenantId);
     const base =
       id === "ultima"
-        ? await db.expense.findFirst({ orderBy: { createdAt: "desc" } })
+        ? // "Nova igual à última": a última lançada costuma ser uma compra, e
+          // duplicá-la criaria uma despesa operacional com o valor da mercadoria.
+          await db.expense.findFirst({ where: SO_OPERACIONAIS, orderBy: { createdAt: "desc" } })
         : await db.expense.findFirst({ where: { id } });
     if (!base) throw new NotFoundError("Despesa não encontrada");
+    if (base.origem !== "MANUAL") {
+      throw new BusinessRuleError(
+        "Conta de compra não pode ser duplicada. Registre uma nova compra.",
+      );
+    }
 
     return {
       description: base.description,
@@ -1170,70 +1244,13 @@ export const DespesasService = {
       status: "PENDENTE" as const,
       categoryId: base.categoryId ?? null,
       paymentMethod: base.paymentMethod ?? null,
+      supplierId: base.supplierId ?? null,
       dueDate: base.dueDate ? isoDateTz(proximoVencimento(base.dueDate)) : null,
       paidDate: null,
       recurring: false,
     };
   },
 
-  /**
-   * Lança o frete de uma compra como despesa operacional.
-   *
-   * Frete é a despesa mais recorrente do CEASA e vivia fora do módulo: quem
-   * queria vê-la no fluxo de caixa lançava à mão, e às vezes duas vezes. O
-   * vínculo `purchaseId` é o que garante uma despesa por compra.
-   */
-  async lancarFreteDaCompra(
-    args: {
-      purchaseId: string;
-      amount: Prisma.Decimal | number;
-      purchaseDate: Date;
-      supplierName?: string | null;
-    },
-    ctx: TenantCtx,
-  ) {
-    if (toDecimal(args.amount).lessThanOrEqualTo(0)) return null;
-    const db = getTenantPrisma(ctx.tenantId);
-
-    const existente = await db.expense.findFirst({
-      where: { purchaseId: args.purchaseId },
-      select: { id: true },
-    });
-    if (existente) return null;
-
-    // Usa a categoria "Frete" se a empresa tiver criado; sem ela, fica sem
-    // categoria em vez de inventar uma pelas costas do usuário.
-    const categoria = await db.expenseCategory.findFirst({ where: { name: "Frete" } });
-    const e = await db.expense.create({
-      data: {
-        tenantId: ctx.tenantId,
-        description: args.supplierName
-          ? `Frete da compra — ${args.supplierName}`
-          : "Frete da compra",
-        amount: args.amount,
-        type: "VARIAVEL",
-        status: "PENDENTE",
-        categoryId: categoria?.id ?? null,
-        dueDate: args.purchaseDate,
-        purchaseId: args.purchaseId,
-      },
-    });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "CREATE",
-      entity: "Expense",
-      entityId: e.id,
-      newData: {
-        motivo: "frete_compra",
-        purchaseId: args.purchaseId,
-        amount: e.amount.toString(),
-      },
-      ip: ctx.ip,
-    });
-    return e;
-  },
 };
 
 /**

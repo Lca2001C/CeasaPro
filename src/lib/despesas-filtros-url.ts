@@ -23,6 +23,10 @@ export interface FiltrosDespesa {
   dateField: string;
   from: string;
   to: string;
+  /** "COMPRA" | "OPERACIONAL" | "" (todas). */
+  origem?: string;
+  /** Fornecedor a quem a conta é devida. */
+  supplierId?: string;
 }
 
 /** URL com busca e filtros aplicados, preservando a aba. */
@@ -33,6 +37,8 @@ export function urlDeDespesas(f: FiltrosDespesa): string {
   if (f.q) params.set("q", f.q);
   if (f.type) params.set("type", f.type);
   if (f.categoryId) params.set("categoria", f.categoryId);
+  if (f.origem) params.set("origem", f.origem);
+  if (f.supplierId) params.set("fornecedor", f.supplierId);
   if (f.from || f.to) {
     params.set("campo", f.dateField || "dueDate");
     if (f.from) params.set("de", f.from);

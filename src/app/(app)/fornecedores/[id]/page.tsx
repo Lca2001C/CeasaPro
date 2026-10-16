@@ -5,6 +5,10 @@ import { formatBRL, formatDate } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { Card, CardContent } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { StatCard } from "@/components/data/stat-card";
+import { SITUACAO_COMPRA_LABELS, situacaoDaCompra } from "@/lib/despesas/situacao-compra";
+import Link from "next/link";
 import { FornecedorForm } from "../_components/fornecedor-form";
 
 export const dynamic = "force-dynamic";
@@ -16,11 +20,13 @@ export default async function EditarFornecedorPage({
 }) {
   const { id } = await params;
   const { tenantId } = await requireTenant();
-  const [f, compras] = await Promise.all([
+  const [f, compras, aberto] = await Promise.all([
     FornecedoresService.get(tenantId, id).catch(() => null),
     FornecedoresService.purchaseHistory(tenantId, id),
+    FornecedoresService.emAberto(tenantId, id),
   ]);
   if (!f) notFound();
+  const agora = new Date();
 
   return (
     <div className="flex flex-col gap-4">
@@ -35,6 +41,17 @@ export default async function EditarFornecedorPage({
           active: f.active,
         }}
       />
+
+      {/* O que ainda devo a este fornecedor — compras a prazo e contas
+          lançadas com ele. */}
+      <Link href={`/despesas?status=PENDENTE&fornecedor=${f.id}`} className="block">
+        <StatCard
+          label="Em aberto com este fornecedor"
+          value={formatBRL(aberto.total)}
+          hint={`${aberto.contas} conta(s) a pagar`}
+          tone={aberto.contas > 0 ? "warning" : "default"}
+        />
+      </Link>
 
       <Card>
         <CardContent className="pt-4">
@@ -58,8 +75,11 @@ export default async function EditarFornecedorPage({
                       <p className="truncate text-xs text-muted-foreground">{c.notes}</p>
                     )}
                   </div>
-                  <span className="shrink-0 text-sm font-semibold tabular-nums">
-                    {formatBRL(c.totalAmount)}
+                  <span className="flex shrink-0 items-center gap-2">
+                    <SituacaoBadge situacao={situacaoDaCompra(c.expenses[0], agora)} />
+                    <span className="text-sm font-semibold tabular-nums">
+                      {formatBRL(c.totalAmount)}
+                    </span>
                   </span>
                 </div>
               ))}
@@ -69,4 +89,11 @@ export default async function EditarFornecedorPage({
       </Card>
     </div>
   );
+}
+
+function SituacaoBadge({ situacao }: { situacao: ReturnType<typeof situacaoDaCompra> }) {
+  if (situacao === "SEM_CONTA") return null;
+  const variant =
+    situacao === "PAGA" ? "success" : situacao === "VENCIDA" ? "destructive" : "warning";
+  return <Badge variant={variant}>{SITUACAO_COMPRA_LABELS[situacao]}</Badge>;
 }

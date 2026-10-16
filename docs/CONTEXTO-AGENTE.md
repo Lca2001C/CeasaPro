@@ -31,7 +31,7 @@ Não existe `STAFF` nesta versão. O super-admin também pode **usar o sistema**
 
 Violar qualquer uma destas é regressão grave:
 
-1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks, auditoria e **cotações** — este último porque as tabelas do boletim são globais por desenho e a extensão multi-tenant cobriria só metade do módulo; ali o `tenantId` entra explícito em cada consulta, e é isso que `tests/integration/cotacoes-vinculo.test.ts` guarda.
+1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks, auditoria, **cotações** e o **banco de fotos** (`catalogo_imagens`) — porque as tabelas do boletim e o catálogo de fotos são globais por desenho e a extensão multi-tenant cobriria só metade do módulo; nas cotações o `tenantId` entra explícito em cada consulta, e é isso que `tests/integration/cotacoes-vinculo.test.ts` guarda.
 2. **Fórmulas financeiras só em** `src/lib/services/financial-calc.service.ts`. Não duplicar cálculo de total, lucro, margem ou rateio de frete.
 3. **Dinheiro é `Decimal`**, nunca `number`/`Float`. Helpers em `src/lib/money.ts`. Quantidade: 3 casas; dinheiro: 2.
 4. **Estoque e caixas plásticas são livros-razão.** Não existe coluna de saldo mutável. Saldo = soma de movimentos (`stock_movements`, `plastic_crate_movements`).
@@ -187,15 +187,21 @@ Primeiro acesso do OWNER enquanto `onboardingCompletedAt` é nulo. Passos: dados
 
 ### Dashboard (`/dashboard`)
 
-Números: hoje vendi, a receber, valor em estoque, lucro do mês. Gráfico 30 dias. Avisos (fiado vencido, despesas, higienização). CTAs: Nova venda, Novo produto, Novo fiado. Mais vendidos, prejuízo, estoque parado.
+Números: hoje vendi, a receber, valor em estoque, lucro do mês. Gráfico 30 dias. Avisos (fiado vencido, despesas, higienização). CTAs: Nova venda, Novo produto (`/estoque?novo=1`), Novo fiado. Mais vendidos, prejuízo, estoque parado.
 
-### Produtos / Fornecedores
+### Estoque = Produtos + Compras + Estoque
 
-CRUD Server Actions. Soft delete. Produto com histórico não apaga de fato.
+Uma tela só: `/estoque` (abas Produtos | Compras), `/estoque/compra` e `/estoque/ajuste`. `/produtos*` e `/compras*` só redirecionam; Produtos e Compras saíram do menu.
 
-### Compras (`POST /api/compras`)
+**Produto** (Server Actions, soft delete, sem histórico não apaga de fato): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
 
-Transação: itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento de estoque `ENTRADA`.
+**Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados.
+
+**Compra** (`POST /api/compras`): transação com itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento `ENTRADA`. E **uma despesa `origem = COMPRA`** no valor total, com o fornecedor, `PAGO` (`paidDate = purchaseDate`) ou `PENDENTE` até o vencimento — ver Despesas.
+
+### Fornecedores
+
+CRUD Server Actions. Soft delete. A tela mostra o histórico de compras com a situação da conta e o total em aberto com o fornecedor.
 
 ### Vendas / PDV (`POST /api/vendas`)
 
@@ -215,7 +221,11 @@ Compra tem `idempotencyKey` (como a venda): o reenvio devolve a compra já grava
 
 ### Despesas
 
-Fixa/variável, categorias (seed no provisionamento do tenant), pendente/pago. Entram no lucro líquido.
+Fixa/variável, categorias (seed no provisionamento do tenant), pendente/pago, fornecedor opcional. `Expense.origem` separa as duas naturezas:
+
+- `MANUAL` (operacional): entra no lucro líquido, em Fixas/Variáveis e no "% do faturamento".
+- `COMPRA` (gerada pela compra; índice único parcial `expenses_compra_unica`) e `FRETE_COMPRA` (frete lançado à parte antes desta versão): o custo **já está no CMV**, então ficam **fora** de lucro, Fixas/Variáveis, `totais`, `replicarMes` e "nova igual à última", e **dentro** de Contas a Pagar, vencidas, avisos/push, `CONTAS_PAGAS` e **fluxo de caixa** (que não lê mais `purchases.totalAmount` — a compra sai do caixa pela `paidDate` da conta). Filtro: `SO_OPERACIONAIS` / `ORIGENS_DE_COMPRA` em `despesas.service.ts`.
+- Conta de compra: valor/descrição/fornecedor travados, não exclui, não duplica. Compras antigas ganharam a conta no backfill da migration `20261016120000_estoque_unificado_compra_despesa` (PAGA na data da compra; sem o frete se ele já tinha despesa própria).
 
 ### Caixas plásticas (módulo `caixas`)
 
@@ -316,6 +326,8 @@ src/
     auth/ billing/ plan/ payments/ reports/ validations/
     cotacoes/           regras puras do boletim (nome, embalagem, frescor,
                         variação, gráfico, alerta, csv) + fontes/ (raspadores)
+    storage/            Cloudflare R2 (fotos de produto)
+    imagem/             formato (magic bytes) + compressão no aparelho
     http/               ActionResult, AppError, withAction, withRoute
     seo/                páginas indexáveis
     tz.ts money.ts format.ts labels.ts
@@ -375,6 +387,8 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 - Testes E2E de layout: cartões visíveis estão em `main .bg-card` (o `aside` também tem `bg-card` e é o primeiro match).
 - Páginas públicas estáticas quebram CSP (`force-dynamic`).
 - Dois `next dev` no Windows travam Prisma.
+- **Despesa de compra fora do lucro.** Toda compra gera `Expense` com `origem = COMPRA`. Qualquer soma nova de despesas que meça custo operacional (lucro, margem, Fixas/Variáveis) precisa filtrar `origem = 'MANUAL'`; quem mede dinheiro devido ou pago (contas a pagar, caixa) inclui tudo. Errar o lado conta a mercadoria duas vezes ou some com a dívida do fornecedor.
+- **Foto de produto não sobe crua.** Celular gera 3–8 MB; Server Action aceita 1 MB e a Vercel 4,5 MB. Sempre `comprimirFoto` antes, e o servidor confere magic bytes (o bucket é público).
 - **Só 2 crons.** O plano Hobby da Vercel aceita dois agendamentos; um terceiro faz o **deploy** falhar, não o cron. É por isso que a importação de cotações pega carona no cron de billing.
 - **Não criar alerta de cotação automaticamente.** `push-avisos.service.ts` manda o push diário sempre que existe QUALQUER aviso pendente. Alerta em cada produto vinculado transforma a notificação de "só quando há algo a tratar" em "todo dia, para sempre" — e quem desliga isso perde junto o aviso de fiado vencido.
 - **`ceasa_quotes.unit` é texto livre da fonte** (`KG`, `CX 30 DZ`, `DZ 4 KG`, `UN 1,5 KG`). O peso em quilo só existe quando a **própria fonte** o declara no texto; `pesoEmKg` devolve `null` no resto, e é para continuar assim — R$/kg inventado é o preço errado com cara de certo.

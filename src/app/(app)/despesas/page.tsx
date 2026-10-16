@@ -9,6 +9,7 @@ import {
   mesAnterior,
   periodoDaUrl,
 } from "@/lib/services/despesas.service";
+import { FornecedoresService } from "@/lib/services/fornecedores.service";
 import { formatBRL, formatQty } from "@/lib/format";
 import { toDecimal } from "@/lib/money";
 import { cn } from "@/lib/cn";
@@ -46,6 +47,8 @@ interface Query {
   q?: string;
   type?: string;
   categoria?: string;
+  origem?: string;
+  fornecedor?: string;
   campo?: string;
   de?: string;
   ate?: string;
@@ -130,6 +133,8 @@ export default async function DespesasPage({
     q: (typeof sp.q === "string" && sp.q.trim()) || undefined,
     type: sp.type === "FIXA" || sp.type === "VARIAVEL" ? sp.type : undefined,
     categoryId: sp.categoria || undefined,
+    origem: sp.origem === "COMPRA" || sp.origem === "OPERACIONAL" ? sp.origem : undefined,
+    supplierId: sp.fornecedor || undefined,
     dateField: campoData,
     from: periodo.from,
     to: periodo.to,
@@ -140,11 +145,12 @@ export default async function DespesasPage({
   // Filtro, ordem, limite e totais são resolvidos no banco. A tela carregava
   // TODAS as despesas para filtrar e somar em JS: ~278 ms com 2 anos de
   // histórico, crescendo sem teto.
-  const [despesas, total, resumo, categorias] = await Promise.all([
+  const [despesas, total, resumo, categorias, fornecedores] = await Promise.all([
     DespesasService.listContas(tenantId, { ...filtro, skip }, session.modules, agora),
     DespesasService.countContas(tenantId, filtro, session.modules, agora),
     DespesasService.resumoMes(tenantId, undefined, agora, session.modules),
     DespesasService.listCategories(tenantId),
+    FornecedoresService.list(tenantId),
   ]);
 
   const comFiltros = (patch: Record<string, string | undefined>) => {
@@ -180,7 +186,7 @@ export default async function DespesasPage({
     <div>
       <PageHeader
         title="Despesas"
-        description="Controle suas contas fixas e variáveis."
+        description="Suas contas fixas e variáveis — e o que você deve aos fornecedores pelas compras."
         action={
           <Button asChild size="sm">
             <Link href="/despesas/nova">
@@ -223,7 +229,7 @@ export default async function DespesasPage({
         <CardContent className="pt-4">
           <div className="mb-1 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between sm:gap-2">
             <span className="text-sm font-semibold [overflow-wrap:anywhere]">
-              Contas de {resumo.referencia} vs. mês anterior
+              Contas operacionais de {resumo.referencia} vs. mês anterior
             </span>
             <Button asChild variant="ghost" size="sm" className="shrink-0">
               <Link href="/despesas/categorias">
@@ -244,7 +250,9 @@ export default async function DespesasPage({
             />
           </div>
           <p className="mt-2 text-xs text-muted-foreground">
-            As contas do mês consumiram{" "}
+            {/* Sem as compras de mercadoria: o custo delas já sai do lucro
+                pelo custo do que foi vendido. */}
+            As contas operacionais do mês consumiram{" "}
             <b className="tabular-nums">{formatQty(resumo.percentualDoFaturamento)}%</b> do que
             você vendeu ({formatBRL(resumo.faturamento)}).
           </p>
@@ -288,8 +296,11 @@ export default async function DespesasPage({
           dateField: sp.campo ?? "dueDate",
           from: sp.de ?? "",
           to: sp.ate ?? "",
+          origem: sp.origem ?? "",
+          supplierId: sp.fornecedor ?? "",
         }}
         categorias={categorias.map((c) => ({ id: c.id, name: c.name }))}
+        fornecedores={fornecedores.map((s) => ({ id: s.id, name: s.name }))}
       />
 
       {linhas.length === 0 ? (

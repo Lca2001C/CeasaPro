@@ -60,7 +60,21 @@ export default async function NovaVendaPage({
 
   const ativos = produtos
     .filter((p) => p.active)
-    .map((p) => ({ id: p.id, name: p.name, saleUnit: p.saleUnit }));
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      saleUnit: p.saleUnit,
+      minStock: p.minStock == null ? null : Number(p.minStock),
+    }));
+
+  // Preço de venda cadastrado no produto vence o sugerido pela compra, mas não
+  // o da última venda: no CEASA o preço muda todo dia, e o último praticado é
+  // mais atual que o do cadastro. A ordem final fica em `precoSugerido` (pdv).
+  const precosSugeridos: Record<string, number> = { ...precosDaCompra };
+  for (const p of produtos) {
+    const preco = p.salePrice == null ? 0 : Number(p.salePrice);
+    if (preco > 0) precosSugeridos[p.id] = preco;
+  }
 
   return (
     <Pdv
@@ -68,7 +82,7 @@ export default async function NovaVendaPage({
       caixasLimpas={saldo.limpas}
       caixasHabilitado={caixasHabilitado}
       ultimosPrecos={ultimosPrecos}
-      precosDaCompra={precosDaCompra}
+      precosDaCompra={precosSugeridos}
       maisVendidos={maisVendidos}
       clientesConhecidos={clientesConhecidos}
       estoquePorProduto={estoquePorProduto}

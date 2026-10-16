@@ -40,6 +40,13 @@ export const EXPENSE_PAYMENT_METHOD_LABELS: Record<string, string> = {
   CARTAO: "Cartão",
 };
 
+/** De onde a despesa veio (`Expense.origem`). */
+export const EXPENSE_ORIGEM_LABELS: Record<string, string> = {
+  MANUAL: "Operacional",
+  COMPRA: "Compra",
+  FRETE_COMPRA: "Frete de compra",
+};
+
 export const CREDIT_STATUS_LABELS: Record<string, string> = {
   EM_ABERTO: "Em aberto",
   PAGO: "Pago",

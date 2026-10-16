@@ -23,6 +23,8 @@ const despesaBase = z.object({
   paidDate: dateStr,
   /** "Repetir todo mês": ao quitar, a parcela do mês seguinte é gerada sozinha. */
   recurring: z.boolean().optional(),
+  /** A quem a conta é devida (opcional). */
+  supplierId: z.string().min(1).nullable().optional(),
 });
 
 /**
@@ -72,8 +74,17 @@ export type MarcarPagoInput = z.infer<typeof marcarPagoSchema>;
 export const despesaDateFieldEnum = z.enum(["dueDate", "paidDate", "createdAt"]);
 export type DespesaDateField = z.infer<typeof despesaDateFieldEnum>;
 
+/**
+ * Recorte por origem na lista: a conta que veio de uma COMPRA (mercadoria —
+ * já está no CMV) ou a OPERACIONAL (aluguel, luz… — entra no lucro).
+ */
+export const despesaOrigemFiltroEnum = z.enum(["COMPRA", "OPERACIONAL"]);
+export type DespesaOrigemFiltro = z.infer<typeof despesaOrigemFiltroEnum>;
+
 /** Filtros da listagem — tudo opcional, tudo resolvido no banco. */
 export const despesaFiltroSchema = z.object({
+  origem: despesaOrigemFiltroEnum.optional(),
+  supplierId: z.string().min(1).optional(),
   status: expenseStatusEnum.optional(),
   /** Só pendentes com vencimento no passado. */
   vencidas: z.boolean().optional(),

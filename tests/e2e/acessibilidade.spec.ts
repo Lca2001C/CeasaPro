@@ -30,22 +30,24 @@ import { varrer, varrerGraves, descrever } from "./_helpers/acessibilidade";
 const TELAS = [
   // Listas e painéis
   "/dashboard",
-  "/produtos",
   "/vendas",
   "/fiado",
+  // Produtos e Compras moram no Estoque: a lista de produtos é a aba padrão e
+  // o histórico de compras é a outra aba — formas de tela diferentes.
   "/estoque",
+  "/estoque?aba=compras",
   "/despesas",
   "/relatorios",
   "/cotacoes",
-  "/compras",
   "/caixas-plasticas",
   "/higienizacao",
   "/embalagens",
   // Formulários — onde estavam as violações críticas
-  "/produtos/novo",
+  // O cadastro de produto agora é um modal sobre o Estoque, aberto pela URL.
+  "/estoque?novo=1",
   "/fornecedores/novo",
   "/fiado/novo",
-  "/compras/nova",
+  "/estoque/compra",
   "/despesas/nova",
   "/estoque/ajuste",
   "/caixas-plasticas/novo",
@@ -113,11 +115,11 @@ test.describe("o que a varredura genérica não cobra", () => {
   test("a tela atual é anunciada, e não só pintada", async ({ page }) => {
     // Antes, o item ativo do menu era marcado apenas por cor de fundo — o que
     // não chega a quem usa leitor de tela nem a quem não distingue as cores.
-    await page.goto("/produtos");
+    await page.goto("/estoque");
 
     const ativo = page.locator("aside nav a[aria-current='page']");
     await expect(ativo).toHaveCount(1);
-    await expect(ativo).toHaveText(/produtos/i);
+    await expect(ativo).toHaveText(/estoque/i);
 
     // E muda junto com a navegação, em vez de ficar preso na primeira tela.
     await page.goto("/despesas");
@@ -161,10 +163,20 @@ test.describe("no celular, que é onde o app vive", () => {
   test("a barra inferior anuncia a tela atual", async ({ page }) => {
     // No celular quem manda é a `BottomNav`, e nenhum spec a exercitava.
     await page.setViewportSize({ width: 320, height: 720 });
-    await page.goto("/produtos");
+    await page.goto("/estoque");
 
-    const ativo = page.locator("nav a[aria-current='page']");
+    /*
+      Pelo PAPEL da navegação, e não por `nav a[...]`: a barra lateral continua
+      no DOM (só escondida por CSS) e também marca o Estoque — o seletor cru
+      contaria as duas. Com Produtos isso passava despercebido porque o item
+      ficava no "Mais" e só a lateral o marcava; ou seja, o teste conferia a
+      barra errada.
+    */
+    const ativo = page
+      .getByRole("navigation", { name: "Menu principal" })
+      .locator("a[aria-current='page']");
     await expect(ativo).toHaveCount(1);
+    await expect(ativo).toHaveText(/estoque/i);
   });
 
   test("no tablet, a faixa que nenhum teste cobria", async ({ page }) => {

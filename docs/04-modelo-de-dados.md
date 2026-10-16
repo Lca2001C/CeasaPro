@@ -66,7 +66,7 @@ O par `pendingPlan*` é a **troca de plano agendada**: quando o cliente troca de
 ## Operacionais (por empresa)
 
 ### `products`
-`name`, `saleUnit`, `qtyPerRecipient`, `recipientType`, `sackCapacity`, `active`. Estoque **não** é coluna — é derivado dos movimentos.
+`name`, `saleUnit`, `qtyPerRecipient`, `recipientType`, `sackCapacity`, `salePrice?` (preço de venda cadastrado), `minStock?` (alerta de estoque), `imageKey?` (chave da foto no R2 — `tenants/<tenantId>/produtos/…` ou `catalogo/…`), `active`. Estoque **não** é coluna — é derivado dos movimentos.
 
 ### `suppliers`
 `name`, `phone`, `address`, `notes`, `active`.
@@ -81,10 +81,10 @@ Venda: `customerName?`, `saleDate`, `paymentMethod`, `totalAmount`. Item: `produ
 Conta: `saleId?` (1‑1 com a venda fiada), `customerName`, `customerPhone?`, `totalAmount`, `paidAmount` (cache mantido na transação), `status`, `dueDate?`. Pagamento (append-only): `accountId`, `amount`, `method`, `paidAt`. **Saldo = total − pago**.
 
 ### `stock_movements` (ledger de estoque — append-only)
-`productId`, `type` (`StockMovementType`), `quantity` (sempre positivo; o sinal vem do tipo), `unitCost?`, `reason?`, `sourceType` ("PURCHASE"/"SALE"/"MANUAL"), `sourceId?`, `movedAt`. O saldo e o valor em estoque são somas deste ledger.
+`productId`, `type` (`StockMovementType`), `quantity` (sempre positivo; o sinal vem do tipo), `unitCost?`, `reason?`, `sourceType` ("PURCHASE"/"SALE"/"MANUAL"/"ESTOQUE_INICIAL"), `sourceId?`, `movedAt`. O saldo e o valor em estoque são somas deste ledger.
 
 ### `expenses` + `expense_categories`
-Despesa: `categoryId?`, `description`, `amount`, `dueDate?`, `paidDate?`, `type` (fixa/variável), `status` (pendente/pago). Categoria: `name`, `isDefault` (única por `(tenantId, name)`).
+Despesa: `categoryId?`, `description`, `amount`, `dueDate?`, `paidDate?`, `type` (fixa/variável), `status` (pendente/pago), `supplierId?`, `purchaseId?`, `origem` (`MANUAL` | `COMPRA` | `FRETE_COMPRA`). Índice único parcial `expenses_compra_unica` em `(tenantId, purchaseId) WHERE origem = 'COMPRA' AND deletedAt IS NULL` — uma conta por compra. Categoria: `name`, `isDefault` (única por `(tenantId, name)`); "Compra de mercadoria" é padrão.
 
 ### `report_exports`
 Histórico de exportações: `userId?`, `type`, `format`, `status`, `periodStart/End`, `filters` (Json), `rowCount`, `fileName`, `errorMessage`. Guarda só metadados.
@@ -124,6 +124,11 @@ Produto da empresa ↔ produto do boletim, **mais a embalagem**. Único por `(te
 
 ### `tenant_boletins_enviados` (tem `tenantId`)
 Boletim que o **cliente** enviou, aguardando o super-admin publicar. `centralCode`, `quoteDate` (`@db.Date`), `textoCru` (o que foi colado, não as linhas parseadas), `linhasValidas`, `linhasIgnoradas`, `status` (`BoletimEnviadoStatus`), `motivo?` (da recusa — o cliente lê), `revisadoPor?`, `revisadoEm?`. É rascunho com escopo de empresa de propósito: gravação direta em `ceasa_quotes` (tabela global, e a gravação sobrescreve) faria um cliente mexer no preço que os concorrentes dele leem, sem caminho de volta.
+
+## Banco de fotos
+
+### `catalogo_imagens` (global, sem `tenantId`)
+`nome`, `slug` (normalizado, busca), `imageKey` (único), `ativo`. Mantido pelo super-admin em `/admin/imagens`; lido com `prisma` cru. Foto em uso por produto só é desativada.
 
 ## Auditoria
 

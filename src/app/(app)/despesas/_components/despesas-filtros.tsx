@@ -31,13 +31,22 @@ export type FiltrosAtuais = FiltrosDespesa;
 export function DespesasFiltros({
   atuais,
   categorias,
+  fornecedores,
 }: {
   atuais: FiltrosAtuais;
   categorias: { id: string; name: string }[];
+  fornecedores: { id: string; name: string }[];
 }) {
   const router = useRouter();
   const [aberto, setAberto] = useState(
-    Boolean(atuais.type || atuais.categoryId || atuais.from || atuais.to),
+    Boolean(
+      atuais.type ||
+        atuais.categoryId ||
+        atuais.from ||
+        atuais.to ||
+        atuais.origem ||
+        atuais.supplierId,
+    ),
   );
   const [f, setF] = useState<FiltrosAtuais>(atuais);
 
@@ -46,12 +55,24 @@ export function DespesasFiltros({
   }
 
   function limpar() {
-    setF({ ...f, q: "", type: "", categoryId: "", from: "", to: "", dateField: "dueDate" });
+    setF({
+      ...f,
+      q: "",
+      type: "",
+      categoryId: "",
+      from: "",
+      to: "",
+      dateField: "dueDate",
+      origem: "",
+      supplierId: "",
+    });
     // Limpar os filtros não é sair da aba.
     router.push(urlDeDespesasSemFiltros(f));
   }
 
-  const temFiltro = Boolean(f.q || f.type || f.categoryId || f.from || f.to);
+  const temFiltro = Boolean(
+    f.q || f.type || f.categoryId || f.from || f.to || f.origem || f.supplierId,
+  );
 
   return (
     <div className="mb-4 flex flex-col gap-2">
@@ -113,6 +134,37 @@ export function DespesasFiltros({
               {categorias.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
+                </option>
+              ))}
+            </Select>
+          </div>
+
+          {/* Compra (mercadoria, já no custo do que foi vendido) separada da
+              conta operacional (aluguel, luz…). */}
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filtro-origem">Origem</Label>
+            <Select
+              id="filtro-origem"
+              value={f.origem ?? ""}
+              onChange={(e) => setF({ ...f, origem: e.target.value })}
+            >
+              <option value="">Todas</option>
+              <option value="COMPRA">Compras</option>
+              <option value="OPERACIONAL">Operacionais</option>
+            </Select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="filtro-fornecedor">Fornecedor</Label>
+            <Select
+              id="filtro-fornecedor"
+              value={f.supplierId ?? ""}
+              onChange={(e) => setF({ ...f, supplierId: e.target.value })}
+            >
+              <option value="">Todos</option>
+              {fornecedores.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
                 </option>
               ))}
             </Select>

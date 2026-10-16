@@ -71,6 +71,8 @@ interface Produto {
   id: string;
   name: string;
   saleUnit: string;
+  /** Alerta de estoque do produto — o mesmo "acabando" da tela de Estoque. */
+  minStock?: number | null;
 }
 
 interface CartItem {
@@ -781,7 +783,7 @@ export function Pdv({
             <div className="mt-2 flex flex-wrap gap-2">
               {filtered.map((p) => {
                 const saldo = saldoDe(p.id);
-                const nivel = nivelEstoque(saldo);
+                const nivel = nivelEstoque(saldo, p.minStock);
                 return (
                   <Button
                     key={p.id}

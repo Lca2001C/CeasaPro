@@ -142,7 +142,8 @@ describe("capitulosDoPlano", () => {
     expect(nucleo.every((c) => c.modulo === undefined)).toBe(true);
     expect(nucleo.length).toBeLessThan(CAPITULOS.length);
     // O núcleo é o que todo plano tem: compra, venda, estoque, fiado, despesa.
-    for (const rota of ["/dashboard", "/produtos", "/compras", "/estoque", "/fiado"]) {
+    // Produtos e Compras vivem dentro do Estoque — um capítulo só.
+    for (const rota of ["/dashboard", "/estoque", "/fornecedores", "/fiado", "/despesas"]) {
       expect(nucleo.map((c) => c.rota)).toContain(rota);
     }
   });

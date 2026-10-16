@@ -3,6 +3,10 @@ import { audit } from "@/lib/audit";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { ProdutoInput, ProdutoUpdateInput } from "@/lib/validations/produto";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { ProdutoImagemService } from "./produto-imagem.service";
+
+/** `sourceType` do movimento de ENTRADA gravado pelo cadastro do produto. */
+export const SOURCE_ESTOQUE_INICIAL = "ESTOQUE_INICIAL";
 
 /** O produto já aparece em algum lançamento (estoque, compra ou venda)? */
 async function temHistorico(tenantId: string, productId: string): Promise<boolean> {
@@ -41,30 +45,72 @@ export const ProdutosService = {
     return product;
   },
 
+  /**
+   * Cadastro do produto — e, se veio, o estoque que já está no box.
+   *
+   * O estoque inicial é um movimento de ENTRADA comum (o saldo continua sendo
+   * só a soma do livro-razão), com o custo informado pelo dono: é ele que vira
+   * o custo médio e, daí, o CMV das primeiras vendas. Produto e entrada na MESMA
+   * transação, com a auditoria dentro: produto sem a entrada que o dono digitou
+   * seria estoque sumindo sem aviso.
+   */
   async create(input: ProdutoInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
-    const product = await db.product.create({
-      data: {
-        tenantId: ctx.tenantId,
-        name: input.name,
-        saleUnit: input.saleUnit,
-        qtyPerRecipient: input.qtyPerRecipient ?? null,
-        recipientType: input.recipientType ?? null,
-        sackCapacity: input.sackCapacity ?? null,
-        active: input.active,
-      },
+    const imageKey = await ProdutoImagemService.validarChave(ctx.tenantId, input.imageKey);
+    const estoqueInicial = input.estoqueInicial ?? 0;
+    if (estoqueInicial > 0 && input.custoInicial == null) {
+      throw new BusinessRuleError("Informe quanto custou cada unidade do estoque inicial.");
+    }
+
+    return db.$transaction(async (tx) => {
+      const product = await tx.product.create({
+        data: {
+          tenantId: ctx.tenantId,
+          name: input.name,
+          saleUnit: input.saleUnit,
+          qtyPerRecipient: input.qtyPerRecipient ?? null,
+          recipientType: input.recipientType ?? null,
+          sackCapacity: input.sackCapacity ?? null,
+          salePrice: input.salePrice ?? null,
+          minStock: input.minStock ?? null,
+          imageKey,
+          active: input.active,
+        },
+      });
+
+      if (estoqueInicial > 0) {
+        await tx.stockMovement.create({
+          data: {
+            tenantId: ctx.tenantId,
+            productId: product.id,
+            type: "ENTRADA",
+            quantity: estoqueInicial,
+            unitCost: input.custoInicial ?? 0,
+            reason: "Estoque inicial (cadastro do produto)",
+            sourceType: SOURCE_ESTOQUE_INICIAL,
+            sourceId: product.id,
+          },
+        });
+      }
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "Product",
+          entityId: product.id,
+          newData: {
+            ...product,
+            ...(estoqueInicial > 0 ? { estoqueInicial, custoInicial: input.custoInicial } : {}),
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return product;
     });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "CREATE",
-      entity: "Product",
-      entityId: product.id,
-      newData: product,
-      ip: ctx.ip,
-    });
-    return product;
   },
 
   async update(input: ProdutoUpdateInput, ctx: TenantCtx) {
@@ -84,6 +130,12 @@ export const ProdutosService = {
       );
     }
 
+    const imageKey = await ProdutoImagemService.validarChave(
+      ctx.tenantId,
+      input.imageKey,
+      before.imageKey,
+    );
+
     const product = await db.product.update({
       where: { id: input.id },
       data: {
@@ -92,6 +144,9 @@ export const ProdutosService = {
         qtyPerRecipient: input.qtyPerRecipient ?? null,
         recipientType: input.recipientType ?? null,
         sackCapacity: input.sackCapacity ?? null,
+        salePrice: input.salePrice ?? null,
+        minStock: input.minStock ?? null,
+        imageKey,
         active: input.active,
       },
     });
@@ -106,6 +161,11 @@ export const ProdutosService = {
       newData: product,
       ip: ctx.ip,
     });
+    // Foto trocada ou removida: a antiga da empresa sai do bucket (best-effort,
+    // depois de gravar — falhar aqui não pode desfazer a edição).
+    if (before.imageKey && before.imageKey !== imageKey) {
+      await ProdutoImagemService.descartarDaEmpresa(ctx.tenantId, before.imageKey);
+    }
     return product;
   },
 

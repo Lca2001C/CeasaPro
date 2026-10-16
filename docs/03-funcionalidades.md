@@ -51,30 +51,32 @@ Rota `/dashboard`. Pensado para "entender tudo em menos de 10 segundos".
 - Botão grande **Nova venda**.
 - **Mais indicadores:** vendas na semana/mês, margem líquida do mês, contas a pagar; e listas de **mais vendidos**, **produtos com prejuízo** e **estoque parado** (30+ dias sem venda).
 
-## Produtos
+## Produtos (dentro do Estoque)
 
-Rotas `/produtos`, `/produtos/novo`, `/produtos/[id]`. CRUD via Server Actions.
+Não há mais tela própria: `/produtos`, `/produtos/novo` e `/produtos/[id]` redirecionam para `/estoque`, `/estoque?novo=1` e `/estoque?editar=<id>`. O cadastro é o **modal "Novo Produto"** (`src/components/produtos/produto-modal.tsx`), via Server Actions.
 
-- Campos: nome, unidade de venda (caixa/kg/saco/bandeja/unidade), quantidade por recipiente, tipo de caixa (plástica/papelão/madeira), capacidade do saco, ativo/inativo.
-- Buscar por nome; marcar ativo/inativo; exclusão é **soft delete** (com confirmação).
-- Produtos com histórico não são apagados de fato (proteção de integridade) — usa-se a exclusão lógica.
+- Campos: nome, embalagem (caixa/kg/saco/bandeja/unidade), **preço de venda** (opcional — primeiro preço sugerido no PDV depois do da última venda), **estoque inicial** + **custo por unidade** (obrigatório quando há estoque), **alerta de estoque** (`minStock`; vazio = limite padrão 5) e **foto**. Em "Mais opções": tipo de caixa, quantidade por recipiente, capacidade do saco, ativo.
+- **Foto**: Câmera (`capture="environment"`), Galeria ou **Banco** (catálogo da plataforma, `/admin/imagens`). Comprimida no aparelho (WebP ~1024 px) e gravada no Cloudflare R2 pelo servidor. Sem R2 configurado os botões ficam desabilitados.
+- O estoque inicial vira um movimento `ENTRADA` (`sourceType: "ESTOQUE_INICIAL"`) na mesma transação do produto. Depois do cadastro, o saldo só muda por compra, venda ou ajuste.
+- Exclusão é **soft delete**; embalagem trava quando há histórico.
 
 ## Fornecedores
 
 Rotas `/fornecedores`, `/fornecedores/novo`, `/fornecedores/[id]`.
 
 - Campos: nome, telefone, endereço, observações, ativo/inativo.
-- CRUD completo (soft delete). Histórico de compras por fornecedor disponível no serviço.
+- CRUD completo (soft delete). A tela do fornecedor mostra o histórico de compras com a situação de cada uma (paga / a pagar / vencida) e o total **em aberto** com ele.
 
-## Compras
+## Compras (dentro do Estoque)
 
-Rotas `/compras`, `/compras/nova`. Operação **transacional** (Route Handler `POST /api/compras`).
+Rota `/estoque/compra` (registrar) e aba **Compras** de `/estoque?aba=compras` (histórico). `/compras` e `/compras/nova` redirecionam. Operação **transacional** (Route Handler `POST /api/compras`).
 
-- Cabeçalho: data, fornecedor (opcional), frete, observações. Itens: produto, quantidade, preço unitário (repetíveis).
+- Cabeçalho: data, fornecedor (opcional), frete, observações, **pagamento** ("Pago agora" com a forma, ou "A pagar até" uma data). Itens: produto, quantidade, preço unitário (repetíveis). "+ Novo produto" abre o mesmo modal do Estoque.
 - Regras (tudo numa transação):
   - `valor_total_compra = Σ(qtd × preço) + frete`.
   - O **frete é rateado** entre os itens proporcionalmente ao valor de cada linha; o custo real por unidade (`unitCost`) grava o frete embutido.
   - Cada item gera um **movimento de estoque de ENTRADA** → o estoque sobe automaticamente.
+  - Gera **uma despesa** `origem = COMPRA` no valor total, com o fornecedor (`PAGO` em `purchaseDate` ou `PENDENTE` até o vencimento). Ver Despesas.
   - Registra auditoria.
 
 ## Vendas / Frente de caixa (PDV)
@@ -128,7 +130,9 @@ Em tela estreita (celular, que é o uso no balcão) a mesma informação vira ca
 
 ## Estoque
 
-Rotas `/estoque` (posição) e `/estoque/ajuste`. Movimento manual em `POST /api/estoque/ajuste`.
+Rotas `/estoque` (produtos + posição, com abas Produtos | Compras), `/estoque/compra` e `/estoque/ajuste`. Movimento manual em `POST /api/estoque/ajuste`.
+
+- Filtros: Todos, Com estoque, **Estoque baixo** (usa `minStock` do produto) e Zerados. Cartão de produto com foto, saldo, custo médio, valor e preço de venda; ações Vender, Editar e Excluir.
 
 - A **posição** é **derivada** dos movimentos: `saldo = Σ(ENTRADA, AJUSTE) − Σ(SAÍDA, QUEBRA, DOAÇÃO)`. Mostra quantidade e valor por produto e o **valor total em estoque**.
 - Entradas/saídas são automáticas (compra/venda). O **ajuste manual** cobre **quebra/perda**, **doação** e acerto de inventário, com motivo. O custo unitário usado é o custo médio das entradas (ou informado).
@@ -139,8 +143,9 @@ Rotas `/despesas`, `/despesas/nova`, `/despesas/[id]`.
 
 - Campos: descrição, valor, tipo (**fixa/variável**), categoria, vencimento, pagamento, situação (**pendente/pago**).
 - **Categorias**: 14 categorias iniciais criadas no cadastro da empresa (aluguel do box, energia, internet, contabilidade, pró-labore, impostos, seguro, condomínio, água, telefone, salários, INSS, sistema de gestão, outros).
-- A lista mostra o resumo: total de **fixas**, **variáveis** e **geral**.
-- Alimenta o cálculo de **lucro líquido** e as **contas a pagar** do dashboard.
+- Campo **fornecedor** opcional; filtros por **Origem** (Compras / Operacionais) e **Fornecedor**.
+- **Toda compra gera uma despesa** (`origem = COMPRA`; o frete lançado à parte antes desta versão é `FRETE_COMPRA`). Ela conta em Contas a Pagar, vencidas, avisos e fluxo de caixa, mas **não** no lucro, em Fixas/Variáveis, no "% do faturamento" nem na réplica de mês — o custo da mercadoria já está no CMV. Valor, descrição e fornecedor vêm da compra (travados); não pode ser excluída nem duplicada.
+- O comparativo do mês (Fixas/Variáveis) e o lucro líquido do dashboard usam só as despesas operacionais (`origem = MANUAL`).
 
 ## Caixas plásticas
 

@@ -74,7 +74,7 @@ test.describe("Guia de uso (/ajuda)", () => {
     // ─── 1. Plano completo: o guia mostra tudo ───
     await page.goto("/ajuda");
     // Escopa ao <main>: os titulos das areas coincidem com os links da barra
-    // lateral (Produtos, Fiado, Estoque estao nos dois lugares), e sem isto o
+    // lateral (Fiado, por exemplo, esta nos dois lugares), e sem isto o
     // seletor casa com dois elementos.
     const guia = page.locator("main");
     await expect(guia.getByRole("heading", { name: "Como usar o CeasaPro" })).toBeVisible();
@@ -82,9 +82,10 @@ test.describe("Guia de uso (/ajuda)", () => {
     // Núcleo: sempre presente, independentemente do plano.
     await expect(guia.getByText("Comece por aqui")).toBeVisible();
     // `exact: true` e obrigatorio: `hasText` casa por SUBSTRING e sem acento de
-    // caixa, e "Produtos" apareceria tambem nos resumos de Compras e Estoque
-    // (os dois mencionam "produto"). O escopo em <main> ja exclui a lateral.
-    for (const nucleo of ["Vender (frente de caixa)", "Produtos", "Fiado", "Estoque"]) {
+    // caixa, e "Estoque" casaria com todo resumo que fala do estoque. O escopo
+    // em <main> ja exclui a lateral. Produtos e Compras nao tem mais area
+    // propria: vivem dentro de "Estoque (produtos e compras)", como no app.
+    for (const nucleo of ["Vender (frente de caixa)", "Estoque (produtos e compras)", "Fiado"]) {
       await expect(guia.getByText(nucleo, { exact: true })).toHaveCount(1);
     }
 

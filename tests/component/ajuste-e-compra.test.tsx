@@ -19,9 +19,16 @@ vi.mock("next/navigation", () => ({
 }));
 const toast = vi.hoisted(() => ({ error: vi.fn(), success: vi.fn(), warning: vi.fn() }));
 vi.mock("sonner", () => ({ toast }));
+// O "+ Novo produto" da compra abre o modal de produto, que chama Server Actions.
+vi.mock("@/actions/produtos.actions", () => ({
+  criarProduto: vi.fn(),
+  atualizarProduto: vi.fn(),
+  enviarFotoProduto: vi.fn(),
+  buscarFotosDoBanco: vi.fn(),
+}));
 
 const { AjusteForm } = await import("@/app/(app)/estoque/ajuste/_components/ajuste-form");
-const { CompraForm } = await import("@/app/(app)/compras/nova/_components/compra-form");
+const { CompraForm } = await import("@/app/(app)/estoque/compra/_components/compra-form");
 
 const produtos = [{ id: "tomate", name: "Tomate" }];
 
@@ -96,9 +103,9 @@ describe("compra", () => {
     render(<CompraForm produtos={produtos} fornecedores={[]} />);
     const botao = screen.getByRole("button", { name: "Salvar compra" });
     await user.click(botao);
-    await waitFor(() => expect(push).toHaveBeenCalledWith("/compras"));
+    await waitFor(() => expect(push).toHaveBeenCalledWith("/estoque?aba=compras"));
 
-    // A tela antiga segue na frente até /compras chegar: o botão NÃO pode voltar.
+    // A tela antiga segue na frente até o Estoque chegar: o botão NÃO pode voltar.
     expect(botao).toBeDisabled();
     await user.click(botao);
     await user.click(botao);
@@ -115,6 +122,44 @@ describe("compra", () => {
     expect(botao).toBeEnabled();
     await user.click(botao);
     expect(apiPost).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe("compra: pagamento vira a conta em Despesas", () => {
+  it("padrão: pago agora, sem forma informada", async () => {
+    apiPost.mockResolvedValue({ ok: true, data: { id: "c1" } });
+    const user = userEvent.setup();
+    render(<CompraForm produtos={produtos} fornecedores={[]} />);
+    await user.click(screen.getByRole("button", { name: "Salvar compra" }));
+    expect(apiPost.mock.calls[0]![1]).toMatchObject({
+      pagamento: { status: "PAGO", paymentMethod: null },
+    });
+    expect(apiPost.mock.calls[0]![1]).not.toHaveProperty("lancarFreteComoDespesa");
+  });
+
+  it("a prazo: manda PENDENTE com o vencimento e a forma", async () => {
+    apiPost.mockResolvedValue({ ok: true, data: { id: "c1" } });
+    const user = userEvent.setup();
+    render(<CompraForm produtos={produtos} fornecedores={[]} />);
+    await user.click(screen.getByRole("radio", { name: "A pagar" }));
+    await user.selectOptions(screen.getByLabelText("Forma"), "BOLETO");
+    const vencimento = screen.getByLabelText("Pagar até") as HTMLInputElement;
+    await user.clear(vencimento);
+    await user.type(vencimento, "2099-12-31");
+    await user.click(screen.getByRole("button", { name: "Salvar compra" }));
+    expect(apiPost.mock.calls[0]![1]).toMatchObject({
+      pagamento: { status: "PENDENTE", paymentMethod: "BOLETO", dueDate: "2099-12-31" },
+    });
+  });
+
+  it("a prazo sem vencimento não envia", async () => {
+    const user = userEvent.setup();
+    render(<CompraForm produtos={produtos} fornecedores={[]} />);
+    await user.click(screen.getByRole("radio", { name: "A pagar" }));
+    await user.clear(screen.getByLabelText("Pagar até"));
+    await user.click(screen.getByRole("button", { name: "Salvar compra" }));
+    expect(apiPost).not.toHaveBeenCalled();
+    expect(toast.error).toHaveBeenCalledWith("Informe até quando vai pagar a compra.");
   });
 });
 

@@ -23,6 +23,13 @@ export interface ContaUnificada {
   dueDate: string | null;
   paidDate: string | null;
   vencida: boolean;
+  /** Fornecedor a quem a conta é devida, quando há. */
+  supplierName: string | null;
+  /**
+   * Compra que gerou esta conta. Conta de compra tem valor, descrição e
+   * fornecedor travados (vêm da compra) e não pode ser excluída.
+   */
+  purchaseId: string | null;
 }
 
 export interface HigienizacaoParaLista {
@@ -46,6 +53,8 @@ export interface DespesaParaLista {
   categoryName: string | null;
   dueDate: Date | null;
   paidDate: Date | null;
+  supplierName?: string | null;
+  purchaseId?: string | null;
 }
 
 /**
@@ -89,6 +98,8 @@ export function linhaDeDespesa(d: DespesaParaLista, agora: Date): ContaUnificada
     dueDate: d.dueDate?.toISOString() ?? null,
     paidDate: d.paidDate?.toISOString() ?? null,
     vencida: !pago && d.dueDate !== null && d.dueDate < hoje,
+    supplierName: d.supplierName ?? null,
+    purchaseId: d.purchaseId ?? null,
   };
 }
 
@@ -116,6 +127,8 @@ export function linhasDeHigienizacao(
     dueDate: lote.sentDate.toISOString(),
     paidDate: null,
     vencida,
+    supplierName: null,
+    purchaseId: null,
   };
 
   const paga: ContaUnificada = {
@@ -131,6 +144,8 @@ export function linhasDeHigienizacao(
     dueDate: lote.sentDate.toISOString(),
     paidDate: lote.paidDate?.toISOString() ?? null,
     vencida: false,
+    supplierName: null,
+    purchaseId: null,
   };
 
   const candidatas: ContaUnificada[] = [];

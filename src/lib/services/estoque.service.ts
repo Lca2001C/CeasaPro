@@ -17,6 +17,8 @@ export interface StockPosition {
   avgCost: Prisma.Decimal;
   value: Prisma.Decimal;
   lastMovementAt: Date | null;
+  /** Alerta de estoque do produto (nulo = limite padrão). */
+  minStock: Prisma.Decimal | null;
 }
 
 /**
@@ -218,6 +220,7 @@ export const EstoqueService = {
         quantity: Prisma.Decimal | string;
         custo: Prisma.Decimal | string;
         lastmovementat: Date | null;
+        minStock: Prisma.Decimal | string | null;
       }[]
     >(
       `${sqlCustoEstoque(false)}
@@ -226,7 +229,8 @@ export const EstoqueService = {
               p."saleUnit"::text AS "saleUnit",
               COALESCE(r.quantidade, 0) AS quantity,
               COALESCE(r.custo, 0) AS custo,
-              r.ultimo_mov AS lastmovementat
+              r.ultimo_mov AS lastmovementat,
+              p."minStock" AS "minStock"
        FROM products p
        LEFT JOIN resultado r ON r."productId" = p.id
        WHERE p."tenantId" = $1 AND p."deletedAt" IS NULL
@@ -246,6 +250,7 @@ export const EstoqueService = {
         // número que a venda grava em `unitCostAtSale`.
         value: valorDaLinha(quantity, custo),
         lastMovementAt: r.lastmovementat,
+        minStock: r.minStock == null ? null : toDecimal(r.minStock as Prisma.Decimal.Value),
       };
     });
   },

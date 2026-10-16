@@ -20,14 +20,35 @@ export const FornecedoresService = {
     return s;
   },
 
-  /** Histórico de compras do fornecedor. */
+  /** Histórico de compras do fornecedor, com a conta (paga ou a pagar) de cada uma. */
   async purchaseHistory(tenantId: string, id: string) {
     const db = getTenantPrisma(tenantId);
     return db.purchase.findMany({
       where: { supplierId: id },
+      include: {
+        expenses: {
+          where: { origem: "COMPRA", deletedAt: null },
+          select: { id: true, status: true, dueDate: true },
+          take: 1,
+        },
+      },
       orderBy: { purchaseDate: "desc" },
       take: 50,
     });
+  },
+
+  /**
+   * Quanto a empresa ainda deve a este fornecedor: as contas PENDENTES ligadas
+   * a ele (as de compra e as lançadas à mão com o fornecedor).
+   */
+  async emAberto(tenantId: string, id: string) {
+    const db = getTenantPrisma(tenantId);
+    const r = await db.expense.aggregate({
+      _sum: { amount: true },
+      _count: { _all: true },
+      where: { supplierId: id, status: "PENDENTE" },
+    });
+    return { total: r._sum.amount ?? 0, contas: r._count._all };
   },
 
   async create(input: FornecedorInput, ctx: TenantCtx) {

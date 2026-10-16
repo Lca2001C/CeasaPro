@@ -254,7 +254,7 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
     expect(Number(painel.contasPagar)).toBe(Number(resumo.aPagar));
   });
 
-  it("frete com purchaseId não entra no lucro — já está no CMV", async () => {
+  it("conta de compra/frete não entra no lucro — já está no CMV", async () => {
     const purchase = await prisma.purchase.create({
       data: {
         tenantId,
@@ -285,6 +285,7 @@ describe("painel: agregações do mês têm TETO (regressão)", () => {
         status: "PENDENTE",
         dueDate: new Date(),
         purchaseId: purchase.id,
+        origem: "FRETE_COMPRA",
       },
     });
 

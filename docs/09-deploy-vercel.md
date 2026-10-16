@@ -192,6 +192,8 @@ Settings → **Environment Variables**. Marque **Production** (e Preview, se voc
 
 **Opcionais (têm default no código):** `ACCESS_TOKEN_TTL` (15m), `REFRESH_TOKEN_TTL_DAYS` (30), `SMTP_HOST` (smtp.gmail.com), `SMTP_PORT` (465), `EMAIL_REPLY_TO`, `LOG_LEVEL`.
 
+**Fotos de produto (opcional):** `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` (as cinco ou nenhuma). Sem elas o cadastro funciona e os botões de foto ficam desabilitados. Ver [07](07-instalacao-e-deploy.md).
+
 **Não configure:**
 
 | Variável | Por quê |
@@ -199,7 +201,6 @@ Settings → **Environment Variables**. Marque **Production** (e Preview, se voc
 | `NODE_ENV` | A Vercel define sozinha; setar à mão quebra o build |
 | `VERCEL_URL`, `VERCEL_PROJECT_PRODUCTION_URL` | Injetadas automaticamente |
 | `SEED_SUPERADMIN_*` | Só para rodar o seed, não em runtime |
-| `R2_*` | Estão no `.env.example`, mas nenhuma linha do código as usa hoje |
 
 > Rede de segurança: se `APP_URL` faltar, `src/lib/app-url.ts` cai em `VERCEL_PROJECT_PRODUCTION_URL` (produção) ou `VERCEL_URL` (preview), então os links de e-mail ainda saem com o domínio certo. Isso **não** substitui configurar `APP_URL`: `NEXT_PUBLIC_APP_URL` entra no bundle do browser em tempo de build e não tem fallback.
 

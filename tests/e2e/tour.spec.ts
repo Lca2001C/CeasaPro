@@ -4,7 +4,7 @@ import { test, expect, type Page } from "@playwright/test";
  * Tour guiado (driver.js).
  *
  * O que este teste prova é o que a tipagem e os testes de unidade não alcançam:
- * que o tour ANDA. Ele atravessa treze rotas e em cada uma precisa achar no DOM
+ * que o tour ANDA. Ele atravessa onze rotas e em cada uma precisa achar no DOM
  * o elemento que o roteiro promete — um `data-tour` renomeado numa página não
  * quebra build nem tipo, só faz o balão apontar para o vazio. Aqui isso falha.
  *
@@ -17,13 +17,17 @@ import { test, expect, type Page } from "@playwright/test";
  * `requestAnimationFrame` — e produziria falha intermitente.
  */
 
-/** O percurso do plano completo, que é o da empresa demo. */
+/**
+ * O percurso do plano completo, que é o da empresa demo.
+ *
+ * Produtos e Compras não são mais capítulos: os dois moram no Estoque (cadastro,
+ * entrada e saldo numa tela só), que por isso tem quatro balões e vem logo
+ * depois do Início.
+ */
 const PERCURSO = [
   "/dashboard",
-  "/produtos",
-  "/fornecedores",
-  "/compras",
   "/estoque",
+  "/fornecedores",
   "/vendas",
   "/fiado",
   "/despesas",
@@ -37,7 +41,7 @@ const PERCURSO = [
 /** Títulos que marcam pontos do roteiro usados como referência nos testes. */
 const ABERTURA = "Vamos dar uma volta pelo sistema";
 const FIM_DO_INICIO = "Como andar pelo sistema";
-const COMECO_DE_PRODUTOS = "Produtos: a base de tudo";
+const COMECO_DO_ESTOQUE = "Estoque: a casa dos seus produtos";
 
 const balao = (page: Page) => page.locator(".driver-popover");
 /**
@@ -68,7 +72,7 @@ const TRANSICAO_MS = 500;
 
 test.describe("Tour guiado", () => {
   test("atravessa todas as telas do plano e termina no guia de uso", async ({ page }) => {
-    // Treze navegações contra o build de produção: lento por natureza.
+    // Onze navegações contra o build de produção: lento por natureza.
     test.setTimeout(180_000);
 
     await page.goto("/dashboard");
@@ -153,8 +157,8 @@ test.describe("Tour guiado", () => {
       await proximo(page).click();
       await page.waitForTimeout(TRANSICAO_MS);
     }
-    await page.waitForURL("**/produtos");
-    await expect(titulo(page)).toHaveText(COMECO_DE_PRODUTOS);
+    await page.waitForURL("**/estoque");
+    await expect(titulo(page)).toHaveText(COMECO_DO_ESTOQUE);
 
     // Voltar do primeiro balão de uma tela cai no ÚLTIMO da anterior, e não no
     // primeiro — senão seria preciso reler a tela toda para seguir adiante.

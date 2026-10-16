@@ -24,9 +24,10 @@ export const PRIMEIROS_PASSOS: PassoInicial[] = [
   {
     titulo: "1. Cadastre seus produtos",
     texto:
-      "Nome e unidade de venda (caixa, kg, saco, bandeja ou unidade). É o mínimo " +
-      "para conseguir vender.",
-    href: "/produtos/novo",
+      "No Estoque, toque em Adicionar Novo Produto: nome, embalagem, preço de venda, " +
+      "quanto já tem no box (com quanto custou) e uma foto — da câmera, da galeria ou " +
+      "do banco de fotos.",
+    href: "/estoque?novo=1",
   },
   {
     titulo: "2. Cadastre seus fornecedores",
@@ -34,11 +35,11 @@ export const PRIMEIROS_PASSOS: PassoInicial[] = [
     href: "/fornecedores/novo",
   },
   {
-    titulo: "3. Lance a primeira compra",
+    titulo: "3. Registre a compra",
     texto:
-      "É a compra que coloca mercadoria no estoque. Sem lançar compra, o estoque fica " +
-      "em zero e o sistema não deixa vender.",
-    href: "/compras/nova",
+      "No Estoque, toque em Registrar compra. A mercadoria entra no estoque e a conta " +
+      "vai para Despesas, paga ou a pagar, com o fornecedor.",
+    href: "/estoque/compra",
   },
   {
     titulo: "4. Faça a primeira venda",
@@ -79,20 +80,6 @@ export const AREAS: AreaGuia[] = [
       "você precisar lançar nada na tela de Fiado.",
   },
   {
-    titulo: "Produtos",
-    href: "/produtos",
-    resumo: "O que você comercializa. É a base de tudo: sem produto não há compra nem venda.",
-    comoUsar: [
-      "Toque em Novo, informe o nome e a unidade de venda.",
-      "Se vende por caixa ou saco, informe quanto vai em cada um.",
-      "Use a busca pelo nome para achar rápido no meio de muitos.",
-    ],
-    atencao:
-      "Produto que já tem compra ou venda no histórico não é apagado de verdade: fica " +
-      "inativo e sai das listas. É de propósito — apagar de vez faria os relatórios " +
-      "dos meses anteriores mudarem de valor.",
-  },
-  {
     titulo: "Fornecedores",
     href: "/fornecedores",
     resumo: "De quem você compra. Permite ver quanto passa por cada um.",
@@ -100,21 +87,6 @@ export const AREAS: AreaGuia[] = [
       "Cadastre nome e telefone; o resto é opcional.",
       "Na tela do fornecedor você vê o histórico de compras dele.",
     ],
-  },
-  {
-    titulo: "Compras",
-    href: "/compras",
-    resumo: "A entrada de mercadoria. É o que coloca produto no estoque.",
-    comoUsar: [
-      "Escolha a data e o fornecedor.",
-      "Adicione os itens: produto, quantidade e preço que você pagou.",
-      "Informe o frete, se houve.",
-      "Ao salvar, tudo entra no estoque automaticamente.",
-    ],
-    atencao:
-      "O frete é dividido entre os itens conforme o valor de cada um — o item mais " +
-      "caro carrega mais frete. Por isso o custo real de cada caixa já vem com o frete " +
-      "embutido, e é isso que faz o lucro sair certo em vez de otimista.",
   },
   {
     titulo: "Vendas (histórico)",
@@ -142,31 +114,44 @@ export const AREAS: AreaGuia[] = [
       "faturamento e a mercadoria volta para o estoque.",
   },
   {
-    titulo: "Estoque",
+    titulo: "Estoque (produtos e compras)",
     href: "/estoque",
-    resumo: "Quanto você tem de cada produto, e quanto isso vale.",
+    resumo:
+      "Seus produtos, quanto tem de cada um, quanto isso vale — e as compras que " +
+      "colocaram a mercadoria lá.",
     comoUsar: [
-      "A lista mostra o saldo de cada produto e destaca o que está baixo.",
+      "Adicionar Novo Produto: nome, embalagem, preço de venda, estoque inicial, alerta " +
+        "de estoque e foto (câmera, galeria ou banco de fotos).",
+      "Registrar compra: data, fornecedor, itens, frete e se pagou agora ou vai pagar " +
+        "depois. O estoque sobe na hora.",
+      "A aba Compras mostra o histórico e o que ainda está a pagar.",
       "Use Ajuste para registrar quebra, perda, doação ou uma correção de contagem.",
     ],
     atencao:
       "O saldo não é um número que se digita: é a soma de todas as entradas e saídas. " +
-      "É o que permite abrir um produto e ver de onde veio cada movimento. Para " +
-      "corrigir uma diferença, lance um Ajuste — assim fica registrado o que " +
-      "aconteceu, em vez de o número mudar sem explicação.",
+      "Para corrigir uma diferença, lance um Ajuste. O frete da compra é dividido entre " +
+      "os itens conforme o valor de cada um, então o custo de cada caixa já vem com o " +
+      "frete embutido. E produto com compra ou venda no histórico não é apagado de " +
+      "verdade: sai das listas, para os relatórios antigos não mudarem.",
   },
   {
     titulo: "Despesas",
     href: "/despesas",
-    resumo: "Frete, funcionário, aluguel do box, embalagem — o que sai do caixa.",
+    resumo:
+      "Funcionário, aluguel do box, embalagem — e as contas das compras de mercadoria, " +
+      "com o fornecedor.",
     comoUsar: [
       "Lance com categoria, valor e vencimento.",
       "Marque se é fixa (todo mês) ou variável.",
-      "Use as abas Pendentes / Pagas / Todas para filtrar.",
+      "Use as abas Pendentes / Pagas / Todas para filtrar, e o filtro Origem para ver " +
+        "só as compras ou só as contas do dia a dia.",
+      "Cada compra registrada no Estoque aparece aqui sozinha, marcada como Compra.",
     ],
     atencao:
       "Os três valores no topo somam TODAS as suas despesas, não só as que aparecem na " +
-      "tela. É de propósito: o total devido não pode mudar só porque você filtrou a lista.",
+      "tela. É de propósito: o total devido não pode mudar só porque você filtrou a lista. " +
+      "A conta de uma compra entra no que você deve e no caixa, mas não diminui o lucro " +
+      "uma segunda vez: o custo da mercadoria já sai do lucro quando você vende.",
   },
   {
     titulo: "Relatórios",

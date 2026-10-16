@@ -66,7 +66,7 @@ test.describe("Access token vencido no meio do formulário", () => {
     context,
   }) => {
     await entrar(page);
-    await page.goto("/compras/nova");
+    await page.goto("/estoque/compra");
     await expect(page.getByRole("button", { name: "Salvar compra" })).toBeVisible();
 
     // 15 minutos depois: o navegador já descartou o cookie de acesso (maxAge),
@@ -82,7 +82,8 @@ test.describe("Access token vencido no meio do formulário", () => {
 
     // O que o usuário tem de ver: a compra registrada — não um 401.
     await expect(page.getByText(/Compra registrada/i)).toBeVisible();
-    await expect(page).toHaveURL(/\/compras$/);
+    // A lista de compras agora é a aba "Compras" do Estoque.
+    await expect(page).toHaveURL(/\/estoque\?aba=compras$/);
 
     // E gravada de verdade. Sem esta asserção, um toast otimista passaria.
     expect(await comprasDoTenant()).toBe(antes + 1);
@@ -186,7 +187,7 @@ test.describe("Sessão realmente encerrada", () => {
 
   test("sem refresh token, avisa em vez de fingir que salvou", async ({ page, context }) => {
     await entrar(page);
-    await page.goto("/compras/nova");
+    await page.goto("/estoque/compra");
     await expect(page.getByRole("button", { name: "Salvar compra" })).toBeVisible();
 
     // Logout em outro aparelho, conta desativada, 30 dias sem usar: não há como

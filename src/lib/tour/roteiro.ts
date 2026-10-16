@@ -112,21 +112,38 @@ export const CAPITULOS: CapituloTour[] = [
     ],
   },
   {
-    rota: "/produtos",
+    // Produtos, Compras e Estoque são uma tela só: cadastrar, dar entrada e
+    // conferir o saldo acontecem aqui.
+    rota: "/estoque",
     passos: [
       {
         alvo: TITULO,
-        titulo: "Produtos: a base de tudo",
+        titulo: "Estoque: a casa dos seus produtos",
         texto:
-          "O que você comercializa. Sem produto cadastrado não há compra nem venda, " +
-          "então é por aqui que se começa.",
+          "Aqui ficam os produtos, quanto você tem de cada um e quanto isso vale. Cada " +
+          "número é a soma das entradas e saídas daquele produto — calculado, não digitado.",
+      },
+      {
+        alvo: '[data-tour="novo-produto"]',
+        titulo: "Cadastre o produto aqui",
+        texto:
+          "Nome, embalagem, preço de venda, quanto já tem no box (e quanto custou), o " +
+          "alerta de estoque baixo e uma foto — tirada na hora, da galeria ou do banco " +
+          "de fotos.",
+      },
+      {
+        alvo: '[data-tour="registrar-compra"]',
+        titulo: "Compra é o que enche o estoque",
+        texto:
+          "Data, fornecedor, itens e frete. O frete é rateado no custo de cada item, e a " +
+          "conta da compra vai para Despesas — paga na hora ou a pagar até o vencimento.",
       },
       {
         alvo: ACAO,
-        titulo: "Nome e unidade de venda",
+        titulo: "Quebra, perda e contagem",
         texto:
-          "É o mínimo para conseguir vender: tomate vendido em caixa, batata em saco, " +
-          "queijo em kg. Se vende por caixa ou saco, informe quanto vai em cada um.",
+          "Quando a mercadoria estraga ou a contagem não fecha, lance um Ajuste. Assim " +
+          "fica registrado o que aconteceu, em vez de o saldo mudar sem explicação.",
       },
     ],
   },
@@ -137,47 +154,8 @@ export const CAPITULOS: CapituloTour[] = [
         alvo: TITULO,
         titulo: "De quem você compra",
         texto:
-          "Nome e telefone bastam. Serve para abrir o fornecedor e ver o histórico de " +
-          "compras dele — quanto passa por cada um.",
-      },
-    ],
-  },
-  {
-    rota: "/compras",
-    passos: [
-      {
-        alvo: TITULO,
-        titulo: "Compra é o que enche o estoque",
-        texto:
-          "Toda mercadoria entra por aqui. O estoque nasce vazio, e o sistema não deixa " +
-          "vender o que não entrou.",
-      },
-      {
-        alvo: ACAO,
-        titulo: "Itens e frete",
-        texto:
-          "Data, fornecedor, os itens com quantidade e preço pago, e o frete. O frete é " +
-          "rateado entre os itens conforme o valor de cada um, então o custo da caixa já " +
-          "vem com ele embutido — é o que faz o lucro sair certo, e não otimista.",
-      },
-    ],
-  },
-  {
-    rota: "/estoque",
-    passos: [
-      {
-        alvo: TITULO,
-        titulo: "O saldo é calculado, não digitado",
-        texto:
-          "Cada número aqui é a soma das entradas e saídas daquele produto. Por isso " +
-          "você pode abrir um produto e ver de onde veio cada movimento.",
-      },
-      {
-        alvo: ACAO,
-        titulo: "Quebra, perda e contagem",
-        texto:
-          "Quando a mercadoria estraga ou a contagem não fecha, lance um Ajuste. Assim " +
-          "fica registrado o que aconteceu, em vez de o saldo mudar sem explicação.",
+          "Nome e telefone bastam. Ao abrir o fornecedor você vê o histórico de compras " +
+          "dele e quanto ainda deve a ele.",
       },
     ],
   },

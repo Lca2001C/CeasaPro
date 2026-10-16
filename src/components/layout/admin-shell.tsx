@@ -17,6 +17,7 @@ const nav = [
   { href: "/admin/planos", label: "Planos" },
   { href: "/admin/pagamentos", label: "Pagamentos" },
   { href: "/admin/cotacoes", label: "Cotações" },
+  { href: "/admin/imagens", label: "Banco de fotos" },
   { href: "/admin/auditoria", label: "Auditoria" },
 ];
 

@@ -40,6 +40,7 @@ const PARES: Record<string, string> = {
   CREDIT_STATUS_LABELS: "CreditStatus",
   EXPENSE_TYPE_LABELS: "ExpenseType",
   EXPENSE_STATUS_LABELS: "ExpenseStatus",
+  EXPENSE_ORIGEM_LABELS: "ExpenseOrigem",
   EXPENSE_PAYMENT_METHOD_LABELS: "ExpensePaymentMethod",
   STOCK_MOVEMENT_LABELS: "StockMovementType",
   CRATE_MOVEMENT_LABELS: "PlasticCrateMovementType",

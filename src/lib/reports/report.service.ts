@@ -14,6 +14,7 @@ import {
   EXPENSE_TYPE_LABELS,
   EXPENSE_STATUS_LABELS,
   EXPENSE_PAYMENT_METHOD_LABELS,
+  EXPENSE_ORIGEM_LABELS,
   CREDIT_STATUS_LABELS,
   CRATE_MOVEMENT_LABELS,
   CRATE_CLEANING_STATUS_LABELS,
@@ -228,7 +229,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             campo === "dueDate"
               ? { OR: [{ dueDate: janela }, { dueDate: null, createdAt: janela }] }
               : { [campo]: janela },
-          include: { category: true },
+          include: { category: true, supplier: { select: { name: true } } },
           orderBy: [{ [campo]: "asc" }, { createdAt: "asc" }],
         })
       ).sort((a, b) => (dataDe(a)?.getTime() ?? 0) - (dataDe(b)?.getTime() ?? 0));
@@ -236,6 +237,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         categoria: d.category?.name ?? "Sem categoria",
         data: dataDe(d),
         description: d.description,
+        origem: EXPENSE_ORIGEM_LABELS[d.origem],
+        supplier: d.supplier?.name ?? "-",
         category: d.category?.name ?? "-",
         type: EXPENSE_TYPE_LABELS[d.type],
         status: EXPENSE_STATUS_LABELS[d.status],
@@ -252,6 +255,10 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         columns: [
           { key: "data", label: LABEL_CAMPO_DATA[campo], format: "date" },
           { key: "description", label: "Descricao" },
+          // Compra (mercadoria — já está no custo do que foi vendido) separada
+          // da despesa operacional: o lucro do Início só desconta a segunda.
+          { key: "origem", label: "Origem" },
+          { key: "supplier", label: "Fornecedor" },
           { key: "category", label: "Categoria" },
           { key: "type", label: "Tipo" },
           { key: "status", label: "Situacao" },
@@ -273,13 +280,15 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
     case "CONTAS_PAGAS": {
       const pagas = await db.expense.findMany({
         where: { status: "PAGO", paidDate: { gte: p.from, lte: p.to } },
-        include: { category: true },
+        include: { category: true, supplier: { select: { name: true } } },
         orderBy: [{ paidDate: "asc" }],
       });
       const linhas = pagas.map((d) => ({
         categoria: d.category?.name ?? "Sem categoria",
         paidDate: d.paidDate,
         description: d.description,
+        origem: EXPENSE_ORIGEM_LABELS[d.origem],
+        supplier: d.supplier?.name ?? "-",
         category: d.category?.name ?? "-",
         type: EXPENSE_TYPE_LABELS[d.type],
         paymentMethod: d.paymentMethod
@@ -293,6 +302,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         columns: [
           { key: "paidDate", label: "Pagamento", format: "date" },
           { key: "description", label: "Descricao" },
+          { key: "origem", label: "Origem" },
+          { key: "supplier", label: "Fornecedor" },
           { key: "category", label: "Categoria" },
           { key: "type", label: "Tipo" },
           { key: "paymentMethod", label: "Forma" },
@@ -743,14 +754,18 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "FLUXO_CAIXA": {
       // Entradas = vendas à vista + recebimentos de fiado + venda de embalagens.
-      // Saidas = compras + despesas pagas (sem o frete já embutido na compra) +
-      // pagamentos de higienizacao.
+      // Saidas = despesas pagas (inclusive a conta de cada compra, na data em
+      // que foi PAGA) + pagamentos de higienizacao.
+      //
+      // A compra entra pela despesa dela (`origem = COMPRA`), não por
+      // `purchases.totalAmount` na data da compra: a compra a prazo só sai do
+      // caixa quando é paga. Contar as duas fontes seria a compra em dobro.
       // Agrupa pelo dia BRASILEIRO. As colunas são `timestamp` sem fuso guardando
       // UTC, então truncar direto jogava o movimento das 21h em diante para o dia
       // seguinte — o fluxo de caixa nunca fechava com o do balcão.
       const dayExpr = (col: string) =>
         Prisma.raw(`DATE_TRUNC('day', ${col} AT TIME ZONE 'UTC' AT TIME ZONE '${APP_TIME_ZONE}')::date`);
-      const [vendasVista, recebFiado, vendEmb, compras, despesasPagas, pagHig] =
+      const [vendasVista, recebFiado, vendEmb, despesasPagas, pagHig] =
         await Promise.all([
           // Entrada de venda: o que NÃO foi fiado.
           //
@@ -785,13 +800,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL
               AND "saleDate" >= ${p.from} AND "saleDate" <= ${p.to} GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
-            SELECT ${dayExpr('"purchaseDate"')} AS d, SUM("totalAmount") AS total FROM purchases
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL
-              AND "purchaseDate" >= ${p.from} AND "purchaseDate" <= ${p.to} GROUP BY 1`,
-          prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidDate"')} AS d, SUM(amount) AS total FROM expenses
             WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
-              AND "purchaseId" IS NULL
               AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
           // Soma os PAGAMENTOS, não o acumulado do lote.
           //
@@ -826,7 +836,6 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       bump(vendasVista, "entradas");
       bump(recebFiado, "entradas");
       bump(vendEmb, "entradas");
-      bump(compras, "saidas");
       bump(despesasPagas, "saidas");
       bump(pagHig, "saidas");
 

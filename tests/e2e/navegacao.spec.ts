@@ -6,12 +6,12 @@ test.describe("Navegação (botões do menu)", () => {
     const side = page.locator("aside");
     await expect(side).toBeVisible();
 
+    // Produtos e Compras saíram do menu: os dois vivem dentro do Estoque, e a
+    // tela se chama "Controle de Estoque" — o par link/título não é o mesmo texto.
     const destinos: [string, string][] = [
-      ["Produtos", "Produtos"],
       ["Fornecedores", "Fornecedores"],
-      ["Compras", "Compras"],
       ["Despesas", "Despesas"],
-      ["Estoque", "Estoque"],
+      ["Estoque", "Controle de Estoque"],
       ["Fiado", "Fiado"],
       ["Relatórios", "Relatórios"],
       ["Meu plano", "Meu plano"],

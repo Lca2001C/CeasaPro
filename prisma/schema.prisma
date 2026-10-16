@@ -672,6 +672,16 @@ model Product {
   qtyPerRecipient Decimal?          @db.Decimal(14, 3)
   recipientType   RecipientType?
   sackCapacity    Decimal?          @db.Decimal(14, 3)
+  /// Preço de venda que o dono cadastrou. É o primeiro preço sugerido no PDV;
+  /// sem ele, o PDV cai no sugerido da última compra.
+  salePrice       Decimal?          @db.Decimal(14, 2)
+  /// Alerta de estoque deste produto. Nulo = usa o limite global
+  /// (`ESTOQUE_BAIXO` em `src/lib/estoque/nivel.ts`).
+  minStock        Decimal?          @db.Decimal(14, 3)
+  /// Chave do objeto no R2 (`tenants/<tenantId>/produtos/...` ou
+  /// `catalogo/...`). Guardamos a chave, não a URL: trocar o domínio público
+  /// do bucket não pode quebrar as fotos já gravadas.
+  imageKey        String?
   active          Boolean           @default(true)
   createdAt       DateTime          @default(now())
   updatedAt       DateTime          @updatedAt
@@ -699,6 +709,7 @@ model Supplier {
   updatedAt DateTime   @updatedAt
   deletedAt DateTime?
   purchases Purchase[]
+  expenses  Expense[]
   tenant    Tenant     @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, name])
@@ -952,9 +963,23 @@ model Expense {
   /// Parcela anterior da mesma conta recorrente (ou a despesa de origem, quando
   /// duplicada/replicada à mão).
   parentId      String?
-  /// Compra que originou esta despesa (frete lançado como despesa operacional).
-  /// Garante que o mesmo frete não entre duas vezes.
+  /// Compra que originou esta despesa. Com `origem = COMPRA`, um índice único
+  /// parcial (SQL na migration `estoque_unificado_compra_despesa`) garante uma
+  /// despesa viva por compra.
   purchaseId    String?
+  /// Fornecedor a quem a conta é devida. Preenchido pela compra; opcional na
+  /// despesa lançada à mão.
+  supplierId    String?
+  /// De onde a despesa veio. É ISTO, e não a categoria (que o usuário renomeia),
+  /// que separa conta operacional de conta de compra:
+  ///
+  /// - `MANUAL`: despesa operacional — entra no lucro líquido.
+  /// - `COMPRA`: o valor da compra (itens + frete). Já está no CMV pelo
+  ///   `unitCost` das entradas, então conta em Contas a Pagar e no caixa, e
+  ///   NUNCA no lucro.
+  /// - `FRETE_COMPRA`: frete lançado à parte antes desta versão (legado). Mesma
+  ///   regra da `COMPRA`.
+  origem        ExpenseOrigem         @default(MANUAL)
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   deletedAt     DateTime?
@@ -962,6 +987,7 @@ model Expense {
   parent        Expense?              @relation("ExpenseRecurrence", fields: [parentId], references: [id], onDelete: SetNull)
   children      Expense[]             @relation("ExpenseRecurrence")
   purchase      Purchase?             @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  supplier      Supplier?             @relation(fields: [supplierId], references: [id], onDelete: SetNull)
   tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, dueDate])
@@ -970,7 +996,30 @@ model Expense {
   @@index([tenantId, paidDate])
   @@index([tenantId, recurring])
   @@index([purchaseId])
+  @@index([tenantId, supplierId])
+  @@index([tenantId, origem])
   @@map("expenses")
+}
+
+/// Banco de fotos de produto da PLATAFORMA ("Banco" no cadastro de produto).
+///
+/// GLOBAL, sem `tenantId`, no molde de `ceasa_products`: a foto do tomate é a
+/// mesma para todo cliente, e o super-admin a mantém em `/admin/imagens`. Fica
+/// fora de `TENANT_MODELS` e é lida com `prisma` cru. O produto do cliente
+/// guarda a mesma `imageKey` — por isso foto em uso só é desativada, nunca
+/// excluída.
+model CatalogoImagem {
+  id        String   @id @default(cuid())
+  nome      String
+  /// `normalizarNome(nome)` — minúsculas, sem acento. É o campo da busca.
+  slug      String
+  imageKey  String   @unique
+  ativo     Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([ativo, slug])
+  @@map("catalogo_imagens")
 }
 
 model ReportExport {
@@ -1287,6 +1336,12 @@ enum ExpensePaymentMethod {
 enum ExpenseStatus {
   PENDENTE
   PAGO
+}
+
+enum ExpenseOrigem {
+  MANUAL
+  COMPRA
+  FRETE_COMPRA
 }
 
 enum TenantStatus {

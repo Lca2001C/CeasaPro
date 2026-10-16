@@ -17,11 +17,19 @@ export type NivelEstoque = "zerado" | "acabando" | "ok";
  */
 export const ESTOQUE_BAIXO = 5;
 
-export function nivelEstoque(quantidade: Numeric): NivelEstoque {
+/**
+ * @param minimo Alerta de estoque do PRODUTO (`Product.minStock`), quando o dono
+ *   cadastrou um. Nulo cai no `ESTOQUE_BAIXO` global. Com mínimo, "acabando" é
+ *   chegar NELE (≤), que é como o dono lê "me avise quando tiver 10".
+ */
+export function nivelEstoque(quantidade: Numeric, minimo?: Numeric | null): NivelEstoque {
   const q = toDecimal(quantidade);
   // Saldo negativo (ajuste manual, movimento fora de ordem) conta como zerado:
   // não há o que vender, e mostrar "-2 caixas" como se fosse estoque confunde.
   if (q.lessThanOrEqualTo(0)) return "zerado";
+  if (minimo != null) {
+    return q.lessThanOrEqualTo(toDecimal(minimo)) ? "acabando" : "ok";
+  }
   if (q.lessThan(ESTOQUE_BAIXO)) return "acabando";
   return "ok";
 }

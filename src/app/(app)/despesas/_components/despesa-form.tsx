@@ -23,12 +23,19 @@ import { CurrencyInput } from "@/components/forms/currency-input";
 
 interface Props {
   categories: { id: string; name: string }[];
+  fornecedores?: { id: string; name: string }[];
+  /**
+   * A conta veio de uma compra (`Expense.origem` ≠ MANUAL). Valor, descrição,
+   * tipo e fornecedor são os da compra e ficam travados — o servidor recusa
+   * mudar o valor. Pagamento, vencimento, forma e categoria seguem editáveis.
+   */
+  compra?: { fornecedor: string | null };
   initial?: DespesaInput & { id: string };
   /** Valores para uma despesa NOVA já preenchida (duplicar / "igual à última"). */
   preenchido?: DespesaInput;
 }
 
-export function DespesaForm({ categories, initial, preenchido }: Props) {
+export function DespesaForm({ categories, fornecedores = [], initial, preenchido, compra }: Props) {
   const router = useRouter();
   const [saving, setSaving] = useState(false);
   const hoje = isoDateTz();
@@ -40,8 +47,7 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
     formState: { errors },
   } = useForm<DespesaInput>({
     resolver: zodResolver(despesaSchema),
-    defaultValues:
-      initial ??
+    defaultValues: initial ??
       preenchido ?? {
         description: "",
         type: "VARIAVEL",
@@ -93,9 +99,28 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="flex flex-col gap-4">
+      {compra && (
+        <p className="rounded-md border border-info/40 bg-info/10 p-2 text-xs">
+          Esta conta veio de uma <b>compra</b>
+          {compra.fornecedor ? (
+            <>
+              {" "}
+              de <b>{compra.fornecedor}</b>
+            </>
+          ) : null}
+          . O valor é o da compra; aqui você marca o pagamento, muda o vencimento e a forma de
+          pagar.
+        </p>
+      )}
+
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="description">Descrição</Label>
-        <Input id="description" autoFocus {...register("description")} />
+        <Input
+          id="description"
+          autoFocus={!compra}
+          readOnly={Boolean(compra)}
+          {...register("description")}
+        />
         {errors.description && (
           <span className="text-xs text-destructive">{errors.description.message}</span>
         )}
@@ -113,6 +138,7 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
               value={field.value}
               onChange={field.onChange}
               onBlur={field.onBlur}
+              disabled={Boolean(compra)}
             />
           )}
         />
@@ -122,13 +148,21 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
       <div className="grid grid-cols-2 gap-3">
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="type">Tipo</Label>
-          <Select id="type" {...register("type")}>
-            {toOptions(EXPENSE_TYPE_LABELS).map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </Select>
+          {compra ? (
+            <>
+              {/* Campo nativo desabilitado sai do submit do RHF; o tipo vai escondido. */}
+              <input type="hidden" {...register("type")} />
+              <Input id="type" value="Compra de mercadoria" readOnly />
+            </>
+          ) : (
+            <Select id="type" {...register("type")}>
+              {toOptions(EXPENSE_TYPE_LABELS).map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </Select>
+          )}
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="status">Situação</Label>
@@ -156,11 +190,7 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
         </div>
         <div className="flex flex-col gap-1.5">
           <Label htmlFor="paymentMethod">Forma de pagamento</Label>
-          <Select
-            id="paymentMethod"
-            defaultValue=""
-            {...register("paymentMethod", nullIfEmpty)}
-          >
+          <Select id="paymentMethod" defaultValue="" {...register("paymentMethod", nullIfEmpty)}>
             <option value="">— Não informado —</option>
             {toOptions(EXPENSE_PAYMENT_METHOD_LABELS).map((o) => (
               <option key={o.value} value={o.value}>
@@ -190,27 +220,43 @@ export function DespesaForm({ categories, initial, preenchido }: Props) {
         </div>
       </div>
 
+      {!compra && fornecedores.length > 0 && (
+        <div className="flex flex-col gap-1.5">
+          <Label htmlFor="supplierId">Fornecedor (opcional)</Label>
+          <Select id="supplierId" defaultValue="" {...register("supplierId", nullIfEmpty)}>
+            <option value="">— Nenhum —</option>
+            {fornecedores.map((f) => (
+              <option key={f.id} value={f.id}>
+                {f.name}
+              </option>
+            ))}
+          </Select>
+        </div>
+      )}
+
       {vencimentoNoPassado && (
         <p className="flex items-start gap-2 rounded-md border border-warning/40 bg-warning/10 p-2 text-xs">
-          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
-          O vencimento escolhido já passou. A conta vai nascer como <b>vencida</b> — se for uma
-          conta antiga que você está registrando agora, está tudo certo.
+          <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />O vencimento escolhido já
+          passou. A conta vai nascer como <b>vencida</b> — se for uma conta antiga que você está
+          registrando agora, está tudo certo.
         </p>
       )}
 
       {/* Fixa de verdade: aluguel, INSS e pró-labore não deveriam ser
           relançados à mão todo mês. */}
-      <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
-        <input type="checkbox" className="mt-0.5 size-4" {...register("recurring")} />
-        <span>
-          <b>Repetir todo mês</b>
-          <span className="mt-0.5 block text-xs text-muted-foreground">
-            Ao quitar esta conta, a do mês seguinte é criada automaticamente como pendente, no
-            mesmo dia do vencimento. Precisa de um vencimento informado.
-            {type === "FIXA" ? "" : " Comum em contas fixas (aluguel, INSS, pró-labore)."}
+      {!compra && (
+        <label className="flex items-start gap-2 rounded-lg border p-3 text-sm">
+          <input type="checkbox" className="mt-0.5 size-4" {...register("recurring")} />
+          <span>
+            <b>Repetir todo mês</b>
+            <span className="mt-0.5 block text-xs text-muted-foreground">
+              Ao quitar esta conta, a do mês seguinte é criada automaticamente como pendente, no
+              mesmo dia do vencimento. Precisa de um vencimento informado.
+              {type === "FIXA" ? "" : " Comum em contas fixas (aluguel, INSS, pró-labore)."}
+            </span>
           </span>
-        </span>
-      </label>
+        </label>
+      )}
 
       <div className="flex gap-2 pt-2">
         <Button type="button" variant="ghost" className="flex-1" onClick={() => router.back()}>

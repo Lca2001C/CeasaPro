@@ -97,7 +97,7 @@ export default async function ComecarCotacoesPage() {
             description="Cadastre seus produtos para poder vinculá-los às cotações."
             action={
               <Button asChild size="sm">
-                <Link href="/produtos/novo">Cadastrar produto</Link>
+                <Link href="/estoque?novo=1">Cadastrar produto</Link>
               </Button>
             }
           />

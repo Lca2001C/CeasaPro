@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { recipientTypeEnum } from "./produto";
+import { expensePaymentMethodEnum } from "./despesa";
 
 export const compraItemSchema = z.object({
   productId: z.string().min(1, "Selecione o produto"),
@@ -28,14 +29,25 @@ export const compraSchema = z.object({
   /** Quantas já vieram quebradas — entram como perda, não como estoque. */
   caixasQuebradas: z.number().int().nonnegative().optional(),
   /**
-   * Lançar o frete como despesa operacional.
+   * Como a compra foi paga. Toda compra vira UMA despesa (`origem = COMPRA`)
+   * no valor total — itens + frete —, ligada ao fornecedor:
    *
-   * Frete é a despesa mais comum do CEASA e vivia fora do módulo de despesas:
-   * quem queria vê-la no fluxo de caixa lançava à mão — às vezes duas vezes.
-   * Opcional porque o frete já entra no custo do produto; a despesa é para
-   * quem também controla a saída de caixa.
+   * - `PAGO`: saiu do caixa no dia da compra (`paidDate = purchaseDate`).
+   * - `PENDENTE`: comprou a prazo; vai para Contas a Pagar até `dueDate`.
+   *
+   * Ausente = paga na hora (o comportamento de antes desta opção existir).
    */
-  lancarFreteComoDespesa: z.boolean().optional(),
+  pagamento: z
+    .object({
+      status: z.enum(["PAGO", "PENDENTE"]),
+      paymentMethod: expensePaymentMethodEnum.nullable().optional(),
+      dueDate: z.string().trim().nullable().optional(),
+    })
+    .refine((p) => p.status !== "PENDENTE" || Boolean(p.dueDate), {
+      path: ["dueDate"],
+      message: "Informe até quando vai pagar",
+    })
+    .optional(),
   /** Uma por compra digitada: o reenvio devolve a compra já gravada. */
   idempotencyKey: z.uuid().optional(),
 });

@@ -151,7 +151,7 @@ export default async function DashboardPage() {
           </Link>
         </Button>
         <Button asChild size="lg" variant="info" className="h-14 w-full text-base shadow-md [&_svg]:size-5">
-          <Link href="/produtos/novo">
+          <Link href="/estoque?novo=1">
             <Boxes /> Novo produto
           </Link>
         </Button>

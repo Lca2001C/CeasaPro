@@ -472,51 +472,8 @@ describe("Categorias", () => {
   });
 });
 
-describe("Frete da compra como despesa", () => {
-  it("cria uma conta a pagar e não duplica na segunda chamada", async () => {
-    const purchase = await prisma.purchase.create({
-      data: {
-        tenantId,
-        purchaseDate: startOfDayTz(HOJE),
-        freight: 180,
-        totalAmount: 1180,
-      },
-    });
-
-    const e = await DespesasService.lancarFreteDaCompra(
-      {
-        purchaseId: purchase.id,
-        amount: purchase.freight,
-        purchaseDate: purchase.purchaseDate,
-        supplierName: "Transportes Silva",
-      },
-      ctx,
-    );
-    expect(e).not.toBeNull();
-    expect(e!.description).toContain("Transportes Silva");
-    expect(e!.type).toBe("VARIAVEL");
-    expect(e!.status).toBe("PENDENTE");
-    expect(Number(e!.amount)).toBe(180);
-
-    const repetido = await DespesasService.lancarFreteDaCompra(
-      { purchaseId: purchase.id, amount: 180, purchaseDate: purchase.purchaseDate },
-      ctx,
-    );
-    expect(repetido).toBeNull();
-    expect(await prisma.expense.count({ where: { tenantId, purchaseId: purchase.id } })).toBe(1);
-
-    await prisma.expense.deleteMany({ where: { tenantId } });
-    await prisma.purchase.deleteMany({ where: { tenantId } });
-  });
-
-  it("frete zero não gera despesa", async () => {
-    const r = await DespesasService.lancarFreteDaCompra(
-      { purchaseId: "qualquer", amount: 0, purchaseDate: HOJE },
-      ctx,
-    );
-    expect(r).toBeNull();
-  });
-});
+// A conta da compra (que substituiu o "frete como despesa") tem os testes
+// próprios em `compra-despesa.test.ts`.
 
 describe("Lista unificada com higienização", () => {
   it("mostra o saldo da higienização nas pendentes quando o plano inclui o módulo", async () => {

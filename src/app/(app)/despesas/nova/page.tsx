@@ -1,5 +1,6 @@
 import { requireTenant } from "@/lib/auth/session";
 import { DespesasService } from "@/lib/services/despesas.service";
+import { FornecedoresService } from "@/lib/services/fornecedores.service";
 import { PageHeader } from "@/components/data/page-header";
 import { DespesaForm } from "../_components/despesa-form";
 
@@ -21,8 +22,9 @@ export default async function NovaDespesaPage({
   const { duplicar } = await searchParams;
   const { tenantId } = await requireTenant();
 
-  const [categories, preenchido] = await Promise.all([
+  const [categories, fornecedores, preenchido] = await Promise.all([
     DespesasService.listCategories(tenantId),
+    FornecedoresService.list(tenantId),
     duplicar
       ? DespesasService.dadosParaDuplicar(tenantId, duplicar).catch(() => null)
       : Promise.resolve(null),
@@ -40,6 +42,9 @@ export default async function NovaDespesaPage({
       />
       <DespesaForm
         categories={categories.map((c) => ({ id: c.id, name: c.name }))}
+        fornecedores={fornecedores
+          .filter((f) => f.active)
+          .map((f) => ({ id: f.id, name: f.name }))}
         preenchido={preenchido ?? undefined}
       />
     </div>

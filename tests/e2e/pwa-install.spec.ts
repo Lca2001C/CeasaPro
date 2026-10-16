@@ -42,7 +42,7 @@ test.describe("Convite de instalação do PWA", () => {
     await expect(page.getByText(TITULO)).toHaveCount(0);
 
     // Marcado como dispensado: não volta nas próximas telas...
-    await page.goto("/produtos");
+    await page.goto("/estoque");
     await expect(page.getByText(TITULO)).toHaveCount(0);
 
     // ...nem num login novo dentro dos 7 dias. Precisa encerrar a sessão antes:

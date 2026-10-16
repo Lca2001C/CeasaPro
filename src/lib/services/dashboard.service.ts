@@ -156,6 +156,9 @@ export const DashboardService = {
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+          -- Só despesa operacional: a conta da compra já está no CMV e, aqui,
+          -- inflaria "Contas variáveis" com a mercadoria do mês.
+          AND origem = 'MANUAL'
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
           AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
         GROUP BY type
@@ -212,7 +215,7 @@ export const DashboardService = {
         SELECT COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
-          AND "purchaseId" IS NULL
+          AND origem = 'MANUAL'
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
           AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
       `,
@@ -234,7 +237,8 @@ export const DashboardService = {
     } = higLotes;
     despesasVariaveisMes = money(despesasVariaveisMes.plus(higEnviadaMes));
 
-    // Frete lançado como despesa já está no CMV (unitCost). Higienização paga
+    // A conta da compra (mercadoria + frete) já está no CMV (unitCost) e fica
+    // fora pelo `origem = 'MANUAL'` da consulta. Higienização paga
     // no mês é opex de verdade e entra no lucro líquido.
     const despesasLucro = money(
       toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higPagaMes),

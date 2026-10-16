@@ -1,5 +1,8 @@
 /** Constantes puras (sem dependências) — seguras para importar em qualquer contexto. */
 
+/** Categoria em que a despesa gerada pela compra é lançada. */
+export const COMPRA_EXPENSE_CATEGORY = "Compra de mercadoria";
+
 /** Categorias de despesa iniciais (README §8.10). */
 export const DEFAULT_EXPENSE_CATEGORIES = [
   "Aluguel do box",
@@ -15,6 +18,9 @@ export const DEFAULT_EXPENSE_CATEGORIES = [
   "Salários",
   "INSS",
   "Sistema de gestão",
+  // Toda compra vira despesa nesta categoria (rótulo apenas: quem separa conta
+  // de compra de conta operacional é `Expense.origem`, não o nome).
+  COMPRA_EXPENSE_CATEGORY,
   "Outros",
 ];
 

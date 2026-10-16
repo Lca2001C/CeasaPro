@@ -58,7 +58,7 @@ Arquivo modelo: [`.env.example`](../.env.example).
 | `SMTP_HOST`, `SMTP_PORT` | Opcionais — padrão `smtp.gmail.com` e `465` |
 | `CRON_SECRET` | Protege `/api/cron/billing` |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP` | WhatsApp do suporte (só dígitos, com DDI) |
-| `R2_*` | Cloudflare R2 (armazenamento — logo/anexos, futuro) |
+| `R2_*` | Cloudflare R2 — fotos de produto. As cinco (`R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`) ou nenhuma. Crie o bucket, ligue o acesso público (domínio r2.dev ou próprio) e use esse domínio, sem barra final, em `R2_PUBLIC_URL`. Sem elas, o cadastro funciona sem foto. |
 
 Gere segredos com: `node -e "console.log(require('crypto').randomBytes(32).toString('base64'))"` ou `openssl rand -base64 32`.
 
