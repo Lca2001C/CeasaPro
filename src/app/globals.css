@@ -49,9 +49,23 @@
   --input: 240 6% 89%;
   --ring: 142 68% 30%;
   --radius: 0.85rem;
+  /*
+    Cores dos gráficos (Financeiro do Início). Três séries categóricas, em
+    ordem fixa — a 1ª é sempre Vendas, a 2ª Compras, a 3ª Contas — validadas
+    para daltonismo (CVD ΔE ≥ 9 entre vizinhas). A 3ª fica abaixo de 3:1 no
+    fundo claro, por isso todo gráfico mostra o valor escrito e tem tabela.
+    Hex, e não HSL como os tokens acima: são os passos exatos validados.
+  */
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
 }
 
 .dark {
+  /* Os mesmos três tons, nos passos validados para o fundo escuro. */
+  --viz-1: #3987e5;
+  --viz-2: #d95926;
+  --viz-3: #199e70;
   --background: 240 10% 6%;
   --foreground: 0 0% 96%;
   --card: 240 8% 10%;
@@ -105,6 +119,9 @@
   --color-border: hsl(var(--border));
   --color-input: hsl(var(--input));
   --color-ring: hsl(var(--ring));
+  --color-viz-1: var(--viz-1);
+  --color-viz-2: var(--viz-2);
+  --color-viz-3: var(--viz-3);
   --radius-lg: var(--radius);
   --radius-md: calc(var(--radius) - 4px);
   --radius-sm: calc(var(--radius) - 8px);

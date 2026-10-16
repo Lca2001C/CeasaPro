@@ -88,7 +88,8 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
     await entrar(page);
 
     // Abre a seção recolhível, que é onde estão os cartões da captura original.
-    await page.getByText("Ver financeiro completo").click();
+    await page.getByRole("link", { name: "Financeiro" }).click();
+    await page.waitForURL(/aba=financeiro/);
 
     // Um número na casa dos MILHÕES tem de estar visível por completo — o
     // defeito original não removia texto, só o escondia, então esta asserção
@@ -114,7 +115,8 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
 
   test("o sinal de negativo não fica sozinho numa linha", async ({ page }) => {
     await entrar(page);
-    await page.getByText("Ver financeiro completo").click();
+    await page.getByRole("link", { name: "Financeiro" }).click();
+    await page.waitForURL(/aba=financeiro/);
 
     // Com a despesa gigante, "Sobrou no mês" e a margem ficam negativos. O sinal
     // precisa estar COLADO no "R$": um "−" órfão na linha de cima faz o leitor

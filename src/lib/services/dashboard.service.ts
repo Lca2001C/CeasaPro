@@ -47,6 +47,10 @@ export interface DashboardSummary {
   contasPagar: Prisma.Decimal;
   estoqueValor: Prisma.Decimal;
   lucroBrutoMes: Prisma.Decimal;
+  /** Custo da mercadoria vendida no mês (CMV) — o que o lucro bruto desconta. */
+  cmvMes: Prisma.Decimal;
+  /** Contas que o lucro líquido desconta (operacionais + higienização paga). */
+  despesasLucroMes: Prisma.Decimal;
   lucroMes: Prisma.Decimal;
   margemLiquidaMes: Prisma.Decimal;
   despesasFixasMes: Prisma.Decimal;
@@ -275,6 +279,8 @@ export const DashboardService = {
       contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0).plus(higSaldoAberto)),
       estoqueValor,
       lucroBrutoMes,
+      cmvMes: money(cmvMes),
+      despesasLucroMes: despesasLucro,
       lucroMes,
       margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, vendasMesTotal),
       despesasFixasMes,

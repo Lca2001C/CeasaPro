@@ -94,12 +94,13 @@ export const CAPITULOS: CapituloTour[] = [
       },
       {
         alvo: '[data-tour="dashboard-detalhes"]',
-        titulo: "O resto fica guardado aqui",
+        titulo: "O fechamento do mês fica no Financeiro",
         texto:
-          "Toque para abrir: vendas da semana e do mês, lucro bruto e margem. Logo " +
-          "abaixo há outra seção com mais vendidos, produtos com prejuízo e estoque " +
-          "parado. Ficam fechadas de propósito, para a tela abrir limpa no balcão.",
-        lado: "top",
+          "Toque em Financeiro para ver vendas da semana e do mês, lucro e margem, e os " +
+          "gráficos: do que vendeu ao que sobrou, vendas dia a dia, os últimos seis " +
+          "meses e para onde foram as contas. Na Visão Geral ficam os produtos mais " +
+          "vendidos, com prejuízo e o estoque parado.",
+        lado: "bottom",
       },
       {
         alvo: NAVEGACAO,
