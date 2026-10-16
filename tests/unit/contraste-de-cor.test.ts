@@ -261,6 +261,14 @@ describe("tema escuro: cada cor com o texto que vai por cima dela", () => {
 });
 
 describe("tema escuro: selos e textos de estado sobre o card", () => {
+  for (const cor of ["info", "violet", "warning", "success"]) {
+    it(`selo de ${cor} dentro de cartão já tingido`, () => {
+      const c = tokenEscuro(cor);
+      const cartao = sobre(c, 0.05, tokenEscuro("card"));
+      expect(razao(c, sobre(c, 0.1, cartao))).toBeGreaterThanOrEqual(AA_TEXTO);
+    });
+  }
+
   for (const cor of ["success", "warning", "destructive", "info", "violet", "primary"]) {
     it(`selo bg-${cor}/10 + text-${cor}`, () => {
       const c = tokenEscuro(cor);
@@ -272,16 +280,17 @@ describe("tema escuro: selos e textos de estado sobre o card", () => {
   }
 
   it("selo de VENCIDA dentro do cartão de conta vencida (duas tintas somadas)", () => {
-    // O cartão já é `bg-destructive/5`; o selo põe mais `/10` por cima. Era o
-    // par que reprovava (4,36:1) antes de clarear o tomate.
+    // O cartão já é `bg-destructive/5`; o selo põe mais `/10` por cima — as duas
+    // tintas somadas. Foi este par que o axe acusou em /despesas na 1ª paleta escura.
     const d = tokenEscuro("destructive");
     const cartaoTingido = sobre(d, 0.05, tokenEscuro("card"));
     expect(razao(d, sobre(d, 0.1, cartaoTingido))).toBeGreaterThanOrEqual(AA_TEXTO);
   });
 
-  it("as superfícies sobem em degraus: página < card < modal", () => {
+  it("as superfícies sobem em degraus: página < menu lateral < card < modal", () => {
     const l = (n: string) => luminancia(tokenEscuro(n));
-    expect(l("superficie-pagina")).toBeLessThan(l("superficie-card"));
+    expect(l("superficie-pagina")).toBeLessThan(l("superficie-lateral"));
+    expect(l("superficie-lateral")).toBeLessThan(l("superficie-card"));
     expect(l("superficie-card")).toBeLessThan(l("superficie-elevada"));
   });
 });

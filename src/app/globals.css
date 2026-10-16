@@ -62,6 +62,7 @@
   */
   --superficie-pagina: 240 7% 97%;
   --superficie-card: 0 0% 100%;
+  --superficie-lateral: 0 0% 100%;
   --superficie-elevada: 0 0% 100%;
   /* Sombras: tingidas do próprio texto (frio, levemente azulado), nunca preto puro. */
   --sombra-suave: 0 1px 2px hsl(240 10% 12% / 0.04), 0 4px 18px -6px hsl(240 10% 12% / 0.1);
@@ -79,63 +80,57 @@
 }
 
 /*
-  "Ceasa à noite" — o tema escuro.
+  Tema escuro — azul-marinho profundo.
 
-  Fundo verde-floresta quase preto, como o galpão do Ceasa de madrugada; as
-  cores de estado vêm da feira: alface (sucesso), manga/abóbora (aviso), tomate
-  (perigo), céu da manhã (informação), uva (roxo).
+  Fundo #071426, menu lateral #09172A, cartões #0D1B2E, modal #142740, bordas
+  #20334D. Verde-esmeralda (#00D6A0) é a marca, o botão principal, o item
+  ativo e o sucesso; azul (#3993FF) para cadastro e informação; roxo
+  (#A879FF) para fiado; âmbar (#FFB547) para pendência; coral (#FF625F) para
+  prejuízo e ação destrutiva. Títulos #F1F5F9, texto auxiliar #A9BBD2.
 
-  Regra que o tema claro não tinha de seguir e este tem: nos tons CLAROS, o
-  texto por cima é ESCURO, nunca branco. O `.dark` anterior não definia
-  --success nem --warning (herdavam os tons escuros do claro e sumiam no fundo)
-  e o primary com texto branco ficava abaixo de AA.
+  Regra: nos tons CLAROS o texto por cima é ESCURO (#05251D no verde, e o
+  equivalente de cada cor), nunca branco.
 
   Contrastes medidos em `tests/unit/contraste-de-cor.test.ts` (bloco do tema
-  escuro). O par mais justo é o selo de perigo dentro do cartão já tingido de
-  vermelho — ver o comentário de --destructive.
+  escuro). O par mais justo é o selo azul (`bg-info/10` + `text-info`) dentro
+  de um cartão já tingido: 4,55:1.
 */
 .dark {
-  --background: 150 25% 6%; /* #0B130F galpão de madrugada */
-  --foreground: 60 20% 95%; /* #F5F5F0 */
-  --card: 150 18% 10%; /* #151E19 caixote */
-  --card-foreground: 60 20% 95%;
-  --popover: 150 15% 13%; /* #1C2621 modal / card elevado */
-  --popover-foreground: 60 20% 95%;
-  --primary: 145 63% 49%; /* #2ECC70 verde CEASA aceso */
-  --primary-foreground: 150 45% 7%;
-  --secondary: 150 12% 16%;
-  --secondary-foreground: 60 20% 95%;
-  --muted: 150 12% 16%;
-  --muted-foreground: 140 8% 68%; /* #A7B4AB */
-  --accent: 145 35% 16%;
-  --accent-foreground: 142 60% 78%;
-  --success: 142 60% 52%; /* alface */
-  --success-foreground: 150 45% 7%;
-  --warning: 38 92% 58%; /* manga / abóbora */
-  --warning-foreground: 30 60% 10%;
-  /*
-    Tomate. Era `6 80% 62%` (o tom da paleta original): o selo "Vencida"
-    (`bg-destructive/10`) DENTRO do cartão de conta vencida, que já é tingido
-    de vermelho (`bg-destructive/5`), somava as duas tintas e o texto caía para
-    4,36:1 — o axe acusou em /despesas. 66% leva esse par a 4,76:1 e, como o
-    texto do botão destrutivo é escuro, melhora ele também (5,55 → 6,26:1).
-  */
-  --destructive: 6 80% 66%;
-  --destructive-foreground: 0 50% 10%;
-  --info: 205 85% 64%; /* céu da manhã */
-  --info-foreground: 210 50% 10%;
-  --violet: 270 70% 72%; /* uva */
-  --violet-foreground: 270 40% 12%;
-  --border: 150 12% 20%;
-  --input: 150 12% 22%;
-  --ring: 145 63% 49%;
-  /* Superfícies: a página é o fundo; o card e o modal sobem um degrau cada. */
-  --superficie-pagina: 150 25% 6%;
-  --superficie-card: 150 18% 10%;
-  --superficie-elevada: 150 15% 13%;
-  /* No escuro a sombra quase não se vê — é o degrau de superfície que separa. */
-  --sombra-suave: 0 1px 2px hsl(0 0% 0% / 0.4), 0 4px 18px -6px hsl(0 0% 0% / 0.5);
-  --sombra-elevada: 0 2px 6px hsl(0 0% 0% / 0.5), 0 18px 44px -12px hsl(0 0% 0% / 0.7);
+  --background: 215 69% 9%; /* #071426 */
+  --foreground: 210 40% 96%; /* #F1F5F9 */
+  --card: 215 56% 12%; /* #0D1B2E */
+  --card-foreground: 210 40% 96%;
+  --popover: 214 52% 16%; /* #142740 */
+  --popover-foreground: 210 40% 96%;
+  --primary: 165 100% 42%; /* #00D6A0 verde-esmeralda */
+  --primary-foreground: 165 76% 8%; /* #05251D */
+  --secondary: 214 52% 16%;
+  --secondary-foreground: 210 40% 96%;
+  --muted: 214 52% 16%;
+  --muted-foreground: 214 31% 74%; /* #A9BBD2 */
+  --accent: 190 58% 14%; /* item ativo: verde sobre o marinho */
+  --accent-foreground: 163 83% 65%;
+  --success: 165 100% 42%;
+  --success-foreground: 165 76% 8%;
+  --warning: 36 100% 64%; /* #FFB547 âmbar */
+  --warning-foreground: 35 100% 8%;
+  --destructive: 1 100% 69%; /* #FF625F vermelho coral */
+  --destructive-foreground: 0 72% 10%;
+  --info: 213 100% 62%; /* #3993FF azul vibrante — 62% e não 61%: arredondado para baixo, o selo azul em cartão tingido caía para 4,4:1 */
+  --info-foreground: 213 84% 10%;
+  --violet: 261 100% 74%; /* #A879FF roxo suave */
+  --violet-foreground: 262 68% 14%;
+  --border: 215 41% 21%; /* #20334D */
+  --input: 216 39% 27%;
+  --ring: 165 100% 42%;
+  /* Superfícies: página < menu lateral < cartão < modal. */
+  --superficie-pagina: 215 69% 9%;
+  --superficie-lateral: 215 65% 10%; /* #09172A */
+  --superficie-card: 215 56% 12%;
+  --superficie-elevada: 214 52% 16%;
+  /* Sombras quase nulas: no escuro quem separa é a borda e o degrau de fundo. */
+  --sombra-suave: 0 1px 2px hsl(215 80% 3% / 0.35);
+  --sombra-elevada: 0 2px 6px hsl(215 80% 3% / 0.4), 0 18px 44px -12px hsl(215 80% 3% / 0.6);
   /* Os mesmos três tons dos gráficos, nos passos validados para o fundo escuro. */
   --viz-1: #3987e5;
   --viz-2: #d95926;
@@ -176,6 +171,7 @@
   --color-viz-3: var(--viz-3);
   --color-pagina: hsl(var(--superficie-pagina));
   --color-superficie: hsl(var(--superficie-card));
+  --color-lateral: hsl(var(--superficie-lateral));
   --color-elevada: hsl(var(--superficie-elevada));
   --shadow-suave: var(--sombra-suave);
   --shadow-elevada: var(--sombra-elevada);
