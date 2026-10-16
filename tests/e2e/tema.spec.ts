@@ -20,7 +20,9 @@ test.describe("tema escuro", () => {
     await page.goto("/dashboard", { waitUntil: "domcontentloaded" });
     await expect(page.locator("html")).toHaveClass(/\bdark\b/);
     const fundo = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(fundo).toBe("rgb(11, 19, 15)"); // #0B130F, o galpão de madrugada
+    // #071426, o azul-marinho do tema escuro — o token é HSL (215 69% 9%) e o
+    // navegador arredonda o canal azul para 39.
+    expect(fundo).toBe("rgb(7, 20, 39)");
 
     // A barra do sistema acompanha o tema escolhido, mesmo com o sistema claro.
     await page.waitForLoadState("networkidle");
@@ -28,7 +30,7 @@ test.describe("tema escuro", () => {
       .locator('meta[name="theme-color"]')
       .evaluateAll((ms) => ms.map((m) => m.getAttribute("content")));
     expect(metas.length).toBeGreaterThan(0);
-    expect(new Set(metas)).toEqual(new Set(["#0B130F"]));
+    expect(new Set(metas)).toEqual(new Set(["#071426"]));
     expect(bloqueios).toEqual([]);
   });
 

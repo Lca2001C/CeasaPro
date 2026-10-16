@@ -11,7 +11,9 @@ import {
   Package,
   Percent,
   ReceiptText,
+  ShoppingBag,
   ShoppingCart,
+  SlidersHorizontal,
   TrendingDown,
   TrendingUp,
   WalletCards,
@@ -46,6 +48,8 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ConviteTour } from "@/components/tour/convite-tour";
+import { CardDeResumo } from "@/components/ui/card-de-resumo";
+import { ListaDeAcoes, LinhaDeAcao } from "@/components/ui/linha-de-acao";
 
 export const dynamic = "force-dynamic";
 
@@ -186,63 +190,68 @@ export default async function DashboardPage({
 
       {ehGeral ? (
         <>
-          {avisos.length > 0 && (
-            <Card>
-              <CardContent className="flex flex-col gap-2 pt-4">
-                {avisos.map((aviso) => (
-                  <Link
-                    key={aviso.tipo}
-                    href={aviso.href}
-                    className="flex flex-col gap-1 rounded-md border px-3 py-2 text-sm transition-colors hover:bg-muted/50 sm:flex-row sm:items-center sm:justify-between sm:gap-3"
-                  >
-                    <span className="flex min-w-0 items-start gap-2">
-                      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-warning" />
-                      <span className="min-w-0 [overflow-wrap:anywhere]">{aviso.label}</span>
-                    </span>
-                    {/* Aviso sem dinheiro (cotação) não ganha coluna de valor:
-                        `formatBRL(null)` escreveria "R$ 0,00", que leria como
-                        "não tem nada a pagar" em vez de "isto não é dinheiro". */}
-                    {aviso.total !== null && (
-                      <span className="shrink-0 self-end font-semibold tabular-nums sm:self-auto">
-                        {valorExibivel(formatBRL(aviso.total))}
-                      </span>
-                    )}
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
-          )}
-
-          {/* Os quatro números do dia a dia. O fechamento do mês está na aba
-              Financeiro. */}
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" data-tour="dashboard-numeros">
-            <StatCard
-              label="Hoje vendi"
-              value={formatBRL(s.hojeVendi)}
-              icon={<ShoppingCart className="size-4" />}
-              tone="success"
+          {/*
+            Os quatro números do dia a dia. "Hoje vendi" é o destaque — o número
+            que o dono abre o app para ver —; os outros três abrem a tela deles.
+            O fechamento do mês está na aba Financeiro.
+          */}
+          <div className="grid gap-3 sm:grid-cols-3" data-tour="dashboard-numeros">
+            <CardDeResumo
+              destaque
+              className="sm:col-span-3"
+              rotulo="Hoje vendi"
+              valor={formatBRL(s.hojeVendi)}
+              dica={`No mês: ${valorExibivel(formatBRL(s.mesVendi))}`}
+              icone={<ShoppingCart />}
+              href="/vendas"
             />
-            <StatCard
-              label="Clientes me devem"
-              value={formatBRL(s.aReceber)}
-              hint="Fiado a receber"
-              icon={<HandCoins className="size-4" />}
-              tone="warning"
+            <CardDeResumo
+              rotulo="Clientes me devem"
+              valor={formatBRL(s.aReceber)}
+              dica="Fiado a receber"
+              icone={<HandCoins />}
+              tom="warning"
+              tomDoValor={s.aReceber.greaterThan(0) ? "warning" : undefined}
+              href="/fiado"
             />
-            <StatCard
-              label="Tenho em estoque"
-              value={formatBRL(s.estoqueValor)}
-              hint="Valor da mercadoria"
-              icon={<Package className="size-4" />}
+            <CardDeResumo
+              rotulo="Tenho em estoque"
+              valor={formatBRL(s.estoqueValor)}
+              dica="Valor da mercadoria"
+              icone={<Package />}
+              href="/estoque"
             />
-            <StatCard
-              label="Sobrou no mês"
-              value={formatBRL(s.lucroMes)}
-              hint="Lucro líquido"
-              icon={<TrendingUp className="size-4" />}
-              tone={lucroTone}
+            <CardDeResumo
+              rotulo="Sobrou no mês"
+              valor={formatBRL(s.lucroMes)}
+              dica="Lucro líquido"
+              icone={<TrendingUp />}
+              tom={lucroTone}
+              tomDoValor={lucroTone}
+              href="/dashboard?aba=financeiro"
             />
           </div>
+
+          <Atalhos temCotacoes={temCotacoes} />
+
+          {avisos.length > 0 && (
+            <ListaDeAcoes titulo="Precisa de atenção">
+              {avisos.map((aviso) => (
+                <LinhaDeAcao
+                  key={aviso.tipo}
+                  href={aviso.href}
+                  icone={<AlertTriangle />}
+                  tom="warning"
+                  titulo={aviso.label}
+                  // Aviso sem dinheiro (cotação) não ganha valor: `formatBRL(null)`
+                  // escreveria "R$ 0,00", que leria como "não tem nada a pagar".
+                  complemento={
+                    aviso.total !== null ? valorExibivel(formatBRL(aviso.total)) : undefined
+                  }
+                />
+              ))}
+            </ListaDeAcoes>
+          )}
 
           {/* Contas a pagar reunidas: despesas + higienização, com as três mais
               próximas clicáveis. Responde "o que eu preciso resolver hoje?". */}
@@ -519,6 +528,44 @@ function Financeiro({
         </CartaoGrafico>
       </div>
     </>
+  );
+}
+
+/**
+ * Atalhos em pílulas, com rolagem horizontal POR DENTRO — no celular a fila
+ * passa da largura da tela, e quem rola é ela, não a página. As três ações
+ * principais (venda, produto, fiado) ficam nos botões grandes acima; aqui vão
+ * as do dia a dia que antes exigiam abrir o menu.
+ */
+function Atalhos({ temCotacoes }: { temCotacoes: boolean }) {
+  const atalhos = [
+    { href: "/estoque/compra", rotulo: "Registrar compra", icone: ShoppingBag },
+    { href: "/fiado", rotulo: "Receber fiado", icone: HandCoins },
+    { href: "/despesas/nova", rotulo: "Nova despesa", icone: ReceiptText },
+    { href: "/estoque/ajuste", rotulo: "Ajuste de estoque", icone: SlidersHorizontal },
+    ...(temCotacoes ? [{ href: "/cotacoes", rotulo: "Cotações", icone: TrendingUp }] : []),
+    { href: "/relatorios", rotulo: "Relatórios", icone: BarChart3 },
+  ];
+  return (
+    // No desktop a fila cabe e quebra linha; a rolagem é só do celular.
+    <nav
+      aria-label="Atalhos"
+      className="-mx-4 overflow-x-auto px-4 [scrollbar-width:none] md:mx-0 md:overflow-visible md:px-0"
+    >
+      <ul className="flex w-max gap-2 py-1 md:w-auto md:flex-wrap">
+        {atalhos.map(({ href, rotulo, icone: Icone }) => (
+          <li key={href}>
+            <Link
+              href={href}
+              className="inline-flex min-h-11 items-center gap-2 rounded-full border border-border/60 bg-card px-4 text-sm font-semibold text-card-foreground shadow-suave outline-none motion-safe:transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              <Icone aria-hidden className="size-4 text-primary" />
+              {rotulo}
+            </Link>
+          </li>
+        ))}
+      </ul>
+    </nav>
   );
 }
 

@@ -91,7 +91,7 @@ export function BottomNav({
       */
       aria-label="Menu principal"
       data-tour="nav-mobile"
-      className="fixed inset-x-0 bottom-0 z-40 border-t bg-background/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
+      className="fixed inset-x-0 bottom-0 z-40 border-t border-border/60 bg-lateral/95 pb-[env(safe-area-inset-bottom)] backdrop-blur md:hidden"
     >
       <div className="mx-auto flex max-w-lg items-stretch justify-around">
         {primary.map((item) => {
@@ -104,20 +104,43 @@ export function BottomNav({
               // Ver o mesmo comentário em `side-nav`: sem isto a tela atual é
               // marcada só por cor.
               aria-current={active ? "page" : undefined}
-              className={cn(
-                "flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium",
-                active ? "text-primary" : "text-muted-foreground",
-              )}
+              className="flex min-h-16 flex-1 flex-col items-center justify-center gap-1 py-2 text-xs outline-none focus-visible:bg-muted/60"
             >
-              <Icon className={cn("size-6", item.highlight && "size-7")} />
-              {item.label}
+              {/*
+                Ícone grande dentro de uma pílula: a pílula preenchida é a marca
+                do item ATIVO (além do `aria-current`). "Vender" é a ação do
+                balcão e fica sempre em verde cheio.
+              */}
+              <span
+                aria-hidden
+                className={cn(
+                  "flex h-8 w-14 items-center justify-center rounded-full motion-safe:transition-colors",
+                  item.highlight
+                    ? "bg-primary text-primary-foreground shadow-suave"
+                    : active
+                      ? "bg-accent text-accent-foreground"
+                      : "text-muted-foreground",
+                )}
+              >
+                <Icon className="size-6" />
+              </span>
+              <span
+                className={cn(
+                  "leading-none",
+                  active ? "font-semibold text-foreground" : "font-medium text-muted-foreground",
+                )}
+              >
+                {item.label}
+              </span>
             </Link>
           );
         })}
         <Sheet open={open} onOpenChange={setOpen}>
-          <SheetTrigger className="flex flex-1 flex-col items-center gap-0.5 py-2 text-[11px] font-medium text-muted-foreground">
-            <Menu className="size-6" />
-            Mais
+          <SheetTrigger className="flex min-h-16 flex-1 flex-col items-center justify-center gap-1 py-2 text-xs font-medium text-muted-foreground outline-none focus-visible:bg-muted/60">
+            <span aria-hidden className="flex h-8 w-14 items-center justify-center rounded-full">
+              <Menu className="size-6" />
+            </span>
+            <span className="leading-none">Mais</span>
           </SheetTrigger>
           <SheetContent side="bottom">
             <SheetHeader>
@@ -130,9 +153,14 @@ export function BottomNav({
                   <SheetClose asChild key={item.href}>
                     <Link
                       href={item.href}
-                      className="flex flex-col items-center gap-2 rounded-lg border p-3 text-center text-xs font-medium hover:bg-accent"
+                      className="flex min-h-24 flex-col items-center justify-center gap-2 rounded-lg border border-border/60 bg-card p-3 text-center text-xs font-semibold shadow-suave outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
                     >
-                      <Icon className="size-6 text-primary" />
+                      <span
+                        aria-hidden
+                        className="flex size-11 items-center justify-center rounded-full bg-primary/10 text-primary"
+                      >
+                        <Icon className="size-5" />
+                      </span>
                       {item.label}
                     </Link>
                   </SheetClose>
@@ -150,7 +178,7 @@ export function BottomNav({
                   setOpen(false);
                   void sair(toast.error);
                 }}
-                className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-3 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
+                className="flex min-h-12 w-full items-center justify-center gap-2 rounded-full bg-muted px-3 text-sm font-semibold text-foreground outline-none hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <LogOut className="size-5" />
                 Sair

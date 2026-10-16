@@ -16,7 +16,7 @@ export default function manifest(): MetadataRoute.Manifest {
     // para evitar.
     display_override: ["standalone", "minimal-ui"],
     orientation: "portrait",
-    // O manifesto só aceita UMA cor; a do tema escuro (#0B130F) chega pela
+    // O manifesto só aceita UMA cor; a do tema escuro (#071426) chega pela
     // `<meta name="theme-color">` com `media`, que o navegador prefere à do
     // manifesto com a página aberta. Ver `app/layout.tsx` e `lib/tema.ts`.
     background_color: "#FFFFFF",

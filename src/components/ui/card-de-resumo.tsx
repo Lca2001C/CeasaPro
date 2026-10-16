@@ -55,7 +55,7 @@ export function CardDeResumo({
         <span
           className={cn(
             "min-w-0 text-sm font-medium [overflow-wrap:anywhere]",
-            destaque ? "text-primary-foreground/90" : "text-muted-foreground",
+            destaque ? "text-primary-foreground" : "text-muted-foreground",
           )}
         >
           {rotulo}
@@ -75,7 +75,10 @@ export function CardDeResumo({
       <div className="mt-2 flex items-end justify-between gap-2">
         <span
           className={cn(
-            "min-w-0 text-[1.75rem] font-bold leading-tight tracking-tight tabular-nums [overflow-wrap:anywhere] sm:text-3xl",
+            "min-w-0 font-bold leading-tight tracking-tight tabular-nums [overflow-wrap:anywhere]",
+            // O destaque é o número do dia e cresce; nos outros, 2xl é o que cabe
+            // numa linha nos três cartões lado a lado do desktop.
+            destaque ? "text-[1.75rem] sm:text-4xl" : "text-[1.75rem] sm:text-2xl",
             corDoValor,
           )}
         >
@@ -86,7 +89,7 @@ export function CardDeResumo({
             aria-hidden
             className={cn(
               "mb-1 size-5 shrink-0",
-              destaque ? "text-primary-foreground/80" : "text-muted-foreground",
+              destaque ? "text-primary-foreground" : "text-muted-foreground",
             )}
           />
         )}
@@ -95,7 +98,7 @@ export function CardDeResumo({
         <div
           className={cn(
             "mt-1 text-sm",
-            destaque ? "text-primary-foreground/90" : "text-muted-foreground",
+            destaque ? "text-primary-foreground" : "text-muted-foreground",
           )}
         >
           {dica}

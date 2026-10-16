@@ -28,7 +28,7 @@ export const ROTULO_DO_TEMA: Record<Tema, string> = {
 export const CHAVE_DO_TEMA = "ceasapro-tema";
 
 /** Cor da barra do navegador / do sistema em cada tema (`<meta name="theme-color">`). */
-export const COR_DA_BARRA = { claro: "#FFFFFF", escuro: "#0B130F" } as const;
+export const COR_DA_BARRA = { claro: "#FFFFFF", escuro: "#071426" } as const;
 
 /** Evento disparado nesta aba quando o tema muda (o `storage` só avisa as OUTRAS abas). */
 export const EVENTO_DO_TEMA = "ceasapro:tema";

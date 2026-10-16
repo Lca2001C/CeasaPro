@@ -12,6 +12,16 @@ import { SupportButton } from "@/components/support-button";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { NetworkStatus } from "@/components/pwa/network-status";
 import { TourGuiado } from "@/components/tour/tour-guiado";
+import { civilParts } from "@/lib/tz";
+
+/** "Bom dia" / "Boa tarde" / "Boa noite" pelo relógio de Brasília, não o do aparelho. */
+function saudacao(agora = new Date()): string {
+  const h = civilParts(agora).hour;
+  return h < 12 ? "Bom dia" : h < 18 ? "Boa tarde" : "Boa noite";
+}
+
+const primeiroNome = (nome: string) => nome.trim().split(/\s+/)[0] ?? nome;
+const inicial = (nome: string) => (nome.trim()[0] ?? "?").toUpperCase();
 
 interface Props {
   companyName: string;
@@ -77,10 +87,23 @@ export function AppShell({
           app instalado. `env()` vale 0 no navegador e no Android — fora do
           iPhone o header continua com os mesmos 3.5rem.
         */}
-        <header className="sticky top-0 z-30 flex h-[calc(3.5rem+env(safe-area-inset-top))] items-center justify-between border-b bg-background/95 px-4 pt-[env(safe-area-inset-top)] backdrop-blur">
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold">{companyName}</p>
-            <p className="truncate text-xs text-muted-foreground">{userName}</p>
+        <header className="sticky top-0 z-30 flex h-[calc(4rem+env(safe-area-inset-top))] items-center justify-between gap-3 border-b border-border/60 bg-pagina/90 px-4 pt-[env(safe-area-inset-top)] backdrop-blur">
+          {/* Saudação e empresa: quem abre o app vê de cara em qual box está. */}
+          <div className="flex min-w-0 items-center gap-3">
+            <span
+              aria-hidden
+              className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/10 text-sm font-bold text-primary"
+            >
+              {inicial(userName || companyName)}
+            </span>
+            <div className="min-w-0">
+              {/* A hora do servidor e a do aparelho podem cruzar o meio-dia
+                  entre a renderização e a hidratação. */}
+              <p className="truncate text-sm font-semibold" suppressHydrationWarning>
+                {saudacao()}, {primeiroNome(userName)}
+              </p>
+              <p className="truncate text-xs text-muted-foreground">{companyName}</p>
+            </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <BotaoTutorial />

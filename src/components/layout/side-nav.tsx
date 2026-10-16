@@ -18,6 +18,7 @@ import {
   BadgeCheck,
   TrendingUp,
   LogOut,
+  Sprout,
 } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { moduleForPath, isModuleEnabled } from "@/lib/plan/modules";
@@ -74,10 +75,15 @@ export function SideNav({
     <aside
       // Âncora do tour guiado; a barra de baixo tem a dela. Ver `nav-mobile`.
       data-tour="nav-desktop"
-      className="hidden w-60 shrink-0 border-r bg-card md:block"
+      className="hidden w-64 shrink-0 border-r border-border/60 bg-lateral md:block"
     >
       <div className="sticky top-0 flex h-screen flex-col p-3">
-        <div className="px-2 py-3 text-lg font-bold text-primary">CeasaPro</div>
+        <div className="flex items-center gap-2 px-3 py-3 text-xl font-bold tracking-tight">
+          <Sprout aria-hidden className="size-6 text-primary" />
+          <span>
+            Ceasa<span className="text-primary">Pro</span>
+          </span>
+        </div>
         {/*
           O rótulo distingue esta navegação das outras do documento. Sem ele o
           leitor de tela anuncia só "navegação", e quem usa a lista de marcos
@@ -99,10 +105,11 @@ export function SideNav({
                 */
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium",
+                  "flex min-h-11 items-center gap-3 rounded-full px-4 text-sm outline-none motion-safe:transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                  // Verde só no item selecionado; o resto do menu fica neutro.
                   active
-                    ? "bg-accent text-accent-foreground"
-                    : "text-muted-foreground hover:bg-accent/60",
+                    ? "bg-accent font-semibold text-accent-foreground"
+                    : "font-medium text-muted-foreground hover:bg-muted hover:text-foreground",
                 )}
               >
                 <Icon className="size-5" />
@@ -115,7 +122,7 @@ export function SideNav({
         <div className="mt-auto flex flex-col gap-2 border-t pt-3">
           <AtalhoDeTema />
           {(companyName || trialLabel) && (
-            <div className="rounded-lg bg-accent/70 px-3 py-2">
+            <div className="rounded-lg border border-border/60 bg-card px-3 py-2">
               {companyName && (
                 <p className="truncate text-xs font-semibold text-accent-foreground">
                   {companyName}
@@ -132,7 +139,7 @@ export function SideNav({
           <button
             type="button"
             onClick={() => void sair(toast.error)}
-            className="flex w-full items-center justify-center gap-2 rounded-lg bg-destructive px-3 py-2.5 text-sm font-semibold text-destructive-foreground shadow-sm hover:bg-destructive/90"
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-full bg-muted px-3 text-sm font-semibold text-foreground outline-none motion-safe:transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:ring-2 focus-visible:ring-ring"
           >
             <LogOut className="size-5" />
             Sair
