@@ -375,6 +375,15 @@ UI: tokens em `globals.css`. Variantes de botão: `default` (verde), `success`, 
 
 ---
 
+## 13b. Desempenho
+
+- **O custo do app é o NÚMERO de idas ao banco por tela**, não uma consulta lenta: em produção o pool é pequeno (`connection_limit`) e cada `include` do Prisma é mais uma volta. Antes de acrescentar leitura numa tela, veja se ela já foi lida (layout, serviço vizinho). Leitura repetida na mesma requisição → `cache()` do React, **só em caminho de leitura** (ação que muda o dado lê por conta própria). Ver `getInteresses`, `centralParaLeitura`.
+- **Medir:** `PRISMA_CONTAR_CONSULTAS=1 npm run dev` imprime uma linha por consulta. Em produção, consulta acima de `PRISMA_SLOW_MS` (padrão 300 ms) vira log `Consulta lenta`, e o Neon tem `pg_stat_statements` ativo (`SELECT … FROM pg_stat_statements ORDER BY total_exec_time DESC`).
+- **`getSummary` recebe a aba** (`geral`/`financeiro`/`resumo`); sem ela calcula tudo.
+- **Nada de servidor no navegador.** Componente `"use client"` não importa `@/lib/money` (traz o runtime do Prisma) nem módulo com `node:crypto`/`jose`: use `@/lib/numero`, `@/lib/format`, `@/lib/estoque/nivel`, `@/lib/cotacoes/embalagem-texto`, `@/lib/auth/google-erros`. `google-oauth.ts` é `server-only`.
+- **PDV:** cartões da grade em `memo` com callbacks estáveis e busca com `useDeferredValue`. Callback novo para o cartão tem de ser estável (`useCallback` + `setCart` funcional), senão todo cartão redesenha a cada tecla.
+- **Livro-razão continua a regra** (§3.4). O índice `stock_movements (tenantId, productId, createdAt, id)` é a ordem exata da janela do custo médio — não reordenar a janela sem reordenar o índice.
+
 ## 14. Testes
 
 | Comando | O quê |
