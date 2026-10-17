@@ -258,6 +258,19 @@ export const CAPITULOS: CapituloTour[] = [
     ],
   },
   {
+    rota: "/ceasanews",
+    modulo: "ceasanews",
+    passos: [
+      {
+        alvo: TITULO,
+        titulo: "O que mexe no mercado",
+        texto:
+          "Notícias dos últimos dias sobre CEASAs, preços, clima, frete e safra. As que falam " +
+          "dos produtos que você vende ficam no topo; tocar numa notícia abre a matéria.",
+      },
+    ],
+  },
+  {
     rota: "/relatorios",
     passos: [
       {

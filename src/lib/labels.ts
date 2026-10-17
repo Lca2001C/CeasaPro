@@ -171,6 +171,21 @@ export const BOLETIM_ENVIADO_STATUS_LABELS: Record<string, string> = {
   RECUSADO: "recusado",
 };
 
+/** Assuntos do CeasaNews — viram os filtros da tela. */
+export const NOTICIA_TEMA_LABELS: Record<string, string> = {
+  CEASA: "CEASA",
+  PRECOS: "Preços",
+  CLIMA: "Clima",
+  LOGISTICA: "Frete e transporte",
+  SAFRA: "Safra",
+  ECONOMIA: "Economia",
+};
+
+export const NOTICIA_COLETA_STATUS_LABELS: Record<string, string> = {
+  OK: "Coletado",
+  FALHA: "Falhou",
+};
+
 export function toOptions(map: Record<string, string>) {
   return Object.entries(map).map(([value, label]) => ({ value, label }));
 }

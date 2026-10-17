@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   lembretes: vi.fn(),
   despesas: vi.fn(),
   importar: vi.fn(),
+  noticias: vi.fn(),
 }));
 
 vi.mock("@/lib/services/billing.service", () => ({
@@ -31,6 +32,9 @@ vi.mock("@/lib/services/cotacoes-import.service", () => ({
     importarTodasAsCentrais: mocks.importar,
     verificarDefasagem: vi.fn().mockResolvedValue([]),
   },
+}));
+vi.mock("@/lib/services/noticias.service", () => ({
+  NoticiasService: { coletar: mocks.noticias },
 }));
 vi.mock("@/lib/security/rate-limit-db", () => ({
   purgeExpiredRateLimits: vi.fn().mockResolvedValue(0),
@@ -56,6 +60,7 @@ beforeEach(() => {
   mocks.lembretes.mockResolvedValue({ candidatos: 0, enviados: 0 });
   mocks.despesas.mockResolvedValue({ empresas: 0, geradas: 0 });
   mocks.importar.mockResolvedValue({ centrais: 0 });
+  mocks.noticias.mockResolvedValue({ feeds: 0, falhas: 0, novas: 0 });
 });
 afterEach(() => {
   if (original === undefined) delete process.env.CRON_SECRET;
@@ -99,6 +104,15 @@ describe("cron/billing — orçamento da reconciliação", () => {
     const corpo = (await r.json()) as { ok: boolean; statuses: unknown };
     expect(corpo.ok).toBe(false);
     expect(corpo.statuses).toEqual({ erro: "falhou" });
+  });
+
+  it("coleta do CeasaNews que falha não derruba o cron", async () => {
+    mocks.noticias.mockRejectedValue(new Error("feeds fora"));
+    const r = await GET(pedido());
+    expect(r.status).toBe(200);
+    expect(mocks.importar).toHaveBeenCalledTimes(1);
+    const corpo = (await r.json()) as { noticias: unknown };
+    expect(corpo.noticias).toEqual({ erro: "falhou" });
   });
 
   it("a reconciliação continua ANTES do recálculo de status", async () => {

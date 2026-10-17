@@ -220,6 +220,21 @@ export const AREAS: AreaGuia[] = [
       "o preço de agora.",
     modulo: "cotacoes",
   },
+  {
+    titulo: "CeasaNews",
+    href: "/ceasanews",
+    resumo: "Notícias que mexem no mercado de hortifruti: CEASAs, preços, clima, frete e safra.",
+    comoUsar: [
+      "Abra o CeasaNews: as notícias dos últimos 7 dias aparecem da mais nova para a mais antiga.",
+      "As que falam dos produtos que você vende sobem para o topo, em \"Sobre os seus produtos\".",
+      "Toque num assunto (Preços, Clima, Frete…) para ver só ele; toque na notícia para ler a matéria.",
+    ],
+    atencao:
+      "As notícias são de veículos de terceiros, escolhidas por um filtro automático de " +
+      "assunto — pode escapar uma que não interessa, ou faltar uma que interessaria. A " +
+      "matéria abre no site de quem publicou. A lista é atualizada várias vezes por dia.",
+    modulo: "ceasanews",
+  },
 ];
 
 export interface Duvida {

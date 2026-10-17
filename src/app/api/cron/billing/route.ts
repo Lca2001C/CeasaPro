@@ -2,6 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 import { BillingService } from "@/lib/services/billing.service";
 import { gerarRecorrentesDeTodosOsTenants } from "@/lib/services/despesas.service";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
+import { NoticiasService } from "@/lib/services/noticias.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
 import { purgeDeadRefreshTokens } from "@/lib/auth/refresh";
 import { describeError, logger } from "@/lib/logger";
@@ -145,6 +146,18 @@ async function handle(req: Request): Promise<Response> {
             });
     logger.info({ cotacoes }, "Sub-tarefa de cotacoes concluida");
 
+    // CeasaNews: a mesma regra das cotações — conveniência, por último, com
+    // orçamento do que sobrou e `.catch()` próprio. A tela também coleta sob
+    // demanda; aqui é a garantia de uma coleta por dia mesmo sem visita.
+    const restanteNoticias = ORCAMENTO_DA_ROTA_MS - (Date.now() - comecou);
+    const noticias =
+      restanteNoticias < MINIMO_PARA_IMPORTAR_MS
+        ? { pulado: "sem tempo no orcamento da rota" }
+        : await NoticiasService.coletar({ prazo: Date.now() + restanteNoticias }).catch((e) => {
+            logger.error({ err: describeError(e) }, "Coleta do CeasaNews falhou");
+            return { erro: "falhou" };
+          });
+
     return Response.json(
       {
         ok: !statusFalhou,
@@ -155,6 +168,7 @@ async function handle(req: Request): Promise<Response> {
         rateLimitsRemovidos,
         sessoesRemovidas,
         cotacoes,
+        noticias,
       },
       { status: statusFalhou ? 500 : 200 },
     );

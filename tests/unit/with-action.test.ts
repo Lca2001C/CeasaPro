@@ -55,7 +55,7 @@ function sessaoOk(over: Record<string, unknown> = {}) {
     name: "Dono",
     tenantStatus: "ACTIVE",
     subStatus: "ATIVO",
-    modules: ["caixas", "higienizacao", "embalagens", "cotacoes", "relatorios_avancados"],
+    modules: ["caixas", "higienizacao", "embalagens", "cotacoes", "relatorios_avancados", "ceasanews"],
     mustChangePassword: false,
     sev: 0,
     tev: 0,

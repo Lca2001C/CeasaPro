@@ -34,6 +34,7 @@ const PERCURSO = [
   // Caixas e embalagens: uma tela em abas, um capítulo só.
   "/caixas-plasticas",
   "/higienizacao",
+  "/ceasanews",
   "/relatorios",
   "/ajuda",
 ];

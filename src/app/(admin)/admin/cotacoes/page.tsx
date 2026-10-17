@@ -2,8 +2,9 @@ import { AlertTriangle } from "lucide-react";
 import { requireSuperAdmin } from "@/lib/auth/session";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { CotacoesEnvioService } from "@/lib/services/cotacoes-envio.service";
+import { NoticiasService } from "@/lib/services/noticias.service";
 import { frescorAlarma, frescorDoBoletim, rotuloDeFrescor } from "@/lib/cotacoes/frescor";
-import { CEASA_IMPORT_STATUS_LABELS } from "@/lib/labels";
+import { CEASA_IMPORT_STATUS_LABELS, NOTICIA_COLETA_STATUS_LABELS } from "@/lib/labels";
 import { formatDateOnly, formatDateTime } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,6 +13,7 @@ import { cn } from "@/lib/cn";
 import { SecaoRecolhivel } from "@/components/data/secao-recolhivel";
 import { ImportarManual } from "./_components/importar-manual";
 import { FilaDeEnvios } from "./_components/fila-de-envios";
+import { ColetarNoticias } from "./_components/coletar-noticias";
 
 export const dynamic = "force-dynamic";
 
@@ -25,9 +27,10 @@ export const dynamic = "force-dynamic";
  */
 export default async function AdminCotacoesPage() {
   await requireSuperAdmin();
-  const [centrais, fila] = await Promise.all([
+  const [centrais, fila, noticias] = await Promise.all([
     CotacoesImportService.situacaoDasCentrais(),
     CotacoesEnvioService.listarFila(),
+    NoticiasService.situacaoDosFeeds(),
   ]);
   const agora = new Date();
 
@@ -196,6 +199,45 @@ export default async function AdminCotacoesPage() {
           ))}
         </div>
       </SecaoRecolhivel>
+
+      {/*
+        CeasaNews mora aqui, e não numa tela própria: é a mesma pergunta ("a
+        coleta de fora está viva?") e o mesmo operador. Feed isolado falhando é
+        informação; todos falhando já virou aviso na caixa (NOTICIAS_FALHA).
+      */}
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2">
+          <CardTitle className="text-base">CeasaNews — coleta de notícias</CardTitle>
+          <ColetarNoticias />
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1 text-sm">
+          <p className="mb-1 text-xs text-muted-foreground">
+            {noticias.total} notícias guardadas (30 dias). Coleta no cron diário e sempre que alguém
+            abre a tela com a última coleta passando de 2 h.
+          </p>
+          {noticias.feeds.map((f) => (
+            <div key={f.chave} className="flex flex-wrap items-center justify-between gap-2 border-t py-1.5">
+              <span className="min-w-0 truncate">
+                {f.nome} <span className="text-xs text-muted-foreground">({f.chave})</span>
+              </span>
+              {f.ultima ? (
+                <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant={f.ultima.status === "OK" ? "secondary" : "warning"}>
+                    {NOTICIA_COLETA_STATUS_LABELS[f.ultima.status]}
+                  </Badge>
+                  {f.ultima.status === "OK"
+                    ? `${f.ultima.aceitos}/${f.ultima.lidos} aceitas · ${f.ultima.novos} novas`
+                    : (f.ultima.erro ?? "erro desconhecido").slice(0, 80)}
+                  {" · "}
+                  {formatDateTime(f.ultima.createdAt)}
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">nunca coletado</span>
+              )}
+            </div>
+          ))}
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader>

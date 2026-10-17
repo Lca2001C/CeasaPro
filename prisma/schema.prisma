@@ -1266,6 +1266,9 @@ enum AdminNotificationKind {
   /// paga volta a usar —, mas o bloqueio era uma decisão humana e quem a tomou
   /// precisa saber que ela foi desfeita.
   BLOQUEIO_DESFEITO_POR_PAGAMENTO
+  /// Nenhum feed do CeasaNews respondeu numa coleta inteira. Feed isolado fora
+  /// do ar não avisa (as outras fontes cobrem); TODOS fora é o módulo parado.
+  NOTICIAS_FALHA
 }
 
 /// Desfecho de uma tentativa de importar boletim.
@@ -1438,4 +1441,74 @@ enum ReportStatus {
   PROCESSANDO
   CONCLUIDO
   ERRO
+}
+
+// ─── CeasaNews ──────────────────────────────────────────────────────────────
+//
+// Tabelas GLOBAIS, sem `tenantId`, no molde de `ceasa_*` e `rate_limits`: a
+// notícia sobre a geada no Sul é a mesma para todo cliente, e copiá-la por
+// empresa multiplicaria a coleta pelo número de clientes. Lidas com `prisma`
+// cru e FORA de `TENANT_MODELS`. Nenhum dado de empresa mora aqui.
+
+/// Assunto de uma notícia, decidido pelo filtro (`src/lib/noticias/filtro.ts`).
+enum NoticiaTema {
+  CEASA
+  PRECOS
+  CLIMA
+  LOGISTICA
+  SAFRA
+  ECONOMIA
+}
+
+enum NoticiaColetaStatus {
+  OK
+  FALHA
+}
+
+/// Uma notícia que passou no filtro. Guardamos título, resumo curto e link —
+/// nunca a matéria: quem quer ler vai ao veículo.
+model Noticia {
+  id          String        @id @default(cuid())
+  /// Link da matéria, sem parâmetros de rastreio. É a identidade da notícia.
+  url         String        @unique
+  /// Título normalizado (`normalizarNome`). Único: a mesma matéria chega por
+  /// mais de um feed (o site e o Google Notícias), e só a primeira fica.
+  chaveTitulo String        @unique
+  /// Veículo que publicou ("Canal Rural", "Folha PE").
+  fonte       String
+  /// Chave do feed que a trouxe (`src/lib/noticias/fontes.ts`).
+  feed        String
+  titulo      String
+  /// Texto puro, cortado. HTML do feed nunca chega à tela.
+  resumo      String        @default("")
+  publicadaEm DateTime
+  /// Só `https:` — é o que a CSP deixa a tela carregar.
+  imagemUrl   String?
+  temas       NoticiaTema[]
+  /// Relevância dada pelo filtro: ordena quando duas saem na mesma hora.
+  pontuacao   Int           @default(0)
+  createdAt   DateTime      @default(now())
+
+  @@index([publicadaEm])
+  @@map("noticias")
+}
+
+/// Uma ida a UM feed: o log que a tela do super-admin lê para dizer qual fonte
+/// parou. Mesmo papel de `CeasaImportRun`.
+model NoticiaColeta {
+  id         String              @id @default(cuid())
+  feed       String
+  status     NoticiaColetaStatus
+  /// Itens lidos do feed, itens que passaram no filtro, e os que eram novos.
+  lidos      Int                 @default(0)
+  aceitos    Int                 @default(0)
+  novos      Int                 @default(0)
+  httpStatus Int?
+  erro       String?
+  durationMs Int                 @default(0)
+  createdAt  DateTime            @default(now())
+
+  @@index([feed, createdAt])
+  @@index([createdAt])
+  @@map("noticias_coletas")
 }

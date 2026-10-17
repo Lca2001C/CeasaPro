@@ -19,7 +19,13 @@ const prisma = new PrismaClient();
 
 const DEMO = "demo@ceasapro.com.br";
 /** Rótulos vindos de `OPTIONAL_MODULES` — as áreas gateadas por plano. */
-const AREAS_OPCIONAIS = ["Caixas plásticas", "Higienização", "Venda de embalagens", "Cotações"];
+const AREAS_OPCIONAIS = [
+  "Caixas plásticas",
+  "Higienização",
+  "Venda de embalagens",
+  "Cotações",
+  "CeasaNews",
+];
 
 let planoOriginalId = "";
 let tenantId = "";

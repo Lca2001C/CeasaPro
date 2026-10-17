@@ -45,6 +45,12 @@ describe("a importação não pode derrubar o que ela pegou carona", () => {
     expect(trecho).toMatch(/\.catch\(/);
   });
 
+  it("a coleta do CeasaNews tem `.catch()` próprio e vem depois das cotações", () => {
+    const coleta = billing.indexOf("NoticiasService.coletar(");
+    expect(coleta).toBeGreaterThan(billing.indexOf("CotacoesImportService.importarTodasAsCentrais"));
+    expect(billing.slice(coleta, coleta + 400)).toMatch(/\.catch\(/);
+  });
+
   it("a importação vem DEPOIS de tudo que mexe com dinheiro", () => {
     // Se ela subisse na ordem, um site externo lento passaria a decidir se a
     // reconciliação do dia acontece. Rodando por último, o pior caso é a

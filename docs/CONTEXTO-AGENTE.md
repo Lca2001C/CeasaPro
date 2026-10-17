@@ -31,7 +31,7 @@ Não existe `STAFF` nesta versão. O super-admin também pode **usar o sistema**
 
 Violar qualquer uma destas é regressão grave:
 
-1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks, auditoria, **cotações** e o **banco de fotos** (`catalogo_imagens`) — porque as tabelas do boletim e o catálogo de fotos são globais por desenho e a extensão multi-tenant cobriria só metade do módulo; nas cotações o `tenantId` entra explícito em cada consulta, e é isso que `tests/integration/cotacoes-vinculo.test.ts` guarda.
+1. **Isolamento por tenant.** Em módulos de negócio use `getTenantPrisma(tenantId)`. O `tenantId` vem **só da sessão JWT**, nunca do body/query. `prisma` cru só em auth, super-admin, billing/webhooks, auditoria, **cotações**, o **banco de fotos** (`catalogo_imagens`) e o **CeasaNews** (`noticias`, `noticias_coletas`) — porque as tabelas do boletim, o catálogo de fotos e as notícias são globais por desenho e a extensão multi-tenant cobriria só metade do módulo; nas cotações o `tenantId` entra explícito em cada consulta, e é isso que `tests/integration/cotacoes-vinculo.test.ts` guarda.
 2. **Fórmulas financeiras só em** `src/lib/services/financial-calc.service.ts`. Não duplicar cálculo de total, lucro, margem ou rateio de frete.
 3. **Dinheiro é `Decimal`**, nunca `number`/`Float`. Helpers em `src/lib/money.ts`. Quantidade: 3 casas; dinheiro: 2.
 4. **Estoque e caixas plásticas são livros-razão.** Não existe coluna de saldo mutável. Saldo = soma de movimentos (`stock_movements`, `plastic_crate_movements`).
@@ -163,7 +163,7 @@ Catálogo **único**: `src/lib/plan/modules.ts`.
 
 **Núcleo (sempre):** dashboard, produtos, fornecedores, compras, PDV/vendas, fiado, estoque, despesas, relatórios básicos, config, meu plano, assinatura.
 
-**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = **nenhum** opcional liberado (fail-closed; `AdminService` exige a lista ao criar/salvar plano). `{ "modules": [] }` é como se diz "só o núcleo".
+**Opcionais:** `caixas`, `higienizacao`, `embalagens`, `cotacoes`, `relatorios_avancados`, `ceasanews`. Gravados em `Plan.features.modules`. Plano **sem** `features.modules` = **nenhum** opcional liberado (fail-closed; `AdminService` exige a lista ao criar/salvar plano). `{ "modules": [] }` é como se diz "só o núcleo".
 
 Bloqueio em 3 camadas: menu → `proxy.ts` (redirect `/plano?bloqueado=` ou 403) → `module:` nos wrappers.
 
@@ -266,6 +266,17 @@ Foram sondadas e **descartadas por publicarem só PDF** — o projeto não tem e
 | CEASA-PR, CE, PE | — | host inalcançável na sondagem (TLS/timeout/conexão recusada) |
 
 CONAB/PROHORT é a de maior alavancagem (acenderia dezenas de praças), e **não é "só um adaptador"**: ela é série `NACIONAL`, e a série é função pura do `sourceKey` da praça — ver a última armadilha do §15.
+
+### CeasaNews (módulo `ceasanews`, `/ceasanews`)
+
+Notícias que mexem no mercado de hortifruti (CEASAs, preços, clima, frete, safra), de veículos de terceiros: título, resumo curto, fonte e link para a matéria — nunca o texto da matéria.
+
+- **Fontes** em `src/lib/noticias/fontes.ts`: RSS de Canal Rural, g1 Agronegócios, Compre Rural e Agência Brasil (Economia), mais buscas do **Google Notícias**. Conab, HF Brasil/Cepea, Notícias Agrícolas e Embrapa não têm feed acessível (o Google Notícias os cobre); Agrolink tem feed parado em 2020. Feed novo: sondar antes (200 com itens recentes).
+- **`parse.ts` é puro** (RSS 2.0 + Atom, `fast-xml-parser`), testado contra feeds reais em `tests/fixtures/noticias/`. Sai **texto puro** — a tela nunca usa `dangerouslySetInnerHTML`; imagem só `https:`.
+- **`filtro.ts` é puro:** termo forte (ceasa, hortifruti, hortaliça…) entra sozinho; fora isso precisa de alimento de balcão **e** algo que mexa no preço (preço, clima, logística, safra, economia). Termos negativos derrubam. Os feeds gerais deixam passar só a minoria — é o esperado.
+- **Tabelas globais** (`noticias`, `noticias_coletas`), `prisma` cru, fora de `TENANT_MODELS`. Dedupe por `url` **e** por `chaveTitulo` (a mesma matéria vem do site e do Google). Guarda 30 dias; a tela mostra 7.
+- **Coleta:** sub-tarefa do cron de billing (depois das cotações, `.catch` próprio) e sob demanda ao abrir a tela, via `after()`, se a última tiver mais de 2 h. Feed isolado falhando não avisa; **todos** falhando gera `NOTICIAS_FALHA`. Situação por feed e "Coletar agora" em `/admin/cotacoes`.
+- "Sobre os seus produtos" casa a notícia com a família (primeira palavra) dos produtos ativos da empresa — o dado da empresa entra só na hora de ler.
 
 ### Relatórios (`/relatorios`, `GET /api/reports/[type]/export`)
 
@@ -391,7 +402,7 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 - Dois `next dev` no Windows travam Prisma.
 - **Despesa de compra fora do lucro.** Toda compra gera `Expense` com `origem = COMPRA`. Qualquer soma nova de despesas que meça custo operacional (lucro, margem, Fixas/Variáveis) precisa filtrar `origem = 'MANUAL'`; quem mede dinheiro devido ou pago (contas a pagar, caixa) inclui tudo. Errar o lado conta a mercadoria duas vezes ou some com a dívida do fornecedor.
 - **Foto de produto não sobe crua.** Celular gera 3–8 MB; Server Action aceita 1 MB e a Vercel 4,5 MB. Sempre `comprimirFoto` antes, e o servidor confere magic bytes (o bucket é público).
-- **Só 2 crons.** O plano Hobby da Vercel aceita dois agendamentos; um terceiro faz o **deploy** falhar, não o cron. É por isso que a importação de cotações pega carona no cron de billing.
+- **Só 2 crons.** O plano Hobby da Vercel aceita dois agendamentos; um terceiro faz o **deploy** falhar, não o cron. É por isso que a importação de cotações e a coleta do CeasaNews pegam carona no cron de billing.
 - **Não criar alerta de cotação automaticamente.** `push-avisos.service.ts` manda o push diário sempre que existe QUALQUER aviso pendente. Alerta em cada produto vinculado transforma a notificação de "só quando há algo a tratar" em "todo dia, para sempre" — e quem desliga isso perde junto o aviso de fiado vencido.
 - **`ceasa_quotes.unit` é texto livre da fonte** (`KG`, `CX 30 DZ`, `DZ 4 KG`, `UN 1,5 KG`). O peso em quilo só existe quando a **própria fonte** o declara no texto; `pesoEmKg` devolve `null` no resto, e é para continuar assim — R$/kg inventado é o preço errado com cara de certo.
 - **No vínculo, `unit = NULL` ≠ `unit = ''`.** `NULL` é "o cliente não escolheu embalagem" (vale para todas); `''` é uma embalagem real, que a praça manual grava quando o boletim não traz a coluna. No `<select>` da tela, "qualquer embalagem" precisa de um valor-sentinela, nunca `""`.

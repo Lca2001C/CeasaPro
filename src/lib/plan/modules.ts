@@ -11,6 +11,7 @@ export const OPTIONAL_MODULE_KEYS = [
   "embalagens",
   "cotacoes",
   "relatorios_avancados",
+  "ceasanews",
 ] as const;
 
 export type OptionalModuleKey = (typeof OPTIONAL_MODULE_KEYS)[number];
@@ -60,6 +61,18 @@ export const OPTIONAL_MODULES: Record<OptionalModuleKey, OptionalModule> = {
     description:
       "Preços do boletim da sua central do CEASA, com destaque para os produtos que você tem em estoque. A busca automática cobre hoje as centrais de MG e ES; nas demais praças, o boletim depende de envio manual.",
     pathPrefixes: ["/cotacoes"],
+  },
+  ceasanews: {
+    key: "ceasanews",
+    label: "CeasaNews",
+    /*
+      Como a de Cotações, diz o que o módulo é e o que NÃO é: um apanhado de
+      notícias de veículos de terceiros, com link para a matéria — não
+      jornalismo próprio nem preço do momento.
+    */
+    description:
+      "Notícias do mercado de hortifruti num lugar só: CEASAs, preços, clima, frete e safra, filtradas de veículos do agro e do Google Notícias, com destaque para o que fala dos seus produtos. Cada notícia leva à matéria original.",
+    pathPrefixes: ["/ceasanews"],
   },
   relatorios_avancados: {
     key: "relatorios_avancados",

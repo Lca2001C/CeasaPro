@@ -16,6 +16,7 @@ import {
   Droplets,
   BadgeCheck,
   TrendingUp,
+  Newspaper,
   LogOut,
   Sprout,
 } from "lucide-react";
@@ -34,6 +35,7 @@ const items = [
   { href: "/vendas", label: "Vendas", icon: Receipt },
   { href: "/fiado", label: "Fiado", icon: HandCoins },
   { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
+  { href: "/ceasanews", label: "CeasaNews", icon: Newspaper },
   { href: "/despesas", label: "Despesas", icon: Wallet },
   // Caixas e embalagens são uma tela só, em abas; os módulos seguem separados.
   { href: "/caixas-plasticas", label: "Caixas e embalagens", icon: Container },
