@@ -156,6 +156,12 @@ test.describe("Grade de cotações", () => {
 
     await expect(page.getByRole("heading", { name: /Produtos que você vende/ })).toBeVisible();
     await expect(page.getByRole("heading", { name: /Outros produtos da CEASA/ })).toBeVisible();
+    // Os produtos da empresa vêm ANTES do resto da praça.
+    const titulos = await page.locator("main h2").allTextContents();
+    const meus = titulos.findIndex((t) => /Produtos que você vende/.test(t));
+    const outros = titulos.findIndex((t) => /Outros produtos da CEASA/.test(t));
+    expect(meus).toBeGreaterThanOrEqual(0);
+    expect(meus).toBeLessThan(outros);
 
     // O produto vinculado carrega o selo, e é o único que carrega.
     const selos = page.getByText("Você vende", { exact: true });

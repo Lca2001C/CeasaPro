@@ -181,6 +181,16 @@ export const VendasService = {
    * itens; começar por eles corta digitação em quase toda venda.
    */
   async maisVendidos(tenantId: string, dias = 30, limite = 12): Promise<string[]> {
+    return (await this.rankingDeVendas(tenantId, dias)).slice(0, limite);
+  },
+
+  /**
+   * Todos os produtos vendidos nos últimos N dias, do que mais gira para o que
+   * menos gira (número de vendas, depois quantidade). Produto sem venda no
+   * período não entra. Um critério só para o PDV e para as Cotações — "mais
+   * vendido" não pode significar uma coisa em cada tela.
+   */
+  async rankingDeVendas(tenantId: string, dias = 30): Promise<string[]> {
     const desde = addDaysTz(new Date(), -dias);
     const rows = await prisma.$queryRaw<{ productId: string }[]>`
       SELECT si."productId"
@@ -191,7 +201,6 @@ export const VendasService = {
         AND s."saleDate" >= ${desde}
       GROUP BY si."productId"
       ORDER BY COUNT(*) DESC, SUM(si.quantity) DESC
-      LIMIT ${limite}
     `;
     return rows.map((r) => r.productId);
   },

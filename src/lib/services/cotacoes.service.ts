@@ -15,9 +15,10 @@ import { APP_TIME_ZONE, addDaysTz, startOfDayTz } from "@/lib/tz";
 
 /** Janela das compras que entram em "comprei acima do boletim". */
 const JANELA_DE_COMPRAS_DIAS = 30;
-import { toNumber } from "@/lib/money";
+import { toDecimal, toNumber } from "@/lib/money";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { VendasService } from "./vendas.service";
 
 /**
  * Leitura das cotações e gestão dos vínculos.
@@ -205,7 +206,109 @@ export interface ComparacaoComOBoletim {
   }[];
 }
 
+/**
+ * Um produto do cliente na tela de Cotações — TODOS os ativos, não só os que
+ * saíram no boletim de hoje.
+ *
+ * A pergunta que traz o comerciante aqui é "quanto está o que eu vendo". Antes
+ * só o produto vinculado E presente no boletim do dia virava cartão; o resto
+ * virava aviso numa lista. Agora cada produto aparece, e o cartão diz em qual
+ * dos três estados ele está: com preço hoje, fora do boletim de hoje (com o
+ * último preço e a data dele), ou sem vínculo.
+ */
+export interface MeuProdutoNaCotacao {
+  produtoId: string;
+  nome: string;
+  /** Saldo em estoque (livro-razão), para a linha "você tem X". */
+  saldo: Prisma.Decimal;
+  vinculo: { ceasaProductId: string; ceasaProductName: string; unit: string | null } | null;
+  /**
+   * O preço mais recente da praça para o vínculo, em QUALQUER data — é o que o
+   * cartão mostra quando o produto não saiu no boletim de hoje, sempre com a
+   * data junto (nunca "ontem": a praça não publica todo dia).
+   */
+  ultimo: { quoteDate: Date; unit: string; refPrice: Prisma.Decimal } | null;
+}
+
 export const CotacoesService = {
+  /**
+   * Todos os produtos ativos do cliente, do que mais vende para o que menos
+   * vende nos últimos 30 dias (o mesmo critério do PDV), e depois por nome.
+   *
+   * `prisma` cru com `tenantId` explícito em cada consulta, como o resto do
+   * módulo (ver CONTEXTO-AGENTE §3.1). O último preço respeita a central e a
+   * SÉRIE dela: cotação de outra série é dado que nenhuma tela lê.
+   */
+  async getMeusProdutos(tenantId: string): Promise<MeuProdutoNaCotacao[]> {
+    const [tenant, produtos, ranking] = await Promise.all([
+      prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: { ceasaCentral: { select: { code: true, sourceKey: true } } },
+      }),
+      prisma.$queryRaw<{ id: string; name: string; saldo: Prisma.Decimal | string | null }[]>`
+        SELECT p.id, p.name,
+               (SELECT COALESCE(SUM(CASE WHEN m.type IN ('ENTRADA','AJUSTE') THEN m.quantity ELSE -m.quantity END), 0)
+                  FROM stock_movements m
+                 WHERE m."productId" = p.id AND m."tenantId" = ${tenantId}) AS saldo
+        FROM products p
+        WHERE p."tenantId" = ${tenantId} AND p."deletedAt" IS NULL AND p.active = true
+      `,
+      VendasService.rankingDeVendas(tenantId, 30),
+    ]);
+    const central = tenant?.ceasaCentral ?? null;
+
+    const vinculos = central
+      ? await prisma.$queryRaw<
+          {
+            productId: string;
+            ceasaProductId: string;
+            ceasaProductName: string;
+            unit: string | null;
+            quoteDate: Date | null;
+            quoteUnit: string | null;
+            refPrice: Prisma.Decimal | string | null;
+          }[]
+        >`
+          SELECT l."productId", l."ceasaProductId", cp.name AS "ceasaProductName", l.unit,
+                 ult."quoteDate", ult.unit AS "quoteUnit", ult."refPrice"
+          FROM tenant_ceasa_links l
+          JOIN ceasa_products cp ON cp.id = l."ceasaProductId"
+          LEFT JOIN LATERAL (
+            SELECT q."quoteDate", q.unit, q."refPrice"
+            FROM ceasa_quotes q
+            WHERE q."centralCode" = ${central.code}
+              AND q."ceasaProductId" = l."ceasaProductId"
+              AND (l.unit IS NULL OR q.unit = l.unit)
+              AND cp.serie::text = ${serieDaFonte(central.sourceKey)}
+            ORDER BY q."quoteDate" DESC, q.unit ASC
+            LIMIT 1
+          ) ult ON true
+          WHERE l."tenantId" = ${tenantId}
+        `
+      : [];
+    const vinculoDe = new Map(vinculos.map((v) => [v.productId, v]));
+
+    const posicao = new Map(ranking.map((id, i) => [id, i]));
+    const ordem = (id: string) => posicao.get(id) ?? Number.MAX_SAFE_INTEGER;
+    return produtos
+      .map((p): MeuProdutoNaCotacao => {
+        const v = vinculoDe.get(p.id);
+        return {
+          produtoId: p.id,
+          nome: p.name,
+          saldo: toDecimal(p.saldo ?? 0),
+          vinculo: v
+            ? { ceasaProductId: v.ceasaProductId, ceasaProductName: v.ceasaProductName, unit: v.unit }
+            : null,
+          ultimo:
+            v && v.quoteDate && v.quoteUnit !== null && v.refPrice !== null
+              ? { quoteDate: v.quoteDate, unit: v.quoteUnit, refPrice: dec(v.refPrice)! }
+              : null,
+        };
+      })
+      .sort((a, b) => ordem(a.produtoId) - ordem(b.produtoId) || a.nome.localeCompare(b.nome, "pt-BR"));
+  },
+
   /**
    * Centrais que a empresa pode escolher.
    *

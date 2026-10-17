@@ -2,14 +2,17 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AlertTriangle, Link2, Send } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
-import { CotacoesService, type LinhaDeCotacao } from "@/lib/services/cotacoes.service";
+import {
+  CotacoesService,
+  type LinhaDeCotacao,
+  type MeuProdutoNaCotacao,
+} from "@/lib/services/cotacoes.service";
 import {
   explicacaoDaCadencia,
   explicacaoSemBoletim,
   frescorDoBoletim,
   rotuloDeFrescor,
 } from "@/lib/cotacoes/frescor";
-import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem";
 import { casaPelaPrimeiraPalavra, primeiraPalavra } from "@/lib/cotacoes/nome";
 import { formatDateOnly } from "@/lib/format";
 import { PageHeader } from "@/components/data/page-header";
@@ -21,6 +24,7 @@ import { cn } from "@/lib/cn";
 import { BuscaCotacoes } from "./_components/busca-cotacoes";
 import { EscolherCentral } from "./_components/escolher-central";
 import { CartaoDeCotacao } from "./_components/cartao-de-cotacao";
+import { CartaoMeuProduto } from "./_components/cartao-meu-produto";
 
 export const dynamic = "force-dynamic";
 
@@ -41,6 +45,9 @@ export default async function CotacoesPage({
 
   const { tenantId } = await requireTenant();
   const painel = await CotacoesService.getPainel(tenantId);
+  // Depois do painel, e não em paralelo: `getPainel` grava os vínculos
+  // automáticos de nome idêntico, e esta lista precisa enxergá-los.
+  const meusProdutos = painel.central ? await CotacoesService.getMeusProdutos(tenantId) : [];
 
   /*
     Quem tem central e NENHUM vínculo vai para a tela de partida.
@@ -90,7 +97,7 @@ export default async function CotacoesPage({
   */
   const filtro: Filtro = FILTROS.some((f) => f.value === rawFiltro)
     ? (rawFiltro as Filtro)
-    : painel.temVinculo || temPorPalavra
+    : meusProdutos.length > 0
       ? "MEUS"
       : "TODOS";
 
@@ -103,29 +110,58 @@ export default async function CotacoesPage({
   const familiaBuscada = primeiraPalavra(busca);
 
   /*
-    As duas seções da tela.
+    As três seções da tela.
 
-    Os produtos vinculados vêm SEMPRE primeiro, e não é ordenação estética: a
-    pergunta que traz o comerciante aqui é "quanto está o que eu vendo", e a
-    resposta não pode estar na página 3 de uma lista de 246 itens que ele não
-    vende. É a mesma decisão do destaque de estoque, levada ao layout.
+    1. "Produtos que você vende": TODO produto ativo do cliente, do que mais
+       vende para o que menos vende (30 dias, o critério do PDV). A pergunta
+       que traz o comerciante aqui é "quanto está o que eu vendo", e a
+       resposta não pode estar na página 3 de uma lista de 246 itens — nem
+       depender de o produto ter saído no boletim de hoje: quem não saiu
+       aparece com o último preço e a data, e quem não tem vínculo aparece
+       com o caminho para vincular.
+    2. "Parecidos com os seus": a família pela primeira palavra, sem vínculo
+       gravado ("TOMATE SALADA" para quem vende "Tomate Italiano").
+    3. "Outros produtos da CEASA": o resto do boletim, só em "Todos". A linha do
+       mesmo item em OUTRA embalagem fica aqui, com a marca "sua embalagem é X"
+       — se subisse, a caixa e o quilo competiriam na seção do topo.
   */
-  /*
-    "Meus produtos" é só o vínculo EXATO. A linha do mesmo item em outra
-    embalagem vai para "Todos" — se ela subisse para a seção verde, quem escolheu
-    a caixa veria a caixa e o quilo lado a lado ali, o que confunde exatamente
-    quem esta mudança quer ajudar. Ela não desaparece: continua em "Todos", com a
-    marca discreta de "sua embalagem é X".
-  */
-  /*
-    A família pela primeira palavra também é "meus": quem vende "Tomate
-    Italiano" vê ali todos os tomates do boletim, sem precisar vincular.
-  */
-  const ehMeu = (l: LinhaDeCotacao) => l.vinculo === "exato" || l.vinculo === "palavra";
-  const meus = painel.linhas.filter(ehMeu).filter(casaComBusca);
+  const chave = (l: { ceasaProductId: string; unit: string }) => `${l.ceasaProductId}|${l.unit}`;
+  const linhasDoProduto = (m: MeuProdutoNaCotacao): LinhaDeCotacao[] =>
+    m.vinculo
+      ? painel.linhas
+          .filter(
+            (l) =>
+              l.ceasaProductId === m.vinculo!.ceasaProductId &&
+              (m.vinculo!.unit === null || l.unit === m.vinculo!.unit),
+          )
+          // A linha é DESTE produto: dois produtos no mesmo item do boletim
+          // mostram, cada um, o seu nome e o seu saldo.
+          .map((l) => ({
+            ...l,
+            vinculo: "exato" as const,
+            meuProdutoId: m.produtoId,
+            meuProdutoNome: m.nome,
+            meuSaldo: m.saldo,
+          }))
+      : [];
+  const usadas = new Set(meusProdutos.flatMap((m) => linhasDoProduto(m).map(chave)));
+  const casaProduto = (m: MeuProdutoNaCotacao) =>
+    !busca ||
+    casaPelaPrimeiraPalavra(m.nome, busca) ||
+    (m.vinculo !== null && casaPelaPrimeiraPalavra(m.vinculo.ceasaProductName, busca));
+  const meus = meusProdutos
+    .filter(casaProduto)
+    .map((m) => ({ produto: m, linhas: linhasDoProduto(m) }));
+  const parecidos = painel.linhas
+    .filter((l) => l.vinculo === "palavra" && !usadas.has(chave(l)))
+    .filter(casaComBusca);
   const outros =
-    filtro === "MEUS" ? [] : painel.linhas.filter((l) => !ehMeu(l)).filter(casaComBusca);
-  const nenhum = meus.length === 0 && outros.length === 0;
+    filtro === "MEUS"
+      ? []
+      : painel.linhas
+          .filter((l) => l.vinculo !== "palavra" && !usadas.has(chave(l)))
+          .filter(casaComBusca);
+  const nenhum = meus.length === 0 && parecidos.length === 0 && outros.length === 0;
 
   const frescor = frescorDoBoletim(
     painel.quoteDate,
@@ -213,66 +249,11 @@ export default async function CotacoesPage({
       )}
 
       {/*
-        Vínculo que não achou preço hoje.
-
-        Sem este cartão o produto sai da tela sem uma palavra: ele não está em
-        `semVinculo` (tem vínculo) nem nas linhas (nada casou), e o cliente que
-        escolheu "CX 20 KG" simplesmente não encontra mais o tomate dele no dia em
-        que a praça publicou só o quilo. Dizer qual embalagem faltou é o que
-        permite a ele corrigir a escolha em vez de concluir que o módulo quebrou.
+        "Não saiu neste boletim" e "dois produtos no mesmo item" eram cartões de
+        aviso aqui. Agora cada produto tem o próprio cartão na seção do topo —
+        com o último preço e a data, ou com o seu nome na linha compartilhada —
+        e nada some da tela calado.
       */}
-      {painel.vinculosSemCotacao.length > 0 && (
-        <Card className="p-3">
-          <p className="text-sm font-medium">
-            {painel.vinculosSemCotacao.length === 1
-              ? "1 produto seu não saiu neste boletim"
-              : `${painel.vinculosSemCotacao.length} produtos seus não saíram neste boletim`}
-          </p>
-          <ul className="mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground">
-            {painel.vinculosSemCotacao.map((v) => (
-              <li key={v.produtoId} className="[overflow-wrap:anywhere]">
-                <strong className="font-medium">{v.produtoNome}</strong> — {v.ceasaProductName}
-                {v.unit !== null && ` na embalagem ${rotuloDeEmbalagem(v.unit)}`}
-              </li>
-            ))}
-          </ul>
-          <div className="mt-2">
-            <Button asChild size="sm" variant="outline">
-              <Link href="/cotacoes/vincular">
-                <Link2 className="size-4" />
-                Revisar vínculos
-              </Link>
-            </Button>
-          </div>
-        </Card>
-      )}
-
-      {/*
-        Dois produtos seus no MESMO item do boletim.
-
-        A grade mostra um produto por linha do boletim; o outro não tinha linha
-        própria e sumia da tela. Aqui ele aparece, dizendo em qual produto o
-        preço está sendo mostrado — o preço é o mesmo, só o nome na linha é outro.
-      */}
-      {painel.vinculosNaMesmaCotacao.length > 0 && (
-        <Card className="p-3">
-          <p className="text-sm font-medium">
-            {painel.vinculosNaMesmaCotacao.length === 1
-              ? "1 produto seu usa a mesma cotação de outro produto"
-              : `${painel.vinculosNaMesmaCotacao.length} produtos seus usam a mesma cotação de outro produto`}
-          </p>
-          <ul className="mt-1 flex flex-col gap-0.5 text-xs text-muted-foreground">
-            {painel.vinculosNaMesmaCotacao.map((v) => (
-              <li key={v.produtoId} className="[overflow-wrap:anywhere]">
-                <strong className="font-medium">{v.produtoNome}</strong> — {v.ceasaProductName}
-                {v.unit !== null && ` na embalagem ${rotuloDeEmbalagem(v.unit)}`}
-                {v.junto && `, mostrado na linha de ${v.junto}`}
-              </li>
-            ))}
-          </ul>
-        </Card>
-      )}
-
       {painel.familias.length > 0 && (
         <nav aria-label="Seus produtos" className="flex flex-col gap-1.5">
           <span className="text-xs font-medium text-muted-foreground">Seus produtos</span>
@@ -326,7 +307,7 @@ export default async function CotacoesPage({
             busca
               ? "Nenhum produto do boletim casa com essa busca."
               : filtro === "MEUS"
-                ? "Nenhum produto seu saiu neste boletim. Veja em Todos."
+                ? "Você ainda não tem produtos ativos. Veja em Todos."
                 : "O boletim desta central ainda não trouxe produtos."
           }
         />
@@ -335,7 +316,24 @@ export default async function CotacoesPage({
           {meus.length > 0 && (
             <section className="flex flex-col gap-2">
               <SecaoTitulo texto="Produtos que você vende" quantidade={meus.length} />
-              <Grade linhas={meus} />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                {meus.map(({ produto, linhas }) =>
+                  linhas.length > 0 ? (
+                    linhas.map((l) => (
+                      <CartaoDeCotacao key={`${produto.produtoId}-${chave(l)}`} linha={l} />
+                    ))
+                  ) : (
+                    <CartaoMeuProduto key={produto.produtoId} produto={produto} />
+                  ),
+                )}
+              </div>
+            </section>
+          )}
+
+          {parecidos.length > 0 && (
+            <section className="flex flex-col gap-2">
+              <SecaoTitulo texto="Parecidos com os seus" quantidade={parecidos.length} />
+              <Grade linhas={parecidos} />
             </section>
           )}
 

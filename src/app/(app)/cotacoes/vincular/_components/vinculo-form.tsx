@@ -223,7 +223,7 @@ function LinhaSemVinculo({
   const restante = doBoletim.filter((c) => !idsSugeridos.has(c.id));
 
   return (
-    <Card className="flex flex-col gap-2 p-3">
+    <Card id={`produto-${produto.id}`} className="flex scroll-mt-20 flex-col gap-2 p-3 target:ring-2 target:ring-primary">
       <label className="flex items-start gap-2">
         <input
           type="checkbox"
@@ -300,7 +300,7 @@ function LinhaVinculada({ produto, busy }: { produto: ProdutoDoCliente; busy: bo
   }
 
   return (
-    <Card className="flex flex-wrap items-center justify-between gap-2 p-3">
+    <Card id={`produto-${produto.id}`} className="flex scroll-mt-20 flex-wrap items-center justify-between gap-2 p-3 target:ring-2 target:ring-primary">
       <div className="min-w-0">
         <p className="truncate font-medium">{produto.name}</p>
         <Badge variant="success" className="mt-1 gap-1">
