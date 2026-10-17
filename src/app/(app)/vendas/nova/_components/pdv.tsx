@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useDeferredValue, useMemo, useRef, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
@@ -31,7 +31,7 @@ import { RECIPIENT_TYPE_LABELS, SALE_UNIT_LABELS, toOptions } from "@/lib/labels
 import { nivelEstoque, passaDoEstoque, saldoApos } from "@/lib/estoque/nivel";
 import { nomeDaEmbalagem } from "@/lib/estoque/custo-carga";
 import { agruparPorPrimeiraPalavra, primeiraPalavra } from "@/lib/cotacoes/nome";
-import { embalagemCasaComVenda } from "@/lib/cotacoes/embalagem";
+import { embalagemCasaComVenda } from "@/lib/cotacoes/embalagem-texto";
 import type { ReferenciaDoBoletim } from "@/lib/services/cotacoes.service";
 import type { SaleUnit } from "@prisma/client";
 import {
@@ -233,19 +233,6 @@ export function Pdv({
     return ultimosPrecos[produtoId] ?? precosDaCompra[produtoId] ?? 0;
   }
 
-  function novoItem(p: Produto, quantity: number, unitPrice: number): CartItem {
-    return {
-      productId: p.id,
-      name: p.name,
-      saleUnit: p.saleUnit,
-      quantity,
-      unitPrice,
-      recipientType: "",
-      crateQty: 0,
-      discountAmount: 0,
-    };
-  }
-
   const saldoDe = (produtoId: string) => estoquePorProduto[produtoId] ?? 0;
   const unidadeDe = (saleUnit: string) => (SALE_UNIT_LABELS[saleUnit] ?? "").toLowerCase();
   /** Quilo é o caso em que ±1 não serve: 2,350 kg é o normal, não a exceção. */
@@ -269,12 +256,26 @@ export function Pdv({
    * O que mais gira vem primeiro, não o alfabeto: no balcão quase toda venda é
    * o mesmo punhado de itens, e abrir por eles corta rolagem em quase toda venda.
    */
+  /*
+    Busca ADIADA e nomes normalizados uma vez só.
+
+    Cada tecla na busca re-renderizava a tela inteira e normalizava (NFD +
+    regex) o nome de todos os produtos de novo. Agora o campo responde na hora
+    e a grade filtra logo depois (`useDeferredValue`), com os nomes já
+    normalizados; os cartões são `memo`, então só os que mudam redesenham.
+  */
+  const buscaAdiada = useDeferredValue(search);
+  const nomesNormalizados = useMemo(
+    () => new Map(produtos.map((p) => [p.id, normalizarBusca(p.name)])),
+    [produtos],
+  );
   const listados = useMemo(() => {
     const ordem = new Map(maisVendidos.map((id, i) => [id, i]));
+    const porId = new Map(produtos.map((p) => [p.id, p]));
     let base: Produto[];
     if (filtro === MAIS_VENDIDOS) {
       base = maisVendidos
-        .map((id) => produtos.find((p) => p.id === id))
+        .map((id) => porId.get(id))
         .filter((p): p is Produto => Boolean(p));
     } else if (filtro === TODOS) {
       base = [...produtos].sort(
@@ -283,9 +284,9 @@ export function Pdv({
     } else {
       base = produtos.filter((p) => primeiraPalavra(p.name) === filtro);
     }
-    const q = normalizarBusca(search);
-    return q ? base.filter((p) => normalizarBusca(p.name).includes(q)) : base;
-  }, [search, filtro, produtos, maisVendidos]);
+    const q = normalizarBusca(buscaAdiada);
+    return q ? base.filter((p) => (nomesNormalizados.get(p.id) ?? "").includes(q)) : base;
+  }, [buscaAdiada, filtro, produtos, maisVendidos, nomesNormalizados]);
 
   // ── Totais ────────────────────────────────────────────────────────────
   // Os totais vêm do contrato compartilhado — a MESMA função que o refine do
@@ -348,19 +349,45 @@ export function Pdv({
     parteFiada > 0 || (caixasHabilitado && usaCaixaPlastica) || caixasResolvidas > 0;
 
   // ── Carrinho ──────────────────────────────────────────────────────────
-  function addProduct(p: Produto) {
-    const qtd = qtdParaAdicionar && qtdParaAdicionar > 0 ? qtdParaAdicionar : 1;
+  // Estável entre teclas da busca (só muda com a quantidade ou os preços), para
+  // os cartões `memo` da grade não redesenharem à toa. O preço é o mesmo de
+  // `precoSugerido`, escrito aqui para não depender de função recriada a cada render.
+  const addProduct = useCallback(
+    (p: Produto) => {
+      const qtd = qtdParaAdicionar && qtdParaAdicionar > 0 ? qtdParaAdicionar : 1;
+      const preco = ultimosPrecos[p.id] ?? precosDaCompra[p.id] ?? 0;
+      setCart((c) => {
+        const found = c.find((i) => i.productId === p.id);
+        if (found) {
+          return c.map((i) =>
+            i.productId === p.id ? { ...i, quantity: somarQuantidade(i.quantity, qtd) } : i,
+          );
+        }
+        return [...c, novoItem(p, qtd, preco)];
+      });
+      setSearch("");
+    },
+    [qtdParaAdicionar, ultimosPrecos, precosDaCompra],
+  );
+  /** +1 no cartão da grade — pela quantidade ATUAL do carrinho, não a do último render. */
+  const porUm = useCallback((item: CartItem) => {
+    setCart((c) =>
+      c.map((i) =>
+        i.productId === item.productId ? { ...i, quantity: somarQuantidade(i.quantity, 1) } : i,
+      ),
+    );
+  }, []);
+  /** −1 no cartão da grade; chegando a zero, o item sai (mesma regra de `tirarUm`). */
+  const tirarUmDaGrade = useCallback((item: CartItem) => {
     setCart((c) => {
-      const found = c.find((i) => i.productId === p.id);
-      if (found) {
-        return c.map((i) =>
-          i.productId === p.id ? { ...i, quantity: somarQuantidade(i.quantity, qtd) } : i,
-        );
-      }
-      return [...c, novoItem(p, qtd, precoSugerido(p.id))];
+      const atual = c.find((i) => i.productId === item.productId);
+      if (!atual) return c;
+      const nova = subtrairQuantidade(atual.quantity, 1);
+      return nova <= 0
+        ? c.filter((i) => i.productId !== item.productId)
+        : c.map((i) => (i.productId === item.productId ? { ...i, quantity: nova } : i));
     });
-    setSearch("");
-  }
+  }, []);
 
   function updateItem(id: string, patch: Partial<CartItem>) {
     setCart((c) => c.map((i) => (i.productId === id ? { ...i, ...patch } : i)));
@@ -813,11 +840,9 @@ export function Pdv({
                       preco={precoSugerido(p.id)}
                       maisVendido={destaque.has(p.id)}
                       item={noCarrinho.get(p.id)}
-                      onAdicionar={() => addProduct(p)}
-                      onTirarUm={(i) => tirarUm(i)}
-                      onPorUm={(i) =>
-                        updateItem(i.productId, { quantity: somarQuantidade(i.quantity, 1) })
-                      }
+                      onAdicionar={addProduct}
+                      onTirarUm={tirarUmDaGrade}
+                      onPorUm={porUm}
                     />
                   ))}
                 </div>
@@ -1532,6 +1557,20 @@ function Miniatura({ foto, className }: { foto: string | null; className?: strin
   );
 }
 
+/** Item novo no carrinho. Fora do componente: é puro, e assim o `adicionar` estável não depende dele. */
+function novoItem(p: Produto, quantity: number, unitPrice: number): CartItem {
+  return {
+    productId: p.id,
+    name: p.name,
+    saleUnit: p.saleUnit,
+    quantity,
+    unitPrice,
+    recipientType: "",
+    crateQty: 0,
+    discountAmount: 0,
+  };
+}
+
 /**
  * Um produto na grade: a foto em destaque, o saldo por cima dela e o preço
  * sugerido embaixo.
@@ -1541,7 +1580,7 @@ function Miniatura({ foto, className }: { foto: string | null; className?: strin
  * até a lista do pedido (os nomes acessíveis são outros, para não se confundir
  * com os da linha do carrinho).
  */
-function CartaoDeProduto({
+const CartaoDeProduto = memo(function CartaoDeProduto({
   produto,
   saldo,
   preco,
@@ -1556,7 +1595,7 @@ function CartaoDeProduto({
   preco: number;
   maisVendido: boolean;
   item?: CartItem;
-  onAdicionar: () => void;
+  onAdicionar: (p: Produto) => void;
   onTirarUm: (i: CartItem) => void;
   onPorUm: (i: CartItem) => void;
 }) {
@@ -1574,7 +1613,7 @@ function CartaoDeProduto({
     >
       <button
         type="button"
-        onClick={onAdicionar}
+        onClick={() => onAdicionar(produto)}
         aria-label={`Adicionar ${produto.name}`}
         className="group flex flex-1 flex-col text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >
@@ -1666,7 +1705,7 @@ function CartaoDeProduto({
       </div>
     </div>
   );
-}
+});
 
 /**
  * O custo e o boletim, embaixo da linha do carrinho.

@@ -1,3 +1,4 @@
+import "server-only";
 import { createHash, randomBytes } from "node:crypto";
 import { SignJWT, jwtVerify } from "jose";
 import { absoluteUrl } from "@/lib/app-url";
@@ -39,21 +40,8 @@ export interface GoogleProfile {
   name: string;
 }
 
-export type GoogleLoginErro =
-  | "google-indisponivel"
-  | "google-cancelado"
-  | "google-falhou"
-  | "google-inativo";
-
-export const MENSAGENS_ERRO_GOOGLE: Record<GoogleLoginErro, string> = {
-  "google-indisponivel":
-    "Entrar com Google ainda não está disponível. Use e-mail e senha.",
-  "google-cancelado": "Entrada com Google cancelada.",
-  "google-falhou":
-    "Não foi possível entrar com o Google. Tente de novo ou use e-mail e senha.",
-  "google-inativo":
-    "Não foi possível entrar com o Google. Tente de novo ou use e-mail e senha.",
-};
+import type { GoogleLoginErro } from "./google-erros";
+export { MENSAGENS_ERRO_GOOGLE, type GoogleLoginErro } from "./google-erros";
 
 export function googleOAuthConfig(): GoogleOAuthConfig | null {
   const clientId = process.env.GOOGLE_CLIENT_ID?.trim();

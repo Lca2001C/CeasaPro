@@ -1,4 +1,4 @@
-import { MENSAGENS_ERRO_GOOGLE, type GoogleLoginErro } from "@/lib/auth/google-oauth";
+import { MENSAGENS_ERRO_GOOGLE, type GoogleLoginErro } from "@/lib/auth/google-erros";
 
 const CODIGOS = new Set<string>(Object.keys(MENSAGENS_ERRO_GOOGLE));
 

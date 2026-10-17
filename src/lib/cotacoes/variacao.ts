@@ -1,4 +1,4 @@
-import { toNumber, type Numeric } from "@/lib/money";
+import { paraNumeroCru as paraNumero, type Numerico } from "@/lib/numero";
 
 /**
  * Quanto o preço mexeu de um boletim para o outro, e o desenho do minigráfico.
@@ -32,13 +32,13 @@ export type DirecaoDaVariacao = "alta" | "baixa" | "estavel";
  * hoje, e o comerciante concluiria que o preço está estável há tempos.
  */
 export function variacaoPercentual(
-  atual: Numeric | null | undefined,
-  anterior: Numeric | null | undefined,
+  atual: Numerico | null | undefined,
+  anterior: Numerico | null | undefined,
 ): number | null {
   if (atual === null || atual === undefined) return null;
   if (anterior === null || anterior === undefined) return null;
-  const a = toNumber(atual);
-  const b = toNumber(anterior);
+  const a = paraNumero(atual);
+  const b = paraNumero(anterior);
   if (!Number.isFinite(a) || !Number.isFinite(b)) return null;
   // Base zero ou negativa não tem variação percentual definida — dividir daria
   // Infinity, que viraria "∞%" na tela.

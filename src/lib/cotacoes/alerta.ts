@@ -1,4 +1,4 @@
-import { toNumber, type Numeric } from "@/lib/money";
+import { paraNumeroCru as paraNumero, type Numerico } from "@/lib/numero";
 import { variacaoPercentual } from "./variacao";
 
 /**
@@ -14,17 +14,17 @@ export type MotivoDoAlerta = "alta" | "baixa" | "acima_do_teto" | "abaixo_do_pis
 
 export interface AlertaConfigurado {
   /** De quantos por cento, para cima ou para baixo, o movimento merece aviso. */
-  variacaoMinima: Numeric;
+  variacaoMinima: Numerico;
   /** Avisar quando o preço PASSAR deste valor (está caro para comprar). */
-  precoTeto: Numeric | null;
+  precoTeto: Numerico | null;
   /** Avisar quando o preço CAIR abaixo deste valor (é hora de comprar). */
-  precoPiso: Numeric | null;
+  precoPiso: Numerico | null;
 }
 
 export interface PrecoObservado {
-  refPrice: Numeric | null;
+  refPrice: Numerico | null;
   /** Preço do boletim ANTERIOR. `null` quando o item estreou. */
-  anterior: Numeric | null;
+  anterior: Numerico | null;
 }
 
 export interface Disparo {
@@ -73,10 +73,10 @@ export const FOLGA_DO_LIMITE_SUGERIDO = 0.15;
  * seria oferecer um botão que não faz nada).
  */
 export function limitesSugeridos(
-  media: Numeric | null | undefined,
+  media: Numerico | null | undefined,
 ): { teto: number; piso: number } | null {
   if (media === null || media === undefined) return null;
-  const m = toNumber(media);
+  const m = paraNumero(media);
   if (!Number.isFinite(m) || m <= 0) return null;
   const arredonda = (v: number) => Math.round(v * 100) / 100;
   return {
@@ -103,12 +103,12 @@ export function avaliarAlerta(config: AlertaConfigurado, preco: PrecoObservado):
   if (preco.refPrice === null || preco.refPrice === undefined) {
     return { motivos, variacao: null };
   }
-  const atual = toNumber(preco.refPrice);
+  const atual = paraNumero(preco.refPrice);
   // Preço zero ou negativo é dado ruim (boletim manual com "0,00"), não queda
   // de mercado: sem este corte, virava "caiu 100% (R$ 0,00)" e piso disparado.
   if (!Number.isFinite(atual) || atual <= 0) return { motivos, variacao: null };
 
-  const limiar = Math.max(toNumber(config.variacaoMinima), VARIACAO_MINIMA_ACEITA);
+  const limiar = Math.max(paraNumero(config.variacaoMinima), VARIACAO_MINIMA_ACEITA);
   if (variacao !== null && Math.abs(variacao) >= limiar) {
     motivos.push(variacao > 0 ? "alta" : "baixa");
   }
@@ -121,11 +121,11 @@ export function avaliarAlerta(config: AlertaConfigurado, preco: PrecoObservado):
     teto existe para pegar: a subida lenta que ninguém percebe boletim a boletim.
   */
   if (config.precoTeto !== null && config.precoTeto !== undefined) {
-    const teto = toNumber(config.precoTeto);
+    const teto = paraNumero(config.precoTeto);
     if (Number.isFinite(teto) && teto > 0 && atual >= teto) motivos.push("acima_do_teto");
   }
   if (config.precoPiso !== null && config.precoPiso !== undefined) {
-    const piso = toNumber(config.precoPiso);
+    const piso = paraNumero(config.precoPiso);
     if (Number.isFinite(piso) && piso > 0 && atual <= piso) motivos.push("abaixo_do_piso");
   }
 

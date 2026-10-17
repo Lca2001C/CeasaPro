@@ -13,7 +13,7 @@ import { Card } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { SALE_UNIT_LABELS } from "@/lib/labels";
-import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem";
+import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem-texto";
 import type { SaleUnit } from "@prisma/client";
 
 interface ItemDoBoletim {

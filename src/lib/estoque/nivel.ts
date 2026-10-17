@@ -1,4 +1,4 @@
-import { toDecimal, type Numeric } from "@/lib/money";
+import { paraNumero, type Numerico } from "@/lib/numero";
 
 /**
  * Quanto ainda dá para vender de um produto.
@@ -22,15 +22,15 @@ export const ESTOQUE_BAIXO = 5;
  *   cadastrou um. Nulo cai no `ESTOQUE_BAIXO` global. Com mínimo, "acabando" é
  *   chegar NELE (≤), que é como o dono lê "me avise quando tiver 10".
  */
-export function nivelEstoque(quantidade: Numeric, minimo?: Numeric | null): NivelEstoque {
-  const q = toDecimal(quantidade);
+export function nivelEstoque(quantidade: Numerico, minimo?: Numerico | null): NivelEstoque {
+  const q = milesimos(quantidade);
   // Saldo negativo (ajuste manual, movimento fora de ordem) conta como zerado:
   // não há o que vender, e mostrar "-2 caixas" como se fosse estoque confunde.
-  if (q.lessThanOrEqualTo(0)) return "zerado";
+  if (q <= 0) return "zerado";
   if (minimo != null) {
-    return q.lessThanOrEqualTo(toDecimal(minimo)) ? "acabando" : "ok";
+    return q <= milesimos(minimo) ? "acabando" : "ok";
   }
-  if (q.lessThan(ESTOQUE_BAIXO)) return "acabando";
+  if (q < ESTOQUE_BAIXO * 1000) return "acabando";
   return "ok";
 }
 
@@ -43,16 +43,23 @@ export function nivelEstoque(quantidade: Numeric, minimo?: Numeric | null): Nive
  */
 const CASAS_QUANTIDADE = 3;
 
-function quantidade(v: Numeric) {
-  return toDecimal(v).toDecimalPlaces(CASAS_QUANTIDADE);
+/**
+ * Quantidade em MILÉSIMOS inteiros — as 3 casas do banco, sem Decimal (ver
+ * `src/lib/numero.ts`: isto roda no PDV, no navegador). Inteiro até 9 × 10¹⁵ é
+ * exato em `number`, muito além de `Decimal(14, 3)`. Arredonda meio para longe
+ * do zero, como o `ROUND_HALF_UP` do Decimal que estava aqui antes.
+ */
+function milesimos(v: Numerico): number {
+  const n = paraNumero(v) * 10 ** CASAS_QUANTIDADE;
+  return Math.sign(n) * Math.round(Math.abs(n));
 }
 
 /** Vender `pedido` deixaria o saldo negativo? */
-export function passaDoEstoque(disponivel: Numeric, pedido: Numeric): boolean {
-  return quantidade(pedido).greaterThan(quantidade(disponivel));
+export function passaDoEstoque(disponivel: Numerico, pedido: Numerico): boolean {
+  return milesimos(pedido) > milesimos(disponivel);
 }
 
 /** Saldo que sobra depois de vender `pedido` (pode ficar negativo — é o aviso). */
-export function saldoApos(disponivel: Numeric, pedido: Numeric) {
-  return quantidade(disponivel).minus(quantidade(pedido));
+export function saldoApos(disponivel: Numerico, pedido: Numerico): number {
+  return (milesimos(disponivel) - milesimos(pedido)) / 10 ** CASAS_QUANTIDADE;
 }

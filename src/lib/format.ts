@@ -1,4 +1,4 @@
-import { toNumber, type Numeric } from "./money";
+import { paraNumero, type Numerico } from "./numero";
 import { APP_TIME_ZONE } from "./tz";
 
 const BRL = new Intl.NumberFormat("pt-BR", {
@@ -44,12 +44,12 @@ const DATETIME = new Intl.DateTimeFormat("pt-BR", {
 });
 
 /** R$ 1.234,56 */
-export function formatBRL(v: Numeric | null | undefined): string {
-  return BRL.format(toNumber(v ?? 0));
+export function formatBRL(v: Numerico | null | undefined): string {
+  return BRL.format(paraNumero(v));
 }
 
-export function formatQty(v: Numeric | null | undefined): string {
-  return NUM.format(toNumber(v ?? 0));
+export function formatQty(v: Numerico | null | undefined): string {
+  return NUM.format(paraNumero(v));
 }
 
 /**
