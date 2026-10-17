@@ -188,6 +188,39 @@ export async function custoMedioPonderado(
   return new Map(rows.map((r) => [r.productId, toDecimal(r.custo as Prisma.Decimal.Value)]));
 }
 
+/**
+ * Saldo E custo médio dos produtos, numa consulta só — o que a venda precisa
+ * dentro da transação, com os produtos travados (`FOR UPDATE`).
+ *
+ * A venda fazia um `groupBy` de saldo e, depois, `custoMedioPonderado`: duas
+ * varreduras das MESMAS linhas do livro-razão, em sequência na conexão da
+ * transação, com o produto travado o tempo todo. O CTE de custo já calcula o
+ * saldo (`resultado.quantidade`, mesma regra de sinal: ENTRADA/AJUSTE somam).
+ * Produto sem movimento não aparece — saldo zero, sem custo.
+ */
+export async function saldoECustoMedio(
+  tx: CustoTxClient,
+  tenantId: string,
+  productIds: string[],
+): Promise<{ saldo: Map<string, Prisma.Decimal>; custo: Map<string, Prisma.Decimal> }> {
+  const saldo = new Map<string, Prisma.Decimal>();
+  const custo = new Map<string, Prisma.Decimal>();
+  if (productIds.length === 0) return { saldo, custo };
+  const rows = await tx.$queryRawUnsafe<
+    { productId: string; quantidade: Prisma.Decimal | string; custo: Prisma.Decimal | string | null }[]
+  >(
+    `${sqlCustoEstoque(true)}
+     SELECT "productId", quantidade, custo FROM resultado`,
+    tenantId,
+    productIds,
+  );
+  for (const r of rows) {
+    saldo.set(r.productId, toDecimal(r.quantidade as Prisma.Decimal.Value));
+    if (r.custo !== null) custo.set(r.productId, toDecimal(r.custo as Prisma.Decimal.Value));
+  }
+  return { saldo, custo };
+}
+
 /** O movimento TIRA do estoque? (`AJUSTE` negativo é acerto de inventário para baixo.) */
 function retiraDoEstoque(input: AjusteEstoqueInput): boolean {
   if (input.type === "QUEBRA" || input.type === "DOACAO") return true;
@@ -303,6 +336,15 @@ export const EstoqueService = {
    * {@link sqlCustoEstoque}), que a tela escondia e o painel mostrava. Só não
    * busca nome, unidade nem data: o painel quer o total.
    */
+  /**
+   * O valor total a partir de posições JÁ calculadas — o mesmo número de
+   * `getTotalValue` (mesma `valorDaLinha` por produto, arredondado uma vez no
+   * fim), sem rodar de novo o custo sobre o livro-razão inteiro.
+   */
+  valorTotalDasPosicoes(posicoes: { value: Prisma.Decimal }[]): Prisma.Decimal {
+    return money(add(...posicoes.map((p) => p.value)));
+  },
+
   async getTotalValue(tenantId: string): Promise<Prisma.Decimal> {
     const rows = await prisma.$queryRawUnsafe<
       { quantity: Prisma.Decimal | string; custo: Prisma.Decimal | string }[]

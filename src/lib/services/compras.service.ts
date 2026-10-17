@@ -13,6 +13,14 @@ import { formatBRL } from "@/lib/format";
 import { COMPRA_EXPENSE_CATEGORY } from "@/lib/constants";
 import { isModuleEnabled } from "@/lib/plan/modules";
 
+export interface UltimaCompraDoProduto {
+  productId: string;
+  unitPrice: Prisma.Decimal;
+  unitCost: Prisma.Decimal;
+  suggested: Prisma.Decimal | null;
+  purchaseDate: Date;
+}
+
 export const ComprasService = {
   async list(tenantId: string) {
     const db = getTenantPrisma(tenantId);
@@ -48,19 +56,30 @@ export const ComprasService = {
    * com `purchases` é obrigatório: `purchase_items` não tem `deletedAt` próprio,
    * então sem ele uma compra excluída continuaria ditando o "último preço".
    */
-  async ultimosPrecosPagos(
-    tenantId: string,
-  ): Promise<Record<string, { unitPrice: number; purchaseDate: Date }>> {
-    const rows = await prisma.$queryRaw<
-      { productId: string; unitPrice: Prisma.Decimal; purchaseDate: Date }[]
-    >`
+  /**
+   * A ÚLTIMA compra de cada produto, com tudo que as telas tiram dela: o preço
+   * pago (margem na Compra e no PDV) e o sugerido/custo (preço inicial no PDV).
+   *
+   * Uma consulta só para os dois usos: o PDV rodava esta mesma varredura duas
+   * vezes por carga, uma para cada número.
+   */
+  async ultimaCompraPorProduto(tenantId: string): Promise<UltimaCompraDoProduto[]> {
+    return prisma.$queryRaw<UltimaCompraDoProduto[]>`
       SELECT DISTINCT ON (pi."productId")
-             pi."productId", pi."unitPrice", p."purchaseDate"
+             pi."productId", pi."unitPrice", pi."unitCost",
+             pi."suggestedSalePrice" AS suggested, p."purchaseDate"
       FROM purchase_items pi
       JOIN purchases p ON p.id = pi."purchaseId"
       WHERE pi."tenantId" = ${tenantId} AND p."deletedAt" IS NULL
       ORDER BY pi."productId", p."purchaseDate" DESC, pi."createdAt" DESC
     `;
+  },
+
+  async ultimosPrecosPagos(
+    tenantId: string,
+    jaLidas?: UltimaCompraDoProduto[],
+  ): Promise<Record<string, { unitPrice: number; purchaseDate: Date }>> {
+    const rows = jaLidas ?? (await this.ultimaCompraPorProduto(tenantId));
     const mapa: Record<string, { unitPrice: number; purchaseDate: Date }> = {};
     for (const r of rows) {
       const valor = Number(money(r.unitPrice));

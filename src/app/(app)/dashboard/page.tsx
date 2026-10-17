@@ -79,7 +79,7 @@ export default async function DashboardPage({
   const ehGeral = aba === "geral";
   const [s, avisos, contas, proximas, cadastro, cotacoes, comparacao, financeiro] =
     await Promise.all([
-      DashboardService.getSummary(tenantId, session.modules),
+      DashboardService.getSummary(tenantId, session.modules, aba),
       AvisosService.get(tenantId, session.modules),
       // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
       // em "quanto tenho que pagar", não em módulos.

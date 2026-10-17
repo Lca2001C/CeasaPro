@@ -42,7 +42,9 @@ export const GET = withTenantRoute({
     const [resumo, avisos, estoque, fiado] = await Promise.all([
       // Com os módulos: sem eles `contasPagar` saía sem a higienização em
       // aberto, e a consulta offline mostrava menos do que o Início.
-      DashboardService.getSummary(ctx.tenantId, ctx.session.modules),
+      // Só os números do resumo: o valor do estoque sai das posições abaixo,
+      // em vez de o custo sobre o livro-razão inteiro rodar duas vezes.
+      DashboardService.getSummary(ctx.tenantId, ctx.session.modules, "resumo"),
       AvisosService.get(ctx.tenantId, ctx.session.modules),
       EstoqueService.getPositions(ctx.tenantId),
       FiadoService.listOpen(ctx.tenantId, "EM_ABERTO"),
@@ -55,7 +57,7 @@ export const GET = withTenantRoute({
       resumo: {
         hojeVendi: Number(resumo.hojeVendi),
         aReceber: Number(resumo.aReceber),
-        estoqueValor: Number(resumo.estoqueValor),
+        estoqueValor: Number(EstoqueService.valorTotalDasPosicoes(estoque)),
         contasPagar: Number(resumo.contasPagar),
       },
       avisos: avisos.map((a) => ({

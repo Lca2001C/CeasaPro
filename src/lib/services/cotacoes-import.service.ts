@@ -12,6 +12,7 @@ import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
 import { normalizarEmbalagem } from "@/lib/cotacoes/embalagem";
 import { audit } from "@/lib/audit";
+import { esquecerUnidadesDoBoletim } from "./cotacoes.service";
 
 // Reexportada para não quebrar quem já a importava daqui. A definição saiu
 // deste arquivo e mora em `lib/cotacoes/serie.ts` — o comentário lá explica
@@ -196,8 +197,16 @@ export const CotacoesImportService = {
     }
     const produtosNovos = novosUnicos.length;
 
+    // Só quem ainda não foi visto HOJE (ou estava inativo): o cron reimporta o
+    // mesmo boletim várias vezes, e regravar todos os produtos a cada vez
+    // deu 12 mil updates em 320 linhas em produção — escrita e bloat à toa.
+    const inicioDoDia = new Date(new Date().setUTCHours(0, 0, 0, 0));
     await prisma.ceasaProduct.updateMany({
-      where: { serie, slug: { in: slugsUnicos } },
+      where: {
+        serie,
+        slug: { in: slugsUnicos },
+        OR: [{ lastSeenAt: { lt: inicioDoDia } }, { active: false }],
+      },
       data: { lastSeenAt: new Date(), active: true },
     });
 
@@ -287,6 +296,11 @@ export const CotacoesImportService = {
         "maxPrice"   = EXCLUDED."maxPrice",
         "refPrice"   = EXCLUDED."refPrice",
         "importedAt" = EXCLUDED."importedAt"
+      -- Só regrava o que MUDOU: reimportar o mesmo boletim (o cron faz isso
+      -- todo dia) reescrevia as ~220 linhas iguais — 8,5 mil updates em 3,8 mil
+      -- linhas em produção. Linha igual fica como está, inclusive o importedAt.
+      WHERE (ceasa_quotes."minPrice", ceasa_quotes."avgPrice", ceasa_quotes."maxPrice", ceasa_quotes."refPrice")
+        IS DISTINCT FROM (EXCLUDED."minPrice", EXCLUDED."avgPrice", EXCLUDED."maxPrice", EXCLUDED."refPrice")
     `;
 
     let removidas = 0;
@@ -314,6 +328,8 @@ export const CotacoesImportService = {
         removidas = r.count;
       }
     }
+
+    esquecerUnidadesDoBoletim(centralCode);
 
     const runId = await registrarRun(
       centralCode,
@@ -387,6 +403,7 @@ export const CotacoesImportService = {
         where: { centralCode, quoteDate: dia },
       });
       if (cotacoes.count === 0) return { cotacoesApagadas: 0, registroId: null };
+      esquecerUnidadesDoBoletim(centralCode);
 
       const quem = autor.email ?? "super-admin";
       const registro = await tx.ceasaImportRun.create({

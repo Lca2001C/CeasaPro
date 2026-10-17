@@ -25,27 +25,26 @@ export default async function NovaVendaPage({
     produtos,
     saldo,
     ultimosPrecos,
-    precosDaCompra,
+    ultimasCompras,
     maisVendidos,
     clientesConhecidos,
     saldoPorProduto,
     ultimaVenda,
-    ultimosPagos,
     boletim,
   ] = await Promise.all([
-    ProdutosService.list(tenantId),
+    ProdutosService.ativosParaVenda(tenantId),
     // Sem o módulo de caixas o saldo não é lido: nada na tela usa.
     caixasHabilitado
       ? CaixasService.getSaldo(tenantId)
       : Promise.resolve({ limpas: 0 } as { limpas: number }),
     VendasService.ultimosPrecos(tenantId),
-    VendasService.precosSugeridosDaCompra(tenantId),
+    // Uma leitura das compras para os dois números que saem dela (ver abaixo).
+    ComprasService.ultimaCompraPorProduto(tenantId),
     VendasService.maisVendidos(tenantId),
     VendasService.clientesConhecidos(tenantId),
     // Só o saldo: o custo médio (janela sobre o livro-razão) não aparece aqui.
     EstoqueService.getQuantidades(tenantId),
     VendasService.ultimaVenda(tenantId),
-    ComprasService.ultimosPrecosPagos(tenantId),
     // Mesma regra do saldo de caixas acima: quem não contratou Cotações não paga
     // a consulta, e o PDV — a tela mais sensível a latência do sistema — não
     // ganha uma ida ao banco por um bloco que não vai renderizar.
@@ -54,14 +53,17 @@ export default async function NovaVendaPage({
       : Promise.resolve({}),
   ]);
 
+  const [precosDaCompra, ultimosPagos] = await Promise.all([
+    VendasService.precosSugeridosDaCompra(tenantId, ultimasCompras),
+    ComprasService.ultimosPrecosPagos(tenantId, ultimasCompras),
+  ]);
+
   // O saldo vai como número simples: o PDV só precisa comparar e mostrar, e
   // Decimal não atravessa a fronteira Server → Client component.
   const estoquePorProduto: Record<string, number> = {};
   for (const p of produtos) estoquePorProduto[p.id] = saldoPorProduto[p.id] ?? 0;
 
-  const ativos = produtos
-    .filter((p) => p.active)
-    .map((p) => ({
+  const ativos = produtos.map((p) => ({
       id: p.id,
       name: p.name,
       saleUnit: p.saleUnit,

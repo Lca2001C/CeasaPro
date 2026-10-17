@@ -12,9 +12,10 @@ import {
 } from "@/lib/http/app-error";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
+import { ComprasService, type UltimaCompraDoProduto } from "./compras.service";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
-import { custoMedioPonderado } from "./estoque.service";
+import { saldoECustoMedio } from "./estoque.service";
 import { addDaysTz, endOfDayTz, parseFormDateTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
 import { resolvePlasticCrateQty } from "@/lib/validations/venda";
 import {
@@ -30,8 +31,6 @@ import type {
   VendaPagamentoInput,
 } from "@/lib/validations/venda";
 import type { TenantCtx } from "@/lib/http/with-action";
-
-const IN_TYPES = new Set(["ENTRADA", "AJUSTE"]);
 
 /** Quantas vendas cada página do histórico carrega. */
 export const VENDAS_POR_PAGINA = 50;
@@ -167,6 +166,10 @@ export const VendasService = {
         AND "cancelledAt" IS NULL
         AND "customerName" IS NOT NULL
         AND "customerName" <> ''
+        -- Só quem comprou no último ano: o DISTINCT varria o histórico inteiro
+        -- de vendas a cada abertura do PDV, e cliente sumido há mais de um ano
+        -- não precisa de autocompletar.
+        AND "saleDate" >= ${addDaysTz(new Date(), -365)}
       ORDER BY "customerName" ASC
       LIMIT 500
     `;
@@ -212,17 +215,13 @@ export const VendasService = {
    * operador tinha de lembrar o preço de cabeça. Usa o preço de venda sugerido
    * lançado na compra; se não houver, aplica a margem padrão sobre o custo real.
    */
-  async precosSugeridosDaCompra(tenantId: string): Promise<Record<string, number>> {
-    const rows = await prisma.$queryRaw<
-      { productId: string; suggested: Prisma.Decimal | null; unitCost: Prisma.Decimal }[]
-    >`
-      SELECT DISTINCT ON (pi."productId")
-             pi."productId", pi."suggestedSalePrice" AS suggested, pi."unitCost"
-      FROM purchase_items pi
-      JOIN purchases p ON p.id = pi."purchaseId"
-      WHERE pi."tenantId" = ${tenantId} AND p."deletedAt" IS NULL
-      ORDER BY pi."productId", p."purchaseDate" DESC, pi."createdAt" DESC
-    `;
+  async precosSugeridosDaCompra(
+    tenantId: string,
+    jaLidas?: UltimaCompraDoProduto[],
+  ): Promise<Record<string, number>> {
+    // A mesma leitura de `ComprasService.ultimosPrecosPagos` — o PDV a faz uma
+    // vez e passa para os dois (ver `ultimaCompraPorProduto`).
+    const rows = jaLidas ?? (await ComprasService.ultimaCompraPorProduto(tenantId));
     const mapa: Record<string, number> = {};
     for (const r of rows) {
       const sugerido = r.suggested
@@ -751,25 +750,14 @@ export const VendasService = {
       // dá R$ 50,50. Esse valor era gravado em `unitCostAtSale` e virava a base
       // do CMV, do lucro e da margem — vender 1 caixa a R$ 30,00 aparecia como
       // prejuízo de R$ 20,50 quando deu lucro de R$ 28,02.
-      const [grouped, costMap] = await Promise.all([
-        tx.stockMovement.groupBy({
-          by: ["productId", "type"],
-          where: { productId: { in: productIds } },
-          _sum: { quantity: true },
-        }),
-        custoMedioPonderado(tx, ctx.tenantId, productIds),
-      ]);
-
-      const available = new Map<string, Prisma.Decimal>();
-      for (const g of grouped) {
-        const signed = IN_TYPES.has(g.type)
-          ? toDecimal(g._sum.quantity ?? 0)
-          : toDecimal(g._sum.quantity ?? 0).negated();
-        available.set(
-          g.productId,
-          (available.get(g.productId) ?? new Prisma.Decimal(0)).plus(signed),
-        );
-      }
+      //
+      // Uma consulta para os dois (ver `saldoECustoMedio`): eram duas
+      // varreduras do mesmo livro-razão com os produtos travados.
+      const { saldo: available, custo: costMap } = await saldoECustoMedio(
+        tx,
+        ctx.tenantId,
+        productIds,
+      );
 
       // 2. Valida disponibilidade (quantidade pedida por produto)
       const requested = new Map<string, Prisma.Decimal>();

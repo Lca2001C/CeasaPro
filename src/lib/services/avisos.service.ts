@@ -67,7 +67,9 @@ export const AvisosService = {
     const hoje = startOfDayTz(agora);
     const em7dias = endOfDayTz(addDaysTz(agora, 7));
 
-    const [fiadoVenc, despVenc, despAVencer, higPend] = await Promise.all([
+    // A cotação entra no MESMO `Promise.all`: antes ela só começava depois das
+    // quatro leituras acima terminarem, sem depender de nenhuma delas.
+    const [fiadoVenc, despVenc, despAVencer, higPend, cotacoes] = await Promise.all([
       db.creditAccount.findMany({
         where: { status: "EM_ABERTO", dueDate: { lt: hoje } },
         select: { customerName: true, totalAmount: true, paidAmount: true },
@@ -90,6 +92,11 @@ export const AvisosService = {
             select: { totalAmount: true, paidAmount: true },
           })
         : [],
+      isModuleEnabled(modules, "cotacoes")
+        ? import("./cotacoes-alertas.service").then(({ CotacoesAlertasService }) =>
+            CotacoesAlertasService.disparosDoBoletim(tenantId, agora),
+          )
+        : null,
     ]);
 
     const avisos: Aviso[] = [];
@@ -172,10 +179,9 @@ export const AvisosService = {
       offline usam `key={aviso.tipo}`, então um por produto produziria chaves
       repetidas — e, pior, encheria a notificação diária com uma linha por item.
     */
-    if (isModuleEnabled(modules, "cotacoes")) {
-      const { CotacoesAlertasService } = await import("./cotacoes-alertas.service");
-      const r = await CotacoesAlertasService.disparosDoBoletim(tenantId, agora);
-      if (r && r.disparos.length > 0) {
+    if (cotacoes) {
+      const r = cotacoes;
+      if (r.disparos.length > 0) {
         const primeiro = r.disparos[0]!;
         const resto = r.disparos.length - 1;
         avisos.push({

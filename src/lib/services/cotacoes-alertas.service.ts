@@ -1,3 +1,4 @@
+import { cache } from "react";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
@@ -398,8 +399,18 @@ export const CotacoesAlertasService = {
   },
 };
 
+/*
+  Uma vez por requisição. O Início lê os interesses direto E através dos avisos
+  (`disparosDoBoletim` → `this.getInteresses`): eram duas rodadas idênticas de
+  ~4 consultas na mesma carga. `cache` do React memoriza dentro da requisição do
+  Server Component e é transparente fora dela (testes, cron).
+*/
+CotacoesAlertasService.getInteresses = cache(
+  CotacoesAlertasService.getInteresses.bind(CotacoesAlertasService),
+);
+
 /** A praça da empresa e a série que ela publica. `null` quando não há praça. */
-async function contextoDaEmpresa(tenantId: string) {
+const contextoDaEmpresa = cache(async function contextoDaEmpresa(tenantId: string) {
   const tenant = await prisma.tenant.findUnique({
     where: { id: tenantId },
     select: {
@@ -419,7 +430,7 @@ async function contextoDaEmpresa(tenantId: string) {
   if (!bruta) return null;
   const { sourceKey, ...central } = bruta;
   return { central, serie: serieDaFonte(sourceKey) };
-}
+});
 
 /**
  * Os DOIS últimos boletins da praça, restritos aos itens acompanhados.

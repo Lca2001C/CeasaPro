@@ -19,6 +19,7 @@ import { toDecimal, toNumber } from "@/lib/money";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { VendasService } from "./vendas.service";
+import { cache } from "react";
 
 /**
  * Leitura das cotações e gestão dos vínculos.
@@ -230,6 +231,24 @@ export interface MeuProdutoNaCotacao {
   ultimo: { quoteDate: Date; unit: string; refPrice: Prisma.Decimal } | null;
 }
 
+/**
+ * A central da empresa, UMA vez por requisição — `getPainel` e
+ * `getMeusProdutos` liam a mesma linha (empresa + central, duas consultas cada)
+ * na mesma carga de `/cotacoes`. Só para LEITURA: as ações que trocam a praça
+ * leem por conta própria (`centralESerie`), sem passar por esta memória.
+ */
+const centralParaLeitura = cache(async (tenantId: string) => {
+  const t = await prisma.tenant.findUnique({
+    where: { id: tenantId },
+    select: {
+      ceasaCentral: {
+        select: { code: true, name: true, city: true, uf: true, maxDiasSemBoletim: true, sourceKey: true },
+      },
+    },
+  });
+  return t?.ceasaCentral ?? null;
+});
+
 export const CotacoesService = {
   /**
    * Todos os produtos ativos do cliente, do que mais vende para o que menos
@@ -240,11 +259,8 @@ export const CotacoesService = {
    * SÉRIE dela: cotação de outra série é dado que nenhuma tela lê.
    */
   async getMeusProdutos(tenantId: string): Promise<MeuProdutoNaCotacao[]> {
-    const [tenant, produtos, ranking] = await Promise.all([
-      prisma.tenant.findUnique({
-        where: { id: tenantId },
-        select: { ceasaCentral: { select: { code: true, sourceKey: true } } },
-      }),
+    const [central, produtos, ranking] = await Promise.all([
+      centralParaLeitura(tenantId),
       prisma.$queryRaw<{ id: string; name: string; saldo: Prisma.Decimal | string | null }[]>`
         SELECT p.id, p.name,
                (SELECT COALESCE(SUM(CASE WHEN m.type IN ('ENTRADA','AJUSTE') THEN m.quantity ELSE -m.quantity END), 0)
@@ -255,8 +271,6 @@ export const CotacoesService = {
       `,
       VendasService.rankingDeVendas(tenantId, 30),
     ]);
-    const central = tenant?.ceasaCentral ?? null;
-
     const vinculos = central
       ? await prisma.$queryRaw<
           {
@@ -347,22 +361,7 @@ export const CotacoesService = {
    * mais que filtrar aqui.
    */
   async getPainel(tenantId: string): Promise<PainelDeCotacoes> {
-    const tenant = await prisma.tenant.findUnique({
-      where: { id: tenantId },
-      select: {
-        ceasaCentral: {
-          select: {
-            code: true,
-            name: true,
-            city: true,
-            uf: true,
-            maxDiasSemBoletim: true,
-            sourceKey: true,
-          },
-        },
-      },
-    });
-    const bruta = tenant?.ceasaCentral ?? null;
+    const bruta = await centralParaLeitura(tenantId);
     if (!bruta) {
       return {
         central: null,
@@ -383,9 +382,18 @@ export const CotacoesService = {
 
     // Antes de ler: produto antigo ou item novo no boletim com o MESMO nome
     // ganha o vínculo aqui. Falhar não pode derrubar a tela de preços.
-    await autoVincularIdenticos(tenantId, { centralCode: central.code, serie }).catch((e) =>
-      logger.error({ err: describeError(e), tenantId }, "Falha no vínculo automático de cotações"),
-    );
+    //
+    // `semVinculo` é lido UMA vez e reaproveitado no fim da tela; só é relido se
+    // o vínculo automático gravou alguma coisa.
+    const semAntes = await semVinculo(tenantId);
+    const gravados = await autoVincularIdenticos(
+      tenantId,
+      { centralCode: central.code, serie },
+      semAntes,
+    ).catch((e) => {
+      logger.error({ err: describeError(e), tenantId }, "Falha no vínculo automático de cotações");
+      return 0;
+    });
     const ativos = await prisma.product.findMany({
       where: { tenantId, deletedAt: null, active: true },
       orderBy: { name: "asc" },
@@ -408,14 +416,10 @@ export const CotacoesService = {
       produtos aos nomes específicos do boletim abriria o app e encontraria os
       nomes genéricos da série nacional no lugar, sem explicação.
     */
-    const ultima = await prisma.ceasaQuote.aggregate({
-      where: { centralCode: central.code, product: { serie } },
-      _max: { quoteDate: true },
-    });
-    const quoteDate = ultima._max.quoteDate ?? null;
+    const quoteDate = await ultimaDataDaSerie(central.code, serie);
     if (!quoteDate) {
       const [sem, vinculos] = await Promise.all([
-        semVinculo(tenantId),
+        gravados > 0 ? semVinculo(tenantId) : semAntes,
         vinculosDaEmpresa(tenantId),
       ]);
       // `vinculosSemCotacao` fica vazio de propósito: sem boletim NENHUM, listar
@@ -503,7 +507,7 @@ export const CotacoesService = {
 
     const [recentes, sem, vinculos] = await Promise.all([
       ultimosBoletins(central.code, serie),
-      semVinculo(tenantId),
+      gravados > 0 ? semVinculo(tenantId) : semAntes,
       vinculosDaEmpresa(tenantId),
     ]);
 
@@ -1247,10 +1251,11 @@ async function semVinculo(tenantId: string) {
 async function autoVincularIdenticos(
   tenantId: string,
   contexto?: CentralDaEmpresa | null,
+  jaLidos?: { id: string; name: string }[],
 ): Promise<number> {
   const c = contexto ?? (await centralESerie(tenantId));
   if (!c) return 0;
-  const sem = await semVinculo(tenantId);
+  const sem = jaLidos ?? (await semVinculo(tenantId));
   if (sem.length === 0) return 0;
   const itens = await unidadesPorProdutoDoBoletim(c.centralCode, c.serie);
   if (itens.length === 0) return 0;
@@ -1411,7 +1416,64 @@ export interface ItemDoBoletim {
  * boletim por semanas; oferecer só o que saiu hoje faria o cliente não conseguir
  * vincular metade do que ele vende, justamente na entressafra.
  */
+/**
+ * A data do boletim mais recente da praça DENTRO da série.
+ *
+ * Era `aggregate _max` com filtro pela série do produto: em produção, Seq Scan
+ * de todo o histórico da praça + Hash Join, crescendo um boletim por dia. Esta
+ * desce o índice `(centralCode, quoteDate)` do fim e para no primeiro dia que
+ * tem item da série — normalmente a primeira linha.
+ */
+async function ultimaDataDaSerie(centralCode: string, serie: CeasaSerie): Promise<Date | null> {
+  const rows = await prisma.$queryRaw<{ d: Date }[]>`
+    SELECT q."quoteDate" AS d
+    FROM ceasa_quotes q
+    JOIN ceasa_products p ON p.id = q."ceasaProductId"
+    WHERE q."centralCode" = ${centralCode} AND p.serie = ${serie}::"CeasaSerie"
+    ORDER BY q."quoteDate" DESC
+    LIMIT 1
+  `;
+  return rows[0]?.d ?? null;
+}
+
+/*
+  Memória das embalagens por item do boletim, por instância.
+
+  `unidadesPorProdutoDoBoletim` agrega o histórico INTEIRO da praça e rodava em
+  toda abertura de Cotações (o vínculo automático) e da tela de vínculo — para
+  um dado que só muda quando chega boletim. A chave carrega a assinatura da
+  praça (quantas cotações e a data mais recente, lidas só do índice): boletim
+  novo, corrigido ou apagado muda a chave sozinho. Quem grava avisa também
+  (`esquecerUnidadesDoBoletim`), e a validade curta cobre o resto.
+*/
+const VALIDADE_DAS_UNIDADES_MS = 10 * 60 * 1000;
+const unidadesEmMemoria = new Map<string, { expira: number; itens: ItemDoBoletim[] }>();
+
+/** Chamado por quem grava ou apaga boletim (`CotacoesImportService`). */
+export function esquecerUnidadesDoBoletim(centralCode: string): void {
+  for (const k of unidadesEmMemoria.keys()) {
+    if (k.startsWith(`${centralCode}|`)) unidadesEmMemoria.delete(k);
+  }
+}
+
 async function unidadesPorProdutoDoBoletim(
+  centralCode: string,
+  serie: CeasaSerie,
+): Promise<ItemDoBoletim[]> {
+  const [assinatura] = await prisma.$queryRaw<{ n: bigint; d: Date | null }[]>`
+    SELECT COUNT(*) AS n, MAX("quoteDate") AS d
+    FROM ceasa_quotes WHERE "centralCode" = ${centralCode}
+  `;
+  const chave = `${centralCode}|${serie}|${assinatura?.n ?? 0}|${assinatura?.d?.getTime() ?? 0}`;
+  const guardado = unidadesEmMemoria.get(chave);
+  if (guardado && guardado.expira > Date.now()) return guardado.itens;
+  const itens = await consultarUnidadesPorProdutoDoBoletim(centralCode, serie);
+  esquecerUnidadesDoBoletim(centralCode);
+  unidadesEmMemoria.set(chave, { expira: Date.now() + VALIDADE_DAS_UNIDADES_MS, itens });
+  return itens;
+}
+
+async function consultarUnidadesPorProdutoDoBoletim(
   centralCode: string,
   serie: CeasaSerie,
 ): Promise<ItemDoBoletim[]> {

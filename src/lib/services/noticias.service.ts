@@ -125,6 +125,24 @@ async function coletarFeed(feed: FeedDeNoticias, agora: Date, prazo?: number): P
   };
 }
 
+/**
+ * Trava de "coleta em andamento", atômica, na tabela `rate_limits` (global, já
+ * existe, e o cron limpa as vencidas). Só quem consegue gravar ou renovar a
+ * linha VENCIDA coleta; a trava expira sozinha, então uma coleta que morreu
+ * no meio não bloqueia a próxima.
+ */
+async function pegarTravaDeColeta(agora: Date): Promise<boolean> {
+  const expira = new Date(agora.getTime() + 60_000);
+  const linhas = await prisma.$queryRaw<{ keyHash: string }[]>`
+    INSERT INTO rate_limits ("keyHash", count, "expiresAt")
+    VALUES ('ceasanews:coleta', 1, ${expira})
+    ON CONFLICT ("keyHash") DO UPDATE SET count = 1, "expiresAt" = EXCLUDED."expiresAt"
+    WHERE rate_limits."expiresAt" < ${agora}
+    RETURNING "keyHash"
+  `;
+  return linhas.length > 0;
+}
+
 export const NoticiasService = {
   /**
    * Busca todos os feeds em paralelo e grava o que passa no filtro.
@@ -214,6 +232,9 @@ export const NoticiasService = {
       select: { createdAt: true },
     });
     if (ultima && agora.getTime() - ultima.createdAt.getTime() < IDADE_MAXIMA_MS) return null;
+    // O registro da coleta só é gravado no FIM (até 25 s depois): sem trava,
+    // toda abertura da tela nesse intervalo disparava outra coleta inteira.
+    if (!(await pegarTravaDeColeta(agora))) return null;
     return this.coletar({ agora, prazo: agora.getTime() + 25_000 });
   },
 

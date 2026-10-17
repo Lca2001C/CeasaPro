@@ -106,8 +106,9 @@ export default async function EstoquePage({
   // Produto para o modal de edição: números simples (Decimal não atravessa
   // para o componente cliente). "Tem histórico" = já tem movimento de estoque —
   // compra, venda e ajuste geram movimento; o servidor confere de novo.
+  const posicaoDe = new Map(todas.map((t) => [t.productId, t]));
   const editaveis: ProdutoEditavel[] = produtos.map((p) => {
-    const pos = todas.find((t) => t.productId === p.id);
+    const pos = posicaoDe.get(p.id);
     return {
       id: p.id,
       name: p.name,

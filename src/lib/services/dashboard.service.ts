@@ -63,7 +63,25 @@ export interface DashboardSummary {
 }
 
 export const DashboardService = {
-  async getSummary(tenantId: string, modules?: string[]): Promise<DashboardSummary> {
+  /**
+   * @param parte Só o que a aba do Início mostra. Cada aba usa metade dos
+   *   números, e calcular as duas sempre dobrava as consultas da carga (o
+   *   Início é a tela que todo mundo abre). Sem `parte`, calcula tudo — é o que
+   *   o snapshot offline precisa. Os campos da parte não pedida vêm zerados.
+   *   `"resumo"` são só os quatro números do snapshot offline (hoje, a receber,
+   *   contas a pagar — o valor do estoque ele tira das posições que já busca).
+   */
+  async getSummary(
+    tenantId: string,
+    modules?: string[],
+    parte?: "geral" | "financeiro" | "resumo",
+  ): Promise<DashboardSummary> {
+    const geral = parte === undefined || parte === "geral";
+    const fin = parte === undefined || parte === "financeiro";
+    const contas = fin || parte === "resumo";
+    /** Valor neutro com o MESMO formato do resultado da consulta pulada. */
+    const pula = <T,>(v: T) => Promise.resolve(v);
+    const somaVazia = { _sum: { totalAmount: null, amount: null, paidAmount: null } } as const;
     const db = getTenantPrisma(tenantId);
     const now = new Date();
     const todayStart = startOfDay(now);
@@ -124,10 +142,12 @@ export const DashboardService = {
         // Canceladas fora: a venda desfeita não é faturamento.
         where: { saleDate: { gte: todayStart, lte: ateAgora }, cancelledAt: null },
       }),
-      db.sale.aggregate({
-        _sum: { totalAmount: true },
-        where: { saleDate: { gte: weekStart, lte: ateAgora }, cancelledAt: null },
-      }),
+      fin
+        ? db.sale.aggregate({
+            _sum: { totalAmount: true },
+            where: { saleDate: { gte: weekStart, lte: ateAgora }, cancelledAt: null },
+          })
+        : pula(somaVazia),
       db.creditAccount.aggregate({
         _sum: { totalAmount: true, paidAmount: true },
         where: { status: "EM_ABERTO" },
@@ -138,25 +158,29 @@ export const DashboardService = {
       // "Contas fixas" + "Contas variáveis" não fechavam com o card acima
       // deles e /despesas mostrava um terceiro número. Mesma janela de
       // `resumoMes.aPagar`: um número por conceito.
-      db.expense.aggregate({
-        _sum: { amount: true },
-        where: { status: "PENDENTE", dueDate: { gte: monthStart, lte: fimDoMes } },
-      }),
-      db.purchase.aggregate({
-        _sum: { totalAmount: true },
-        where: { purchaseDate: { gte: monthStart, lte: ateAgora } },
-      }),
+      contas
+        ? db.expense.aggregate({
+            _sum: { amount: true },
+            where: { status: "PENDENTE", dueDate: { gte: monthStart, lte: fimDoMes } },
+          })
+        : pula(somaVazia),
+      fin
+        ? db.purchase.aggregate({
+            _sum: { totalAmount: true },
+            where: { purchaseDate: { gte: monthStart, lte: ateAgora } },
+          })
+        : pula(somaVazia),
       db.sale.aggregate({
         _sum: { totalAmount: true },
         where: { saleDate: { gte: monthStart, lte: ateAgora }, cancelledAt: null },
       }),
-      prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
+      !fin ? pula([] as { cmv: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS cmv
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
         WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."saleDate" <= ${ateAgora} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
       `,
-      prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
+      !fin ? pula([] as { type: string; total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
@@ -171,21 +195,21 @@ export const DashboardService = {
       // por dia UTC: a venda das 22h ia para a barra do dia seguinte. Reinterpreta
       // como UTC, converte para o fuso do app e só então trunca — o resultado é
       // uma data civil brasileira, que `isoDateTz` lê de volta sem deslocar.
-      prisma.$queryRaw<{ d: Date; total: Prisma.Decimal | string }[]>`
+      !fin ? pula([] as { d: Date; total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ d: Date; total: Prisma.Decimal | string }[]>`
         SELECT DATE_TRUNC('day', "saleDate" AT TIME ZONE 'UTC' AT TIME ZONE ${APP_TIME_ZONE}) AS d,
                SUM("totalAmount") AS total
         FROM sales
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL AND "saleDate" >= ${chartStart} AND "saleDate" <= ${ateAgora}
         GROUP BY d ORDER BY d ASC
       `,
-      EstoqueService.getTotalValue(tenantId),
+      geral ? EstoqueService.getTotalValue(tenantId) : pula(toDecimal(0)),
       // Receita por produto com o desconto da VENDA rateado — a mesma fonte dos
       // relatórios. Somando `lineTotal` cru, "Mais lucrativos" mostrava lucro
       // numa venda que deu prejuízo depois do desconto, e "Com prejuízo" não a
       // apontava. Teto "até agora", como os cartões do mês: sem ele a venda com
       // data futura entrava nas listas e não nos cartões do mesmo painel.
-      linhasVendidas(tenantId, monthStart, ateAgora),
-      prisma.$queryRaw<IdleProductRow[]>`
+      geral ? linhasVendidas(tenantId, monthStart, ateAgora) : pula([] as Awaited<ReturnType<typeof linhasVendidas>>),
+      !geral ? pula([] as IdleProductRow[]) : prisma.$queryRaw<IdleProductRow[]>`
         WITH saldo AS (
           SELECT "productId",
                  COALESCE(SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END), 0) AS quantity,
@@ -215,7 +239,7 @@ export const DashboardService = {
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
         LIMIT 5
       `,
-      prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+      !fin ? pula([] as { total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
@@ -223,7 +247,7 @@ export const DashboardService = {
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
           AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
       `,
-      isModuleEnabled(modules, "higienizacao")
+      contas && isModuleEnabled(modules, "higienizacao")
         ? higienizacaoDoMes(tenantId, monthStart, fimDoMes)
         : Promise.resolve(HIGIENIZACAO_ZERADA),
     ]);

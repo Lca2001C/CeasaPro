@@ -22,6 +22,27 @@ async function temHistorico(tenantId: string, productId: string): Promise<boolea
 }
 
 export const ProdutosService = {
+  /**
+   * Só os ATIVOS, só o que a frente de caixa mostra. O PDV usava `list`, que
+   * traz inativos e todas as colunas, para depois filtrar e jogar fora.
+   */
+  async ativosParaVenda(tenantId: string) {
+    return getTenantPrisma(tenantId).product.findMany({
+      where: { active: true },
+      orderBy: { name: "asc" },
+      select: { id: true, name: true, saleUnit: true, minStock: true, imageKey: true, salePrice: true },
+    });
+  },
+
+  /** Nomes dos produtos ativos — para casar notícia e cotação com o que a empresa vende. */
+  async nomesAtivos(tenantId: string): Promise<string[]> {
+    const rows = await getTenantPrisma(tenantId).product.findMany({
+      where: { active: true },
+      select: { name: true },
+    });
+    return rows.map((r) => r.name);
+  },
+
   async list(tenantId: string, search?: string) {
     const db = getTenantPrisma(tenantId);
     return db.product.findMany({

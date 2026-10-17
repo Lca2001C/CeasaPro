@@ -55,8 +55,11 @@ export default async function CeasaNewsPage({
 
   // "Sobre os seus produtos": a família pela primeira palavra do nome, a mesma
   // régua das Cotações ("Tomate Italiano" → tomate).
-  const produtos = (await ProdutosService.list(tenantId)).filter((p) => p.active);
-  const familias = agruparPorPrimeiraPalavra(produtos, (p) => p.name).map((g) => g.rotulo);
+  const [nomes, fotos] = await Promise.all([
+    ProdutosService.nomesAtivos(tenantId),
+    CatalogoImagensService.paraIlustrar(),
+  ]);
+  const familias = agruparPorPrimeiraPalavra(nomes, (n) => n).map((g) => g.rotulo);
   const citadas = new Map<string, string[]>(
     noticias.map((n) => [n.id, familiasCitadas(`${n.titulo} ${n.resumo}`, familias)]),
   );
@@ -64,8 +67,7 @@ export default async function CeasaNewsPage({
   const noTopo = new Set(sobreSeus.map((n) => n.id));
   const demais = noticias.filter((n) => !noTopo.has(n.id));
 
-  // Foto do Banco para a notícia sem imagem própria (ver `ImagemDaNoticia`).
-  const fotos = await CatalogoImagensService.paraIlustrar();
+  // `fotos`: do Banco, para a notícia sem imagem própria (ver `CartaoDeNoticia`).
   const ilustracao = new Map(
     noticias.map((n) => [n.id, n.imagemUrl ? null : ilustracaoDaNoticia(n.titulo, n.resumo, fotos)]),
   );
