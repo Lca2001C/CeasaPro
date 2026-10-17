@@ -58,6 +58,8 @@ export function AppShell({
   // Na frente de caixa o botão de WhatsApp cobria o "Finalizar venda".
   const frenteDeCaixa = pathname.startsWith("/vendas/nova");
   const mostrarSuporte = !frenteDeCaixa;
+  // O CeasaNews é portal de notícias: coluna principal + lateral pedem largura.
+  const larga = frenteDeCaixa ? "max-w-7xl" : pathname.startsWith("/ceasanews") ? "max-w-6xl" : "max-w-3xl";
   return (
     <div className="flex min-h-screen">
       {/*
@@ -159,7 +161,7 @@ export function AppShell({
           // funcionaria para quem usa teclado.
           tabIndex={-1}
           // A frente de caixa usa a largura toda: grade de produtos e pedido lado a lado.
-          className={`mx-auto w-full ${frenteDeCaixa ? "max-w-7xl" : "max-w-3xl"} flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] outline-none md:pb-8`}
+          className={`mx-auto w-full ${larga} flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] outline-none md:pb-8`}
         >
           {children}
         </main>

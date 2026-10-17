@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
-import { normalizarNome } from "@/lib/cotacoes/nome";
+import { normalizarNome, primeiraPalavra } from "@/lib/cotacoes/nome";
 import { deleteObject, publicUrl } from "@/lib/storage/r2";
 import { ProdutoImagemService } from "./produto-imagem.service";
 import type { AdminCtx } from "@/lib/http/with-action";
@@ -50,6 +50,27 @@ export const CatalogoImagensService = {
       take: 60,
     });
     return rows.map(paraTela);
+  },
+
+  /**
+   * Uma foto por família de produto ("tomate", "batata"), para ILUSTRAR o que
+   * não tem foto própria — hoje, as notícias do CeasaNews que chegam pelo Google
+   * Notícias, que não manda imagem. Em ordem de nome, então "Batata" vence
+   * "Batata-doce" na família "batata". Sem R2 configurado, lista vazia.
+   */
+  async paraIlustrar(): Promise<{ chave: string; url: string }[]> {
+    const rows = await prisma.catalogoImagem.findMany({
+      where: { ativo: true },
+      orderBy: { nome: "asc" },
+      select: { nome: true, imageKey: true },
+    });
+    const porChave = new Map<string, string>();
+    for (const r of rows) {
+      const chave = primeiraPalavra(r.nome);
+      const url = publicUrl(r.imageKey);
+      if (chave && url && !porChave.has(chave)) porChave.set(chave, url);
+    }
+    return [...porChave].map(([chave, url]) => ({ chave, url }));
   },
 
   async listarAdmin(q?: string): Promise<(FotoDoCatalogo & { emUso: number })[]> {

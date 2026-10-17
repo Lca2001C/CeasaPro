@@ -150,3 +150,18 @@ export function familiasCitadas(texto: string, familias: readonly string[]): str
 export function chaveDoTitulo(titulo: string): string {
   return normalizarNome(titulo).slice(0, 120);
 }
+
+/**
+ * Foto do Banco para ilustrar uma notícia sem imagem: a do primeiro produto
+ * citado no TÍTULO; se o título não cita nenhum, a do primeiro citado no
+ * resumo. É ilustração do assunto, não a foto da matéria — a tela diz isso.
+ */
+export function ilustracaoDaNoticia(
+  titulo: string,
+  resumo: string,
+  fotos: readonly { chave: string; url: string }[],
+): string | null {
+  const chaves = fotos.map((f) => f.chave);
+  const achada = familiasCitadas(titulo, chaves)[0] ?? familiasCitadas(resumo, chaves)[0];
+  return achada ? (fotos.find((f) => f.chave === achada)?.url ?? null) : null;
+}

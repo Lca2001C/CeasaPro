@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { htmlParaTexto, lerFeed, limparUrl } from "@/lib/noticias/parse";
-import { chaveDoTitulo, classificar, familiasCitadas } from "@/lib/noticias/filtro";
+import { chaveDoTitulo, classificar, familiasCitadas, ilustracaoDaNoticia } from "@/lib/noticias/filtro";
 import { idadeDaNoticia } from "@/lib/noticias/tempo";
 import { FEEDS } from "@/lib/noticias/fontes";
 
@@ -172,12 +172,29 @@ describe("familiasCitadas e chaveDoTitulo", () => {
   });
 });
 
+describe("ilustracaoDaNoticia", () => {
+  const fotos = [
+    { chave: "batata", url: "https://img/batata.webp" },
+    { chave: "tomate", url: "https://img/tomate.webp" },
+  ];
+  it("o produto do TÍTULO vence o do resumo", () => {
+    expect(ilustracaoDaNoticia("Preço do tomate dispara", "batata também sobe", fotos)).toBe("https://img/tomate.webp");
+  });
+  it("sem produto no título, usa o do resumo", () => {
+    expect(ilustracaoDaNoticia("Chuva atrasa plantio", "Produtores de batatas no PR", fotos)).toBe("https://img/batata.webp");
+  });
+  it("nenhum produto citado, nenhuma ilustração", () => {
+    expect(ilustracaoDaNoticia("Diesel sobe 3%", "Frete fica mais caro", fotos)).toBeNull();
+  });
+});
+
 describe("idadeDaNoticia", () => {
   const agora = new Date("2026-10-16T15:00:00Z");
   it("minutos e horas, e depois a data em Brasília", () => {
-    expect(idadeDaNoticia(new Date("2026-10-16T14:58:00Z"), agora)).toBe("agora há pouco");
-    expect(idadeDaNoticia(new Date("2026-10-16T14:35:00Z"), agora)).toBe("há 25 min");
-    expect(idadeDaNoticia(new Date("2026-10-16T12:00:00Z"), agora)).toBe("há 3 h");
+    expect(idadeDaNoticia(new Date("2026-10-16T14:58:00Z"), agora)).toBe("Agora há pouco");
+    expect(idadeDaNoticia(new Date("2026-10-16T14:35:00Z"), agora)).toBe("Há 25 minutos");
+    expect(idadeDaNoticia(new Date("2026-10-16T13:30:00Z"), agora)).toBe("Há 1 hora");
+    expect(idadeDaNoticia(new Date("2026-10-16T12:00:00Z"), agora)).toBe("Há 3 horas");
     expect(idadeDaNoticia(new Date("2026-10-14T12:00:00Z"), agora)).toMatch(/14\/10\/2026/);
   });
 });

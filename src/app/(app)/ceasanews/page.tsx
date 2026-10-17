@@ -3,16 +3,17 @@ import { after } from "next/server";
 import type { NoticiaTema } from "@prisma/client";
 import { Newspaper } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
-import { NoticiasService, type NoticiaDaTela } from "@/lib/services/noticias.service";
+import { NoticiasService } from "@/lib/services/noticias.service";
+import { CatalogoImagensService } from "@/lib/services/catalogo-imagens.service";
 import { ProdutosService } from "@/lib/services/produtos.service";
 import { agruparPorPrimeiraPalavra } from "@/lib/cotacoes/nome";
-import { familiasCitadas, TEMAS } from "@/lib/noticias/filtro";
+import { familiasCitadas, ilustracaoDaNoticia, TEMAS } from "@/lib/noticias/filtro";
 import { NOTICIA_TEMA_LABELS } from "@/lib/labels";
 import { describeError, logger } from "@/lib/logger";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { cn } from "@/lib/cn";
-import { CartaoDeNoticia } from "./_components/cartao-de-noticia";
+import { CartaoDeNoticia, ItemLateral } from "./_components/cartao-de-noticia";
 
 export const dynamic = "force-dynamic";
 
@@ -63,6 +64,12 @@ export default async function CeasaNewsPage({
   const noTopo = new Set(sobreSeus.map((n) => n.id));
   const demais = noticias.filter((n) => !noTopo.has(n.id));
 
+  // Foto do Banco para a notícia sem imagem própria (ver `ImagemDaNoticia`).
+  const fotos = await CatalogoImagensService.paraIlustrar();
+  const ilustracao = new Map(
+    noticias.map((n) => [n.id, n.imagemUrl ? null : ilustracaoDaNoticia(n.titulo, n.resumo, fotos)]),
+  );
+
   return (
     <div className="flex flex-col gap-4">
       <PageHeader
@@ -94,20 +101,39 @@ export default async function CeasaNewsPage({
         />
       ) : (
         <>
-          {sobreSeus.length > 0 && (
-            <Secao titulo="Sobre os seus produtos" quantidade={sobreSeus.length}>
-              {sobreSeus.map((n) => (
-                <CartaoDeNoticia key={n.id} noticia={n} familias={citadas.get(n.id)} />
-              ))}
-            </Secao>
-          )}
-          {demais.length > 0 && (
-            <Secao titulo={sobreSeus.length > 0 ? "Mais notícias" : "Últimas notícias"} quantidade={demais.length}>
-              {demais.map((n: NoticiaDaTela) => (
-                <CartaoDeNoticia key={n.id} noticia={n} familias={citadas.get(n.id)} />
-              ))}
-            </Secao>
-          )}
+          {/*
+            Layout de portal (referência: g1): a lista principal com imagem
+            grande e, ao lado, a coluna "Sobre os seus produtos" no lugar do
+            "Leia também". No celular a coluna vem PRIMEIRO — é a parte que fala
+            do que esta empresa vende.
+          */}
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+            {sobreSeus.length > 0 && (
+              <aside className="rounded-2xl border bg-card p-4 shadow-sm lg:sticky lg:top-24 lg:order-2">
+                <h2 className="mb-3 border-b pb-3 text-base font-bold">
+                  Sobre os seus produtos
+                </h2>
+                <div className="flex flex-col divide-y">
+                  {sobreSeus.map((n) => (
+                    <ItemLateral key={n.id} noticia={n} ilustracao={ilustracao.get(n.id) ?? null} />
+                  ))}
+                </div>
+              </aside>
+            )}
+            <section className={sobreSeus.length > 0 ? "lg:order-1" : "lg:col-span-2"}>
+              <h2 className="sr-only">{sobreSeus.length > 0 ? "Mais notícias" : "Últimas notícias"}</h2>
+              <div className="flex flex-col divide-y">
+                {demais.map((n) => (
+                  <CartaoDeNoticia
+                    key={n.id}
+                    noticia={n}
+                    ilustracao={ilustracao.get(n.id) ?? null}
+                    familias={citadas.get(n.id)}
+                  />
+                ))}
+              </div>
+            </section>
+          </div>
           <p className="text-center text-[11px] text-muted-foreground">
             Notícias de veículos de terceiros, dos últimos 7 dias. Cada uma abre a matéria no site de
             quem publicou.
@@ -130,24 +156,5 @@ function ChipDeTema({ href, ativo, rotulo }: { href: string; ativo: boolean; rot
     >
       {rotulo}
     </Link>
-  );
-}
-
-function Secao({
-  titulo,
-  quantidade,
-  children,
-}: {
-  titulo: string;
-  quantidade: number;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="flex flex-col gap-2">
-      <h2 className="mt-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-        {titulo} <span className="tabular-nums">({quantidade})</span>
-      </h2>
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">{children}</div>
-    </section>
   );
 }
