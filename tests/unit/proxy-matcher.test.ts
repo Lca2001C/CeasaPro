@@ -67,6 +67,7 @@ describe("matcher do proxy — o que legitimamente fica de fora", () => {
     "/_next/webpack-hmr",
     "/icons/icon-192.png",
     "/splash/apple-splash-1170-2532.png",
+    "/noticias/clima-1.webp",
     "/favicon.ico",
     "/manifest.webmanifest",
     "/sw.js",

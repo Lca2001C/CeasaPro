@@ -15,7 +15,7 @@ export default function CreditosFotosPage() {
     <>
       <h1 className="text-2xl font-bold text-primary">Créditos das fotos</h1>
       <p>
-        As fotos do banco de fotos de produtos vêm do{" "}
+        As fotos do banco de fotos de produtos e as imagens ilustrativas do CeasaNews vêm do{" "}
         <a
           href="https://commons.wikimedia.org"
           className="text-primary underline"

@@ -4,6 +4,8 @@ import { htmlParaTexto, lerFeed, limparUrl } from "@/lib/noticias/parse";
 import { chaveDoTitulo, classificar, familiasCitadas, ilustracaoDaNoticia } from "@/lib/noticias/filtro";
 import { idadeDaNoticia } from "@/lib/noticias/tempo";
 import { FEEDS } from "@/lib/noticias/fontes";
+import { existsSync } from "node:fs";
+import { fotoDoAssunto, TODAS_AS_FOTOS_DE_ASSUNTO } from "@/lib/noticias/ilustracoes";
 
 /**
  * CeasaNews: leitura dos feeds e filtro de assunto, contra feeds REAIS
@@ -203,5 +205,24 @@ describe("FEEDS", () => {
   it("chaves únicas, só https", () => {
     expect(new Set(FEEDS.map((f) => f.chave)).size).toBe(FEEDS.length);
     expect(FEEDS.every((f) => f.url.startsWith("https://"))).toBe(true);
+  });
+});
+
+describe("fotoDoAssunto — todo cartão tem foto", () => {
+  it("cada foto de assunto existe em public/noticias", () => {
+    for (const f of TODAS_AS_FOTOS_DE_ASSUNTO) expect(existsSync(`public/noticias/${f}.webp`), f).toBe(true);
+  });
+
+  it("usa o PRIMEIRO assunto da notícia, e geral sem assunto", () => {
+    expect(fotoDoAssunto({ id: "a", temas: ["CLIMA", "PRECOS"] })).toMatch(/^\/noticias\/clima-\d\.webp$/);
+    expect(fotoDoAssunto({ id: "a", temas: [] })).toMatch(/^\/noticias\/geral-\d\.webp$/);
+  });
+
+  it("a mesma notícia mostra sempre a mesma foto, e notícias diferentes variam", () => {
+    expect(fotoDoAssunto({ id: "x1", temas: ["SAFRA"] })).toBe(fotoDoAssunto({ id: "x1", temas: ["SAFRA"] }));
+    const variadas = new Set(
+      Array.from({ length: 30 }, (_, i) => fotoDoAssunto({ id: `noticia-${i}`, temas: ["SAFRA"] })),
+    );
+    expect(variadas.size).toBe(3);
   });
 });

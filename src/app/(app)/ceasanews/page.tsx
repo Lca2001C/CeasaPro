@@ -13,12 +13,12 @@ import { describeError, logger } from "@/lib/logger";
 import { PageHeader } from "@/components/data/page-header";
 import { EmptyState } from "@/components/data/empty-state";
 import { cn } from "@/lib/cn";
-import { CartaoDeNoticia, ItemLateral } from "./_components/cartao-de-noticia";
+import { CartaoDeNoticia } from "./_components/cartao-de-noticia";
 
 export const dynamic = "force-dynamic";
 
 /** Quantas notícias "sobre os seus produtos" sobem para o topo. */
-const NO_TOPO = 6;
+const NO_TOPO = 8;
 
 export default async function CeasaNewsPage({
   searchParams,
@@ -102,27 +102,39 @@ export default async function CeasaNewsPage({
       ) : (
         <>
           {/*
-            Layout de portal (referência: g1): a lista principal com imagem
-            grande e, ao lado, a coluna "Sobre os seus produtos" no lugar do
-            "Leia também". No celular a coluna vem PRIMEIRO — é a parte que fala
-            do que esta empresa vende.
+            "Sobre os seus produtos" é uma FAIXA horizontal, como o carrossel de
+            vídeos do g1: rola de lado no celular (com encaixe por cartão) e não
+            empurra a lista principal para baixo da dobra.
           */}
-          <div className="grid grid-cols-1 gap-6 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-            {sobreSeus.length > 0 && (
-              <aside className="rounded-2xl border bg-card p-4 shadow-sm lg:sticky lg:top-24 lg:order-2">
-                <h2 className="mb-3 border-b pb-3 text-base font-bold">
-                  Sobre os seus produtos
-                </h2>
-                <div className="flex flex-col divide-y">
-                  {sobreSeus.map((n) => (
-                    <ItemLateral key={n.id} noticia={n} ilustracao={ilustracao.get(n.id) ?? null} />
-                  ))}
-                </div>
-              </aside>
-            )}
-            <section className={sobreSeus.length > 0 ? "lg:order-1" : "lg:col-span-2"}>
-              <h2 className="sr-only">{sobreSeus.length > 0 ? "Mais notícias" : "Últimas notícias"}</h2>
-              <div className="flex flex-col divide-y">
+          {sobreSeus.length > 0 && (
+            <section aria-labelledby="sobre-seus" className="flex flex-col gap-3">
+              <h2 id="sobre-seus" className="text-lg font-bold">
+                Sobre os seus produtos
+              </h2>
+              {/* No celular a faixa vai de borda a borda (-mx-4) e o cartão
+                  seguinte aparece pela metade, avisando que rola; a partir do
+                  tablet ela se alinha ao conteúdo e cabem 3, depois 4 inteiros. */}
+              <div className="-mx-4 flex snap-x snap-mandatory scroll-px-4 gap-4 overflow-x-auto px-4 pb-2 [scrollbar-width:thin] sm:mx-0 sm:scroll-px-0 sm:px-0">
+                {sobreSeus.map((n) => (
+                  <CartaoDeNoticia
+                    key={n.id}
+                    noticia={n}
+                    ilustracao={ilustracao.get(n.id) ?? null}
+                    familias={citadas.get(n.id)}
+                    className="w-[78vw] max-w-[320px] shrink-0 snap-start sm:w-[calc((100%-1rem)/2)] sm:max-w-none lg:w-[calc((100%-2rem)/3)] xl:w-[calc((100%-3rem)/4)]"
+                  />
+                ))}
+              </div>
+            </section>
+          )}
+
+          {demais.length > 0 && (
+            <section aria-labelledby="mais-noticias" className="flex flex-col gap-3">
+              <h2 id="mais-noticias" className="text-lg font-bold">
+                {sobreSeus.length > 0 ? "Mais notícias" : "Últimas notícias"}
+              </h2>
+              {/* Lado a lado: 1 coluna no celular, 2 no tablet, 3 no desktop. */}
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
                 {demais.map((n) => (
                   <CartaoDeNoticia
                     key={n.id}
@@ -133,7 +145,7 @@ export default async function CeasaNewsPage({
                 ))}
               </div>
             </section>
-          </div>
+          )}
           <p className="text-center text-[11px] text-muted-foreground">
             Notícias de veículos de terceiros, dos últimos 7 dias. Cada uma abre a matéria no site de
             quem publicou.
