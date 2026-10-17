@@ -24,8 +24,9 @@ export default function CreditosFotosPage() {
         >
           Wikimedia Commons
         </a>
-        , sob licenças livres. Foram redimensionadas e convertidas para WebP. Cada linha abaixo
-        leva à página original da foto, com o autor e o texto completo da licença.
+        e estão todas em domínio público ou sob CC0 — nenhuma exige crédito. Citamos a origem
+        por cortesia. Foram redimensionadas e convertidas para WebP; cada linha abaixo leva à
+        página original da foto.
       </p>
 
       <ul className="flex flex-col divide-y rounded-lg border bg-background">
