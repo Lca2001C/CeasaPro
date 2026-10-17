@@ -259,6 +259,14 @@ function BancoDeFotos({
           ))}
         </div>
       )}
+      <a
+        href="/creditos-fotos"
+        target="_blank"
+        rel="noopener noreferrer"
+        className="self-end text-xs text-muted-foreground underline hover:text-foreground"
+      >
+        Créditos das fotos
+      </a>
     </div>
   );
 }

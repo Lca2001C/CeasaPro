@@ -18,6 +18,8 @@ const PUBLIC_PREFIXES = [
   // Documentos legais: precisam abrir sem sessão (são linkados no checkout e no login).
   "/termos",
   "/privacidade",
+  // Crédito das fotos do Banco (licenças CC BY/BY-SA): linkado do rodapé legal.
+  "/creditos-fotos",
   // Sitemap e robots do Google Search Console: sem isto o proxy manda o
   // crawler (sem sessão) para /login e o XML nunca é lido.
   "/sitemap.xml",

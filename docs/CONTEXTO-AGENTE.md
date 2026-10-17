@@ -114,7 +114,7 @@ Arquivos: `src/lib/auth/` (`jwt.ts`, `password.ts`, `refresh.ts`, `cookies.ts`, 
 - Recuperar senha: token 1h; ao redefinir, revoga todas as sessões.
 - `mustChangePassword` força `/alterar-senha` (OWNER criado pelo admin).
 
-Rotas públicas (sem sessão) estão em `PUBLIC_PREFIXES` de `src/proxy.ts`: login, cadastro, recuperar-senha, offline, consulta-offline, termos, privacidade, sitemap, robots, `/api/auth`, webhooks, cron, health. A landing `/` é caso especial (sem sessão mostra marketing; logado vai ao dashboard).
+Rotas públicas (sem sessão) estão em `PUBLIC_PREFIXES` de `src/proxy.ts`: login, cadastro, recuperar-senha, offline, consulta-offline, termos, privacidade, creditos-fotos, sitemap, robots, `/api/auth`, webhooks, cron, health. A landing `/` é caso especial (sem sessão mostra marketing; logado vai ao dashboard).
 
 ---
 
@@ -197,7 +197,7 @@ Uma tela só: `/estoque` (abas Produtos | Compras), `/estoque/compra` e `/estoqu
 
 **Produto** (Server Actions, soft delete, sem histórico não apaga de fato): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
 
-**Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados.
+**Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`; foto vinda do Wikimedia Commons entra também em `src/lib/imagem/creditos-banco.ts`, que alimenta a página pública `/creditos-fotos` — as licenças CC BY/BY-SA exigem o crédito). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados.
 
 **Compra** (`POST /api/compras`): transação com itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento `ENTRADA`. E **uma despesa `origem = COMPRA`** no valor total, com o fornecedor, `PAGO` (`paidDate = purchaseDate`) ou `PENDENTE` até o vencimento — ver Despesas.
 

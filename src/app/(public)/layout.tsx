@@ -29,12 +29,15 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
       <footer className="border-t bg-background">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-1 px-4 py-4 text-xs text-muted-foreground sm:flex-row sm:justify-between">
           <span>Última atualização: {TERMS_UPDATED_AT}</span>
-          <span className="flex gap-3">
+          <span className="flex flex-wrap gap-x-3 gap-y-1">
             <Link href="/termos" className="hover:underline">
               Termos de Uso
             </Link>
             <Link href="/privacidade" className="hover:underline">
               Política de Privacidade
+            </Link>
+            <Link href="/creditos-fotos" className="hover:underline">
+              Créditos das fotos
             </Link>
           </span>
         </div>
