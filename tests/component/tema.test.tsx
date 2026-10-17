@@ -2,11 +2,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { CHAVE_DO_TEMA, COR_DA_BARRA, SCRIPT_DO_TEMA } from "@/lib/tema";
-import { AtalhoDeTema, SeletorDeTema } from "@/components/tema/controles-de-tema";
+import { BotaoModoEscuro, SeletorDeTema } from "@/components/tema/controles-de-tema";
 
 /**
  * Tema Claro / Escuro / Automático: o script do `<head>` (antes da pintura) e
- * os dois controles (Configurações e atalho do menu).
+ * os dois controles (Configurações e botão do header).
  */
 
 let sistemaEscuro = false;
@@ -102,14 +102,29 @@ describe("SeletorDeTema (Configurações)", () => {
   });
 });
 
-describe("AtalhoDeTema (menu)", () => {
-  it("diz o tema atual e um toque passa para o próximo", async () => {
+describe("BotaoModoEscuro (header)", () => {
+  it("alterna entre claro e escuro", async () => {
     const user = userEvent.setup();
     localStorage.setItem(CHAVE_DO_TEMA, "claro");
-    render(<AtalhoDeTema />);
-    const botao = screen.getByRole("button", { name: /Tema: Claro/ });
+    render(<BotaoModoEscuro />);
+    const botao = screen.getByRole("button", { name: "Modo escuro" });
+    expect(botao).toHaveAttribute("aria-pressed", "false");
     await user.click(botao);
     expect(localStorage.getItem(CHAVE_DO_TEMA)).toBe("escuro");
-    expect(screen.getByRole("button", { name: /Tema: Escuro/ })).toBeInTheDocument();
+    expect(document.documentElement).toHaveClass("dark");
+    expect(botao).toHaveAttribute("aria-pressed", "true");
+    await user.click(botao);
+    expect(localStorage.getItem(CHAVE_DO_TEMA)).toBe("claro");
+    expect(document.documentElement).not.toHaveClass("dark");
+  });
+
+  it("em automático com o aparelho escuro, o toque vai para claro", async () => {
+    const user = userEvent.setup();
+    sistemaEscuro = true;
+    document.documentElement.classList.add("dark");
+    render(<BotaoModoEscuro />);
+    await user.click(screen.getByRole("button", { name: "Modo escuro" }));
+    expect(localStorage.getItem(CHAVE_DO_TEMA)).toBe("claro");
+    expect(document.documentElement).not.toHaveClass("dark");
   });
 });

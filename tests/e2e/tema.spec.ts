@@ -48,11 +48,10 @@ test.describe("tema escuro", () => {
     await expect(page.locator("html")).not.toHaveClass(/\bdark\b/);
   });
 
-  test("o atalho do menu também troca o tema", async ({ page }) => {
+  test("o botão do header também troca o tema", async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem("ceasapro-tema", "claro"));
     await page.goto("/dashboard");
-    const atalho = page.getByRole("button", { name: /Tema: Claro/ }).first();
-    await atalho.click();
+    await page.locator("header").getByRole("button", { name: "Modo escuro" }).click();
     await expect(page.locator("html")).toHaveClass(/\bdark\b/);
   });
 });

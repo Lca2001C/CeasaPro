@@ -12,6 +12,7 @@ import { SupportButton } from "@/components/support-button";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { NetworkStatus } from "@/components/pwa/network-status";
 import { TourGuiado } from "@/components/tour/tour-guiado";
+import { BotaoModoEscuro } from "@/components/tema/controles-de-tema";
 import { civilParts } from "@/lib/tz";
 
 /** "Bom dia" / "Boa tarde" / "Boa noite" pelo relógio de Brasília, não o do aparelho. */
@@ -107,6 +108,7 @@ export function AppShell({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <BotaoModoEscuro />
             <BotaoTutorial />
             {isSuperAdmin && (
               <Button asChild variant="outline" size="sm">

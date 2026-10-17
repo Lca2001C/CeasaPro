@@ -24,7 +24,6 @@ import { rotaLiberada } from "@/lib/plan/modules";
 import { toast } from "sonner";
 import { sair } from "@/lib/sair";
 import { hrefAtual } from "./item-atual";
-import { AtalhoDeTema } from "@/components/tema/controles-de-tema";
 
 const items = [
   { href: "/dashboard", label: "Início", icon: Home },
@@ -116,7 +115,6 @@ export function SideNav({
         </nav>
 
         <div className="mt-auto flex flex-col gap-2 border-t pt-3">
-          <AtalhoDeTema />
           {(companyName || trialLabel) && (
             <div className="rounded-lg border border-border/60 bg-card px-3 py-2">
               {companyName && (

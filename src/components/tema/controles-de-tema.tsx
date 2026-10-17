@@ -89,28 +89,39 @@ export function SeletorDeTema({ className }: { className?: string }) {
   );
 }
 
+/** O que está pintado agora — "automático" resolvido pelo aparelho. No servidor, claro. */
+function useEscuroNaTela(): boolean {
+  return useSyncExternalStore(
+    assinarTema,
+    () => document.documentElement.classList.contains("dark"),
+    () => false,
+  );
+}
+
 /**
- * Atalho do menu: um toque passa para o próximo tema (Claro → Escuro →
- * Automático). O nome diz o tema ATUAL e o que o toque faz.
+ * Botão do header: um toque alterna entre claro e escuro a partir do que está
+ * NA TELA (em "automático" com o aparelho escuro, o toque vai para claro). O
+ * "Automático" continua no seletor completo de Configurações.
+ *
+ * Os dois ícones vão no HTML e o CSS (`dark:`) escolhe qual aparece: o servidor
+ * não sabe o tema, e decidir o ícone no JS faria ele trocar depois da carga.
  */
-export function AtalhoDeTema({ className }: { className?: string }) {
-  const tema = useTema();
-  const proximo = TEMAS[(TEMAS.indexOf(tema) + 1) % TEMAS.length]!;
-  const Icone = ICONE[tema];
+export function BotaoModoEscuro({ className }: { className?: string }) {
+  const escuro = useEscuroNaTela();
   return (
     <button
       type="button"
-      onClick={() => salvarTema(proximo)}
-      aria-label={`Tema: ${ROTULO_DO_TEMA[tema]}. Tocar para mudar para ${ROTULO_DO_TEMA[proximo]}`}
+      onClick={() => salvarTema(escuro ? "claro" : "escuro")}
+      aria-label="Modo escuro"
+      aria-pressed={escuro}
+      title={escuro ? "Usar modo claro" : "Usar modo escuro"}
       className={cn(
-        "flex min-h-11 w-full items-center gap-3 rounded-md px-3 text-sm font-medium text-muted-foreground outline-none hover:bg-accent/60 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring",
+        "flex size-11 shrink-0 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-colors",
         className,
       )}
     >
-      <Icone aria-hidden className="size-5 shrink-0" />
-      <span>
-        Tema: <span className="font-semibold text-foreground">{ROTULO_DO_TEMA[tema]}</span>
-      </span>
+      <Moon aria-hidden className="size-5 dark:hidden" />
+      <Sun aria-hidden className="hidden size-5 dark:block" />
     </button>
   );
 }
