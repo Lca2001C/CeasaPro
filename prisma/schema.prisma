@@ -129,7 +129,7 @@ model User {
   tenant               Tenant?            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, email])
-  @@index([tenantId])
+  // Sem `@@index([tenantId])`: o único acima começa por tenantId e serve às mesmas buscas.
   @@index([resetTokenHash])
   @@index([verifyTokenHash])
   @@index([emailIdentity])
@@ -835,7 +835,8 @@ model SalePayment {
   createdAt DateTime      @default(now())
   sale      Sale          @relation(fields: [saleId], references: [id], onDelete: Cascade)
 
-  @@index([tenantId, saleId])
+  // Só `[saleId]`: a venda já pertence a um tenant, e `[tenantId, saleId]` era
+  // um segundo índice para a mesma busca (custo em toda escrita de pagamento).
   @@index([saleId])
   @@map("sale_payments")
 }
@@ -881,7 +882,11 @@ model CreditAccount {
   tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   payments      CreditPayment[]
 
-  @@index([tenantId, status])
+  // `status` + data: os avisos de fiado vencido filtram (status, dueDate) e a
+  // lista ordena por createdAt dentro do status. O antigo `[tenantId, status]`
+  // é prefixo destes dois e saiu.
+  @@index([tenantId, status, dueDate])
+  @@index([tenantId, status, createdAt])
   @@index([tenantId, customerName])
   @@map("credit_accounts")
 }
@@ -919,7 +924,9 @@ model StockMovement {
   @@index([tenantId, productId, movedAt])
   // A janela do custo médio (`sqlCustoEstoque`) ordena por gravação, não por
   // `movedAt`; o índice acima não serve a ela.
-  @@index([tenantId, productId, createdAt])
+  // `id` no fim: é a ordem exata da janela do custo médio (`sqlCustoEstoque`,
+  // ORDER BY "createdAt", id) — sem ele o Postgres reordena por id depois.
+  @@index([tenantId, productId, createdAt, id])
   @@index([tenantId, type])
   // Detalhe da venda e exclusão de fiado buscam os movimentos pela ORIGEM;
   // sem isto, varriam o livro-razão inteiro da empresa.
