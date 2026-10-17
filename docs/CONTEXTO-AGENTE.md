@@ -360,7 +360,7 @@ Módulo pago: chave em `OPTIONAL_MODULES` + `module:` nas actions/rotas. O form 
 
 Relatório: `REPORT_TYPES` + `buildReport`. Avançado → `ADVANCED_REPORTS`.
 
-UI: tokens em `globals.css`. Variantes de botão: `default` (verde), `success`, `info` (azul), `violet`, `warning`, `destructive`, `outline`. **Ação é botão escrito e colorido, não ícone solto**: Editar = `info`, Excluir/Remover = `destructive`, Pagar/Vender/Salvar = `success`. Exceção: o + e − de quantidade do PDV. Listas no celular = cards; desktop = tabela + sidebar.
+UI: tokens em `globals.css`. Variantes de botão: `default` (verde), `success`, `info` (azul), `violet`, `warning`, `destructive`, `outline`. **Ação é botão escrito e colorido, não ícone solto**: Editar = `info`, Excluir/Remover = `destructive`, Pagar/Vender/Salvar = `success`. Exceção: o + e − de quantidade do PDV. Listas no celular = cards; desktop = tabela + sidebar. **A ação principal de cada módulo** (Novo produto, Nova venda, Novo fiado, Novo fornecedor, Nova despesa, Novo envio, Nova venda de embalagem) é o cartão verde `CartaoDeAcao` (`src/components/ui/cartao-de-acao.tsx`) logo abaixo do `PageHeader`, não botão pequeno no cabeçalho; sem `data-tour` próprio ele é o alvo `acao-da-tela` do tour.
 
 ---
 

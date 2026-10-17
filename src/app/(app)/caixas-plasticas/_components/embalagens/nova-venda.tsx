@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import { useRouter } from "next/navigation";
-import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -46,9 +45,12 @@ export function NovaVendaEmbalagem({
 
   return (
     <>
-      <Button variant="success" size="lg" className="w-full sm:w-auto sm:self-start" onClick={() => mudar(true)}>
-        <Plus /> Nova venda de embalagem
-      </Button>
+      <CartaoDeAcao
+        onClick={() => mudar(true)}
+        className="mb-0"
+        titulo="Nova Venda de Embalagem"
+        descricao="Papelão, sacaria e afins — o cliente leva e não devolve"
+      />
 
       <Dialog open={aberto} onOpenChange={mudar}>
         <DialogContent>

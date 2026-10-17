@@ -1,4 +1,5 @@
 import { paginaDaUrl } from "@/lib/paginacao";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Ban, ChevronRight, Plus, ReceiptText, Search } from "lucide-react";
@@ -84,13 +85,12 @@ export default async function VendasPage({
       <PageHeader
         title="Vendas"
         description="Histórico de vendas registradas."
-        action={
-          <Button asChild size="sm">
-            <Link href="/vendas/nova">
-              <Plus /> Nova venda
-            </Link>
-          </Button>
-        }
+      />
+
+      <CartaoDeAcao
+        href="/vendas/nova"
+        titulo="Registrar Nova Venda"
+        descricao="Abra a frente de caixa e venda no balcão"
       />
 
       <div className="flex flex-col gap-5">

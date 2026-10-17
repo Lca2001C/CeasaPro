@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import { redirect } from "next/navigation";
 import { AlertTriangle, ChevronRight, Plus, Container, HandCoins } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
@@ -86,13 +87,12 @@ export default async function FiadoPage({
       <PageHeader
         title="Fiado"
         description="Contas a receber dos clientes."
-        action={
-          <Button asChild size="sm">
-            <Link href="/fiado/novo">
-              <Plus /> Novo fiado
-            </Link>
-          </Button>
-        }
+      />
+
+      <CartaoDeAcao
+        href="/fiado/novo"
+        titulo="Lançar Novo Fiado"
+        descricao="Entrega para pagar depois, com cliente e vencimento"
       />
 
       <div className="flex flex-col gap-5">

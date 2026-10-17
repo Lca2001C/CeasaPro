@@ -1,4 +1,5 @@
 import { paginaDaUrl } from "@/lib/paginacao";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowDown, ArrowUp, Minus, Plus, Receipt, Tags } from "lucide-react";
@@ -187,13 +188,12 @@ export default async function DespesasPage({ searchParams }: { searchParams: Pro
       <PageHeader
         title="Despesas"
         description="Suas contas fixas e variáveis — e o que você deve aos fornecedores pelas compras."
-        action={
-          <Button asChild size="sm">
-            <Link href="/despesas/nova">
-              <Plus /> Nova
-            </Link>
-          </Button>
-        }
+      />
+
+      <CartaoDeAcao
+        href="/despesas/nova"
+        titulo="Lançar Nova Despesa"
+        descricao="Conta fixa ou variável, paga ou a pagar"
       />
 
       <div className="flex flex-col gap-5">

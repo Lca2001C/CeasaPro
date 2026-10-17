@@ -1,9 +1,9 @@
 import Link from "next/link";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import {
   AlertTriangle,
   Package,
   Pencil,
-  Plus,
   ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
@@ -148,23 +148,14 @@ export default async function EstoquePage({
         }
       />
 
-      {/* Cartão "Adicionar Novo Produto": o caminho mais curto até vender. */}
-      <Link
+      {/* O caminho mais curto até vender. */}
+      <CartaoDeAcao
         href="/estoque?novo=1"
         scroll={false}
         data-tour="novo-produto"
-        className="mb-4 flex items-center justify-between gap-3 rounded-xl border-2 border-primary/30 bg-gradient-to-r from-primary to-primary/80 p-4 text-primary-foreground shadow-sm transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-      >
-        <span className="min-w-0">
-          <span className="block text-lg font-bold">Adicionar Novo Produto</span>
-          <span className="block text-sm opacity-90">
-            Cadastre com estoque inicial, preço de venda e foto
-          </span>
-        </span>
-        <span className="flex size-12 shrink-0 items-center justify-center rounded-full bg-primary-foreground/20">
-          <Plus className="size-6" />
-        </span>
-      </Link>
+        titulo="Adicionar Novo Produto"
+        descricao="Cadastre com estoque inicial, preço de venda e foto"
+      />
 
       <div
         className="mb-4 grid grid-cols-2 rounded-lg bg-muted p-1 text-sm font-medium"

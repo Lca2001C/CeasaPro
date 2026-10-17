@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import { HandCoins, PackageSearch, Plus, Sparkles } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { HigienizacaoService } from "@/lib/services/higienizacao.service";
@@ -50,13 +51,12 @@ export default async function HigienizacaoPage({
       <PageHeader
         title="Higienização"
         description="Fila de lavagem das caixas e o financeiro do serviço."
-        action={
-          <Button asChild size="sm">
-            <Link href="/higienizacao/nova">
-              <Plus /> Novo envio
-            </Link>
-          </Button>
-        }
+      />
+
+      <CartaoDeAcao
+        href="/higienizacao/nova"
+        titulo="Novo Envio para Higienização"
+        descricao="Mande caixas sujas para lavar e acompanhe a devolução"
       />
 
       <div className="flex flex-col gap-5">

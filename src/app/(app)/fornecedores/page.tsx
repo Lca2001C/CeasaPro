@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import { Plus, Pencil, Truck } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { FornecedoresService } from "@/lib/services/fornecedores.service";
@@ -23,13 +24,12 @@ export default async function FornecedoresPage() {
       <PageHeader
         title="Fornecedores"
         description="Cadastre de quem você compra."
-        action={
-          <Button asChild size="sm">
-            <Link href="/fornecedores/novo">
-              <Plus /> Novo
-            </Link>
-          </Button>
-        }
+      />
+
+      <CartaoDeAcao
+        href="/fornecedores/novo"
+        titulo="Adicionar Novo Fornecedor"
+        descricao="Cadastre de quem você compra para lançar as compras"
       />
 
       {fornecedores.length === 0 ? (
