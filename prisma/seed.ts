@@ -21,9 +21,11 @@ async function main() {
     );
   }
 
-  // E-mail é único por (tenantId, email) — super-admin não tem tenant, então findFirst.
+  // Não filtrar por `tenantId: null`: ao abrir o ambiente próprio
+  // (`AdminService.getOrCreateAdminWorkspace`) o super-admin ganha um tenantId,
+  // e o seed tentaria criá-lo de novo — batendo no e-mail único.
   const existingAdmin = await prisma.user.findFirst({
-    where: { email: adminEmail, tenantId: null },
+    where: { email: adminEmail, role: "SUPER_ADMIN" },
   });
   if (!existingAdmin) {
     await prisma.user.create({
@@ -144,10 +146,14 @@ async function main() {
         });
         // Mantém a demo utilizável em dev/E2E mesmo depois do fim do trial:
         // sem `activatedAt` a assinatura seria recalculada para SUSPENSO e a
-        // suíte E2E cairia na tela de bloqueio.
+        // suíte E2E cairia na tela de bloqueio. O mesmo vale para o período
+        // pago que venceu: um banco de dev parado um mês trava a demo em SUSPENSO.
         const now = new Date();
         await prisma.tenantSubscription.updateMany({
-          where: { tenantId: demoTenant.id, activatedAt: null },
+          where: {
+            tenantId: demoTenant.id,
+            OR: [{ activatedAt: null }, { currentPeriodEnd: { lt: now } }],
+          },
           data: {
             status: "ATIVO",
             statusSource: "AUTO",
