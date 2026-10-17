@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
-import { ceasaminas } from "@/lib/cotacoes/fontes/ceasaminas";
+import { ceasaminas, preco } from "@/lib/cotacoes/fontes/ceasaminas";
 import { fontePara, FONTES } from "@/lib/cotacoes/fontes";
 
 /**
@@ -218,5 +218,67 @@ describe("registro de fontes", () => {
 
   it("chave desconhecida devolve null em vez de estourar", () => {
     expect(fontePara("inexistente")).toBeNull();
+  });
+});
+
+describe("preco — número no formato brasileiro", () => {
+  it("vírgula decimal, com e sem milhar", () => {
+    expect(preco("45,00")).toBe(45);
+    expect(preco("1.234,50")).toBe(1234.5);
+    expect(preco("R$ 170,00")).toBe(170);
+  });
+
+  it("ponto decimal sem vírgula NÃO vira centena", () => {
+    // Antes todo ponto era removido: "10.27" virava 1027.
+    expect(preco("10.27")).toBe(10.27);
+    expect(preco("10.5")).toBe(10.5);
+  });
+
+  it("ponto em grupos de três é milhar", () => {
+    expect(preco("1.000")).toBe(1000);
+    expect(preco("12.345.678")).toBe(12345678);
+  });
+
+  it("vazio ou ilegível é null", () => {
+    expect(preco("")).toBeNull();
+    expect(preco("-")).toBeNull();
+    expect(preco("abc")).toBeNull();
+  });
+});
+
+describe("buscar — a conferência do dia não se desliga sozinha", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const responder = (html: string) =>
+    vi.stubGlobal("fetch", () => Promise.resolve(new Response(html, { status: 200 })));
+
+  it("boletim do dia pedido passa", async () => {
+    responder(fixture("ceasaminas-ok"));
+    const r = await ceasaminas.buscar({
+      sourceParams: { mercado: "214" },
+      data: new Date(Date.UTC(2026, 8, 4)),
+    });
+    expect(r.ok).toBe(true);
+    expect(r.linhas.length).toBeGreaterThan(0);
+  });
+
+  it("boletim de outro dia é falha", async () => {
+    responder(fixture("ceasaminas-ok"));
+    const r = await ceasaminas.buscar({
+      sourceParams: { mercado: "214" },
+      data: new Date(Date.UTC(2026, 8, 5)),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.erro).toMatch(/2026-09-04/);
+  });
+
+  it("boletim com linhas e sem data legível é falha, não 'sem conferência'", async () => {
+    responder(fixture("ceasaminas-ok").replace(/Data:\s*\d{2}\/\d{2}\/\d{4}/g, "Data: 4 de setembro"));
+    const r = await ceasaminas.buscar({
+      sourceParams: { mercado: "214" },
+      data: new Date(Date.UTC(2026, 8, 4)),
+    });
+    expect(r.ok).toBe(false);
+    expect(r.erro).toMatch(/data/i);
   });
 });

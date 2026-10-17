@@ -466,11 +466,17 @@ describe("lacunas entre boletins (#53)", () => {
       iso(diaMenos(1)),
       iso(diaMenos(0)),
     ]);
-    // Parou no último gravado: não pediu de novo o dia -3 nem além dele.
-    expect(pedidas).toEqual([iso(diaMenos(0)), iso(diaMenos(1)), iso(diaMenos(2))]);
+    // Parou NO último gravado: pediu o dia -3 de novo (pode ter sido corrigido
+    // depois do cron), e nada além dele.
+    expect(pedidas).toEqual([
+      iso(diaMenos(0)),
+      iso(diaMenos(1)),
+      iso(diaMenos(2)),
+      iso(diaMenos(3)),
+    ]);
   });
 
-  it("praça diária já em dia: nenhuma requisição a mais", async () => {
+  it("praça diária já em dia: só pede de novo o último dia gravado", async () => {
     await CotacoesImportService.gravar({
       centralCode: CENTRAL,
       quoteDate: diaMenos(1),
@@ -480,7 +486,26 @@ describe("lacunas entre boletins (#53)", () => {
     const { fonte, pedidas } = fontePorData(new Set([iso(diaMenos(0))]));
     const r = await CotacoesImportService.importarCentral(CENTRAL, { fonteInjetada: fonte });
     expect(r.diasCompletados).toBe(0);
-    expect(pedidas).toEqual([iso(diaMenos(0))]);
+    expect(pedidas).toEqual([iso(diaMenos(0)), iso(diaMenos(1))]);
+  });
+
+  it("boletim de ontem corrigido pela praça depois do cron é regravado", async () => {
+    // Ontem entrou a versão preliminar, com a embalagem errada.
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: diaMenos(1),
+      linhas: [{ ...COM_DADOS.linhas[0]!, unidade: "KG" }, COM_DADOS.linhas[1]!],
+      sourceKey: "ceasaminas",
+    });
+    const { fonte } = fontePorData(new Set([iso(diaMenos(0)), iso(diaMenos(1))]));
+    await CotacoesImportService.importarCentral(CENTRAL, { fonteInjetada: fonte });
+
+    const ontem = await prisma.ceasaQuote.findMany({
+      where: { centralCode: CENTRAL, quoteDate: diaMenos(1) },
+      select: { unit: true },
+      orderBy: { unit: "asc" },
+    });
+    expect(ontem.map((q) => q.unit)).toEqual(["CX", "SC"]);
   });
 
   it("falha ao completar não derruba o dia principal", async () => {
@@ -497,5 +522,76 @@ describe("lacunas entre boletins (#53)", () => {
     expect(r.diasCompletados).toBe(0);
     // Tarefa acessória: não vira aviso de falha da central.
     expect(await AdminNotificationsService.listar()).toHaveLength(0);
+  });
+});
+
+describe("fonte automática substitui o dia inteiro", () => {
+  const DIA = new Date(Date.UTC(2026, 9, 2));
+  const unidadesDoDia = async () =>
+    (
+      await prisma.ceasaQuote.findMany({
+        where: { centralCode: CENTRAL, quoteDate: DIA },
+        select: { unit: true },
+        orderBy: { unit: "asc" },
+      })
+    ).map((q) => q.unit);
+
+  it("a linha que a fonte corrigiu ou retirou some — sem sobrar OVOS em KG ao lado de CX", async () => {
+    // Versão preliminar: o tomate saiu em KG.
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: [{ ...COM_DADOS.linhas[0]!, unidade: "KG" }, COM_DADOS.linhas[1]!],
+      sourceKey: "ceasaminas",
+    });
+    // Versão corrigida: o tomate é em CX.
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: COM_DADOS.linhas,
+      sourceKey: "ceasaminas",
+    });
+    expect(await unidadesDoDia()).toEqual(["CX", "SC"]);
+  });
+
+  it("retorno com menos da metade das linhas não apaga nada e avisa o super-admin", async () => {
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: [
+        ...COM_DADOS.linhas,
+        { produto: "TOMATE DO ROBO", unidade: "KG", minimo: 5, comum: 6, maximo: 7, referencia: 6 },
+        { produto: "BATATA DO ROBO", unidade: "KG", minimo: 3, comum: 4, maximo: 5, referencia: 4 },
+        { produto: "TOMATE DO ROBO", unidade: "DZ", minimo: 9, comum: 9, maximo: 9, referencia: 9 },
+      ],
+      sourceKey: "ceasaminas",
+    });
+    // Só 1 de 5 voltou: cara de página parcial, não de correção.
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: [COM_DADOS.linhas[0]!],
+      sourceKey: "ceasaminas",
+    });
+    expect(await unidadesDoDia()).toHaveLength(5);
+    const avisos = await AdminNotificationsService.listar();
+    expect(avisos.some((a) => /parcial/i.test(a.title))).toBe(true);
+  });
+
+  it("boletim digitado (praça manual) continua só sobrescrevendo", async () => {
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: [{ ...COM_DADOS.linhas[0]!, unidade: "KG" }, COM_DADOS.linhas[1]!],
+      sourceKey: "manual",
+    });
+    await CotacoesImportService.gravar({
+      centralCode: CENTRAL,
+      quoteDate: DIA,
+      linhas: COM_DADOS.linhas,
+      sourceKey: "manual",
+    });
+    // Lá o desfazer é `apagarBoletim`; nada some sozinho.
+    expect(await unidadesDoDia()).toEqual(["CX", "KG", "SC"]);
   });
 });

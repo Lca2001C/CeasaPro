@@ -246,6 +246,27 @@ export const CotacoesImportService = {
       porChaveFinal.set(`${id}|${unit}`, { id, unit, linha });
     }
 
+    /*
+      Fonte AUTOMÁTICA substitui o dia inteiro, não só sobrescreve.
+
+      O `ON CONFLICT` abaixo atualiza o que veio de novo, mas não apaga o que
+      SUMIU. A CEASAMINAS publica uma versão preliminar e depois corrige a
+      embalagem: a linha "OVOS ... KG" a R$ 170 ficava ao lado da corrigida
+      "CX 30 DZ" — preço de caixa de 30 dúzias apresentado como preço por quilo
+      (visto em produção em 02/10/2026). Item retirado pela fonte também ficava.
+
+      Trava: um retorno com menos da metade das linhas já gravadas naquele dia
+      tem cara de página parcial, não de correção — grava sem apagar e avisa.
+      Boletim digitado (praça manual) fica de fora: lá desfazer é `apagarBoletim`.
+    */
+    const automatica = fontePara(sourceKey) !== null;
+    const doDia = automatica
+      ? await prisma.ceasaQuote.findMany({
+          where: { centralCode, quoteDate: data, product: { serie } },
+          select: { ceasaProductId: true, unit: true },
+        })
+      : [];
+
     const agora = new Date();
     const valores = [...porChaveFinal.values()].map(
       ({ id, unit, linha }) => Prisma.sql`(${centralCode}, ${id}, ${data}, ${unit},
@@ -268,6 +289,32 @@ export const CotacoesImportService = {
         "importedAt" = EXCLUDED."importedAt"
     `;
 
+    let removidas = 0;
+    if (doDia.length > 0) {
+      const sumiram = doDia.filter((q) => !porChaveFinal.has(`${q.ceasaProductId}|${q.unit}`));
+      if (sumiram.length > 0 && porChaveFinal.size * 2 < doDia.length) {
+        logger.warn(
+          { centralCode, sourceKey, antes: doDia.length, agora: porChaveFinal.size },
+          "Boletim reimportado bem menor que o gravado — linhas antigas mantidas",
+        );
+        await AdminNotificationsService.criar({
+          kind: "COTACOES_FALHA",
+          title: `Boletim parcial — ${centralCode}`,
+          body: `O boletim de ${data.toISOString().slice(0, 10)} voltou com ${porChaveFinal.size} linhas, contra ${doDia.length} já gravadas. As antigas foram mantidas; confira a fonte.`,
+          href: "/admin/cotacoes",
+        }).catch(() => {});
+      } else if (sumiram.length > 0) {
+        const r = await prisma.ceasaQuote.deleteMany({
+          where: {
+            centralCode,
+            quoteDate: data,
+            OR: sumiram.map((q) => ({ ceasaProductId: q.ceasaProductId, unit: q.unit })),
+          },
+        });
+        removidas = r.count;
+      }
+    }
+
     const runId = await registrarRun(
       centralCode,
       sourceKey,
@@ -279,7 +326,7 @@ export const CotacoesImportService = {
     );
 
     logger.info(
-      { centralCode, sourceKey, cotacoesGravadas, produtosNovos, ms: Date.now() - inicio },
+      { centralCode, sourceKey, cotacoesGravadas, removidas, produtosNovos, ms: Date.now() - inicio },
       "Boletim de cotações gravado",
     );
 
@@ -497,10 +544,11 @@ export const CotacoesImportService = {
    * o recuo acha quarta, para, e a terça nunca é pedida. O histórico e a
    * variação "desde o último boletim" passavam a pular um pregão calados.
    *
-   * Só olha para trás até o último boletim já gravado da central (exclusive) e
-   * nunca além da janela do recuo. Central sem histórico não tem lacuna a
-   * completar. No caso comum — praça diária, gravada ontem — não faz requisição
-   * nenhuma. Tarefa acessória: falha ou falta de prazo aqui só interrompe o
+   * Olha para trás até o último boletim já gravado da central (INCLUSIVE — ele
+   * é pedido de novo, para pegar a correção que a praça publica depois do cron)
+   * e nunca além da janela do recuo. Central sem histórico não tem lacuna a
+   * completar. No caso comum — praça diária, gravada ontem — faz uma requisição
+   * só, a de ontem. Tarefa acessória: falha ou falta de prazo aqui só interrompe o
    * completar, e o dia principal, já gravado, continua OK.
    */
   async completarLacunas(p: {
@@ -523,7 +571,11 @@ export const CotacoesImportService = {
     let cotacoesGravadas = 0;
     for (
       let t = p.maisRecente.getTime() - UM_DIA;
-      t > ultimoGravado.getTime() && t >= p.limite.getTime();
+      // `>=`: a última data já gravada também é pedida de novo. Praça que
+      // publica todo dia corrige o boletim depois do cron; sem isto a versão
+      // preliminar ficava para sempre, porque o dia seguinte já tem boletim e
+      // o recuo para nele.
+      t >= ultimoGravado.getTime() && t >= p.limite.getTime();
       t -= UM_DIA
     ) {
       if (p.prazo !== undefined && Date.now() >= p.prazo) break;

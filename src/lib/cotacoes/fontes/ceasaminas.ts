@@ -84,11 +84,22 @@ function textoLimpo(bruto: string): string {
     .trim();
 }
 
-/** "45,00" → 45. Vazio ou ilegível → null. */
-function preco(bruto: string): number | null {
+/**
+ * "45,00" → 45; "1.234,50" → 1234.5. Vazio ou ilegível → null.
+ *
+ * Sem vírgula, o ponto só é separador de milhar quando separa grupos de três
+ * ("1.000"). Antes ele era sempre removido, e um "10.27" virava 1027 — preço cem
+ * vezes maior, sem erro nenhum.
+ */
+export function preco(bruto: string): number | null {
   const limpo = bruto.replace(/[^\d,.-]/g, "").trim();
   if (!limpo) return null;
-  const n = Number(limpo.replace(/\./g, "").replace(",", "."));
+  const normalizado = limpo.includes(",")
+    ? limpo.replace(/\./g, "").replace(",", ".")
+    : /^\d{1,3}(\.\d{3})+$/.test(limpo)
+      ? limpo.replace(/\./g, "")
+      : limpo;
+  const n = Number(normalizado);
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
@@ -161,6 +172,17 @@ export const ceasaminas: FonteDeCotacao = {
     // devolveria 200 com o boletim de OUTRO dia e nós gravaríamos dado errado
     // com cara de certo.
     const esperado = data.toISOString().slice(0, 10);
+    // Boletim com linhas e SEM data legível é falha, não "sem conferência":
+    // se a fonte mudar o formato do "Data:", a conferência acima se desligaria
+    // calada — e é justamente ela que pega o dia trocado.
+    if (lido.ok && !lido.vazio && lido.linhas.length > 0 && !lido.dataDaResposta) {
+      return {
+        ok: false,
+        linhas: [],
+        httpStatus: resposta.status,
+        erro: "a página do boletim veio sem a data legível — não dá para conferir o dia",
+      };
+    }
     if (lido.ok && lido.dataDaResposta && lido.dataDaResposta !== esperado) {
       return {
         ok: false,

@@ -72,14 +72,25 @@ async function handle(req: Request): Promise<Response> {
       logger.error({ err: describeError(e) }, "Falha na reconciliação com o Mercado Pago");
       return { erro: "falhou" as const };
     });
-    const statuses = await BillingService.recomputeStatuses();
-    // Depois do recálculo: quem acabou de ser reativado por um pagamento
-    // reconciliado não deve receber aviso de vencimento no mesmo minuto.
-    // Não pode derrubar o cron — a cobrança em si não depende do e-mail.
-    const lembretes = await BillingService.enviarLembretesDeVencimento().catch((e) => {
-      logger.error({ err: describeError(e) }, "Falha ao enviar lembretes de vencimento");
-      return { candidatos: 0, enviados: 0 };
+    // Com `.catch()` próprio: sem ele, um erro aqui virava 500 ANTES dos
+    // boletins — a importação e o alarme de defasagem não rodavam, e o dia
+    // passava sem preço novo e sem ninguém avisado. A falha continua visível:
+    // a resposta sai 500 no fim.
+    const statuses = await BillingService.recomputeStatuses().catch((e) => {
+      logger.error({ err: describeError(e) }, "Falha ao recalcular status das assinaturas");
+      return { erro: "falhou" as const };
     });
+    const statusFalhou = "erro" in statuses;
+    // Depois do recálculo: quem acabou de ser reativado por um pagamento
+    // reconciliado não deve receber aviso de vencimento no mesmo minuto — e,
+    // se o recálculo falhou, o aviso partiria de status velho, então não sai.
+    // Não pode derrubar o cron — a cobrança em si não depende do e-mail.
+    const lembretes = statusFalhou
+      ? { pulado: "status nao recalculado" }
+      : await BillingService.enviarLembretesDeVencimento().catch((e) => {
+          logger.error({ err: describeError(e) }, "Falha ao enviar lembretes de vencimento");
+          return { candidatos: 0, enviados: 0 };
+        });
     // Despesas recorrentes: quem não deu baixa no aluguel não deve perder a
     // conta do mês seguinte. Falhar aqui não afeta a cobrança da plataforma.
     const despesasRecorrentes = await gerarRecorrentesDeTodosOsTenants().catch((e) => {
@@ -112,7 +123,15 @@ async function handle(req: Request): Promise<Response> {
     const restante = ORCAMENTO_DA_ROTA_MS - (Date.now() - comecou);
     const cotacoes =
       restante < MINIMO_PARA_IMPORTAR_MS
-        ? { pulado: "sem tempo no orcamento da rota" }
+        ? // Sem tempo para importar, o alarme de defasagem roda mesmo assim
+          // (é uma consulta local): é ele que avisa que a praça está parada —
+          // pular os dois juntos era o jeito de o problema ficar invisível.
+          await CotacoesImportService.verificarDefasagem()
+            .then((d) => ({ pulado: "sem tempo no orcamento da rota", defasadas: d.length }))
+            .catch((e) => {
+              logger.error({ err: describeError(e) }, "Verificacao de defasagem falhou");
+              return { pulado: "sem tempo no orcamento da rota", erro: "falhou" };
+            })
         : await CotacoesImportService.importarTodasAsCentrais({ orcamentoMs: restante })
             .then(async (r) => {
               // A defasagem é conferida DEPOIS de importar: assim ela enxerga o
@@ -126,16 +145,19 @@ async function handle(req: Request): Promise<Response> {
             });
     logger.info({ cotacoes }, "Sub-tarefa de cotacoes concluida");
 
-    return Response.json({
-      ok: true,
-      reconciliacao,
-      statuses,
-      lembretes,
-      despesasRecorrentes,
-      rateLimitsRemovidos,
-      sessoesRemovidas,
-      cotacoes,
-    });
+    return Response.json(
+      {
+        ok: !statusFalhou,
+        reconciliacao,
+        statuses,
+        lembretes,
+        despesasRecorrentes,
+        rateLimitsRemovidos,
+        sessoesRemovidas,
+        cotacoes,
+      },
+      { status: statusFalhou ? 500 : 200 },
+    );
   } catch (e) {
     logger.error({ err: describeError(e) }, "Erro no cron de billing");
     return Response.json({ ok: false }, { status: 500 });

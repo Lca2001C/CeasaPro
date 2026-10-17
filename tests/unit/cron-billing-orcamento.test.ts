@@ -86,6 +86,21 @@ describe("cron/billing — orçamento da reconciliação", () => {
     expect(corpo.reconciliacao).toEqual({ erro: "falhou" });
   });
 
+  it("recálculo de status que falha não leva os boletins junto, e a resposta sai 500", async () => {
+    mocks.recompute.mockRejectedValue(new Error("banco fora"));
+
+    const r = await GET(pedido());
+
+    expect(r.status).toBe(500);
+    expect(mocks.importar).toHaveBeenCalledTimes(1);
+    expect(mocks.despesas).toHaveBeenCalledTimes(1);
+    // Aviso de vencimento partiria de status velho: não sai.
+    expect(mocks.lembretes).not.toHaveBeenCalled();
+    const corpo = (await r.json()) as { ok: boolean; statuses: unknown };
+    expect(corpo.ok).toBe(false);
+    expect(corpo.statuses).toEqual({ erro: "falhou" });
+  });
+
   it("a reconciliação continua ANTES do recálculo de status", async () => {
     const ordem: string[] = [];
     mocks.reconcile.mockImplementation(async () => {
