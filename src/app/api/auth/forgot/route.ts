@@ -36,10 +36,19 @@ export async function POST(req: Request) {
   if (!parsed.success) return generic;
   const email = parsed.data.email; // já normalizado (trim + lowercase) pelo schema
 
-  // Dois limites: por IP (impede varredura) e por e-mail (impede usar o
-  // formulário para inundar a caixa de uma pessoa específica, de vários IPs).
-  const byIp = await rateLimitDb(`forgot:ip:${ip}`, { limit: 5, windowMs: 15 * 60 * 1000 });
-  const byEmail = await rateLimitDb(`forgot:email:${email}`, { limit: 3, windowMs: 15 * 60 * 1000 });
+  // Três limites. Por IP (impede varredura) e por IP + e-mail (3 por origem),
+  // que são os que um atacante sozinho esgota; e por e-mail (impede inundar a
+  // caixa de alguém de vários IPs), que só recebe o pedido que passou nos dois
+  // primeiros. Antes o de e-mail era 3 e contava tudo: UM IP gastava os 3 a
+  // cada 15 min e a recuperação da vítima respondia "enviamos" sem enviar nada.
+  const janela = 15 * 60 * 1000;
+  const byIp = await rateLimitDb(`forgot:ip:${ip}`, { limit: 5, windowMs: janela });
+  const byIpEmail = byIp.ok
+    ? await rateLimitDb(`forgot:${ip}:${email}`, { limit: 3, windowMs: janela })
+    : byIp;
+  const byEmail = byIpEmail.ok
+    ? await rateLimitDb(`forgot:email:${email}`, { limit: 10, windowMs: janela })
+    : byIpEmail;
   // Banco fora: o genérico afirmaria "se existir conta, enviamos o link" — e
   // nada foi enviado. 503 é honesto e não distingue e-mail nenhum, então não
   // reabre a enumeração que o genérico existe para fechar.

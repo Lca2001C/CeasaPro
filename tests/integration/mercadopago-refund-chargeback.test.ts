@@ -91,6 +91,28 @@ async function createTenantComSessao(): Promise<{ tenantId: string; refreshToken
   return { tenantId, refreshToken };
 }
 
+/**
+ * Faz o pagamento já aprovado ser de uma competência PASSADA, com o período
+ * dele terminando daqui a 2 dias (mesma duração): "o mês anterior, quase no
+ * fim". Assim o segundo pagamento é a renovação dentro da janela do lembrete —
+ * fora dela seria recusado ("já está paga"), como deve ser.
+ */
+async function recuarParaMesPassado(tenantId: string, mpPaymentId: string, ref: string) {
+  const pago = await prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId } });
+  const fim = new Date(Date.now() + 2 * 86_400_000);
+  const recuo = pago.periodEnd!.getTime() - fim.getTime();
+  await prisma.subscriptionPayment.update({
+    where: { mpPaymentId },
+    data: {
+      referenceMonth: ref,
+      approvedKey: `${tenantId}:${ref}`,
+      periodStart: new Date(pago.periodStart!.getTime() - recuo),
+      periodEnd: fim,
+    },
+  });
+  await prisma.tenantSubscription.update({ where: { tenantId }, data: { currentPeriodEnd: fim } });
+}
+
 /** Paga a mensalidade por cartão e devolve o id do pagamento no Mercado Pago. */
 async function pagarMensalidade(tenantId: string): Promise<string> {
   const result = await BillingService.processCardPayment(tenantId, cardInput);
@@ -123,10 +145,7 @@ describe("Estorno de um mês ANTERIOR", () => {
     const antigoId = await pagarMensalidade(tenantId);
     // Recua o primeiro pagamento para uma competência passada, liberando o mês
     // corrente para um segundo pagamento (o cenário "agosto e setembro pagos").
-    await prisma.subscriptionPayment.update({
-      where: { mpPaymentId: antigoId },
-      data: { referenceMonth: "2000-01", approvedKey: `${tenantId}:2000-01` },
-    });
+    await recuarParaMesPassado(tenantId, antigoId, "2000-01");
     await pagarMensalidade(tenantId);
     const antes = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
 
@@ -134,10 +153,30 @@ describe("Estorno de um mês ANTERIOR", () => {
     await BillingService.handleWebhook(antigoId);
 
     const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
-    // Antes voltava para o início do mês estornado (≈ agora): o mês pago depois
-    // sumia junto. Agora sobra ~1 mês adiante.
+    // Antes voltava para o início do mês estornado (≈ um mês atrás): o mês pago
+    // depois sumia junto. Agora só a duração do estornado sai, e o vencimento
+    // continua no futuro — pago pelo outro mês.
     expect(depois.currentPeriodEnd.getTime()).toBeLessThan(antes.currentPeriodEnd.getTime());
-    expect(depois.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now() + 25 * 86_400_000);
+    expect(depois.currentPeriodEnd.getTime()).toBeGreaterThan(Date.now());
+    // E o acesso fica: o mês de agora está pago pelo outro pagamento. Antes
+    // suspendia (MANUAL), e com a competência corrente quitada a tela recusava
+    // cobrar — o cliente ficava preso, com mês pago e sem acesso.
+    expect(depois.status).not.toBe("SUSPENSO");
+    expect(depois.statusSource).toBe("AUTO");
+  });
+
+  it("chargeback de mês anterior continua BLOQUEANDO, mesmo com outro mês pago", async () => {
+    const { tenantId } = await createTenantComSessao();
+    const antigoId = await pagarMensalidade(tenantId);
+    await recuarParaMesPassado(tenantId, antigoId, "2000-02");
+    await pagarMensalidade(tenantId);
+
+    gw.paymentStatus.set(antigoId, "charged_back");
+    await BillingService.handleWebhook(antigoId);
+
+    const depois = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId } });
+    expect(depois.status).toBe("BLOQUEADO");
+    expect(depois.statusSource).toBe("MANUAL");
   });
 });
 

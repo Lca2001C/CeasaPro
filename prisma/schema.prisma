@@ -50,6 +50,7 @@ model Tenant {
   deletedAt             DateTime?
   ceasaCentral          CeasaCentral?          @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
   ceasaLinks            TenantCeasaLink[]
+  ceasaLinkRecusas      TenantCeasaLinkRecusa[]
   ceasaAlertas          TenantCeasaAlerta[]
   boletinsEnviados      TenantBoletimEnviado[]
   crateCleanings        CrateCleaning[]
@@ -464,6 +465,23 @@ model TenantCeasaLink {
   @@map("tenant_ceasa_links")
 }
 
+/// Produto cujo vínculo o DONO removeu à mão.
+///
+/// O vínculo por nome idêntico é gravado sozinho (`autoVincularIdenticos`), e
+/// sem esta marca a remoção não durava: o vínculo voltava ao recarregar a tela
+/// ou ao cadastrar outro produto. A marca só barra o automático — vincular à
+/// mão continua valendo, e apaga a marca.
+model TenantCeasaLinkRecusa {
+  tenantId  String
+  productId String
+  createdAt DateTime @default(now())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@id([tenantId, productId])
+  @@map("tenant_ceasa_link_recusas")
+}
+
 /// Alerta de flutuação de preço que UMA empresa pediu para um item do boletim.
 ///
 /// É o segundo (e último) modelo do módulo com `tenantId`: preço é público, mas
@@ -688,6 +706,7 @@ model Product {
   deletedAt       DateTime?
   tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   ceasaLinks      TenantCeasaLink[]
+  ceasaLinkRecusas TenantCeasaLinkRecusa[]
   purchaseItems   PurchaseItem[]
   saleItems       SaleItem[]
   stockMovements  StockMovement[]
@@ -729,11 +748,18 @@ model Purchase {
   /// de timeout) devolve a primeira em vez de dar entrada no estoque de novo.
   /// Nula nas compras antigas — vários NULL não colidem no índice.
   idempotencyKey String?
+  /// Cancelamento (compra lançada errada, até 24 h depois do registro — ver
+  /// `ComprasService.cancelarCompra`). Como na venda, a compra FICA na base e
+  /// sai dos totais; o estoque, o custo médio, as caixas e a conta a pagar
+  /// voltam ao que eram antes dela.
+  cancelledAt     DateTime?
+  cancelledReason String?
   createdAt    DateTime       @default(now())
   updatedAt    DateTime       @updatedAt
   deletedAt    DateTime?
   items        PurchaseItem[]
   expenses     Expense[]
+  crateMovements PlasticCrateMovement[]
   supplier     Supplier?      @relation(fields: [supplierId], references: [id])
   tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
@@ -899,6 +925,11 @@ model CreditPayment {
   method    PaymentMethod @default(DINHEIRO)
   paidAt    DateTime      @default(now())
   createdAt DateTime      @default(now())
+  /// Estorno de recebimento lançado errado (até 24 h — ver
+  /// `FiadoService.estornarPagamento`). A linha fica no extrato, marcada; sai
+  /// do fluxo de caixa e o valor volta ao saldo do cliente.
+  reversedAt     DateTime?
+  reversedReason String?
   account   CreditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, paidAt])
@@ -1062,11 +1093,14 @@ model PlasticCrateMovement {
   cleanerName     String?
   saleId          String?
   crateCleaningId String?
+  /// Compra que trouxe as caixas — é o que o cancelamento da compra desfaz.
+  purchaseId      String?
   movementDate    DateTime                 @default(now())
   notes           String?
   createdAt       DateTime                 @default(now())
   crateCleaning   CrateCleaning?           @relation(fields: [crateCleaningId], references: [id])
   sale            Sale?                    @relation(fields: [saleId], references: [id])
+  purchase        Purchase?                @relation(fields: [purchaseId], references: [id])
   tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, movementDate])
@@ -1074,6 +1108,7 @@ model PlasticCrateMovement {
   @@index([tenantId, customerName])
   @@index([saleId])
   @@index([crateCleaningId])
+  @@index([purchaseId])
   @@map("plastic_crate_movements")
 }
 

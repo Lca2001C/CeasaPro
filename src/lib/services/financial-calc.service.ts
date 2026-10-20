@@ -8,9 +8,10 @@ import { add, sub, mul, div, money, toDecimal, type Numeric } from "@/lib/money"
  *
  *   valor_total_compra = quantidade * preco_unitario + frete
  *   valor_total_venda  = quantidade * valor_unitario
- *   lucro_bruto        = total_vendido - custo_dos_produtos_vendidos
+ *   faturamento        = vendas_de_mercadoria + vendas_de_embalagem
+ *   lucro_bruto        = faturamento - custo_dos_produtos_vendidos
  *   lucro_liquido      = lucro_bruto - despesas
- *   margem_liquida     = (lucro_liquido / total_vendido) * 100
+ *   margem_liquida     = (lucro_liquido / faturamento) * 100
  */
 export const FinancialCalc = {
   /** Total de uma compra: itens + frete. */
@@ -123,6 +124,17 @@ export const FinancialCalc = {
       partes[maior] = money(partes[maior]!.plus(residuo));
     }
     return partes;
+  },
+
+  /**
+   * Faturamento do período = venda de mercadoria + venda avulsa de embalagem.
+   *
+   * A embalagem não passa pelo PDV e não tem CMV (a compra dela entra como
+   * conta), mas é dinheiro vendido: fora daqui, o caixa mostrava uma receita
+   * que o lucro e o "% do que você vendeu" não viam.
+   */
+  faturamento(vendasDeMercadoria: Numeric, vendasDeEmbalagem: Numeric = 0) {
+    return money(add(vendasDeMercadoria, vendasDeEmbalagem));
   },
 
   /** Lucro bruto = total vendido - custo dos produtos vendidos (CMV). */

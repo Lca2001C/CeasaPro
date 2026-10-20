@@ -259,7 +259,7 @@ describe("Cancelamento de venda", () => {
       where: { id: s.id },
       data: { createdAt: new Date(Date.now() - 48 * 3600_000) },
     });
-    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/24h/);
+    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/prazo/);
   });
 
   it("estorna só as caixas que ainda estão com o cliente", async () => {
@@ -794,7 +794,7 @@ describe("Cancelar venda fiada que acabou de receber (regressao)", () => {
     // mas a leitura de fora da transacao nao viu o extrato.
     await prisma.creditAccount.updateMany({ where: { saleId: s.id }, data: { paidAmount: 10 } });
 
-    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/pagamento/i);
+    await expect(VendasService.cancelarVenda({ id: s.id }, ctx)).rejects.toThrow(/recebimento/i);
 
     const depois = await prisma.sale.findUniqueOrThrow({ where: { id: s.id } });
     expect(depois.cancelledAt).toBeNull();
@@ -886,10 +886,10 @@ describe("Cabecalho do historico (regressao)", () => {
     expect(Number(t.total)).toBe(50);
   });
 
-  it("parcela de venda excluida pelo fiado nao soma no filtro", async () => {
+  it("parcela de venda cancelada pelo fiado nao soma no filtro", async () => {
     const s = await venda({ customerName: "Ana", paymentMethod: "FIADO" });
     const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: s.id } });
-    await FiadoService.remove(conta.id, ctx);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
 
     const t = await VendasService.totaisDoFiltro(tenantId, {
       preset: "todas",

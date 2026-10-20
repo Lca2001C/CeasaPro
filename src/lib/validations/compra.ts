@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 import { recipientTypeEnum } from "./produto";
 import { expensePaymentMethodEnum } from "./despesa";
 
@@ -23,11 +24,11 @@ export const compraSchema = z.object({
    * dois passos para um fato só, e a segunda metade era esquecida com
    * frequência. Opcional: nem toda compra vem em caixa plástica.
    */
-  caixasRecebidas: z.number().int().nonnegative().optional(),
+  caixasRecebidas: z.number().int().nonnegative().max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /** Chegaram sujas? Vão direto para a fila de higienização. */
   caixasSujas: z.boolean().optional(),
   /** Quantas já vieram quebradas — entram como perda, não como estoque. */
-  caixasQuebradas: z.number().int().nonnegative().optional(),
+  caixasQuebradas: z.number().int().nonnegative().max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /**
    * Como a compra foi paga. Toda compra vira UMA despesa (`origem = COMPRA`)
    * no valor total — itens + frete —, ligada ao fornecedor:
@@ -52,3 +53,10 @@ export const compraSchema = z.object({
   idempotencyKey: z.uuid().optional(),
 });
 export type CompraInput = z.infer<typeof compraSchema>;
+
+/** Cancelamento de compra lançada errada (ver `ComprasService.cancelarCompra`). */
+export const cancelarCompraSchema = z.object({
+  id: z.string().min(1),
+  motivo: z.string().trim().max(200).nullable().optional(),
+});
+export type CancelarCompraInput = z.infer<typeof cancelarCompraSchema>;

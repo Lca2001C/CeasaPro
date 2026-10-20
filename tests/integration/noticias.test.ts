@@ -117,6 +117,20 @@ describe("NoticiasService.listar", () => {
     expect(ceasa.every((n) => n.temas.includes("CEASA"))).toBe(true);
   });
 
+  it("primeira coleta falhando: não repete a cada abertura da tela nem repete o aviso", async () => {
+    // Feeds fora: sem nenhuma coleta boa, a tela tentava de novo a cada
+    // acesso (até 20 s de espera) e criava um NOTICIAS_FALHA por acesso.
+    servir({});
+    await prisma.rateLimit.deleteMany({ where: { keyHash: "ceasanews:coleta" } });
+    expect(await NoticiasService.primeiraColetaSeNunca()).toBe(true);
+    expect(await NoticiasService.primeiraColetaSeNunca()).toBe(false);
+    expect(await prisma.noticiaColeta.count({ where: { feed: "gn-ceasa" } })).toBe(1);
+
+    await NoticiasService.coletar({ agora: AGORA });
+    const avisos = await prisma.adminNotification.count({ where: { kind: "NOTICIAS_FALHA" } });
+    expect(avisos).toBe(1);
+  });
+
   it("coletarSeVelho não coleta de novo dentro de 2 h", async () => {
     servir({ "gn-ceasa": fixture("googlenews") });
     await NoticiasService.coletar({ agora: AGORA });

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 import {
   calcularTotaisVenda,
   centsParaNumero,
@@ -19,7 +20,7 @@ export const vendaItemSchema = z.object({
   quantity: z.number().positive("Quantidade inválida"),
   unitPrice: z.number().nonnegative("Preço inválido"),
   recipientType: recipientTypeEnum.nullable().optional(),
-  crateQty: z.number().int().nonnegative("Quantidade de caixas inválida").optional(),
+  crateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /** Desconto desta linha, em reais. Nunca maior que o valor da linha. */
   discountAmount: z.number().nonnegative("Desconto inválido").optional(),
 });
@@ -83,7 +84,7 @@ const vendaBase = z.object({
   saleDate: dataOpcionalSchema,
   dueDate: dataOpcionalSchema,
   /** Caixas plásticas que saíram na venda. Se omitido, soma os itens PLASTICA. */
-  plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").optional(),
+  plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /** Desconto sobre o total da venda (os descontos por item ficam na linha). */
   discountAmount: z.number().nonnegative("Desconto inválido").optional(),
   discountReason: z.string().trim().max(200).nullable().optional(),

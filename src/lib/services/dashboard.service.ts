@@ -11,13 +11,11 @@ import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/lin
 import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
 
 /**
- * Higienização do mês para o painel: saldo em aberto, o que SAIU do caixa no
- * mês (soma dos pagamentos por `paidAt`) e o custo dos envios do mês.
+ * Higienização do mês para o painel: saldo em aberto e o custo dos lotes
+ * ENVIADOS no mês — que é o que entra em "Contas variáveis" E no lucro.
  *
  * Tudo somado no banco. Antes o painel carregava todos os lotes da história e
- * somava o `paidAmount` ACUMULADO pela data do ÚLTIMO pagamento: lote de
- * R$ 300 pago 100 em agosto e 200 em setembro contava R$ 0 em agosto e R$ 300
- * em setembro, e o "Sobrou no mês" de setembro saía R$ 100 abaixo do real.
+ * somava o `paidAmount` ACUMULADO pela data do ÚLTIMO pagamento.
  */
 function higienizacaoDoMes(tenantId: string, inicio: Date, fim: Date) {
   return resumoDaHigienizacao(tenantId, { inicio, fim }, startOfDay(new Date()));
@@ -49,7 +47,17 @@ export interface DashboardSummary {
   lucroBrutoMes: Prisma.Decimal;
   /** Custo da mercadoria vendida no mês (CMV) — o que o lucro bruto desconta. */
   cmvMes: Prisma.Decimal;
-  /** Contas que o lucro líquido desconta (operacionais + higienização paga). */
+  /**
+   * Venda avulsa de embalagem (papelão, sacaria…) no mês. Não é "Vendi" — não
+   * passa pelo PDV nem tem CMV (a embalagem comprada entra como conta) —, mas é
+   * receita: soma no lucro bruto, e o "Resultado do mês" a mostra numa linha.
+   */
+  embalagensMes: Prisma.Decimal;
+  /**
+   * Contas que o lucro líquido desconta: as operacionais do mês e a
+   * higienização ENVIADA no mês. É exatamente "Contas fixas" + "Contas
+   * variáveis" — os cartões e o lucro usam a mesma data.
+   */
   despesasLucroMes: Prisma.Decimal;
   lucroMes: Prisma.Decimal;
   margemLiquidaMes: Prisma.Decimal;
@@ -68,8 +76,8 @@ export const DashboardService = {
    *   números, e calcular as duas sempre dobrava as consultas da carga (o
    *   Início é a tela que todo mundo abre). Sem `parte`, calcula tudo — é o que
    *   o snapshot offline precisa. Os campos da parte não pedida vêm zerados.
-   *   `"resumo"` são só os quatro números do snapshot offline (hoje, a receber,
-   *   contas a pagar — o valor do estoque ele tira das posições que já busca).
+   *   `"resumo"` são só os números do snapshot offline (hoje e a receber — o
+   *   valor do estoque ele tira das posições, e o a pagar de `ContasPagarService`).
    */
   async getSummary(
     tenantId: string,
@@ -78,7 +86,13 @@ export const DashboardService = {
   ): Promise<DashboardSummary> {
     const geral = parte === undefined || parte === "geral";
     const fin = parte === undefined || parte === "financeiro";
-    const contas = fin || parte === "resumo";
+    const contas = fin;
+    // As DUAS abas mostram "Sobrou no mês": a Visão Geral também precisa de
+    // tudo o que entra no lucro. Pular isso nela fazia o cartão mostrar o
+    // próprio "Vendi" como lucro.
+    const lucro = geral || fin;
+    const comHigienizacao = isModuleEnabled(modules, "higienizacao");
+    const comEmbalagens = isModuleEnabled(modules, "embalagens");
     /** Valor neutro com o MESMO formato do resultado da consulta pulada. */
     const pula = <T,>(v: T) => Promise.resolve(v);
     const somaVazia = { _sum: { totalAmount: null, amount: null, paidAmount: null } } as const;
@@ -136,6 +150,7 @@ export const DashboardService = {
       estoqueParadoRows,
       despOperacional,
       higLotes,
+      embalagensMes,
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
@@ -167,14 +182,14 @@ export const DashboardService = {
       fin
         ? db.purchase.aggregate({
             _sum: { totalAmount: true },
-            where: { purchaseDate: { gte: monthStart, lte: ateAgora } },
+            where: { purchaseDate: { gte: monthStart, lte: ateAgora }, cancelledAt: null },
           })
         : pula(somaVazia),
       db.sale.aggregate({
         _sum: { totalAmount: true },
         where: { saleDate: { gte: monthStart, lte: ateAgora }, cancelledAt: null },
       }),
-      !fin ? pula([] as { cmv: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
+      !lucro ? pula([] as { cmv: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS cmv
         FROM sale_items si
         JOIN sales s ON s.id = si."saleId"
@@ -239,7 +254,7 @@ export const DashboardService = {
         ORDER BY saldo."lastMovementAt" ASC NULLS FIRST, p.name ASC
         LIMIT 5
       `,
-      !fin ? pula([] as { total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+      !lucro ? pula([] as { total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
         SELECT COALESCE(SUM(amount), 0) AS total
         FROM expenses
         WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
@@ -247,9 +262,15 @@ export const DashboardService = {
           AND COALESCE("dueDate", "createdAt") >= ${monthStart}
           AND COALESCE("dueDate", "createdAt") <= ${fimDoMes}
       `,
-      contas && isModuleEnabled(modules, "higienizacao")
+      (contas || lucro) && comHigienizacao
         ? higienizacaoDoMes(tenantId, monthStart, fimDoMes)
         : Promise.resolve(HIGIENIZACAO_ZERADA),
+      lucro && comEmbalagens
+        ? db.packagingSale.aggregate({
+            _sum: { totalAmount: true },
+            where: { saleDate: { gte: monthStart, lte: ateAgora } },
+          })
+        : pula(somaVazia),
     ]);
 
     const porProduto = porProdutoDoMes(linhasDoMes);
@@ -258,20 +279,25 @@ export const DashboardService = {
     const despesasFixasMes = sumExpenseByType(despRows, "FIXA");
     let despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
 
-    const {
-      saldoAberto: higSaldoAberto,
-      pagaNoPeriodo: higPagaMes,
-      enviadaNoPeriodo: higEnviadaMes,
-    } = higLotes;
+    const { saldoAberto: higSaldoAberto, enviadaNoPeriodo: higEnviadaMes } = higLotes;
     despesasVariaveisMes = money(despesasVariaveisMes.plus(higEnviadaMes));
 
     // A conta da compra (mercadoria + frete) já está no CMV (unitCost) e fica
-    // fora pelo `origem = 'MANUAL'` da consulta. Higienização paga
-    // no mês é opex de verdade e entra no lucro líquido.
+    // fora pelo `origem = 'MANUAL'` da consulta.
+    //
+    // A higienização entra pelo ENVIO, como em "Contas variáveis" — e como a
+    // conta operacional, que entra pelo vencimento, não pelo pagamento. Entrava
+    // pelo PAGAMENTO: o lote enviado em outubro e pago em novembro aparecia em
+    // variáveis de outubro sem descontar no lucro de outubro, e descontava em
+    // novembro sem aparecer em variáveis — "Ganhei − fixas − variáveis" não
+    // fechava com "Sobrou" em nenhum dos dois meses. O que saiu do caixa no mês
+    // continua em "Contas pagas" e no fluxo de caixa.
     const despesasLucro = money(
-      toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higPagaMes),
+      toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higEnviadaMes),
     );
-    const lucroBrutoMes = FinancialCalc.lucroBruto(vendasMesTotal, cmvMes);
+    const embalagens = money(toDecimal(embalagensMes._sum.totalAmount ?? 0));
+    const faturamentoMes = FinancialCalc.faturamento(vendasMesTotal, embalagens);
+    const lucroBrutoMes = FinancialCalc.lucroBruto(faturamentoMes, cmvMes);
     const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasLucro);
 
     const aReceber = FinancialCalc.saldoFiado(
@@ -300,13 +326,16 @@ export const DashboardService = {
       mesVendi: money(vendasMesTotal),
       totalCompradoMes: money(toDecimal(comprasMes._sum.totalAmount ?? 0)),
       aReceber,
-      contasPagar: money(toDecimal(contasPagar._sum.amount ?? 0).plus(higSaldoAberto)),
+      contasPagar: money(
+        toDecimal(contasPagar._sum.amount ?? 0).plus(contas ? higSaldoAberto : 0),
+      ),
       estoqueValor,
       lucroBrutoMes,
       cmvMes: money(cmvMes),
+      embalagensMes: embalagens,
       despesasLucroMes: despesasLucro,
       lucroMes,
-      margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, vendasMesTotal),
+      margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, faturamentoMes),
       despesasFixasMes,
       despesasVariaveisMes,
       topVendidos: [...porProduto]

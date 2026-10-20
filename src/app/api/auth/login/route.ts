@@ -6,6 +6,7 @@ import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshToken } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
 import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
+import { chaveDeLoginPorEmail } from "@/lib/auth/limite-login";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 import { errorResponse } from "@/lib/http/error-response";
@@ -51,16 +52,24 @@ async function entrar(req: Request): Promise<Response> {
   // espalha tentativas pode ter UMA conta válida para zerar a janela). Com IP
   // desconhecido fica de fora: todo mundo cairia no mesmo balde.
   const rateKeyIp = `login:${ip}:${email}`;
-  const rateKeyEmail = `login:email:${email}`;
+  const rateKeyEmail = chaveDeLoginPorEmail(email);
   const janela = 15 * 60 * 1000;
-  const [rlIp, rlEmail, rlSoIp] = await Promise.all([
+  const [rlIp, rlSoIp] = await Promise.all([
     rateLimitDb(rateKeyIp, { limit: 5, windowMs: janela }),
-    rateLimitDb(rateKeyEmail, { limit: 20, windowMs: janela }),
     ip === "unknown"
       ? Promise.resolve(null)
       : rateLimitDb(`login:ip:${ip}`, { limit: 60, windowMs: janela }),
   ]);
-  const estourou = [rlIp, rlEmail, rlSoIp].find((r) => r && !r.ok);
+  // O contador do e-mail só recebe a tentativa que passou nos de IP. Contando
+  // tudo, UM IP com 21 tentativas a cada 15 min trancava a conta de qualquer
+  // pessoa, indefinidamente (a recusa vem antes da senha, então nem o acerto
+  // do dono destravava). Assim cada IP põe no máximo 5 tentativas por janela
+  // nele, e trancar alguém de fora exige, de fato, várias origens.
+  const barradoPorIp = [rlIp, rlSoIp].find((r) => r && !r.ok);
+  const rlEmail = barradoPorIp
+    ? null
+    : await rateLimitDb(rateKeyEmail, { limit: 20, windowMs: janela });
+  const estourou = barradoPorIp ?? (rlEmail && !rlEmail.ok ? rlEmail : undefined);
   if (estourou) return respostaDeLimite(estourou);
 
   const user = await prisma.user.findFirst({

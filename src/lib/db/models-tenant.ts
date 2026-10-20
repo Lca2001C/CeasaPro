@@ -34,6 +34,8 @@ export const TENANT_MODELS = new Set<string>([
   // o mesmo para todo mundo), e por não terem a coluna nem chegam a este teste.
   // O vínculo, não: ele é a decisão de UMA empresa sobre o produto DELA.
   "TenantCeasaLink",
+  // A marca "o dono removeu este vínculo" — decisão da empresa, como o vínculo.
+  "TenantCeasaLinkRecusa",
   // O alerta de flutuação, pela mesma razão do vínculo: preço é público, mas
   // "me avise se subir 10%" é decisão de uma empresa só.
   "TenantCeasaAlerta",

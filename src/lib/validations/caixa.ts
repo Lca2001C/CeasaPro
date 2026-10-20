@@ -1,6 +1,15 @@
 import { z } from "zod";
 
 /**
+ * Teto de caixas por lançamento. Um número colado por engano (1.500.000.000)
+ * passava, e a SOMA do livro-razão estourava no banco — o módulo inteiro parava,
+ * inclusive o cancelamento que corrigiria o lançamento. Mesmo motivo do
+ * `QTD_MAX` das embalagens; nenhum box movimenta cem mil caixas de uma vez.
+ */
+export const CAIXAS_MAX = 100_000;
+export const CAIXAS_MAX_MSG = "Quantidade de caixas muito alta — confira o número";
+
+/**
  * Tipos que o formulário "Movimentar caixas" pode lançar À MÃO.
  *
  * Ficam de fora, de propósito:
@@ -18,8 +27,8 @@ export const caixaMovimentoTipoEnum = z.enum(["ENTRADA", "SAIDA", "RETORNO", "QU
 export const caixaMovimentoSchema = z
   .object({
     type: caixaMovimentoTipoEnum,
-    quantity: z.number().int().positive("Quantidade inválida"),
-    brokenQty: z.number().int().nonnegative().optional(), // só na ENTRADA
+    quantity: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
+    brokenQty: z.number().int().nonnegative().max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(), // só na ENTRADA
     dirty: z.boolean().optional(), // ENTRADA/QUEBRA: caixa suja (aguardando higienização)
     customerName: z.string().trim().max(120).nullable().optional(),
     supplierName: z.string().trim().max(120).nullable().optional(),

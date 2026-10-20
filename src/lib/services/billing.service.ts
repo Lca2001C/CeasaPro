@@ -2,13 +2,14 @@ import {
   Prisma,
   type ChargeMethod,
   type PaymentStatus,
+  type StatusSource,
   type SubscriptionPayment,
   type SubscriptionStatus,
 } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
-import { addOneMonth, computeStatus } from "@/lib/billing/status";
+import { addOneMonth, computeStatus, inicioDoPeriodoPago } from "@/lib/billing/status";
 import { gte, money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
@@ -183,10 +184,29 @@ async function competenciaAprovada(tenantId: string, referenceMonth: string) {
  */
 export async function competenciaACobrar(
   tenantId: string,
-  sub: { activatedAt: Date | null; currentPeriodEnd: Date },
+  sub: { activatedAt: Date | null; currentPeriodEnd: Date; statusSource?: StatusSource },
   now: Date,
 ): Promise<{ refMonth: string; antecipada: boolean; paga: SubscriptionPayment | null }> {
   const corrente = currentRefMonth(now);
+
+  // Período pago correndo e fora da janela de renovação: está pago, seja qual
+  // for o rótulo do mês. Quem pagou em 15/09 (até 15/10) via, de 01/10 a 11/10,
+  // "outubro em aberto" e o formulário de pagamento — a competência olhava o
+  // calendário, não o período. Exige um pagamento APROVADO cobrindo agora
+  // (vencimento gravado pelo admin sem pagamento não conta) e fonte AUTO: o
+  // bloqueio manual (chargeback) se desfaz justamente pagando.
+  if (
+    sub.activatedAt &&
+    sub.statusSource !== "MANUAL" &&
+    sub.currentPeriodEnd > now &&
+    !dentroDaJanelaDeRenovacao(sub, now)
+  ) {
+    const cobreAgora = await prisma.subscriptionPayment.findFirst({
+      where: { tenantId, status: "APROVADO", periodEnd: { gt: now } },
+      orderBy: { periodEnd: "desc" },
+    });
+    if (cobreAgora) return { refMonth: corrente, antecipada: false, paga: cobreAgora };
+  }
   const pagaCorrente = await competenciaAprovada(tenantId, corrente);
   if (!pagaCorrente || !dentroDaJanelaDeRenovacao(sub, now)) {
     return { refMonth: corrente, antecipada: false, paga: pagaCorrente };
@@ -1153,10 +1173,10 @@ export const BillingService = {
               tx,
             );
           }
-          // Assinatura nova (nunca ativada) ou vencida há tempos tem
-          // `currentPeriodEnd` no passado: o ciclo recomeça hoje, senão o mês
-          // recém-pago já nasceria vencido e a empresa seguiria bloqueada.
-          const periodStart = sub.currentPeriodEnd > now ? new Date(sub.currentPeriodEnd) : now;
+          // Onde o mês comprado começa: no vencimento (adiantada, ou paga
+          // dentro da tolerância) ou hoje (primeiro pagamento, ou depois de
+          // ficar sem acesso) — ver `inicioDoPeriodoPago`.
+          const periodStart = inicioDoPeriodoPago(sub, now);
           const periodEnd = addOneMonth(periodStart);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
@@ -1242,6 +1262,56 @@ export const BillingService = {
                 mpPaymentId: mp.id,
                 acessoMantido: true,
                 aindaAprovado: outraAprovada.mpPaymentId,
+              },
+            },
+            tx,
+          );
+        } else if (
+          sub &&
+          mp.status !== "charged_back" &&
+          periodoSemOEstornado(sub.currentPeriodEnd, payment) > now &&
+          (await tx.subscriptionPayment.findFirst({
+            where: {
+              tenantId: payment.tenantId,
+              status: "APROVADO",
+              id: { not: payment.id },
+              // Os períodos se empilham: tirado o estornado, o mês pago depois
+              // passa a cobrir agora, mesmo que a linha dele comece no futuro.
+              periodEnd: { gt: now },
+            },
+            select: { id: true },
+          }))
+        ) {
+          /*
+            Estorno com OUTRO período pago ainda correndo: a empresa pagou por
+            agora. Ex.: setembro (até 30/10) e outubro (até 30/11) pagos;
+            estornado setembro, o vencimento volta a 31/10 — e até lá está pago
+            por outubro. Suspender bloqueava quem tem mês pago e, com a
+            competência corrente já quitada, a tela recusava cobrar
+            (MENSALIDADE_JA_PAGA): o cliente ficava preso sem ter como pagar.
+            Só o vencimento recua; o status segue o cálculo automático.
+            Chargeback continua bloqueando sempre: é contestação, e quem decide
+            é o super-admin.
+          */
+          const fim = periodoSemOEstornado(sub.currentPeriodEnd, payment);
+          await tx.tenantSubscription.update({
+            where: { id: sub.id },
+            data: { currentPeriodEnd: fim },
+          });
+          await audit(
+            {
+              tenantId: payment.tenantId,
+              action: "PAYMENT",
+              entity: "SubscriptionPayment",
+              entityId: payment.id,
+              oldData: { status: "APROVADO", currentPeriodEnd: sub.currentPeriodEnd },
+              newData: {
+                status: newStatus,
+                mpStatus: mp.status,
+                mpPaymentId: mp.id,
+                acessoMantido: true,
+                motivo: "outro-periodo-pago-correndo",
+                currentPeriodEnd: fim,
               },
             },
             tx,

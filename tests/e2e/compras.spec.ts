@@ -234,4 +234,32 @@ test.describe("Compra do CEASA", () => {
     // Continua no formulário: nada foi gravado.
     await expect(page).toHaveURL(/\/estoque\/compra/);
   });
+
+  test("compra lançada errada: cancela pela lista, fica marcada e a mercadoria sai", async ({
+    page,
+  }) => {
+    /*
+      Compra errada não tinha volta: estoque, custo e conta a pagar ficavam
+      para sempre. Agora cancela em até 24 h, enquanto a mercadoria está no box.
+      Valor próprio (7 × R$ 9,00) para achar a linha entre as dos outros testes.
+    */
+    await page.goto("/estoque/compra");
+    await page.getByLabel("Fornecedor").selectOption({ label: FORNECEDOR });
+    await page.getByLabel("Produto do item 1").selectOption({ label: PRODUTO });
+    await page.getByLabel("Quantidade do item 1").fill("7");
+    const preco = page.getByLabel("Preço unitário do item 1");
+    await preco.fill("9");
+    await expect(preco).toHaveValue("R$ 9,00");
+    await page.getByRole("button", { name: "Salvar compra" }).click();
+    await page.waitForURL(/\/estoque\?aba=compras/, { timeout: 15_000 });
+
+    const linha = page.locator("details").filter({ hasText: "R$ 63,00" });
+    await linha.locator("summary").click();
+    await linha.getByRole("button", { name: "Cancelar compra" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancelar a compra" }).click();
+
+    await expect(page.getByText(/compra cancelada/i)).toBeVisible();
+    await expect(linha.getByText("Cancelada", { exact: true })).toBeVisible();
+    await expect(linha.getByRole("button", { name: "Cancelar compra" })).toHaveCount(0);
+  });
 });

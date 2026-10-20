@@ -361,6 +361,9 @@ function Financeiro({
 }) {
   const prejuizo = s.lucroMes.isNegative();
   const ultimoMes = financeiro.meses.at(-1);
+  // A venda de embalagem é receita fora do "Vendi": aparece numa linha
+  // própria, para o resultado fechar com o que entrou no caixa.
+  const temEmbalagens = s.embalagensMes.greaterThan(0);
   return (
     <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -398,7 +401,11 @@ function Financeiro({
         <StatCard
           label="Ganhei nas vendas"
           value={formatBRL(s.lucroBrutoMes)}
-          hint="Lucro bruto — antes das contas"
+          hint={
+            temEmbalagens
+              ? `Lucro bruto, com ${formatBRL(s.embalagensMes)} de embalagens`
+              : "Lucro bruto — antes das contas"
+          }
           icon={<TrendingUp className="size-4" />}
           tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
         />
@@ -430,6 +437,9 @@ function Financeiro({
             colunas: ["Linha", "Valor"],
             linhas: [
               ["Vendi", Number(s.mesVendi)],
+              ...(temEmbalagens
+                ? [["Vendi em embalagens", Number(s.embalagensMes)] as [string, number]]
+                : []),
               ["Custo da mercadoria vendida", -Number(s.cmvMes)],
               ["Contas do mês", -Number(s.despesasLucroMes)],
               [prejuizo ? "Prejuízo" : "Sobrou", Number(s.lucroMes)],
@@ -440,6 +450,16 @@ function Financeiro({
             mostrarPercentual={false}
             itens={[
               { rotulo: "Vendi", valor: Number(s.mesVendi), cor: COR_SERIE.vendas },
+              ...(temEmbalagens
+                ? [
+                    {
+                      rotulo: "Vendi em embalagens",
+                      valor: Number(s.embalagensMes),
+                      cor: COR_SERIE.vendas,
+                      prefixo: "+ ",
+                    },
+                  ]
+                : []),
               {
                 rotulo: "Custo da mercadoria vendida",
                 valor: Number(s.cmvMes),

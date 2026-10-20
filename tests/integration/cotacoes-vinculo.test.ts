@@ -561,6 +561,32 @@ describe("quantos produtos sem vínculo já têm nome exato no boletim", () => {
     expect(link!.ceasaProductId).toBe(tomateCereja);
   });
 
+  it("vínculo removido pelo dono NÃO volta sozinho — e vincular à mão ainda funciona", async () => {
+    // A remoção apagava a linha e o próximo carregamento da tela (ou o cadastro
+    // de qualquer produto) recriava o vínculo de nome idêntico.
+    const nome = `QUIABO ${uniq()}`.toUpperCase();
+    const identico = await criarProdutoDoBoletim(nome);
+    await cotar(identico, "KG", "5.00");
+    const produto = await prisma.product.create({
+      data: { tenantId: contaTenant, name: nome, saleUnit: "KG" },
+    });
+    expect(await CotacoesService.autoVincularIdenticos(contaTenant)).toBeGreaterThanOrEqual(1);
+
+    await CotacoesService.desvincular({ productId: produto.id }, makeCtx(contaTenant));
+    expect(await CotacoesService.autoVincularIdenticos(contaTenant)).toBe(0);
+    await CotacoesService.getPainel(contaTenant);
+    expect(await prisma.tenantCeasaLink.findFirst({ where: { productId: produto.id } })).toBeNull();
+
+    await CotacoesService.vincular(
+      { productId: produto.id, ceasaProductId: identico },
+      makeCtx(contaTenant),
+    );
+    expect(await prisma.tenantCeasaLink.findFirst({ where: { productId: produto.id } })).not.toBeNull();
+    expect(
+      await prisma.tenantCeasaLinkRecusa.count({ where: { productId: produto.id } }),
+    ).toBe(0);
+  });
+
   it("sem boletim, o número é zero em vez de uma promessa", async () => {
     const semBoletim = await createTestTenant(`Empresa Sem Boletim ${uniq()}`);
     tenants.push(semBoletim);

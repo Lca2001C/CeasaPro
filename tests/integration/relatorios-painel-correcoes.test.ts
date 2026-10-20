@@ -490,12 +490,31 @@ describe("higienização paga em parcelas de meses diferentes (regressão)", () 
     expect(Number(atual.variaveisMesAnterior)).toBe(300);
   });
 
-  it("Início: o lucro do mês desconta só os 200 pagos neste mês", async () => {
+  it("Início: a higienização entra no lucro pelo ENVIO — a mesma data de 'Contas variáveis'", async () => {
+    // Enviado no mês passado, pago 200 neste: não é custo deste mês. Pelo
+    // pagamento, o lucro descontava 200 que "Contas variáveis" não mostrava.
     await lote300PagoEmDoisMeses();
     const sem = await DashboardService.getSummary(tenantId, []);
     const com = await DashboardService.getSummary(tenantId, ["higienizacao"]);
-    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(200);
+    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(0);
     expect(Number(com.contasPagar)).toBe(Number(sem.contasPagar));
+
+    // Enviado HOJE e ainda não pago: já é custo do mês, nos dois lugares.
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 5, dirty: true, movementDate: hoje },
+      ctx,
+    );
+    await HigienizacaoService.create(
+      { cleanerName: `Do mes-${Date.now()}`, sentDate: hoje, sentQty: 5, unitPrice: 4, notes: null },
+      ctx,
+    );
+    const depois = await DashboardService.getSummary(tenantId, ["higienizacao"]);
+    expect(Number(com.lucroMes) - Number(depois.lucroMes)).toBe(20);
+    expect(Number(depois.despesasVariaveisMes) - Number(com.despesasVariaveisMes)).toBe(20);
+    // "Ganhei − fixas − variáveis" fecha com "Sobrou".
+    expect(
+      depois.lucroBrutoMes.minus(depois.despesasFixasMes).minus(depois.despesasVariaveisMes).toString(),
+    ).toBe(depois.lucroMes.toString());
   });
 
   it("saldo em aberto: entra no 'a pagar', no vencido e no card do Início", async () => {
@@ -527,7 +546,9 @@ describe("higienização paga em parcelas de meses diferentes (regressão)", () 
     const sem = await DashboardService.getSummary(tenantId, []);
     const com = await DashboardService.getSummary(tenantId, ["higienizacao"]);
     expect(Number(com.contasPagar) - Number(sem.contasPagar)).toBe(50);
-    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(30);
+    // Enviado no mês passado: o pagamento de hoje sai do caixa ("pagas"), mas
+    // o custo é do mês do envio.
+    expect(Number(sem.lucroMes) - Number(com.lucroMes)).toBe(0);
   });
 
   it("lote excluído não conta em lugar nenhum", async () => {

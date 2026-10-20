@@ -4,14 +4,18 @@ import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { add, mul, money, toDecimal } from "@/lib/money";
-import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
 import { CaixasService } from "./caixas.service";
-import type { CompraInput } from "@/lib/validations/compra";
+import { saldoECustoMedio } from "./estoque.service";
+import type { CancelarCompraInput, CompraInput } from "@/lib/validations/compra";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz } from "@/lib/tz";
-import { formatBRL } from "@/lib/format";
+import { formatBRL, formatQty } from "@/lib/format";
 import { COMPRA_EXPENSE_CATEGORY } from "@/lib/constants";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { passaDoEstoque } from "@/lib/estoque/nivel";
+import { ORIGEM_COMPRA, ORIGEM_COMPRA_CANCELADA } from "@/lib/estoque/origens";
+import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
 
 export interface UltimaCompraDoProduto {
   productId: string;
@@ -70,7 +74,7 @@ export const ComprasService = {
              pi."suggestedSalePrice" AS suggested, p."purchaseDate"
       FROM purchase_items pi
       JOIN purchases p ON p.id = pi."purchaseId"
-      WHERE pi."tenantId" = ${tenantId} AND p."deletedAt" IS NULL
+      WHERE pi."tenantId" = ${tenantId} AND p."deletedAt" IS NULL AND p."cancelledAt" IS NULL
       ORDER BY pi."productId", p."purchaseDate" DESC, pi."createdAt" DESC
     `;
   },
@@ -142,7 +146,10 @@ export const ComprasService = {
       input.freight,
       input.items.map((i) => i.quantity),
     );
-    const totalAmount = money(add(...lineTotals, input.freight));
+    // Soma das linhas JÁ arredondadas, como a venda (`lib/venda/total.ts`): o
+    // total cru dava R$ 2,23 para dois itens gravados como R$ 1,12 cada, e a
+    // conta da compra não fechava com os itens nem com o relatório por item.
+    const totalAmount = money(add(...lineTotals.map((l) => money(l)), input.freight));
 
     // A conta da compra. Sem `pagamento` (cliente antigo da API, testes), a
     // compra é tratada como paga na hora — o que o fluxo de caixa sempre supôs.
@@ -173,18 +180,27 @@ export const ComprasService = {
 
     const gravar = () =>
       db.$transaction(async (tx) => {
+        // `FOR SHARE` no fornecedor e nos produtos: a exclusão de um ou de outro
+        // trava a mesma linha (`FOR UPDATE`) para conferir conta a pagar e
+        // saldo. Sem o lock, a compra gravada no meio da exclusão deixava
+        // dívida com fornecedor excluído ou estoque em produto excluído.
         if (input.supplierId) {
-          const supplier = await tx.supplier.findFirst({
-            where: { id: input.supplierId, active: true },
-            select: { id: true },
-          });
-          if (!supplier) throw new NotFoundError("Fornecedor nao encontrado");
+          const supplier = await tx.$queryRaw<{ id: string }[]>`
+            SELECT id FROM suppliers
+            WHERE "tenantId" = ${ctx.tenantId} AND id = ${input.supplierId}
+              AND active = true AND "deletedAt" IS NULL
+            FOR SHARE
+          `;
+          if (supplier.length === 0) throw new NotFoundError("Fornecedor nao encontrado");
         }
 
-        const products = await tx.product.findMany({
-          where: { id: { in: productIds }, active: true },
-          select: { id: true },
-        });
+        const products = await tx.$queryRaw<{ id: string }[]>`
+          SELECT id FROM products
+          WHERE "tenantId" = ${ctx.tenantId} AND id = ANY(${productIds}::text[])
+            AND active = true AND "deletedAt" IS NULL
+          ORDER BY id
+          FOR SHARE
+        `;
         if (products.length !== productIds.length) {
           throw new NotFoundError("Um ou mais produtos nao foram encontrados");
         }
@@ -210,7 +226,7 @@ export const ComprasService = {
             type: "ENTRADA" as const,
             quantity: it.quantity,
             unitCost: it.unitCost,
-            sourceType: "PURCHASE",
+            sourceType: ORIGEM_COMPRA,
             sourceId: purchase.id,
             movedAt: purchase.purchaseDate,
           })),
@@ -230,6 +246,8 @@ export const ComprasService = {
               supplierName: fornecedorNome,
               movementDate: purchase.purchaseDate.toISOString(),
               notes: "Entrada automática pela compra",
+              // O vínculo é o que deixa o cancelamento da compra achar as caixas.
+              purchaseId: purchase.id,
             },
             ctx,
           );
@@ -309,6 +327,172 @@ export const ComprasService = {
       }
       throw e;
     }
+  },
+
+  /**
+   * A compra ainda pode ser cancelada? A tela usa para mostrar o botão; o
+   * serviço refaz a conta (e confere o estoque) na hora de cancelar.
+   */
+  podeCancelar(compra: { createdAt: Date; cancelledAt: Date | null }, agora = new Date()): boolean {
+    return !compra.cancelledAt && dentroDoPrazoDeDesfazer(compra.createdAt, agora);
+  },
+
+  /**
+   * Cancela uma compra lançada errada — quantidade, preço ou fornecedor —, para
+   * ela ser lançada de novo do jeito certo. Mesma regra de desfazer da venda
+   * (`src/lib/desfazer/prazo.ts`): só o dono, até 24 h depois do registro.
+   *
+   * Desfaz, na mesma transação, tudo o que `registrarCompra` gravou:
+   *
+   *  1. marca a compra como cancelada (ela FICA na base e sai dos totais);
+   *  2. tira a mercadoria do estoque com um AJUSTE negativo ligado à compra
+   *     (`ORIGEM_COMPRA_CANCELADA`) — e o par entrada/estorno sai do custo
+   *     médio (`sqlCustoEstoque`): o preço digitado errado não fica na média;
+   *  3. estorna as caixas plásticas que chegaram com ela;
+   *  4. cancela a conta da compra, paga ou a pagar: a dívida (ou o pagamento)
+   *     era da compra errada. A compra certa, relançada, gera a dela.
+   *
+   * Recusa se, depois dela, os produtos já tiveram venda, baixa ou ajuste: o
+   * custo desta compra já foi gravado nesses movimentos (e no CMV das vendas),
+   * e a compra deixou de ser um lançamento isolado que se possa desfazer.
+   */
+  async cancelarCompra(input: CancelarCompraInput, ctx: TenantCtx) {
+    // Mesma barreira explícita de `VendasService.cancelarVenda`.
+    if (ctx.session.role !== "OWNER") {
+      throw new ForbiddenError("Só o responsável pela empresa pode cancelar uma compra.");
+    }
+
+    const db = getTenantPrisma(ctx.tenantId);
+    const compra = await db.purchase.findFirst({
+      where: { id: input.id },
+      include: { items: true },
+    });
+    if (!compra) throw new NotFoundError("Compra não encontrada");
+    if (compra.cancelledAt) throw new BusinessRuleError("Esta compra já foi cancelada.");
+    if (!dentroDoPrazoDeDesfazer(compra.createdAt)) {
+      throw new BusinessRuleError(foraDoPrazoDeDesfazer("cancelar esta compra"));
+    }
+
+    // A mesma mercadoria pode vir em duas linhas da compra.
+    const trouxe = new Map<string, Prisma.Decimal>();
+    for (const it of compra.items) {
+      trouxe.set(it.productId, add(trouxe.get(it.productId) ?? 0, it.quantity));
+    }
+    const productIds = [...trouxe.keys()].sort();
+
+    return db.$transaction(async (tx) => {
+      // Guarda otimista contra o clique duplo, como no cancelamento de venda.
+      const marcada = await tx.purchase.updateMany({
+        where: { id: compra.id, cancelledAt: null },
+        data: { cancelledAt: new Date(), cancelledReason: input.motivo || null },
+      });
+      if (marcada.count !== 1) throw new BusinessRuleError("Esta compra já foi cancelada.");
+
+      // Trava os produtos antes de ler o saldo — o padrão da venda. Sem filtro
+      // de `active`/`deletedAt`: o produto desativado depois da compra continua
+      // com a mercadoria dela no estoque.
+      const produtos = await tx.$queryRaw<{ id: string; name: string }[]>`
+        SELECT id, name FROM products
+        WHERE "tenantId" = ${ctx.tenantId} AND id = ANY(${productIds}::text[])
+        ORDER BY id
+        FOR UPDATE
+      `;
+      const nomes = new Map(produtos.map((p) => [p.id, p.name]));
+
+      // Nada pode ter usado o custo desta compra. Toda saída (venda, quebra,
+      // doação) e todo ajuste gravado DEPOIS dela levou a média com o preço
+      // dela — e esse custo fica gravado no movimento e na venda. Tirar a
+      // compra do repasse depois disso deixaria a venda com o CMV do preço
+      // errado, para sempre. Conferir só o saldo não basta: com estoque de
+      // antes, vender 5 de 15 passava, e o lucro do dia ficava errado.
+      const usados = await tx.$queryRaw<{ productId: string }[]>`
+        SELECT DISTINCT m."productId"
+        FROM stock_movements m
+        WHERE m."tenantId" = ${ctx.tenantId}
+          AND m."productId" = ANY(${productIds}::text[])
+          AND m.type <> 'ENTRADA'
+          AND m."createdAt" > (
+            SELECT MIN(e."createdAt") FROM stock_movements e
+            WHERE e."tenantId" = ${ctx.tenantId}
+              AND e."sourceType" = ${ORIGEM_COMPRA} AND e."sourceId" = ${compra.id}
+          )
+      `;
+      if (usados.length > 0) {
+        const nome = nomes.get(usados[0]!.productId) ?? "um produto";
+        throw new BusinessRuleError(
+          `Depois desta compra já houve venda, baixa ou ajuste de ${nome}: o custo dela já ` +
+            "foi usado, e a compra não pode mais ser cancelada.",
+        );
+      }
+
+      const { saldo } = await saldoECustoMedio(tx, ctx.tenantId, productIds);
+      for (const [productId, quantidade] of trouxe) {
+        const temAgora = saldo.get(productId) ?? toDecimal(0);
+        if (passaDoEstoque(temAgora, quantidade)) {
+          throw new BusinessRuleError(
+            `${nomes.get(productId) ?? "Um produto"} tem ${formatQty(temAgora)} em estoque e a ` +
+              `compra trouxe ${formatQty(quantidade)}: parte já foi vendida ou baixada, e a ` +
+              "compra não pode mais ser cancelada.",
+          );
+        }
+      }
+
+      await tx.stockMovement.createMany({
+        data: compra.items.map((it) => ({
+          tenantId: ctx.tenantId,
+          productId: it.productId,
+          type: "AJUSTE" as const,
+          quantity: toDecimal(it.quantity).negated(),
+          unitCost: it.unitCost,
+          reason: "Estorno da compra cancelada",
+          sourceType: ORIGEM_COMPRA_CANCELADA,
+          sourceId: compra.id,
+        })),
+      });
+
+      const entradasDeCaixas = await tx.plasticCrateMovement.findMany({
+        where: { purchaseId: compra.id, type: "ENTRADA", quantity: { gt: 0 } },
+        select: {
+          quantity: true,
+          brokenQty: true,
+          dirty: true,
+          supplierName: true,
+          movementDate: true,
+        },
+      });
+      const caixasEstornadas = await CaixasService.estornarEntradasDaCompraInTx(
+        tx,
+        compra.id,
+        entradasDeCaixas,
+        ctx,
+      );
+
+      const conta = await tx.expense.updateMany({
+        where: { purchaseId: compra.id, origem: "COMPRA" },
+        data: { deletedAt: new Date() },
+      });
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "PURCHASE_CANCELLED",
+          entity: "Purchase",
+          entityId: compra.id,
+          oldData: { totalAmount: compra.totalAmount.toString(), items: compra.items.length },
+          newData: {
+            motivo: input.motivo ?? null,
+            caixasEstornadas,
+            contaCancelada: conta.count > 0,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+
+      return { id: compra.id, caixasEstornadas, contaCancelada: conta.count > 0 };
+    });
   },
 };
 

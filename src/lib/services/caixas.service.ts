@@ -31,6 +31,16 @@ export type MovimentoCaixaInterno = Omit<CaixaMovimentoInput, "type"> & {
 export interface CrateMovementLink {
   saleId?: string | null;
   crateCleaningId?: string | null;
+  purchaseId?: string | null;
+}
+
+/** A ENTRADA de caixas de uma compra, como o cancelamento dela a lê. */
+export interface EntradaDeCaixasDaCompra {
+  quantity: number;
+  brokenQty: number;
+  dirty: boolean;
+  supplierName: string | null;
+  movementDate: Date;
 }
 
 /** Cliente mínimo aceito por `registrarInTx` (prisma base ou `tx` de transação). */
@@ -239,25 +249,34 @@ async function travarCaixasDaEmpresa(
 
 /** O SQL do saldo, executável tanto no cliente base quanto num `tx`. */
 async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSaldo> {
-  const rows = await tx.$queryRaw<SaldoRow[]>`
+  // `::bigint`, não `::int`: cada movimento cabe no Int da coluna, mas a SOMA
+  // não — dois lançamentos gigantes digitados por engano estouravam a soma e
+  // travavam o módulo inteiro (inclusive o cancelamento que os corrigiria). É
+  // o mesmo cuidado de `EmbalagensService.saldos`.
+  const rows = await tx.$queryRaw<Record<keyof SaldoRow, bigint>[]>`
     SELECT
-      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS entrada_limpa,
-      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::int AS entrada_suja,
-      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada,
-      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN "brokenQty" ELSE 0 END), 0)::int AS entrada_quebrada_suja,
-      COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::int AS saida,
-      COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::int AS retorno,
-      COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS saida_hig,
-      COALESCE(SUM(CASE WHEN type::text = 'RETORNO_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::int AS retorno_hig,
-      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_cliente,
-      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::int AS quebra_higienizador,
-      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::int AS quebra_limpa,
-      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::int AS quebra_suja,
-      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::int AS estorno_saida
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND NOT dirty THEN quantity ELSE 0 END), 0)::bigint AS entrada_limpa,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN quantity ELSE 0 END), 0)::bigint AS entrada_suja,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' THEN "brokenQty" ELSE 0 END), 0)::bigint AS entrada_quebrada,
+      COALESCE(SUM(CASE WHEN type::text = 'ENTRADA' AND dirty THEN "brokenQty" ELSE 0 END), 0)::bigint AS entrada_quebrada_suja,
+      COALESCE(SUM(CASE WHEN type::text = 'SAIDA' THEN quantity ELSE 0 END), 0)::bigint AS saida,
+      COALESCE(SUM(CASE WHEN type::text = 'RETORNO' THEN quantity ELSE 0 END), 0)::bigint AS retorno,
+      COALESCE(SUM(CASE WHEN type::text = 'SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::bigint AS saida_hig,
+      COALESCE(SUM(CASE WHEN type::text = 'RETORNO_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::bigint AS retorno_hig,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::bigint AS quebra_cliente,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::bigint AS quebra_higienizador,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_limpa,
+      COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_suja,
+      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida
     FROM plastic_crate_movements
     WHERE "tenantId" = ${tenantId}
   `;
-  return computeCrateSaldo(rows[0] ?? ZERO_ROW);
+  const linha = rows[0];
+  if (!linha) return computeCrateSaldo(ZERO_ROW);
+  const r = Object.fromEntries(
+    Object.entries(linha).map(([k, v]) => [k, Number(v)]),
+  ) as unknown as SaldoRow;
+  return computeCrateSaldo(r);
 }
 
 /**
@@ -335,20 +354,21 @@ export const CaixasService = {
    * que então tirava do saldo global caixas que ninguém devia.
    */
   async saldoPorCliente(tenantId: string): Promise<Map<string, number>> {
-    const rows = await prisma.$queryRaw<{ customer: string; saldo: number }[]>`
+    const rows = await prisma.$queryRaw<{ customer: string; saldo: bigint }[]>`
       SELECT "customerName" AS customer,
              COALESCE(SUM(
                CASE WHEN type::text = 'SAIDA' THEN quantity
                     WHEN type::text IN ('RETORNO', 'QUEBRA', 'ESTORNO_SAIDA') THEN -quantity
                     ELSE 0 END
-             ), 0)::int AS saldo
+             ), 0)::bigint AS saldo
       FROM plastic_crate_movements
       WHERE "tenantId" = ${tenantId} AND "customerName" IS NOT NULL
       GROUP BY "customerName"
     `;
     const map = new Map<string, number>();
     for (const r of rows) {
-      if (r.saldo > 0) map.set(r.customer, r.saldo);
+      const saldo = Number(r.saldo);
+      if (saldo > 0) map.set(r.customer, saldo);
     }
     return map;
   },
@@ -426,6 +446,7 @@ export const CaixasService = {
         cleanerName: input.cleanerName || null,
         saleId: input.saleId ?? null,
         crateCleaningId: input.crateCleaningId ?? null,
+        purchaseId: input.purchaseId ?? null,
         movementDate: parseFormDateTz(input.movementDate),
         notes: input.notes ?? null,
       },
@@ -450,6 +471,79 @@ export const CaixasService = {
       tx,
     );
     return movement;
+  },
+
+  /**
+   * Desfaz as caixas que chegaram com uma compra cancelada.
+   *
+   * O estorno é a ENTRADA espelhada — mesmas quantidades com sinal trocado,
+   * mesmo pote (limpa ou suja), ligada à compra. Assim toda fórmula de saldo
+   * (`computeCrateSaldo`) fecha sem conhecer um tipo novo: entrada e estorno se
+   * anulam em `limpas`/`sujas`, e as quebradas na chegada saem de `perdidas`.
+   *
+   * Recusa se o pote já não tem as caixas boas da compra: elas saíram com
+   * cliente ou foram para a higienização, e tirá-las do estoque deixaria o pote
+   * negativo. É a mesma regra da mercadoria — a compra só é desfeita enquanto o
+   * que ela trouxe ainda está no box.
+   *
+   * @returns quantas caixas (o total recebido, quebradas incluídas) foram estornadas.
+   */
+  async estornarEntradasDaCompraInTx(
+    tx: CrateTxClient,
+    purchaseId: string,
+    entradas: EntradaDeCaixasDaCompra[],
+    ctx: TenantCtx,
+  ): Promise<number> {
+    if (entradas.length === 0) return 0;
+    await travarCaixasDaEmpresa(tx, ctx.tenantId);
+    const saldo = await lerSaldoCom(tx, ctx.tenantId);
+
+    const boas = (sujas: boolean) =>
+      entradas
+        .filter((e) => e.dirty === sujas)
+        .reduce((total, e) => total + e.quantity - e.brokenQty, 0);
+    const [limpas, sujas] = [boas(false), boas(true)];
+    if (limpas > saldo.limpas || sujas > saldo.sujas) {
+      throw new BusinessRuleError(
+        `As caixas desta compra já saíram do box (há ${saldo.limpas} limpa(s) e ` +
+          `${saldo.sujas} suja(s) em estoque). A compra não pode mais ser cancelada.`,
+      );
+    }
+
+    let estornadas = 0;
+    for (const e of entradas) {
+      const movement = await tx.plasticCrateMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          type: "ENTRADA",
+          quantity: -e.quantity,
+          brokenQty: -e.brokenQty,
+          dirty: e.dirty,
+          supplierName: e.supplierName,
+          purchaseId,
+          // A data da ENTRADA, não a de hoje: entrada e estorno se anulam no
+          // mesmo dia do relatório, em vez de um mês mostrar caixas que nunca
+          // chegaram e o seguinte, uma saída que nunca houve.
+          movementDate: e.movementDate,
+          notes: "Estorno pelo cancelamento da compra",
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "PlasticCrateMovement",
+          entityId: movement.id,
+          newData: { type: "ENTRADA", quantity: -e.quantity, purchaseId },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      estornadas += e.quantity;
+    }
+    return estornadas;
   },
 
   async registrar(input: MovimentoCaixaInterno & CrateMovementLink, ctx: TenantCtx) {

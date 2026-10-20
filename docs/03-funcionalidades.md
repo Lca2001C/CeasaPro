@@ -60,14 +60,14 @@ Não há mais tela própria: `/produtos`, `/produtos/novo` e `/produtos/[id]` re
 - Campos: nome, embalagem (caixa/kg/saco/bandeja/unidade), **preço de venda** (opcional — primeiro preço sugerido no PDV depois do da última venda), **estoque inicial** + **custo por unidade** (obrigatório quando há estoque), **alerta de estoque** (`minStock`; vazio = limite padrão 5) e **foto**. Em "Mais opções": tipo de caixa, quantidade por recipiente, capacidade do saco, ativo.
 - **Foto**: Câmera (`capture="environment"`), Galeria ou **Banco** (catálogo da plataforma, `/admin/imagens`). Comprimida no aparelho (WebP ~1024 px) e gravada no Cloudflare R2 pelo servidor. Sem R2 configurado os botões ficam desabilitados.
 - O estoque inicial vira um movimento `ENTRADA` (`sourceType: "ESTOQUE_INICIAL"`) na mesma transação do produto. Depois do cadastro, o saldo só muda por compra, venda ou ajuste.
-- Exclusão é **soft delete**; embalagem trava quando há histórico.
+- Exclusão é **soft delete**, e só com o **estoque zerado** — com saldo, o valor da mercadoria sumiria do painel sem quebra, doação nem saída. Dê baixa no Ajuste antes (ou desative o produto). Embalagem trava quando há histórico.
 
 ## Fornecedores
 
 Rotas `/fornecedores`, `/fornecedores/novo`, `/fornecedores/[id]`.
 
 - Campos: nome, telefone, endereço, observações, ativo/inativo.
-- CRUD completo (soft delete). A tela do fornecedor mostra o histórico de compras com a situação de cada uma (paga / a pagar / vencida) e o total **em aberto** com ele.
+- CRUD completo (soft delete). Não exclui fornecedor com **conta a pagar pendente** — a dívida ficaria sem nome. A tela do fornecedor mostra o histórico de compras com a situação de cada uma (paga / a pagar / vencida) e o total **em aberto** com ele.
 
 ## Compras (dentro do Estoque)
 
@@ -80,6 +80,7 @@ Rota `/estoque/compra` (registrar) e aba **Compras** de `/estoque?aba=compras` (
   - Cada item gera um **movimento de estoque de ENTRADA** → o estoque sobe automaticamente.
   - Gera **uma despesa** `origem = COMPRA` no valor total, com o fornecedor (`PAGO` em `purchaseDate` ou `PENDENTE` até o vencimento). Ver Despesas.
   - Registra auditoria.
+- **Cancelar compra** lançada errada (aba Compras → abrir a compra → Cancelar compra): até **24 h** do registro e enquanto os produtos dela **não tiveram venda, baixa nem ajuste depois dela** (o custo dela já teria ido para o CMV). Tira a mercadoria (e o custo dela do custo médio), estorna as caixas plásticas que chegaram com ela e cancela a conta da compra, paga ou não. A compra fica na lista marcada como cancelada e sai de todos os totais; depois, lança-se a certa.
 
 ## Vendas / Frente de caixa (PDV)
 
@@ -93,6 +94,7 @@ Rotas `/vendas` (histórico) e `/vendas/nova` (PDV). Venda transacional (`POST /
   - se **fiado**, cria a **conta a receber**;
   - registra auditoria.
 - **Histórico** lista as vendas com cliente, forma de pagamento, data e total.
+- **Cancelar venda** (`/vendas/[id]`): até **24 h** do registro, para à vista, fiado e mista — é o mesmo caminho do "Cancelar venda" do fiado. A venda fica no histórico marcada, sai do faturamento, do CMV e do caixa; a mercadoria volta ao estoque pelo custo com que saiu (`unitCostAtSale`). Com recebimento de fiado, estorne o recebimento antes. Depois de 24 h não cancela: o fechamento daquele dia não é reescrito.
 
 ## Fiado
 
@@ -122,12 +124,14 @@ Em tela estreita (celular, que é o uso no balcão) a mesma informação vira ca
 | Criar | PDV (forma Fiado) ou `/fiado/novo` | Cliente é obrigatório |
 | Ler | `/fiado` (lista) e `/fiado/[id]` (detalhe) | — |
 | Editar | `/fiado/[id]` → Dados da conta | Só cadastro: vencimento, telefone, observação. **Valores nunca**: eles vêm da venda |
-| Excluir | `/fiado/[id]` → Excluir lançamento | Só **sem pagamento registrado**; desfaz a venda inteira |
+| Cancelar | `/fiado/[id]` → Cancelar venda | Até **24 h** do registro e **sem recebimento vivo**; cancela a venda inteira |
+| Estornar recebimento | `/fiado/[id]` → Pagamentos → Estornar | Até **24 h** do lançamento; o valor volta ao saldo |
 
 - **Pagamento parcial**: informa valor e forma; o sistema soma ao pago e recalcula o saldo. Ao quitar (pago ≥ total), o status vira **PAGO**. Não permite pagar acima do saldo.
 - `saldo = total − pago` (nunca negativo).
-- **Excluir desfaz a operação inteira**, não só a conta: a venda sai do faturamento (soft delete), a mercadoria **volta ao estoque** (movimentos `ENTRADA` com `sourceType: SALE_REVERSAL`) e as caixas plásticas **retornam como limpas** — nunca chegaram ao cliente, então não entram na fila de higienização. Tudo na mesma transação, com registro na auditoria. Apagar só a conta deixaria a venda de pé e o sistema fecharia com buraco: faturamento contando, estoque baixado e o valor sumido do "a receber".
-- **Conta com pagamento não é excluível.** Apagar dinheiro que entrou é falsear o caixa; o acerto é com o cliente, não no registro. A tela nem oferece o botão, e o servidor recusa de novo (defesa em profundidade).
+- **Cancelar desfaz a operação inteira**, pelo mesmo caminho do histórico de vendas (`VendasService.cancelarVenda`): a venda fica no histórico marcada como cancelada e sai do faturamento, a mercadoria **volta ao estoque** (`AJUSTE` com `sourceType: SALE_CANCELLED`, pelo custo médio da hora) e as caixas plásticas **retornam como limpas** — nunca chegaram ao cliente, então não entram na fila de higienização. Tudo na mesma transação, com auditoria. Venda mista também: a parte paga no balcão sai do caixa junto (devolve-se ao cliente).
+- **Mesmo prazo de toda reversão: 24 h** (`src/lib/desfazer/prazo.ts`). Antes o fiado sem pagamento era apagado a qualquer tempo e reescrevia meses fechados.
+- **Conta com recebimento não é cancelável** — o dinheiro entrou. Se o recebimento foi lançado errado, **estorne-o** (até 24 h): ele fica no extrato marcado como estornado, sai do fluxo de caixa e o valor volta ao saldo; aí a venda pode ser cancelada. A tela só oferece os botões quando valem, e o servidor recusa de novo (defesa em profundidade).
 - **Caixas plásticas** são controladas por movimento, não por um contador na conta: a venda registra a saída e a devolução (`/fiado/[id]` → Caixas plásticas) registra o **RETORNO**, com data. O saldo por cliente vem de `CaixasService.saldoPorCliente`. É o equivalente às colunas *PG VALE CX* / *DATA RECEBIDA CX* da planilha.
 
 ## Estoque
@@ -168,6 +172,7 @@ Rotas `/higienizacao`, `/higienizacao/nova`, `/higienizacao/[id]`. **Módulo opc
 - **Devolução** parcial acumulativa (não pode devolver mais que o enviado) e **pagamento** parcial ao higienizador (não pode pagar mais que o saldo).
 - Status automático: **ENVIADO → DEVOLVIDO → PAGO**.
 - Cards de *caixas a receber* e *total a pagar*.
+- No Início e em Despesas o custo do lote entra pela **data do envio** — em "Contas variáveis" e no lucro, a mesma data. O que foi pago no mês conta em "Pagas" e no fluxo de caixa.
 
 ## Venda de embalagens
 
@@ -176,6 +181,7 @@ Aba **Embalagens** de `/caixas-plasticas` (`?aba=embalagens`); `/embalagens` e `
 - **Tipos** cadastráveis (caixa plástica, papelão, madeira, sacaria… — os padrões vêm no cadastro da empresa).
 - Venda: tipo, cliente (opcional), data, quantidade, valor unitário (→ total).
 - Totais: embalagens vendidas e total vendido. Abas *Vendas* | *Tipos*.
+- A venda de embalagem é **receita**: entra no lucro do Início ("Vendi em embalagens" no Resultado do mês) e no "% do que você vendeu" de Despesas. Não entra em "Vendi" (que é a venda de mercadoria do PDV) nem tem CMV — a embalagem comprada entra como conta.
 
 ## Relatórios
 

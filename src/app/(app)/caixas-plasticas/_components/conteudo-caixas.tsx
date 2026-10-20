@@ -177,16 +177,21 @@ export async function ConteudoCaixas({ tenantId }: { tenantId: string }) {
               <Card key={m.id} className="flex items-center justify-between gap-3 p-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    <Badge variant={BADGE_VARIANT[m.type] ?? "secondary"}>
-                      {CRATE_MOVEMENT_LABELS[m.type]}
-                    </Badge>
+                    {/* ENTRADA negativa = estorno de compra cancelada. */}
+                    {m.type === "ENTRADA" && m.quantity < 0 ? (
+                      <Badge variant="destructive">Estorno de entrada</Badge>
+                    ) : (
+                      <Badge variant={BADGE_VARIANT[m.type] ?? "secondary"}>
+                        {CRATE_MOVEMENT_LABELS[m.type]}
+                      </Badge>
+                    )}
                     <span className="truncate text-sm">
                       {m.customerName ?? m.supplierName ?? ""}
                     </span>
                   </div>
                   <span className="text-sm text-muted-foreground">
                     {formatDate(m.movementDate)}
-                    {m.brokenQty > 0 ? ` · ${m.brokenQty} quebrada(s) na chegada` : ""}
+                    {m.brokenQty !== 0 ? ` · ${m.brokenQty} quebrada(s) na chegada` : ""}
                     {m.notes ? ` · ${m.notes}` : ""}
                   </span>
                 </div>

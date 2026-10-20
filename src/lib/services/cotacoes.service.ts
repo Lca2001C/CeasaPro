@@ -825,7 +825,7 @@ export const CotacoesService = {
         JOIN purchases pu ON pu.id = pi."purchaseId"
         WHERE pi."tenantId" = ${tenantId}
           AND pi."productId" = p.id
-          AND pu."deletedAt" IS NULL
+          AND pu."deletedAt" IS NULL AND pu."cancelledAt" IS NULL
           AND pu."purchaseDate" >= ${desde}
         ORDER BY pu."purchaseDate" DESC, pi."createdAt" DESC
         LIMIT 1
@@ -995,26 +995,35 @@ export const CotacoesService = {
     const doBoletim = await conferirItemDoBoletim(contexto, input);
     const unit = input.unit ?? null;
 
-    const link = await prisma.tenantCeasaLink.upsert({
-      where: { tenantId_productId: { tenantId: ctx.tenantId, productId: meu.id } },
-      create: { tenantId: ctx.tenantId, productId: meu.id, ceasaProductId: doBoletim.id, unit },
-      // `unit` explícito no update, e nunca `undefined`: o Prisma trata
-      // `undefined` como "não mexa", então trocar o vínculo de item herdaria em
-      // silêncio a embalagem do vínculo anterior — que pode não existir no item
-      // novo, e aí o produto sairia da tela sem ninguém ter pedido.
-      update: { ceasaProductId: doBoletim.id, unit },
+    return prisma.$transaction(async (tx) => {
+      const link = await tx.tenantCeasaLink.upsert({
+        where: { tenantId_productId: { tenantId: ctx.tenantId, productId: meu.id } },
+        create: { tenantId: ctx.tenantId, productId: meu.id, ceasaProductId: doBoletim.id, unit },
+        // `unit` explícito no update, e nunca `undefined`: o Prisma trata
+        // `undefined` como "não mexa", então trocar o vínculo de item herdaria em
+        // silêncio a embalagem do vínculo anterior — que pode não existir no item
+        // novo, e aí o produto sairia da tela sem ninguém ter pedido.
+        update: { ceasaProductId: doBoletim.id, unit },
+      });
+      // Vincular à mão desfaz a recusa: o dono decidiu de novo.
+      await tx.tenantCeasaLinkRecusa.deleteMany({
+        where: { tenantId: ctx.tenantId, productId: meu.id },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "TenantCeasaLink",
+          entityId: link.id,
+          newData: { produto: meu.name, cotacao: doBoletim.name, embalagem: unit },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return link;
     });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "UPDATE",
-      entity: "TenantCeasaLink",
-      entityId: link.id,
-      newData: { produto: meu.name, cotacao: doBoletim.name, embalagem: unit },
-      ip: ctx.ip,
-    });
-    return link;
   },
 
   /**
@@ -1094,6 +1103,9 @@ export const CotacoesService = {
     }
 
     await prisma.$transaction(async (tx) => {
+      await tx.tenantCeasaLinkRecusa.deleteMany({
+        where: { tenantId: ctx.tenantId, productId: { in: produtoIds } },
+      });
       for (const item of input.itens) {
         const unit = item.unit ?? null;
         await tx.tenantCeasaLink.upsert({
@@ -1141,19 +1153,34 @@ export const CotacoesService = {
     return autoVincularIdenticos(tenantId);
   },
 
+  /**
+   * Remove o vínculo e MARCA a recusa: sem a marca, `autoVincularIdenticos`
+   * recriava o vínculo de nome idêntico no próximo carregamento da tela.
+   */
   async desvincular(input: { productId: string }, ctx: TenantCtx) {
-    const r = await prisma.tenantCeasaLink.deleteMany({
-      where: { tenantId: ctx.tenantId, productId: input.productId },
-    });
-    if (r.count === 0) throw new BusinessRuleError("Este produto não estava vinculado.");
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "TenantCeasaLink",
-      entityId: input.productId,
-      ip: ctx.ip,
+    await prisma.$transaction(async (tx) => {
+      const r = await tx.tenantCeasaLink.deleteMany({
+        where: { tenantId: ctx.tenantId, productId: input.productId },
+      });
+      if (r.count === 0) throw new BusinessRuleError("Este produto não estava vinculado.");
+      // O produto é da empresa: o vínculo apagado acima só existia se fosse.
+      await tx.tenantCeasaLinkRecusa.upsert({
+        where: { tenantId_productId: { tenantId: ctx.tenantId, productId: input.productId } },
+        create: { tenantId: ctx.tenantId, productId: input.productId },
+        update: {},
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "TenantCeasaLink",
+          entityId: input.productId,
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
   },
 };
@@ -1255,7 +1282,18 @@ async function autoVincularIdenticos(
 ): Promise<number> {
   const c = contexto ?? (await centralESerie(tenantId));
   if (!c) return 0;
-  const sem = jaLidos ?? (await semVinculo(tenantId));
+  const semNenhum = jaLidos ?? (await semVinculo(tenantId));
+  if (semNenhum.length === 0) return 0;
+  // Vínculo que o dono removeu à mão não volta sozinho.
+  const recusados = new Set(
+    (
+      await prisma.tenantCeasaLinkRecusa.findMany({
+        where: { tenantId, productId: { in: semNenhum.map((p) => p.id) } },
+        select: { productId: true },
+      })
+    ).map((r) => r.productId),
+  );
+  const sem = semNenhum.filter((p) => !recusados.has(p.id));
   if (sem.length === 0) return 0;
   const itens = await unidadesPorProdutoDoBoletim(c.centralCode, c.serie);
   if (itens.length === 0) return 0;

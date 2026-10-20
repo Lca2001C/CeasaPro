@@ -8,9 +8,9 @@ import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 /**
- * CRUD do fiado, com foco na exclusão — que não apaga só a conta: desfaz a
- * venda, devolve a mercadoria ao estoque e traz as caixas de volta. Se a
- * reversão falhar em qualquer uma dessas pontas, o sistema fecha com buraco.
+ * CRUD do fiado, com foco em desfazer: cancelar a venda pelo fiado (que devolve
+ * a mercadoria e as caixas e tira a conta) e estornar recebimento lançado
+ * errado. Se a reversão falhar em qualquer ponta, o sistema fecha com buraco.
  */
 const uniq = () => Math.random().toString(36).slice(2, 8);
 const tenants: string[] = [];
@@ -96,26 +96,38 @@ describe("Venda no PDV com forma FIADO", () => {
   });
 });
 
-describe("Exclusão de lançamento de fiado", () => {
-  it("desfaz a venda: conta some, estoque volta e caixas retornam", async () => {
+/** Faz a venda ter sido registrada há `horas` horas (fora ou dentro do prazo). */
+async function envelhecerVenda(saleId: string, horas: number) {
+  await prisma.sale.update({
+    where: { id: saleId },
+    data: { createdAt: new Date(Date.now() - horas * 3600_000) },
+  });
+}
+
+/**
+ * "Excluir" o fiado é CANCELAR a venda — o mesmo caminho do histórico de
+ * vendas, com o mesmo prazo. Antes o fiado sem pagamento era APAGADO a
+ * qualquer tempo (venda e movimentos), reescrevendo fechamentos que a venda à
+ * vista, de propósito, não deixa reescrever.
+ */
+describe("Cancelar a venda pelo fiado", () => {
+  it("a conta sai, a venda fica no histórico cancelada, estoque e caixas voltam", async () => {
     const antesEstoque = await EstoqueService.getTotalValue(tenantId);
     const saldoAntes = await CaixasService.getSaldo(tenantId);
     const { sale, conta } = await vendaFiada({ qtd: 40, preco: 2, caixas: 40 });
 
-    await FiadoService.remove(conta.id, ctx);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
 
-    // A conta sai da listagem (soft delete + filtro do tenant-prisma).
     const { contas } = await FiadoService.listOpen(tenantId, "TODAS");
     expect(contas.some((c) => c.id === conta.id)).toBe(false);
 
-    // A venda também: senão o faturamento contaria uma venda inexistente.
+    // A venda NÃO é apagada: fica no histórico, marcada, fora dos totais.
     const vendaDepois = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } });
-    expect(vendaDepois.deletedAt).toBeTruthy();
+    expect(vendaDepois.cancelledAt).toBeTruthy();
+    expect(vendaDepois.deletedAt).toBeNull();
 
-    // Mercadoria de volta e caixas de volta, aos números de antes da venda.
     const depoisEstoque = await EstoqueService.getTotalValue(tenantId);
     expect(depoisEstoque.toString()).toBe(antesEstoque.toString());
-
     const saldoDepois = await CaixasService.getSaldo(tenantId);
     expect(saldoDepois.comClientes).toBe(saldoAntes.comClientes);
   });
@@ -124,37 +136,40 @@ describe("Exclusão de lançamento de fiado", () => {
     const saldoAntes = await CaixasService.getSaldo(tenantId);
     const { conta } = await vendaFiada({ qtd: 12, preco: 2, caixas: 12 });
 
-    // Durante a venda elas saem do estoque limpo.
     const saldoNaVenda = await CaixasService.getSaldo(tenantId);
     expect(saldoNaVenda.limpas).toBe(saldoAntes.limpas - 12);
 
-    await FiadoService.remove(conta.id, ctx);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
 
-    // E voltam para `limpas`, não para `sujas`. Um movimento de RETORNO faria
-    // o contrário (`sujas = entrada_suja + retorno − …`), mandando higienizar
-    // caixa que nunca saiu do box — por isso a reversão apaga o movimento.
     const saldoDepois = await CaixasService.getSaldo(tenantId);
     expect(saldoDepois.limpas).toBe(saldoAntes.limpas);
     expect(saldoDepois.sujas).toBe(saldoAntes.sujas);
     expect(saldoDepois.emHigienizacao).toBe(saldoAntes.emHigienizacao);
   });
 
-  it("não deixa movimento de caixa órfão da venda apagada", async () => {
+  it("o livro-razão guarda a venda E a devolução — nada é apagado", async () => {
     const { sale, conta } = await vendaFiada({ qtd: 7, preco: 2, caixas: 7 });
-    await FiadoService.remove(conta.id, ctx);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
 
-    const movimentos = await prisma.plasticCrateMovement.count({
+    const [baixa, devolucao] = await Promise.all([
+      prisma.stockMovement.count({ where: { sourceType: "SALE", sourceId: sale.id } }),
+      prisma.stockMovement.count({ where: { sourceType: "SALE_CANCELLED", sourceId: sale.id } }),
+    ]);
+    expect(baixa).toBe(1);
+    expect(devolucao).toBe(1);
+    const caixas = await prisma.plasticCrateMovement.findMany({
       where: { saleId: sale.id },
+      select: { type: true, quantity: true },
     });
-    expect(movimentos).toBe(0);
-
-    const baixas = await prisma.stockMovement.count({
-      where: { sourceType: "SALE", sourceId: sale.id },
-    });
-    expect(baixas).toBe(0);
+    expect(caixas).toEqual(
+      expect.arrayContaining([
+        { type: "SAIDA", quantity: 7 },
+        { type: "ESTORNO_SAIDA", quantity: 7 },
+      ]),
+    );
   });
 
-  it("RECUSA excluir o fiado de venda mista — o PIX recebido sumiria do caixa", async () => {
+  it("venda mista: cancela a venda inteira, e a parte do balcão sai dos totais junto", async () => {
     const sale = await VendasService.registrarVenda(
       {
         customerName: `Cliente ${uniq()}`,
@@ -170,38 +185,150 @@ describe("Exclusão de lançamento de fiado", () => {
     );
     const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: sale.id } });
 
-    await expect(FiadoService.remove(conta.id, ctx)).rejects.toThrow(/balcão/i);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
     const venda = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } });
-    expect(venda.deletedAt).toBeNull();
+    expect(venda.cancelledAt).toBeTruthy();
+    const t = await VendasService.totaisDoFiltro(tenantId, { preset: "todas", q: venda.customerName! });
+    expect(t.quantidade).toBe(0);
   });
 
-  it("RECUSA excluir conta que já recebeu pagamento", async () => {
-    const { conta } = await vendaFiada({ qtd: 50, preco: 2 });
-    await FiadoService.registrarPagamento(
-      { accountId: conta.id, amount: 30, method: "DINHEIRO" },
-      ctx,
+  it("RECUSA com recebimento vivo — e passa depois de estornar o recebimento", async () => {
+    const { sale, conta } = await vendaFiada({ qtd: 50, preco: 2 });
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 30, method: "DINHEIRO" }, ctx);
+
+    await expect(FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx)).rejects.toThrow(
+      /estorne o recebimento/i,
     );
-
-    await expect(FiadoService.remove(conta.id, ctx)).rejects.toThrow(/pagamento/i);
-
-    // Nada pode ter sido revertido pela tentativa recusada.
     const aindaLa = await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } });
     expect(aindaLa.deletedAt).toBeNull();
     expect(Number(aindaLa.paidAmount)).toBe(30);
+
+    const pagamento = await prisma.creditPayment.findFirstOrThrow({ where: { accountId: conta.id } });
+    await FiadoService.estornarPagamento({ paymentId: pagamento.id }, ctx);
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
+    const venda = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } });
+    expect(venda.cancelledAt).toBeTruthy();
+  });
+
+  it("RECUSA depois do prazo de 24 h — a mesma regra da venda à vista", async () => {
+    const { sale, conta } = await vendaFiada({ qtd: 3, preco: 2 });
+    await envelhecerVenda(sale.id, 25);
+
+    await expect(FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx)).rejects.toThrow(
+      /prazo/i,
+    );
+    const venda = await prisma.sale.findUniqueOrThrow({ where: { id: sale.id } });
+    expect(venda.cancelledAt).toBeNull();
+    const detalhe = await FiadoService.get(tenantId, conta.id);
+    expect(detalhe.podeCancelarVenda).toBe(false);
+  });
+
+  it("fora do prazo e com recebimento: diz PRAZO, não manda estornar à toa", async () => {
+    // Estornar um recebimento real para depois ouvir "passou o prazo" tiraria
+    // dinheiro do caixa sem o cancelamento acontecer.
+    const { sale, conta } = await vendaFiada({ qtd: 3, preco: 2 });
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 2, method: "PIX" }, ctx);
+    await envelhecerVenda(sale.id, 25);
+    await expect(FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx)).rejects.toThrow(/prazo/i);
+    const detalhe = await FiadoService.get(tenantId, conta.id);
+    expect(detalhe.vendaNoPrazo).toBe(false);
+    expect(detalhe.podeCancelarVenda).toBe(false);
   });
 
   it("recusa id inexistente", async () => {
-    await expect(FiadoService.remove("nao-existe", ctx)).rejects.toThrow(/não encontrada/i);
+    await expect(FiadoService.cancelarVendaDoFiado({ id: "nao-existe" }, ctx)).rejects.toThrow(
+      /não encontrada/i,
+    );
   });
 
-  it("registra a exclusão na auditoria", async () => {
-    const { conta } = await vendaFiada({ qtd: 5, preco: 2 });
-    await FiadoService.remove(conta.id, ctx);
+  it("registra o cancelamento na auditoria", async () => {
+    const { sale, conta } = await vendaFiada({ qtd: 5, preco: 2 });
+    await FiadoService.cancelarVendaDoFiado({ id: conta.id, motivo: "cliente errado" }, ctx);
 
     const log = await prisma.auditLog.findFirst({
-      where: { tenantId, entity: "CreditAccount", entityId: conta.id, action: "DELETE" },
+      where: { tenantId, entity: "Sale", entityId: sale.id, action: "SALE_CANCELLED" },
+    });
+    expect(log?.newData).toMatchObject({ motivo: "cliente errado", fiadoRemovido: true });
+  });
+});
+
+/**
+ * Estorno de recebimento lançado errado. Antes não havia caminho: um
+ * recebimento errado travava a conta (cancelar e excluir recusavam) para sempre.
+ */
+describe("Estorno de recebimento do fiado", () => {
+  async function receber(contaId: string, valor: number) {
+    await FiadoService.registrarPagamento({ accountId: contaId, amount: valor, method: "PIX" }, ctx);
+    return prisma.creditPayment.findFirstOrThrow({
+      where: { accountId: contaId },
+      orderBy: { createdAt: "desc" },
+    });
+  }
+
+  it("o valor volta ao saldo, a conta reabre e o recebimento fica marcado no extrato", async () => {
+    const { conta } = await vendaFiada({ qtd: 10, preco: 2 });
+    const pagamento = await receber(conta.id, 20);
+    expect((await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } })).status).toBe(
+      "PAGO",
+    );
+
+    await FiadoService.estornarPagamento({ paymentId: pagamento.id, motivo: "era de outro" }, ctx);
+
+    const depois = await FiadoService.get(tenantId, conta.id);
+    expect(depois.status).toBe("EM_ABERTO");
+    expect(Number(depois.paidAmount)).toBe(0);
+    expect(Number(depois.saldo)).toBe(20);
+    expect(depois.payments).toHaveLength(1);
+    expect(depois.payments[0]!.reversedAt).toBeTruthy();
+    expect(depois.payments[0]!.reversedReason).toBe("era de outro");
+    expect(depois.temRecebimentoVivo).toBe(false);
+
+    const log = await prisma.auditLog.findFirst({
+      where: { tenantId, entity: "CreditAccount", entityId: conta.id, action: "PAYMENT_REVERSED" },
     });
     expect(log).toBeTruthy();
+  });
+
+  it("estorno parcial: só o recebimento estornado sai", async () => {
+    const { conta } = await vendaFiada({ qtd: 10, preco: 3 });
+    await receber(conta.id, 10);
+    const errado = await receber(conta.id, 5);
+    await FiadoService.estornarPagamento({ paymentId: errado.id }, ctx);
+    const depois = await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } });
+    expect(Number(depois.paidAmount)).toBe(10);
+  });
+
+  it("recusa estornar duas vezes", async () => {
+    const { conta } = await vendaFiada({ qtd: 4, preco: 2 });
+    const pagamento = await receber(conta.id, 4);
+    await FiadoService.estornarPagamento({ paymentId: pagamento.id }, ctx);
+    await expect(FiadoService.estornarPagamento({ paymentId: pagamento.id }, ctx)).rejects.toThrow(
+      /já foi estornado/i,
+    );
+    const depois = await prisma.creditAccount.findUniqueOrThrow({ where: { id: conta.id } });
+    expect(Number(depois.paidAmount)).toBe(0);
+  });
+
+  it("recusa depois de 24 h do lançamento", async () => {
+    const { conta } = await vendaFiada({ qtd: 4, preco: 2 });
+    const pagamento = await receber(conta.id, 4);
+    await prisma.creditPayment.update({
+      where: { id: pagamento.id },
+      data: { createdAt: new Date(Date.now() - 25 * 3600_000) },
+    });
+    await expect(FiadoService.estornarPagamento({ paymentId: pagamento.id }, ctx)).rejects.toThrow(
+      /prazo/i,
+    );
+    expect((await FiadoService.get(tenantId, conta.id)).payments[0]!.podeEstornar).toBe(false);
+  });
+
+  it("só o dono estorna", async () => {
+    const { conta } = await vendaFiada({ qtd: 4, preco: 2 });
+    const pagamento = await receber(conta.id, 4);
+    const operador = { ...ctx, session: { ...ctx.session, role: "SUPER_ADMIN" as const } };
+    await expect(FiadoService.estornarPagamento({ paymentId: pagamento.id }, operador)).rejects.toThrow(
+      /responsável/i,
+    );
   });
 });
 
@@ -436,14 +563,13 @@ describe("Detalhe do fiado de venda mista (regressão)", () => {
 });
 
 /**
- * Excluir fiado cujas caixas JÁ VOLTARAM.
+ * Cancelar pelo fiado a venda cujas caixas JÁ VOLTARAM.
  *
- * O RETORNO é lançado por nome de cliente, sem vínculo com a venda. Apagar a
- * SAIDA da venda nesse caso deixava o RETORNO sem contrapartida: o saldo do
- * cliente ia a negativo, `comClientes` também, e as caixas devolvidas
- * voltavam duas vezes (uma suja pelo retorno, outra limpa pela exclusão).
+ * O RETORNO é lançado por nome de cliente, sem vínculo com a venda: só o que o
+ * cliente ainda tem é estornado, senão as caixas devolvidas voltariam duas
+ * vezes (uma suja pelo retorno, outra limpa pelo cancelamento).
  */
-describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
+describe("Cancelar fiado com caixas já devolvidas (regressão)", () => {
   it("todas devolvidas: nada é estornado e o saldo do cliente fica em zero", async () => {
     const antes = await CaixasService.getSaldo(tenantId);
     const { conta } = await vendaFiada({ qtd: 10, preco: 2, caixas: 10 });
@@ -452,14 +578,13 @@ describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
       ctx,
     );
 
-    const r = await FiadoService.remove(conta.id, ctx);
+    const r = await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
     expect(r.caixasEstornadas).toBe(0);
     expect(r.caixasNaoEstornadas).toBe(10);
 
     const saldos = await CaixasService.saldoPorCliente(tenantId);
     expect(saldos.get(conta.customerName) ?? 0).toBe(0);
     const depois = await CaixasService.getSaldo(tenantId);
-    // Antes: `comClientes` terminava 10 ABAIXO do que era antes da venda.
     expect(depois.comClientes).toBe(antes.comClientes);
     // As 10 voltaram sujas pelo RETORNO — e só por ele.
     expect(depois.sujas).toBe(antes.sujas + 10);
@@ -474,7 +599,7 @@ describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
       ctx,
     );
 
-    const r = await FiadoService.remove(conta.id, ctx);
+    const r = await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
     expect(r.caixasEstornadas).toBe(6);
     expect(r.caixasNaoEstornadas).toBe(4);
 
@@ -486,7 +611,6 @@ describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
     expect(depois.limpas).toBe(antes.limpas - 4);
     expect(depois.sujas).toBe(antes.sujas + 4);
 
-    // A SAIDA fica (o RETORNO depende dela) e o estorno aponta para a venda.
     const movs = await prisma.plasticCrateMovement.findMany({
       where: { saleId: sale.id },
       select: { type: true, quantity: true },
@@ -499,14 +623,14 @@ describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
     );
 
     const log = await prisma.auditLog.findFirstOrThrow({
-      where: { tenantId, entity: "CreditAccount", entityId: conta.id, action: "DELETE" },
+      where: { tenantId, entity: "Sale", entityId: sale.id, action: "SALE_CANCELLED" },
     });
-    expect(log.newData).toMatchObject({ caixasDevolvidas: 6, caixasNaoEstornadas: 4 });
+    expect(log.newData).toMatchObject({ caixasEstornadas: 6 });
   });
 
-  it("cliente com outra venda: o saldo dele cobre a venda, e a exclusão é exata", async () => {
-    // Retorno não é da venda, é do cliente: levou 8 + 5, devolveu 5. Excluir a
-    // venda de 8 deixa o cliente com zero, sem estorno parcial.
+  it("cliente com outra venda: o saldo dele cobre a venda, e o estorno é integral", async () => {
+    // Retorno não é da venda, é do cliente: levou 8 + 5, devolveu 5. Cancelar
+    // a venda de 8 deixa o cliente com zero, sem estorno parcial.
     const cliente = `Duas vendas ${uniq()}`;
     const vender = (caixas: number) =>
       VendasService.registrarVenda(
@@ -540,12 +664,11 @@ describe("Exclusão de fiado com caixas já devolvidas (regressão)", () => {
     );
     const conta = await prisma.creditAccount.findFirstOrThrow({ where: { saleId: venda8.id } });
 
-    const r = await FiadoService.remove(conta.id, ctx);
+    const r = await FiadoService.cancelarVendaDoFiado({ id: conta.id }, ctx);
     expect(r.caixasEstornadas).toBe(8);
     expect(r.caixasNaoEstornadas).toBe(0);
     const saldos = await CaixasService.saldoPorCliente(tenantId);
     expect(saldos.get(cliente) ?? 0).toBe(0);
-    expect(await prisma.plasticCrateMovement.count({ where: { saleId: venda8.id } })).toBe(0);
   });
 });
 

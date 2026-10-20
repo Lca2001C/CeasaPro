@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { PushInscricaoService } from "@/lib/services/push-inscricao.service";
+import { MAX_INSCRICOES_POR_USUARIO, PushInscricaoService } from "@/lib/services/push-inscricao.service";
 import { createTestTenant, cleanupTenants } from "../helpers/factory";
 
 /**
@@ -168,6 +168,21 @@ describe("PushInscricaoService.remover", () => {
     expect(estranho.removidas).toBe(0);
 
     expect(await prisma.pushSubscription.findUnique({ where: { endpoint } })).not.toBeNull();
+  });
+
+  it("guarda no máximo 10 aparelhos por pessoa — os mais antigos saem", async () => {
+    const dono = { userId: userB1, tenantId: tenantB };
+    const endpoints = Array.from({ length: MAX_INSCRICOES_POR_USUARIO + 3 }, () => endpointDe(uniq()));
+    for (const endpoint of endpoints) {
+      await PushInscricaoService.registrar(dono, { endpoint, keys: chaves("z") }, null);
+    }
+    const ficaram = await prisma.pushSubscription.findMany({
+      where: { userId: userB1 },
+      select: { endpoint: true },
+    });
+    expect(ficaram).toHaveLength(MAX_INSCRICOES_POR_USUARIO);
+    // O último registrado (o aparelho de agora) sempre fica.
+    expect(ficaram.map((f) => f.endpoint)).toContain(endpoints.at(-1));
   });
 
   it("endpoint inexistente não é erro (remover é idempotente)", async () => {

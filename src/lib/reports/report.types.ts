@@ -1,3 +1,5 @@
+import type { OptionalModuleKey } from "@/lib/plan/modules";
+
 export type ReportFormatCell = "money" | "int" | "qty" | "date" | "text";
 
 export interface ReportColumn {
@@ -79,6 +81,29 @@ export const ADVANCED_REPORTS: ReportKind[] = REPORT_TYPES.filter(
  */
 export function isAdvancedReport(kind: ReportKind): boolean {
   return !BASIC_REPORTS.includes(kind);
+}
+
+/**
+ * Módulo opcional DONO dos dados do relatório, além de `relatorios_avancados`.
+ *
+ * Exigir só o pacote de relatórios deixava quem não tem (ou deixou de ter)
+ * higienização ver e exportar os lotes, totais e "a pagar" dela — o gate de
+ * módulo é no servidor (§3.7), e o relatório é mais uma porta para o dado.
+ */
+export const MODULO_DO_RELATORIO: Partial<Record<ReportKind, OptionalModuleKey>> = {
+  CAIXAS_PLASTICAS: "caixas",
+  HIGIENIZACAO: "higienizacao",
+  EMBALAGENS: "embalagens",
+  // Lê `packaging_sales`: o papelão vendido é do módulo de embalagens.
+  CAIXAS_PAPELAO: "embalagens",
+};
+
+/** Todos os módulos que o relatório exige, na ordem em que a falta é dita. */
+export function modulosDoRelatorio(kind: ReportKind): OptionalModuleKey[] {
+  const exigidos: OptionalModuleKey[] = isAdvancedReport(kind) ? ["relatorios_avancados"] : [];
+  const dono = MODULO_DO_RELATORIO[kind];
+  if (dono) exigidos.push(dono);
+  return exigidos;
 }
 
 export const REPORT_LABELS: Record<ReportKind, string> = {

@@ -35,6 +35,19 @@ describe("pushSubscribeSchema", () => {
     expect(r.success).toBe(false);
   });
 
+  it("recusa https de host que não é serviço de push — o cron postaria nele todo dia", () => {
+    for (const endpoint of [
+      "https://alvo-qualquer.com/push",
+      "https://10.0.0.5/admin",
+      "https://fcm.googleapis.com.evil.com/x",
+      "https://evilfcm.googleapis.com.attacker.net/x",
+      "https://notfcm.googleapis.co/x",
+      "https://fcm.googleapis.com:8443/fcm/send/abc",
+    ]) {
+      expect(pushSubscribeSchema.safeParse({ ...valido, endpoint }).success, endpoint).toBe(false);
+    }
+  });
+
   it("recusa esquemas que não são http(s)", () => {
     for (const endpoint of ["file:///etc/passwd", "gopher://a/b", "javascript:alert(1)"]) {
       expect(pushSubscribeSchema.safeParse({ ...valido, endpoint }).success).toBe(false);

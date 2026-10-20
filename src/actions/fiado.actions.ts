@@ -1,19 +1,35 @@
 "use server";
 
-import { z } from "zod";
 import { withTenantAction } from "@/lib/http/with-action";
 import { FiadoService } from "@/lib/services/fiado.service";
-import { fiadoUpdateSchema, devolucaoCaixasSchema } from "@/lib/validations/fiado";
+import {
+  fiadoUpdateSchema,
+  devolucaoCaixasSchema,
+  cancelarFiadoSchema,
+  estornoRecebimentoSchema,
+} from "@/lib/validations/fiado";
 
 export const atualizarFiado = withTenantAction({
   schema: fiadoUpdateSchema,
   handler: (input, ctx) => FiadoService.update(input, ctx),
 });
 
-/** Exclui o lançamento e desfaz a venda (estoque e caixas). Ver `FiadoService.remove`. */
-export const excluirFiado = withTenantAction({
-  schema: z.string().min(1),
-  handler: (id, ctx) => FiadoService.remove(id, ctx),
+/** Cancela a venda do fiado (estoque e caixas voltam). Ver `FiadoService.cancelarVendaDoFiado`. */
+export const cancelarVendaDoFiado = withTenantAction({
+  schema: cancelarFiadoSchema,
+  handler: (input, ctx) => FiadoService.cancelarVendaDoFiado(input, ctx),
+});
+
+/**
+ * Estorno de recebimento lançado errado. Server Action pelo mesmo motivo de
+ * `cancelarVenda`: é um botão com confirmação; a transação fica no serviço.
+ */
+export const estornarRecebimento = withTenantAction({
+  schema: estornoRecebimentoSchema,
+  handler: async (input, ctx) => {
+    const conta = await FiadoService.estornarPagamento(input, ctx);
+    return { id: conta.id, status: conta.status };
+  },
 });
 
 /**
@@ -31,8 +47,8 @@ export const excluirFiado = withTenantAction({
  * abriria a porta em silêncio) e com a mensagem errada: a pessoa lia "Fulano
  * está com 0 caixa(s), confira o nome e a quantidade" e ia conferir o nome.
  *
- * `excluirFiado` NÃO leva o gate de propósito: ela APAGA movimentos de caixa
- * ao desfazer a venda, e apagar o que não existe é inócuo. Excluir um fiado é
+ * `cancelarVendaDoFiado` NÃO leva o gate de propósito: ela só estorna caixas
+ * que a venda levou, e a venda só leva caixa com o módulo. Cancelar uma venda é
  * núcleo, e exigir um módulo pago para isso tiraria a função de quem não o tem.
  */
 export const registrarDevolucaoCaixas = withTenantAction({

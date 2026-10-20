@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from "vitest";
 import { prisma } from "@/lib/db/prisma";
-import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
+import { createTestTenant, cleanupTenants, makeCtx, makeAdminCtx } from "../helpers/factory";
 import { refMonthTz } from "@/lib/tz";
 import { addOneMonth } from "@/lib/billing/status";
 
@@ -120,6 +120,7 @@ vi.mock("@/lib/payments/mercadopago", async (importOriginal) => {
 
 import { BillingService, competenciaACobrar, valorDevido } from "@/lib/services/billing.service";
 import { PlanoService } from "@/lib/services/plano.service";
+import { AdminService } from "@/lib/services/admin.service";
 import { BusinessRuleError } from "@/lib/http/app-error";
 
 const uniq = () => Math.random().toString(36).slice(2, 8);
@@ -703,7 +704,10 @@ describe("Pagar a renovação adiantada", () => {
 
     const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: e.tenantId } });
     expect(sub.currentPeriodEnd.toISOString()).toBe(e.cpe.toISOString());
-    expect(sub.status).toBe("SUSPENSO");
+    // O mês de AGORA continua pago pelo outro pagamento: o acesso fica até o
+    // vencimento (auditoria 18/10 — suspender prendia quem tinha mês pago).
+    expect(sub.status).toBe("ATIVO");
+    expect(sub.statusSource).toBe("AUTO");
   });
 });
 
@@ -889,5 +893,42 @@ describe("Troca agendada para plano que saiu de oferta", () => {
       });
       await prisma.plan.delete({ where: { id: inativo.id } }).catch(() => {});
     }
+  });
+});
+
+describe("Auditoria 18/10", () => {
+  it("reajuste do admin baixa o QR do valor antigo, aqui e no gateway", async () => {
+    // O QR velho ficava vivo; pago, caía em "valor a menor" e o mês não era creditado.
+    const e = await empresa({ status: "ATIVO", activatedAt: new Date("2026-01-01"), currentPeriodEnd: daquiA(2) });
+    const velho = await cobranca(e, { status: "PENDENTE", mpStatus: "pending", amount: 49.9 });
+
+    await AdminService.updateMonthlyAmount(e.tenantId, 59.9, makeAdminCtx());
+
+    const linha = await prisma.subscriptionPayment.findUniqueOrThrow({ where: { id: velho.id } });
+    expect(linha.status).toBe("CANCELADO");
+    expect(gw.cancelados).toContain(velho.mpPaymentId);
+  });
+
+  it("pago DENTRO da tolerância: o mês novo começa no vencimento, não no pagamento", async () => {
+    // Vencido há 2 dias (tolerância de 5): recomeçar hoje dava os dias de graça todo mês.
+    const cpe = new Date(Date.now() - 2 * DIA);
+    const e = await empresa({ status: "VENCIDO", activatedAt: new Date("2026-01-01"), currentPeriodEnd: cpe });
+    const c = await BillingService.createCheckout(e.tenantId, { method: "PIX", acceptedTerms: true }, e.ctx);
+    gw.status.set(c.mpPaymentId!, "approved");
+    expect(await BillingService.handleWebhook(c.mpPaymentId!)).toBe("aplicado");
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: e.tenantId } });
+    expect(sub.currentPeriodEnd.toISOString()).toBe(addOneMonth(cpe).toISOString());
+  });
+
+  it("pago depois de ficar SEM acesso: o mês começa no pagamento", async () => {
+    const cpe = new Date(Date.now() - 20 * DIA);
+    const e = await empresa({ status: "SUSPENSO", activatedAt: new Date("2026-01-01"), currentPeriodEnd: cpe });
+    const c = await BillingService.createCheckout(e.tenantId, { method: "PIX", acceptedTerms: true }, e.ctx);
+    gw.status.set(c.mpPaymentId!, "approved");
+    expect(await BillingService.handleWebhook(c.mpPaymentId!)).toBe("aplicado");
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({ where: { tenantId: e.tenantId } });
+    expect(sub.currentPeriodEnd.getTime()).toBeGreaterThan(addOneMonth(cpe).getTime());
   });
 });

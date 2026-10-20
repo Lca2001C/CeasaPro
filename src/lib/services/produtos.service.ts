@@ -6,6 +6,10 @@ import type { TenantCtx } from "@/lib/http/with-action";
 import { ProdutoImagemService } from "./produto-imagem.service";
 import { CotacoesService } from "./cotacoes.service";
 import { describeError, logger } from "@/lib/logger";
+import { formatQty } from "@/lib/format";
+import { saldoNaTransacao } from "./estoque.service";
+import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 /** `sourceType` do movimento de ENTRADA gravado pelo cadastro do produto. */
 export const SOURCE_ESTOQUE_INICIAL = "ESTOQUE_INICIAL";
@@ -136,13 +140,17 @@ export const ProdutosService = {
     });
 
     // Fora da transação: o produto já está gravado, e o vínculo com a cotação
-    // é conveniência — falhar aqui não pode desfazer o cadastro.
-    await CotacoesService.autoVincularIdenticos(ctx.tenantId).catch((e) =>
-      logger.error(
-        { err: describeError(e), tenantId: ctx.tenantId },
-        "Falha no vínculo automático de cotações",
-      ),
-    );
+    // é conveniência — falhar aqui não pode desfazer o cadastro. Só com o
+    // módulo: cadastro de produto é núcleo, e quem não contratou cotações não
+    // tem por que pagar a leitura do boletim nem ganhar vínculo nele.
+    if (isModuleEnabled(ctx.session.modules, "cotacoes")) {
+      await CotacoesService.autoVincularIdenticos(ctx.tenantId).catch((e) =>
+        logger.error(
+          { err: describeError(e), tenantId: ctx.tenantId },
+          "Falha no vínculo automático de cotações",
+        ),
+      );
+    }
     return criado;
   },
 
@@ -202,20 +210,74 @@ export const ProdutosService = {
     return product;
   },
 
+  /**
+   * Exclui (soft delete) o produto — só com o estoque ZERADO.
+   *
+   * A posição de estoque, o valor em estoque e os relatórios ignoram produto
+   * excluído. Excluir com saldo fazia o valor daquela mercadoria sumir do
+   * painel sem quebra, doação nem saída — enquanto a conta da compra que a
+   * trouxe continuava em Contas a Pagar. A baixa tem de ser lançada (e fica no
+   * livro-razão) antes.
+   *
+   * Trava a linha do produto, como a venda: uma venda ou compra em andamento
+   * espera, e o saldo lido aqui é o definitivo.
+   */
   async remove(id: string, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
-    const before = await db.product.findFirst({ where: { id } });
-    if (!before) throw new NotFoundError("Produto não encontrado");
-    await db.product.update({ where: { id }, data: { deletedAt: new Date() } });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "Product",
-      entityId: id,
-      oldData: before,
-      ip: ctx.ip,
+    await db.$transaction(async (tx) => {
+      const travado = await tx.$queryRaw<{ id: string; name: string }[]>`
+        SELECT id, name FROM products
+        WHERE "tenantId" = ${ctx.tenantId} AND id = ${id} AND "deletedAt" IS NULL
+        FOR UPDATE
+      `;
+      const produto = travado[0];
+      if (!produto) throw new NotFoundError("Produto não encontrado");
+
+      const saldo = await saldoNaTransacao(tx, ctx.tenantId, id);
+      if (saldo.greaterThan(0)) {
+        throw new BusinessRuleError(
+          `${produto.name} ainda tem ${formatQty(saldo)} em estoque. Dê baixa no Ajuste de ` +
+            "estoque (quebra, doação ou acerto) antes de excluir — excluir com saldo sumiria " +
+            "com o valor dessa mercadoria sem registro. Para só tirá-lo da venda, desative-o.",
+        );
+      }
+
+      // Venda ainda cancelável devolveria a mercadoria a um produto excluído —
+      // estoque que nenhuma tela mostra e nenhum ajuste alcança. Espera o prazo.
+      const vendaCancelavel = await tx.saleItem.findFirst({
+        where: {
+          productId: id,
+          sale: {
+            cancelledAt: null,
+            deletedAt: null,
+            createdAt: { gte: new Date(Date.now() - HORAS_PARA_DESFAZER * 3600_000) },
+          },
+        },
+        select: { id: true },
+      });
+      if (vendaCancelavel) {
+        throw new BusinessRuleError(
+          `${produto.name} foi vendido nas últimas ${HORAS_PARA_DESFAZER} h, e essa venda ainda ` +
+            "pode ser cancelada (a mercadoria voltaria ao estoque). Exclua depois desse prazo, " +
+            "ou desative o produto agora.",
+        );
+      }
+
+      const before = await tx.product.findFirst({ where: { id } });
+      await tx.product.update({ where: { id }, data: { deletedAt: new Date() } });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "Product",
+          entityId: id,
+          oldData: before,
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
   },
 };

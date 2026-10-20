@@ -3,17 +3,20 @@ import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
 import { VendasService } from "./vendas.service";
-import { add, gt } from "@/lib/money";
-import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
+import { add, gt, sub } from "@/lib/money";
+import { NotFoundError, BusinessRuleError, ForbiddenError } from "@/lib/http/app-error";
 import type {
   PagamentoFiadoInput,
   FiadoManualInput,
   FiadoUpdateInput,
   DevolucaoCaixasInput,
   FiadoStatusFiltro,
+  EstornoRecebimentoInput,
+  CancelarFiadoInput,
 } from "@/lib/validations/fiado";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfDayTz } from "@/lib/tz";
+import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
 
 const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
@@ -187,8 +190,23 @@ export const FiadoService = {
       ...(conta.sale?.payments ?? []).filter((p) => p.method !== "FIADO").map((p) => p.amount),
     );
 
+    const agora = new Date();
+    const temRecebimentoVivo = conta.payments.some((p) => !p.reversedAt);
+    const vendaNoPrazo = dentroDoPrazoDeDesfazer(conta.sale?.createdAt ?? conta.createdAt, agora);
     return {
       ...conta,
+      // O extrato mostra também o estornado (marcado); `podeEstornar` é o botão.
+      payments: conta.payments.map((p) => ({ ...p, podeEstornar: this.podeEstornar(p, agora) })),
+      /** Há recebimento que ainda conta? Com ele, a venda não pode ser cancelada. */
+      temRecebimentoVivo,
+      /**
+       * A venda ainda está no prazo de cancelamento? A tela só sugere estornar
+       * recebimento para cancelar quando está — fora dele, o estorno tiraria do
+       * caixa um dinheiro real sem o cancelamento acontecer.
+       */
+      vendaNoPrazo,
+      /** O botão "Cancelar venda": as mesmas condições de `VendasService.podeCancelar`. */
+      podeCancelarVenda: !temRecebimentoVivo && vendaNoPrazo,
       totalDaVenda: conta.sale?.totalAmount ?? conta.totalAmount,
       descontoDaVenda: conta.sale?.discountAmount ?? null,
       pagoNoBalcao,
@@ -274,142 +292,68 @@ export const FiadoService = {
   },
 
   /**
-   * Exclui um lançamento de fiado — e **desfaz a venda que o originou**.
+   * "Excluir" um fiado é CANCELAR a venda que o gerou.
    *
-   * Apagar só a conta deixaria a venda de pé: o faturamento continuaria
-   * contando, a mercadoria seguiria baixada do estoque e o valor sumiria do "a
-   * receber". Ou seja, o sistema fecharia com um buraco. Por isso a exclusão
-   * reverte a operação inteira, na mesma transação: conta, venda, baixa de
-   * estoque e caixas plásticas que saíram com a mercadoria — que voltam
-   * exatamente ao estado anterior à venda.
+   * Antes o fiado sem pagamento era APAGADO — venda, movimentos de estoque e de
+   * caixas —, a qualquer tempo: um lançamento de meses atrás sumia e reescrevia
+   * um fechamento que a venda à vista, de propósito, não deixa reescrever. Agora
+   * há um caminho só para desfazer venda (`VendasService.cancelarVenda`): o
+   * mesmo prazo, a venda fica no histórico marcada como cancelada, o estoque e
+   * as caixas voltam com lançamento de estorno, e a conta a receber sai. Venda
+   * mista (parte no balcão) também: a parte paga no balcão é devolvida ao
+   * cliente junto com a venda.
    *
-   * **Recusa quando já houve pagamento.** Apagar dinheiro que entrou é falsear
-   * o caixa; nesse caso o caminho é acertar o valor com o cliente, não excluir
-   * o registro. É a mesma lógica que impede pagar acima do saldo.
+   * Recebimento vivo na conta recusa — estorne-o antes (`estornarPagamento`).
    */
-  async remove(id: string, ctx: TenantCtx) {
+  async cancelarVendaDoFiado(input: CancelarFiadoInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const conta = await db.creditAccount.findFirst({
-      where: { id },
-      include: {
-        payments: { select: { id: true } },
-        sale: {
-          select: {
-            id: true,
-            customerName: true,
-            plasticCrateQty: true,
-            items: true,
-            payments: { select: { method: true } },
-          },
-        },
-      },
+      where: { id: input.id },
+      select: { id: true, saleId: true, customerName: true, createdAt: true },
     });
     if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
 
-    const recusaPagamento = () =>
-      new BusinessRuleError(
-        "Esta conta já tem pagamento registrado e não pode ser excluída — " +
-          "apagá-la sumiria com dinheiro que entrou no caixa.",
-      );
-    if (conta.payments.length > 0 || gt(conta.paidAmount, 0)) throw recusaPagamento();
+    if (!conta.saleId) return this.removerContaSemVenda(conta, ctx);
 
-    // Venda MISTA (parte no PIX/dinheiro/cartão, parte no fiado): excluir o
-    // fiado desfaz a venda inteira, e o que foi pago no balcão sumia do fluxo
-    // de caixa — que só conta venda não excluída. É o mesmo "sumir com dinheiro
-    // que entrou" da regra acima, por outra porta.
-    if (conta.sale?.payments.some((p) => p.method !== "FIADO")) {
-      throw new BusinessRuleError(
-        "Parte desta venda foi paga no balcão (PIX, dinheiro ou cartão). " +
-          "Excluir o fiado apagaria esse recebimento — cancele a venda pelo histórico de vendas.",
-      );
+    const r = await VendasService.cancelarVenda(
+      { id: conta.saleId, motivo: input.motivo ?? null },
+      ctx,
+    );
+    return {
+      id: conta.id,
+      customerName: conta.customerName,
+      caixasEstornadas: r.caixasEstornadas,
+      /** Caixas da venda que o cliente já tinha devolvido — não voltam de novo. */
+      caixasNaoEstornadas: r.caixasNaoEstornadas,
+    };
+  },
+
+  /**
+   * Conta antiga, de antes de o fiado manual passar pela venda: não há venda,
+   * estoque nem caixas a devolver — só a conta a receber. Mesmas regras de
+   * desfazer: o dono, dentro do prazo e sem recebimento vivo.
+   */
+  async removerContaSemVenda(
+    conta: { id: string; customerName: string; createdAt: Date },
+    ctx: TenantCtx,
+  ) {
+    if (ctx.session.role !== "OWNER") {
+      throw new ForbiddenError("Só o responsável pela empresa pode excluir um fiado.");
     }
-
-    const crateQty = conta.sale?.plasticCrateQty ?? 0;
-    const agora = new Date();
-    // Decidido dentro da transação (depende do saldo do cliente sob lock).
-    let caixasEstornadas = 0;
-
+    if (!dentroDoPrazoDeDesfazer(conta.createdAt)) {
+      throw new BusinessRuleError(foraDoPrazoDeDesfazer("excluir este fiado"));
+    }
+    const db = getTenantPrisma(ctx.tenantId);
     await db.$transaction(async (tx) => {
-      // A checagem de pagamento acima roda FORA da transação: um pagamento que
-      // entrasse entre ela e aqui seria apagado junto. O filtro `paidAmount: 0`
-      // refaz a checagem de forma atômica, na própria escrita.
       const { count } = await tx.creditAccount.updateMany({
         where: { id: conta.id, paidAmount: 0 },
-        data: { deletedAt: agora },
+        data: { deletedAt: new Date() },
       });
-      if (count !== 1) throw recusaPagamento();
-
-      if (conta.sale) {
-        // Os movimentos de estoque e de caixas são APAGADOS, não compensados.
-        //
-        // Compensar seria o certo se a venda tivesse acontecido e fosse
-        // devolvida — mas aqui ela está sendo desfeita, como se não tivesse
-        // existido. Uma ENTRADA de estorno apareceria no histórico do produto
-        // como se mercadoria tivesse chegado, e nas caixas nem funcionaria:
-        // `limpas` é `entrada_limpa + retorno_hig − saida − quebra_limpa`, ou
-        // seja, um RETORNO devolve a caixa para `sujas`, não para `limpas` —
-        // o sistema mandaria higienizar caixa que nunca saiu do box.
-        //
-        // Os dois carregam o vínculo com a venda (`sourceId` / `saleId`), então
-        // a remoção é exata. O que aconteceu fica registrado na auditoria e na
-        // própria venda, que é preservada com `deletedAt`.
-        await tx.stockMovement.deleteMany({
-          where: { tenantId: ctx.tenantId, sourceType: "SALE", sourceId: conta.sale.id },
-        });
-
-        // Caixas: apagar a SAIDA só desfaz a venda se as caixas AINDA estão
-        // com o cliente. O RETORNO é lançado por nome de cliente, sem vínculo
-        // com a venda — então, se ele já devolveu, apagar a SAIDA deixava o
-        // RETORNO sem contrapartida: `comClientes` ficava negativo e as
-        // devolvidas continuavam contadas como sujas (voltavam duas vezes).
-        //
-        // Decidido DENTRO da transação, depois do lock de caixas, pelo saldo
-        // DO CLIENTE — o mesmo critério de `VendasService.cancelarVenda`.
-        const cliente = conta.sale.customerName ?? conta.customerName;
-        if (crateQty > 0) {
-          const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
-          const doCliente = await CaixasService.saldoDoClienteInTx(tx, ctx.tenantId, cliente);
-          caixasEstornadas = Math.min(
-            crateQty,
-            Math.max(0, doCliente),
-            Math.max(0, saldo.comClientes),
-          );
-        }
-
-        if (caixasEstornadas === crateQty) {
-          // Tudo ainda está com o cliente (ou a venda não levou caixa): a
-          // reversão exata é apagar o movimento, como se a venda não tivesse
-          // existido — as caixas voltam para `limpas`.
-          await tx.plasticCrateMovement.deleteMany({
-            where: { tenantId: ctx.tenantId, saleId: conta.sale.id },
-          });
-        } else if (caixasEstornadas > 0) {
-          // Parte já voltou: a SAIDA fica (ela aconteceu, e o RETORNO lançado
-          // depende dela) e só o que o cliente ainda tem é estornado. O
-          // ESTORNO_SAIDA devolve essas caixas para `limpas`, como o
-          // cancelamento de venda faz.
-          await CaixasService.registrarInTx(
-            tx,
-            {
-              type: "ESTORNO_SAIDA",
-              quantity: caixasEstornadas,
-              customerName: cliente,
-              movementDate: agora.toISOString(),
-              saleId: conta.sale.id,
-              notes: "Estorno pela exclusão do fiado",
-            },
-            ctx,
-          );
-        }
-        // caixasEstornadas === 0 com caixas na venda: o cliente já devolveu
-        // todas. Nada a desfazer — a SAIDA e o RETORNO continuam se anulando.
-
-        await tx.sale.update({
-          where: { id: conta.sale.id },
-          data: { deletedAt: agora },
-        });
+      if (count !== 1) {
+        throw new BusinessRuleError(
+          "Esta conta tem recebimento lançado. Estorne o recebimento antes de excluir.",
+        );
       }
-
       await audit(
         {
           tenantId: ctx.tenantId,
@@ -418,30 +362,90 @@ export const FiadoService = {
           action: "DELETE",
           entity: "CreditAccount",
           entityId: conta.id,
-          oldData: {
-            customerName: conta.customerName,
-            totalAmount: conta.totalAmount.toString(),
-            saleId: conta.saleId,
-          },
-          newData: {
-            itensDevolvidosAoEstoque: conta.sale?.items.length ?? 0,
-            caixasDevolvidas: caixasEstornadas,
-            caixasNaoEstornadas: crateQty - caixasEstornadas,
-            vendaExcluida: Boolean(conta.sale),
-          },
+          oldData: { customerName: conta.customerName },
           ip: ctx.ip,
         },
         tx,
       );
     });
+    return { id: conta.id, customerName: conta.customerName, caixasEstornadas: 0, caixasNaoEstornadas: 0 };
+  },
 
-    return {
-      id: conta.id,
-      customerName: conta.customerName,
-      caixasEstornadas,
-      /** Caixas da venda que o cliente já tinha devolvido — não voltam de novo. */
-      caixasNaoEstornadas: crateQty - caixasEstornadas,
-    };
+  /** O recebimento ainda pode ser estornado? (A tela usa para mostrar o botão.) */
+  podeEstornar(pagamento: { createdAt: Date; reversedAt: Date | null }, agora = new Date()) {
+    return !pagamento.reversedAt && dentroDoPrazoDeDesfazer(pagamento.createdAt, agora);
+  },
+
+  /**
+   * Estorna um recebimento de fiado lançado errado — valor, forma ou conta
+   * trocados. Até 24 h do registro, a regra única de desfazer.
+   *
+   * O `CreditPayment` FICA no extrato, marcado com `reversedAt`: some do fluxo
+   * de caixa e o valor volta ao saldo do cliente. Apagar a linha esconderia que
+   * o dinheiro chegou a ser lançado; deixá-la sem marca contaria o dinheiro.
+   *
+   * Sem isto, um recebimento errado travava a conta para sempre — cancelar a
+   * venda e excluir o fiado recusam conta com recebimento, e a tela de venda
+   * mandava "estornar o pagamento no fiado" por um caminho que não existia.
+   */
+  async estornarPagamento(input: EstornoRecebimentoInput, ctx: TenantCtx) {
+    if (ctx.session.role !== "OWNER") {
+      throw new ForbiddenError("Só o responsável pela empresa pode estornar um recebimento.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const pagamento = await tx.creditPayment.findFirst({ where: { id: input.paymentId } });
+      if (!pagamento) throw new NotFoundError("Recebimento não encontrado");
+      if (pagamento.reversedAt) throw new BusinessRuleError("Este recebimento já foi estornado.");
+      if (!this.podeEstornar(pagamento)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("estornar este recebimento"));
+      }
+      const conta = await tx.creditAccount.findFirst({ where: { id: pagamento.accountId } });
+      if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+
+      // Guarda contra o clique duplo: o perdedor espera o lock da linha e não
+      // casa mais `reversedAt: null`.
+      const marcado = await tx.creditPayment.updateMany({
+        where: { id: pagamento.id, reversedAt: null },
+        data: { reversedAt: new Date(), reversedReason: input.motivo || null },
+      });
+      if (marcado.count !== 1) throw new BusinessRuleError("Este recebimento já foi estornado.");
+
+      // Mesmo cuidado de `registrarPagamento`: o `paidAmount` lido entra na
+      // condição, para um pagamento simultâneo não ser sobrescrito.
+      const novoPago = sub(conta.paidAmount, pagamento.amount);
+      const escrito = await tx.creditAccount.updateMany({
+        where: { id: conta.id, paidAmount: conta.paidAmount },
+        data: { paidAmount: novoPago, status: "EM_ABERTO" },
+      });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outro lançamento desta conta foi registrado agora mesmo. Confira o saldo e tente de novo.",
+        );
+      }
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "PAYMENT_REVERSED",
+          entity: "CreditAccount",
+          entityId: conta.id,
+          oldData: { paidAmount: conta.paidAmount.toString(), status: conta.status },
+          newData: {
+            paymentId: pagamento.id,
+            estornado: pagamento.amount.toString(),
+            paidAmount: novoPago.toString(),
+            motivo: input.motivo ?? null,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+
+      return tx.creditAccount.findFirstOrThrow({ where: { id: conta.id } });
+    });
   },
 
   /** Cliente devolveu caixas plásticas — elas voltam sujas para o estoque. */

@@ -1,6 +1,7 @@
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import { formatBRL } from "@/lib/format";
 import type { FornecedorInput, FornecedorUpdateInput } from "@/lib/validations/fornecedor";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -20,11 +21,15 @@ export const FornecedoresService = {
     return s;
   },
 
-  /** Histórico de compras do fornecedor, com a conta (paga ou a pagar) de cada uma. */
+  /**
+   * Histórico de compras do fornecedor, com a conta (paga ou a pagar) de cada
+   * uma. A compra cancelada fica de fora: não é negócio feito com ele (ela
+   * continua, marcada, na lista de compras do Estoque).
+   */
   async purchaseHistory(tenantId: string, id: string) {
     const db = getTenantPrisma(tenantId);
     return db.purchase.findMany({
-      where: { supplierId: id },
+      where: { supplierId: id, cancelledAt: null },
       include: {
         expenses: {
           where: { origem: "COMPRA", deletedAt: null },
@@ -104,20 +109,55 @@ export const FornecedoresService = {
     return s;
   },
 
+  /**
+   * Exclui (soft delete) o fornecedor — só sem conta a pagar para ele.
+   *
+   * Com conta pendente, a dívida continuava em Contas a Pagar e o nome de a
+   * quem ela é devida sumia da leitura. Pague (ou cancele a compra, no prazo)
+   * antes; para só tirá-lo das telas de compra, desative-o.
+   *
+   * A linha do fornecedor é travada: a compra trava a mesma linha
+   * (`FOR SHARE`) ao gravar, então uma compra em andamento termina antes desta
+   * conferência — e a que vier depois já o encontra excluído.
+   */
   async remove(id: string, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
-    const before = await db.supplier.findFirst({ where: { id } });
-    if (!before) throw new NotFoundError("Fornecedor não encontrado");
-    await db.supplier.update({ where: { id }, data: { deletedAt: new Date() } });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "DELETE",
-      entity: "Supplier",
-      entityId: id,
-      oldData: before,
-      ip: ctx.ip,
+    await db.$transaction(async (tx) => {
+      const travado = await tx.$queryRaw<{ id: string }[]>`
+        SELECT id FROM suppliers
+        WHERE "tenantId" = ${ctx.tenantId} AND id = ${id} AND "deletedAt" IS NULL
+        FOR UPDATE
+      `;
+      if (travado.length === 0) throw new NotFoundError("Fornecedor não encontrado");
+
+      const pendentes = await tx.expense.aggregate({
+        _sum: { amount: true },
+        _count: { _all: true },
+        where: { supplierId: id, status: "PENDENTE" },
+      });
+      if (pendentes._count._all > 0) {
+        throw new BusinessRuleError(
+          `Há ${pendentes._count._all} conta(s) a pagar para este fornecedor ` +
+            `(${formatBRL(pendentes._sum.amount ?? 0)}). Pague-as antes de excluir — sem o ` +
+            "fornecedor, a dívida ficaria sem nome. Para só tirá-lo das compras, desative-o.",
+        );
+      }
+
+      const before = await tx.supplier.findFirst({ where: { id } });
+      await tx.supplier.update({ where: { id }, data: { deletedAt: new Date() } });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "DELETE",
+          entity: "Supplier",
+          entityId: id,
+          oldData: before,
+          ip: ctx.ip,
+        },
+        tx,
+      );
     });
   },
 };

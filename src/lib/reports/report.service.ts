@@ -132,7 +132,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "COMPRAS": {
       const compras = await db.purchase.findMany({
-        where: { purchaseDate: { gte: p.from, lte: p.to } },
+        // Compra cancelada fica na base, mas não é compra do período.
+        where: { purchaseDate: { gte: p.from, lte: p.to }, cancelledAt: null },
         include: { supplier: true, items: true },
         orderBy: { purchaseDate: "asc" },
       });
@@ -396,7 +397,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           JOIN purchases pu ON pu.id = pi."purchaseId"
           LEFT JOIN suppliers su ON su.id = pu."supplierId"
           WHERE pi."tenantId" = ${p.tenantId}
-            AND pu."deletedAt" IS NULL
+            AND pu."deletedAt" IS NULL AND pu."cancelledAt" IS NULL
             AND pu."purchaseDate" <= ${p.to}
           ORDER BY pi."productId", pu."purchaseDate" DESC, pu."createdAt" DESC
         `,
@@ -408,7 +409,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           JOIN purchases pu ON pu.id = pi."purchaseId"
           LEFT JOIN suppliers su ON su.id = pu."supplierId"
           WHERE pi."tenantId" = ${p.tenantId}
-            AND pu."deletedAt" IS NULL
+            AND pu."deletedAt" IS NULL AND pu."cancelledAt" IS NULL
             AND pu."purchaseDate" >= ${p.from}
             AND pu."purchaseDate" <= ${p.to}
           GROUP BY 1, 2
@@ -583,7 +584,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         JOIN products pr ON pr.id = pi."productId"
         LEFT JOIN suppliers su ON su.id = pu."supplierId"
         WHERE pi."tenantId" = ${p.tenantId}
-          AND pu."deletedAt" IS NULL
+          AND pu."deletedAt" IS NULL AND pu."cancelledAt" IS NULL
           AND pu."purchaseDate" >= ${p.from}
           AND pu."purchaseDate" <= ${p.to}
           AND COALESCE(pi."recipientType", pr."recipientType") = 'PAPELAO'
@@ -726,7 +727,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "FORNECEDORES": {
       const compras = await db.purchase.findMany({
-        where: { purchaseDate: { gte: p.from, lte: p.to } },
+        where: { purchaseDate: { gte: p.from, lte: p.to }, cancelledAt: null },
         include: { supplier: true },
       });
       const porFornecedor = new Map<string, { name: string; compras: number; total: Prisma.Decimal }>();
@@ -793,7 +794,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidAt"')} AS d, SUM(amount) AS total FROM credit_payments
-            WHERE "tenantId" = ${p.tenantId}
+            -- Recebimento estornado foi lançado errado: não entrou no caixa.
+            WHERE "tenantId" = ${p.tenantId} AND "reversedAt" IS NULL
               AND "paidAt" >= ${p.from} AND "paidAt" <= ${p.to} GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"saleDate"')} AS d, SUM("totalAmount") AS total FROM packaging_sales
@@ -875,7 +877,11 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       ]);
       const rows = movimentos.map((m) => ({
         movementDate: m.movementDate,
-        type: CRATE_MOVEMENT_LABELS[m.type],
+        // ENTRADA negativa é o estorno da compra cancelada.
+        type:
+          m.type === "ENTRADA" && m.quantity < 0
+            ? "Estorno de entrada"
+            : CRATE_MOVEMENT_LABELS[m.type],
         quantity: m.quantity,
         brokenQty: m.brokenQty,
         who: m.customerName ?? m.cleanerName ?? m.supplierName ?? "—",

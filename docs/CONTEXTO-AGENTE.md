@@ -43,6 +43,7 @@ Violar qualquer uma destas é regressão grave:
 10. **Não há recorrência Mercado Pago.** Todo mês o cliente paga de novo em `/assinatura`.
 11. **Trial de 7 dias só começa na confirmação de e-mail.** `graceDays` **não** se aplica a quem nunca pagou. Trial vencido → `SUSPENSO`, nunca `VENCIDO`.
 12. **Cancelar assinatura** (Termos §5): para de renovar; o período **já pago** continua até `currentPeriodEnd`. Sem graça depois. Trial/já vencido encerra na hora.
+13. **Desfazer lançamento tem UMA regra** (`src/lib/desfazer/prazo.ts`): venda (à vista, fiada ou mista), compra e recebimento de fiado são desfeitos só até **24 h do registro** (`createdAt`, nunca a data digitada), só pelo OWNER. O lançamento **fica na base marcado** (`cancelledAt` / `reversedAt`), sai dos totais, e estoque/caixas voltam por **movimento de estorno** — nunca se apaga linha de livro-razão. Depois de 24 h ninguém desfaz: o fechamento do dia não é reescrito.
 
 ---
 
@@ -109,7 +110,7 @@ Arquivos: `src/lib/auth/` (`jwt.ts`, `password.ts`, `refresh.ts`, `cookies.ts`, 
 - Access JWT ~15 min, cookie `httpOnly` / `Secure` / `SameSite=Lax`. Claims: `role`, `tenantId`, `tenantStatus`, `subStatus`, `modules`, `tev` (epoch da empresa), `sev` (epoch do usuário).
 - Refresh opaco, hash SHA-256 em `refresh_tokens`, **rotação**, linhagem (`familyId`), janela de graça para abas concorrentes. Reuso de token revogado derruba a família.
 - Logout / troca de senha / exclusão / bloqueio incrementam `sessionEpoch` (user e/ou tenant) e revogam refresh — o access antigo para de valer **na escrita** mesmo antes de expirar.
-- Rate limit de auth no **Postgres** (`rate_limits`), compartilhado entre instâncias serverless.
+- Rate limit de auth no **Postgres** (`rate_limits`), compartilhado entre instâncias serverless. O contador **por e-mail** (login e recuperação) só recebe a tentativa que passou nos limites de IP — senão UM IP trancava a conta de qualquer um — e redefinir a senha zera o do login (`chaveDeLoginPorEmail`).
 - Cadastro público `/cadastro` → e-mail de confirmação → `emailVerifiedAt` → **aí** começa o trial. Sem confirmar, a empresa fica `SUSPENSA`. O "já tem conta?" é decidido pela **identidade** do e-mail (`src/lib/email-identity.ts` → `User.emailIdentity`), não pelo texto: `dono+1@gmail.com` e `d.o.n.o@gmail.com` caem na mesma caixa e não rendem um segundo trial. Só provedores de comportamento conhecido são normalizados — juntar demais recusaria cliente legítimo com uma resposta genérica que não explica nada.
 - Recuperar senha: token 1h; ao redefinir, revoga todas as sessões.
 - `mustChangePassword` força `/alterar-senha` (OWNER criado pelo admin).
@@ -142,7 +143,9 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 - Cartão: Brick (`creditCard`/`debitCard` — normalizar camelCase **e** snake_case). `POST /api/billing/checkout/card`. Tokenização no browser. 3DS `optional`. Débito exige CPF.
 - Confirmação **só** pelo webhook HMAC (`/api/webhooks/mercadopago`), idempotente por `mpPaymentId`. Não confiar no body: buscar o pagamento na API. **Sem `MERCADOPAGO_WEBHOOK_SECRET` o webhook recusa tudo, em qualquer ambiente** — não há mais bypass por `NODE_ENV` (preview e staging são "development" com banco de verdade).
 - **Uma cobrança APROVADA por competência**, garantida pelo banco: `SubscriptionPayment.approvedKey` (`<tenantId>:<referenceMonth>`, `@unique`, nula fora de APROVADO). Sem ela, o segundo pagamento do mês creditava o mês de novo.
-- Estorno → `SUSPENSO`; chargeback → `BLOQUEADO`; revoga sessões da empresa — **só se não sobrar outro pagamento APROVADO da mesma competência**. Sobrando, o acesso fica e a reversão é só uma linha do extrato mudando de status.
+- Estorno → `SUSPENSO`; chargeback → `BLOQUEADO`; revoga sessões da empresa — **só se não sobrar outro pagamento APROVADO da mesma competência**. Sobrando, o acesso fica e a reversão é só uma linha do extrato mudando de status. **Estorno** (não chargeback) com outro período pago correndo — vencimento ainda futuro depois de tirar o estornado e outro APROVADO com `periodEnd` futuro — também não bloqueia: só o vencimento recua. Chargeback bloqueia sempre.
+- **Onde começa o mês pago:** `inicioDoPeriodoPago` (`billing/status.ts`). Adiantado ou pago **dentro da tolerância** → no vencimento (recomeçar no dia do pagamento dava os dias de tolerância de graça todo mês); primeiro pagamento ou depois de ficar sem acesso → hoje.
+- **Reajuste do admin** (`updateMonthlyAmount`) baixa e cancela no MP o QR do valor antigo, como a troca de plano.
 - **Uma cobrança viva por mês.** Troca de plano cancela QR antigo se o valor mudou.
 - Valor cobrado **sempre do plano no banco**, nunca do que o cliente enviou.
 - Cron `GET /api/cron/billing` (`CRON_SECRET`): reconcilia MP + recalcula status + lembrete 3 dias antes do vencimento (só quem já pagou, um e-mail por período).
@@ -150,7 +153,7 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 - **Reconciliação com orçamento:** 20 s, 6 chamadas ao MP ao mesmo tempo, fila rotativa por `SubscriptionPayment.lastReconciledAt`. As tarefas locais do cron rodam mesmo se ela falhar.
 - **QR substituído é cancelado no MP** (`cancelPayment`, best-effort, depois do commit) — não só no banco.
 - **Aprovado que não comprou mês** (valor a menor, duplicado): `uncreditedAt`/`uncreditedReason`, com aviso ao super-admin `PAGAMENTO_NAO_CREDITADO`. Nunca credita o mês duas vezes.
-- **Pagamento antecipado:** dentro de `DUE_REMINDER_DAYS` do vencimento, `competenciaACobrar` cobra a competência do PRÓXIMO período. Fora da janela, `MENSALIDADE_JA_PAGA`.
+- **Pagamento antecipado:** dentro de `DUE_REMINDER_DAYS` do vencimento, `competenciaACobrar` cobra a competência do PRÓXIMO período. Fora da janela, `MENSALIDADE_JA_PAGA` — decidido pelo **período pago** (um APROVADO com `periodEnd` futuro), não pelo rótulo do mês: quem pagou em 15/09 não vê "outubro em aberto" em 01/10. Bloqueio MANUAL fica de fora (o chargeback se desfaz pagando).
 - **Chargeback desfeito por pagamento:** o acesso volta sozinho e o admin é avisado (`BLOQUEIO_DESFEITO_POR_PAGAMENTO`). Para manter bloqueado, bloqueie a empresa (`Tenant.status`).
 
 ### Cancelar
@@ -195,29 +198,36 @@ Duas abas por URL: **Visão Geral** (números do dia, avisos, contas a pagar, li
 
 Uma tela só: `/estoque` (abas Produtos | Compras), `/estoque/compra` e `/estoque/ajuste`. `/produtos*` e `/compras*` só redirecionam; Produtos e Compras saíram do menu.
 
-**Produto** (Server Actions, soft delete, sem histórico não apaga de fato): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
+**Produto** (Server Actions, soft delete, sem histórico não apaga de fato; **só exclui com estoque zerado** — com saldo o valor sumiria do painel sem baixa): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
 
 **Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`; **só foto em domínio público ou CC0** — nada que exija crédito; a origem de cada uma fica em `src/lib/imagem/creditos-banco.ts`, que alimenta a página pública `/creditos-fotos`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados.
 
-**Compra** (`POST /api/compras`): transação com itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento `ENTRADA`. E **uma despesa `origem = COMPRA`** no valor total, com o fornecedor, `PAGO` (`paidDate = purchaseDate`) ou `PENDENTE` até o vencimento — ver Despesas.
+**Compra** (`POST /api/compras`): transação com itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento `ENTRADA`. E **uma despesa `origem = COMPRA`** no valor total, com o fornecedor, `PAGO` (`paidDate = purchaseDate`) ou `PENDENTE` até o vencimento — ver Despesas. Trava fornecedor e produtos com `FOR SHARE` (a exclusão deles trava `FOR UPDATE`).
+
+**Cancelar compra** (`ComprasService.cancelarCompra`, botão na aba Compras): regra §3.13, e só se os produtos dela **não tiveram saída nem ajuste depois dela** (esses movimentos já gravaram o custo dela; tirá-la do repasse deixaria o CMV errado para sempre). Marca `Purchase.cancelledAt`; tira a mercadoria com `AJUSTE` negativo `sourceType = PURCHASE_CANCELLED`; estorna as caixas que vieram com ela (ENTRADA espelhada, ligada por `PlasticCrateMovement.purchaseId`); soft-delete da despesa `COMPRA` (paga ou não). Toda leitura de compra filtra `cancelledAt` — compra cancelada aparece **só** na lista, riscada.
 
 ### Fornecedores
 
-CRUD Server Actions. Soft delete. A tela mostra o histórico de compras com a situação da conta e o total em aberto com o fornecedor.
+CRUD Server Actions. Soft delete — **recusado com conta a pagar pendente** (a dívida ficaria sem nome). A tela mostra o histórico de compras com a situação da conta e o total em aberto com o fornecedor.
 
 ### Vendas / PDV (`POST /api/vendas`)
 
 `/vendas/nova` = frente de caixa. Pagamento: Dinheiro / PIX / Cartão / Fiado. Cliente obrigatório se fiado. Valida saldo de estoque. Grava `unitCostAtSale` para lucro. Fiado cria `CreditAccount` na mesma transação. Pode gerar saída de caixas plásticas.
 
+**Cancelar venda** (`VendasService.cancelarVenda`) é o **único** caminho para desfazer venda — o fiado também passa por ele. Regra §3.13; recusa com recebimento de fiado vivo. A mercadoria volta com `AJUSTE` `SALE_CANCELLED` pelo **custo com que saiu** (`unitCostAtSale`): é a mesma mercadoria, e a média se recompõe com ela. Não use a média da hora — daria à mercadoria velha o preço da compra nova e inflaria o valor do estoque.
+
 ### Fiado
 
-Lista no formato da planilha do balcão (uma linha por entrega). Pagamento parcial `POST /api/fiado/pagamento`. `saldo = total − pago` (nunca negativo). Excluir **só sem pagamento**: desfaz a venda (soft delete), devolve estoque (`SALE_REVERSAL`) e caixas como limpas — tudo na mesma transação. `/fiado/novo` usa o mesmo caminho interno do PDV.
+Lista no formato da planilha do balcão (uma linha por entrega). Pagamento parcial `POST /api/fiado/pagamento`. `saldo = total − pago` (nunca negativo). `/fiado/novo` usa o mesmo caminho interno do PDV.
+
+- **Cancelar venda** pela conta (`FiadoService.cancelarVendaDoFiado`) = `VendasService.cancelarVenda` (mesmo prazo, a venda fica no histórico). Antes o fiado era APAGADO a qualquer tempo — não volte a apagar.
+- **Estornar recebimento** lançado errado (`FiadoService.estornarPagamento`, regra §3.13): `CreditPayment.reversedAt`, `paidAmount` volta, conta reabre. Recebimento estornado fica no extrato e sai do fluxo de caixa (`"reversedAt" IS NULL`) e da checagem de "tem recebimento".
 
 ### Estoque
 
 Posição derivada: `ENTRADA/AJUSTE − SAÍDA/QUEBRA/DOAÇÃO`. Ajuste manual `POST /api/estoque/ajuste`.
 
-Custo = **média ponderada móvel do estoque atual** (`sqlCustoEstoque`), repassada em ordem de **gravação** (`createdAt`), não de `movedAt`: a entrada pondera com o que sobrou, a saída sai pela média sem alterá-la, saldo ≤ 0 reinicia a média e vale zero. O `unitCost` gravado nas saídas é ignorado no cálculo. Só a quantidade: `EstoqueService.getQuantidades` (sem a conta de custo).
+Custo = **média ponderada móvel do estoque atual** (`sqlCustoEstoque`), repassada em ordem de **gravação** (`createdAt`), não de `movedAt`: a entrada pondera com o que sobrou, a saída sai pela média sem alterá-la, saldo ≤ 0 reinicia a média e vale zero. O `unitCost` gravado nas saídas é ignorado no cálculo. A ENTRADA de compra cancelada e o estorno dela saem **juntos** do repasse (o preço errado não fica na média; o par soma zero no saldo). Só a quantidade: `EstoqueService.getQuantidades` (sem a conta de custo). `sourceType` em `src/lib/estoque/origens.ts`.
 
 Compra tem `idempotencyKey` (como a venda): o reenvio devolve a compra já gravada.
 
@@ -226,6 +236,8 @@ Compra tem `idempotencyKey` (como a venda): o reenvio devolve a compra já grava
 Fixa/variável, categorias (seed no provisionamento do tenant), pendente/pago, fornecedor opcional. `Expense.origem` separa as duas naturezas:
 
 - `MANUAL` (operacional): entra no lucro líquido, em Fixas/Variáveis e no "% do faturamento".
+- **Higienização** entra no lucro e em Variáveis pela data de **envio** (como a conta operacional, pelo vencimento) — uma data só no painel. O pagamento dela conta em "Pagas" e no fluxo de caixa.
+- **Faturamento** = venda de mercadoria + venda de embalagem (`FinancialCalc.faturamento`): é a base do lucro bruto, da margem e do "% do que você vendeu". "Vendi" continua só mercadoria; o "Resultado do mês" mostra a embalagem numa linha própria.
 - `COMPRA` (gerada pela compra; índice único parcial `expenses_compra_unica`) e `FRETE_COMPRA` (frete lançado à parte antes desta versão): o custo **já está no CMV**, então ficam **fora** de lucro, Fixas/Variáveis, `totais`, `replicarMes` e "nova igual à última", e **dentro** de Contas a Pagar, vencidas, avisos/push, `CONTAS_PAGAS` e **fluxo de caixa** (que não lê mais `purchases.totalAmount` — a compra sai do caixa pela `paidDate` da conta). Filtro: `SO_OPERACIONAIS` / `ORIGENS_DE_COMPRA` em `despesas.service.ts`.
 - Conta de compra: valor/descrição/fornecedor travados, não exclui, não duplica. Compras antigas ganharam a conta no backfill da migration `20261016120000_estoque_unificado_compra_despesa` (PAGA na data da compra; sem o frete se ele já tinha despesa própria).
 
@@ -235,7 +247,7 @@ Uma tela com duas abas (Radix Tabs, aba na URL: `?aba=embalagens`). Quem tem só
 
 **Caixas plásticas** — movimentos: ENTRADA, SAÍDA, RETORNO, QUEBRA. Saldos derivados (vazias, com clientes, perdidas). Não deixar saída > vazias nem retorno > com clientes.
 
-**Embalagens** — tipos + vendas avulsas (papelão, sacaria etc.), estoque por tipo opcional. Componentes em `caixas-plasticas/_components/embalagens/`.
+**Embalagens** — tipos + vendas avulsas (papelão, sacaria etc.), estoque por tipo opcional. Componentes em `caixas-plasticas/_components/embalagens/`. A venda é receita: entra no faturamento e no lucro do Início (sem CMV — a embalagem comprada entra como conta).
 
 ### Higienização (módulo `higienizacao`)
 
@@ -245,10 +257,10 @@ Envio → devolução parcial → pagamento parcial. Status ENVIADO → DEVOLVID
 
 Preço do **boletim** da praça onde a empresa compra — referência de mercado, não preço do momento (o do momento é negociado no balcão e nenhuma central divulga). É o módulo com mais armadilhas do sistema; leia `docs/auditoria-2026-09-07.md` antes de mexer.
 
-**As quatro tabelas do boletim são GLOBAIS, sem `tenantId`** (`ceasa_centrals`, `ceasa_products`, `ceasa_quotes`, `ceasa_import_runs`): o preço da praça é o mesmo para todos que compram ali, e copiá-lo por empresa multiplicaria a importação por número de clientes. Elas seguem o molde de `rate_limits` — `prisma` cru, fora de `TENANT_MODELS`. Só `tenant_ceasa_links` e `tenant_ceasa_alertas` têm `tenantId`, e são a única superfície do módulo onde vazar dado entre clientes seria possível.
+**As quatro tabelas do boletim são GLOBAIS, sem `tenantId`** (`ceasa_centrals`, `ceasa_products`, `ceasa_quotes`, `ceasa_import_runs`): o preço da praça é o mesmo para todos que compram ali, e copiá-lo por empresa multiplicaria a importação por número de clientes. Elas seguem o molde de `rate_limits` — `prisma` cru, fora de `TENANT_MODELS`. Só `tenant_ceasa_links`, `tenant_ceasa_link_recusas`, `tenant_ceasa_alertas` e `tenant_boletins_enviados` têm `tenantId`, e são a única superfície do módulo onde vazar dado entre clientes seria possível.
 
 - **Importação:** adaptador por fonte (`src/lib/cotacoes/fontes/`, interface em `tipos.ts`, registro em `index.ts`). `buscar` faz I/O, `parse` é **puro** e testado contra fixture real. Três estados, não dois: ok / vazio (dia sem boletim, não alarma) / falha. Página sem o marcador esperado é **falha**, nunca vazio. Roda como sub-tarefa de `GET /api/cron/billing` (**13:30 BRT** — de manhã a praça ainda não publicou o boletim do dia).
-- **Vínculo** (`tenant_ceasa_links`): produto do cliente ↔ produto do boletim **+ embalagem** (`unit`, anulável = "qualquer"). Manual por desenho: "Tomate" ≠ "Tomate cereja" são preços diferentes. `sugerirVinculos` só ordena; escore 1 (nome idêntico) pode ser pré-marcado na tela, nunca gravado sozinho.
+- **Vínculo** (`tenant_ceasa_links`): produto do cliente ↔ produto do boletim **+ embalagem** (`unit`, anulável = "qualquer"). Manual por desenho: "Tomate" ≠ "Tomate cereja" são preços diferentes. `sugerirVinculos` só ordena. Nome **idêntico** (escore 1) é gravado sozinho por `autoVincularIdenticos` (ao abrir a tela e ao cadastrar produto, só com o módulo) — **exceto** produto cujo vínculo o dono removeu: `desvincular` grava `TenantCeasaLinkRecusa`, e vincular à mão a apaga. Sem a marca, a remoção não durava.
 - **Alertas** (`tenant_ceasa_alertas`): por produto **e embalagem**. Nunca criados automaticamente — ver Armadilhas.
 - **Telas:** `/cotacoes` (grade), `/cotacoes/comecar` (partida em 3 passos), `/cotacoes/vincular` (revisão em lote), `/cotacoes/produto/[id]` (histórico, comparativo, alerta), `/admin/cotacoes` (situação das praças + envio manual).
 - **Fora do módulo:** o boletim aparece como referência **somente-leitura** na Compra e no PDV, e no Início (cartão de interesse, estoque parado com preço em queda, "comprei acima do boletim"). Todas essas telas são de núcleo, então o gate é `isModuleEnabled(session.modules, "cotacoes")` no servidor, nunca só esconder.
@@ -280,7 +292,7 @@ Notícias que mexem no mercado de hortifruti (CEASAs, preços, clima, frete, saf
 
 ### Relatórios (`/relatorios`, `GET /api/reports/[type]/export`)
 
-Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`. Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos.
+Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`; os de módulo opcional (caixas, higienização, embalagens, papelão) pedem **também** o módulo dono (`modulosDoRelatorio`, conferido na página e na exportação). Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos.
 
 ### Atividades (removida)
 
@@ -311,7 +323,7 @@ Cadastro público é o outro caminho de aquisição (trial). Empresas do admin *
 
 - PWA: `src/app/manifest.ts`, `public/sw.js` (cache de assets), `pwa-register` em produção. Offline: `/offline` e `/consulta-offline` (snapshot no aparelho; limpar no logout e ao abrir `/login`).
 - O SW é registrado como `/sw.js?v=<build>` (`CEASAPRO_SW_VERSION` em `next.config.ts`: `VERCEL_DEPLOYMENT_ID` → SHA → horário do build). Endereço novo = SW novo a cada deploy, e o `activate` apaga os caches `ceasapro-*` de outros builds. O snapshot tem `schemaVersion` (`src/lib/pwa/snapshot.ts`): mudou o formato, suba a versão.
-- Push: `PushSubscription` por usuário/endpoint; cron `/api/cron/avisos`.
+- Push: `PushSubscription` por usuário/endpoint; cron `/api/cron/avisos`. Endpoint só de serviço de push conhecido (`ehServicoDePush`: FCM, Mozilla, WNS, Apple) — `https` qualquer virava SSRF pelo cron — e no máximo `MAX_INSCRICOES_POR_USUARIO` (10) por pessoa.
 - SEO: `src/app/sitemap.ts` e `src/app/robots.ts` (públicos no proxy). Sitemap lista só `/`, `/cadastro`, `/login`, `/termos`, `/privacidade`. Search Console: enviar o caminho `sitemap.xml`. Verificação: `metadata.verification.google` em `src/app/layout.tsx`.
 - Legal: `/termos`, `/privacidade`. Aceite gravado no tenant (`termsVersion`). Versão em `src/lib/legal.ts`.
 - `APP_URL` / `NEXT_PUBLIC_APP_URL`: origem de todo link absoluto (e-mail, MP, sitemap). Sem barra final. Resolução em `src/lib/app-url.ts`.
@@ -410,6 +422,9 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 - Páginas públicas estáticas quebram CSP (`force-dynamic`).
 - Dois `next dev` no Windows travam Prisma.
 - **Despesa de compra fora do lucro.** Toda compra gera `Expense` com `origem = COMPRA`. Qualquer soma nova de despesas que meça custo operacional (lucro, margem, Fixas/Variáveis) precisa filtrar `origem = 'MANUAL'`; quem mede dinheiro devido ou pago (contas a pagar, caixa) inclui tudo. Errar o lado conta a mercadoria duas vezes ou some com a dívida do fornecedor.
+- **Compra cancelada continua em `purchases`.** Toda soma ou "última compra" nova precisa de `cancelledAt IS NULL` (além de `deletedAt`), como a venda. Esquecer conta mercadoria de uma compra que não existiu — e o "último preço pago" passa a ser o preço digitado errado.
+- **Desfazer não apaga movimento.** Venda cancelada devolve com `AJUSTE` (`SALE_CANCELLED`); compra cancelada estorna com `AJUSTE` negativo (`PURCHASE_CANCELLED`), que `sqlCustoEstoque` reconhece pelo texto e tira do custo junto com a entrada. Trocar o `sourceType` sem `src/lib/estoque/origens.ts` faz o preço errado voltar à média em silêncio.
+- **"Sobrou no mês" aparece nas DUAS abas do Início.** `getSummary` com `parte = "geral"` também calcula tudo o que entra no lucro (CMV, contas, higienização, embalagem) — pular isso para economizar consulta fez o cartão mostrar o próprio "Vendi" como lucro.
 - **Foto de produto não sobe crua.** Celular gera 3–8 MB; Server Action aceita 1 MB e a Vercel 4,5 MB. Sempre `comprimirFoto` antes, e o servidor confere magic bytes (o bucket é público).
 - **Só 2 crons.** O plano Hobby da Vercel aceita dois agendamentos; um terceiro faz o **deploy** falhar, não o cron. É por isso que a importação de cotações e a coleta do CeasaNews pegam carona no cron de billing.
 - **Não criar alerta de cotação automaticamente.** `push-avisos.service.ts` manda o push diário sempre que existe QUALQUER aviso pendente. Alerta em cada produto vinculado transforma a notificação de "só quando há algo a tratar" em "todo dia, para sempre" — e quem desliga isso perde junto o aviso de fiado vencido.
@@ -435,6 +450,7 @@ Windows/PowerShell: **não** use `&&`. Use `;`. `prisma generate` dá EPERM se `
 | Cotações: o que já mordeu | [`auditoria-2026-09-07.md`](auditoria-2026-09-07.md) |
 | Auditoria E2E + pendências | [`auditoria-2026-09-23.md`](auditoria-2026-09-23.md) |
 | Auditoria de bugs dos módulos (2ª rodada) | [`auditoria-2026-09-30.md`](auditoria-2026-09-30.md) |
+| Auditoria de ponta a ponta + pendências (3ª rodada) | [`auditoria-2026-10-18.md`](auditoria-2026-10-18.md) |
 | Vercel + Neon | [`09-deploy-vercel.md`](09-deploy-vercel.md) |
 | PWA | [`10-pwa-evolucao.md`](10-pwa-evolucao.md) |
 | Next 16 (breaking) | `AGENTS.md` + `node_modules/next/dist/docs/` |

@@ -1,19 +1,22 @@
 import Link from "next/link";
 import { ChevronDown, Plus } from "lucide-react";
-import type { ComprasService } from "@/lib/services/compras.service";
-import { formatBRL, formatDate, formatQty } from "@/lib/format";
+import { ComprasService } from "@/lib/services/compras.service";
+import { formatBRL, formatDate, formatDateTime, formatQty } from "@/lib/format";
 import { SITUACAO_COMPRA_LABELS, situacaoDaCompra } from "@/lib/despesas/situacao-compra";
+import { cn } from "@/lib/cn";
 import { EmptyState } from "@/components/data/empty-state";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PagarCompraButton } from "./pagar-compra-button";
+import { CancelarCompraButton } from "./cancelar-compra-button";
 
 type Compra = Awaited<ReturnType<typeof ComprasService.list>>[number];
 
 /**
  * Aba "Compras" do Estoque: o histórico que antes vivia em `/compras`, agora
- * com a situação da conta de cada compra (paga, a pagar, vencida).
+ * com a situação da conta de cada compra (paga, a pagar, vencida). A compra
+ * cancelada continua aqui, riscada — como a venda cancelada no histórico.
  */
 export function ComprasLista({ compras }: { compras: Compra[] }) {
   if (compras.length === 0) {
@@ -38,14 +41,16 @@ export function ComprasLista({ compras }: { compras: Compra[] }) {
       {compras.map((c) => {
         const conta = c.expenses[0];
         const situacao = situacaoDaCompra(conta, agora);
+        const cancelada = c.cancelledAt !== null;
         return (
-          <Card key={c.id} className="overflow-hidden">
+          <Card key={c.id} className={cn("overflow-hidden", cancelada && "opacity-70")}>
             <details className="group">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 hover:bg-accent/40 [&::-webkit-details-marker]:hidden">
                 <div className="min-w-0">
                   <span className="flex flex-wrap items-center gap-2">
                     <span className="font-medium">{c.supplier?.name ?? "Sem fornecedor"}</span>
-                    {situacao !== "SEM_CONTA" && (
+                    {cancelada && <Badge variant="destructive">Cancelada</Badge>}
+                    {!cancelada && situacao !== "SEM_CONTA" && (
                       <Badge
                         variant={
                           situacao === "PAGA"
@@ -68,7 +73,9 @@ export function ComprasLista({ compras }: { compras: Compra[] }) {
                   </span>
                 </div>
                 <div className="flex shrink-0 items-center gap-2">
-                  <span className="font-semibold tabular-nums">{formatBRL(c.totalAmount)}</span>
+                  <span className={cn("font-semibold tabular-nums", cancelada && "line-through")}>
+                    {formatBRL(c.totalAmount)}
+                  </span>
                   <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
                 </div>
               </summary>
@@ -95,12 +102,24 @@ export function ComprasLista({ compras }: { compras: Compra[] }) {
                     O frete de {formatBRL(c.freight)} já está rateado no custo de cada produto.
                   </p>
                 )}
-                {conta && (
+                {cancelada && c.cancelledAt && (
+                  <p className="mt-2 text-xs text-muted-foreground">
+                    Cancelada em {formatDateTime(c.cancelledAt)}
+                    {c.cancelledReason ? ` — ${c.cancelledReason}` : ""}. Não entra em compras,
+                    estoque, custo nem contas a pagar.
+                  </p>
+                )}
+                {!cancelada && (conta || ComprasService.podeCancelar(c, agora)) && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
-                    {conta.status === "PENDENTE" && <PagarCompraButton despesaId={conta.id} />}
-                    <Button asChild size="sm" variant="outline">
-                      <Link href={`/despesas/${conta.id}`}>Ver a conta</Link>
-                    </Button>
+                    {conta?.status === "PENDENTE" && <PagarCompraButton despesaId={conta.id} />}
+                    {conta && (
+                      <Button asChild size="sm" variant="outline">
+                        <Link href={`/despesas/${conta.id}`}>Ver a conta</Link>
+                      </Button>
+                    )}
+                    {ComprasService.podeCancelar(c, agora) && (
+                      <CancelarCompraButton id={c.id} total={formatBRL(c.totalAmount)} />
+                    )}
                   </div>
                 )}
               </div>

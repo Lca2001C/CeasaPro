@@ -82,6 +82,7 @@ export function CancelarVendaButton({
 
         <ul className="list-disc space-y-1 pl-5 text-sm text-muted-foreground">
           <li>a mercadoria volta para o estoque;</li>
+          <li>o que foi pago nela sai do fluxo de caixa (devolva ao cliente);</li>
           {caixas > 0 && <li>as {caixas} caixa(s) plástica(s) voltam para as limpas;</li>}
           {temFiado && <li>a conta gerada no fiado é removida;</li>}
           <li>fica registrado na auditoria quem cancelou e por quê.</li>

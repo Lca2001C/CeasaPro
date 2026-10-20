@@ -79,6 +79,7 @@ export async function cleanupTenants(ids: string[]) {
   // Antes dos produtos: o vínculo aponta para `products`.
   await prisma.tenantCeasaAlerta.deleteMany({ where });
   await prisma.tenantCeasaLink.deleteMany({ where });
+  await prisma.tenantCeasaLinkRecusa.deleteMany({ where });
   // O envio do cliente aponta para `ceasa_centrals`, que cada teste de cotações
   // limpa por conta própria — então ele sai antes, para a central poder ir.
   await prisma.tenantBoletimEnviado.deleteMany({ where });

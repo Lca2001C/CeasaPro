@@ -297,3 +297,31 @@ export function computeStatus(
   if (now <= graceEnd) return "VENCIDO";
   return "SUSPENSO";
 }
+
+/**
+ * Onde começa o período que um pagamento aprovado compra.
+ *
+ * - Renovação adiantada (o período ainda corre): no vencimento atual.
+ * - Paga DENTRO da tolerância (status VENCIDO, com acesso): também no
+ *   vencimento. Recomeçar na data do pagamento dava os dias de tolerância de
+ *   graça a cada ciclo — vence 01/10, paga 06/10, próximo vencimento 06/11 em
+ *   vez de 01/11, todo mês.
+ * - Primeiro pagamento, ou depois de ficar SEM acesso (tolerância esgotada,
+ *   estorno, cancelamento): hoje. Os dias bloqueados não são cobrados.
+ */
+export function inicioDoPeriodoPago(
+  sub: {
+    activatedAt: Date | null;
+    currentPeriodEnd: Date;
+    graceDays: number;
+    statusSource: StatusSource;
+    cancelledAt: Date | null;
+  },
+  now: Date = new Date(),
+): Date {
+  if (sub.currentPeriodEnd > now) return new Date(sub.currentPeriodEnd);
+  if (!sub.activatedAt || sub.statusSource === "MANUAL" || sub.cancelledAt) return now;
+  const graceEnd = new Date(sub.currentPeriodEnd);
+  graceEnd.setDate(graceEnd.getDate() + sub.graceDays);
+  return now <= graceEnd ? new Date(sub.currentPeriodEnd) : now;
+}

@@ -5,7 +5,6 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { EstoqueService, custoMedioPonderado } from "@/lib/services/estoque.service";
 import { ComprasService } from "@/lib/services/compras.service";
 import { VendasService } from "@/lib/services/vendas.service";
-import { ProdutosService } from "@/lib/services/produtos.service";
 import { isoDateTz } from "@/lib/tz";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
 
@@ -128,7 +127,10 @@ describe("valor de estoque não conta produto excluído (regressão)", () => {
     const antes = Number(await EstoqueService.getTotalValue(tenantId));
     expect(antes).toBe(200);
 
-    await ProdutosService.remove(outro.id, ctx);
+    // Excluído com saldo — o que só existe em dado antigo: hoje
+    // `ProdutosService.remove` exige o estoque zerado. A leitura continua
+    // tendo de ignorá-lo.
+    await prisma.product.update({ where: { id: outro.id }, data: { deletedAt: new Date() } });
 
     // `getPositions` sempre filtrou produto excluído; `getTotalValue` não. Um
     // produto de R$ 100 sumia da tela de Estoque e continuava no painel.
@@ -341,8 +343,27 @@ describe("custo médio é do estoque ATUAL, não do histórico inteiro (regress�
     // 60 a 50 + 40 a 80 → 62
     expect(Number(await custoAtual()).toFixed(2)).toBe("62.00");
     await VendasService.cancelarVenda({ id: venda.id, motivo: "teste" }, ctx);
-    // + 40 a 50 (custo da venda) → (60×50 + 40×80 + 40×50) / 140 = 58,5714
+    // + 40 a 50 (custo da venda) → (60×50 + 40×80 + 40×50) / 140 = 58,5714.
+    // Pela média da hora (62) o estoque valeria R$ 480 a mais do que custou.
     expect(Number(await custoAtual()).toFixed(4)).toBe("58.5714");
+    expect((await posicao()).value.toFixed(2)).toBe("8200.00");
+  });
+
+  it("venda que zerou o produto, compra nova e cancelamento: o estoque vale o que custou", async () => {
+    // 10 a R$ 10 voltam e 10 a R$ 20 estão no box: R$ 300, média R$ 15.
+    await comprar(10, 10);
+    const venda = await vender(10, 30);
+    await comprar(10, 20);
+    await VendasService.cancelarVenda({ id: venda.id }, ctx);
+    expect(Number(await custoAtual()).toFixed(2)).toBe("15.00");
+    expect((await posicao()).value.toFixed(2)).toBe("300.00");
+  });
+
+  it("sem saldo na hora do cancelamento, a devolução vale o custo gravado na venda", async () => {
+    await comprar(10, 10);
+    const venda = await vender(10, 30);
+    await VendasService.cancelarVenda({ id: venda.id }, ctx);
+    expect(Number(await custoAtual()).toFixed(2)).toBe("10.00");
   });
 });
 

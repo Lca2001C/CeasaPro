@@ -87,6 +87,9 @@ export const AREAS: AreaGuia[] = [
       "Cadastre nome e telefone; o resto é opcional.",
       "Na tela do fornecedor você vê o histórico de compras dele.",
     ],
+    atencao:
+      "Fornecedor com conta a pagar não pode ser excluído — a dívida ficaria sem nome. " +
+      "Pague antes, ou desative o fornecedor para tirá-lo das compras.",
   },
   {
     titulo: "Vendas (histórico)",
@@ -95,6 +98,8 @@ export const AREAS: AreaGuia[] = [
     comoUsar: [
       "Use para conferir o movimento do dia ou achar uma venda específica.",
       "Para vender, use a frente de caixa — esta tela é só consulta.",
+      "Errou uma venda? Abra a venda e toque em Cancelar venda, até 24 h depois de " +
+        "registrar. Ela fica no histórico marcada, sai dos totais e a mercadoria volta.",
     ],
   },
   {
@@ -108,10 +113,10 @@ export const AREAS: AreaGuia[] = [
       "Quando o pago alcança o total, a conta é marcada como quitada.",
     ],
     atencao:
-      "Conta que já tem pagamento registrado NÃO pode ser excluída — apagar sumiria " +
-      "com dinheiro que entrou no caixa. Se o valor está errado, acerte com o cliente " +
-      "e registre. Sem nenhum pagamento, excluir desfaz a venda inteira: ela sai do " +
-      "faturamento e a mercadoria volta para o estoque.",
+      "Lançou um pagamento errado? Na conta, toque em Estornar ao lado dele, até 24 h " +
+      "depois de lançar: o valor volta para o saldo do cliente e sai do caixa. Para " +
+      "desfazer o fiado inteiro, toque em Cancelar venda (também até 24 h, e sem " +
+      "pagamento na conta): a venda sai do faturamento e a mercadoria volta para o estoque.",
   },
   {
     titulo: "Estoque (produtos e compras)",
@@ -124,15 +129,18 @@ export const AREAS: AreaGuia[] = [
         "de estoque e foto (câmera, galeria ou banco de fotos).",
       "Registrar compra: data, fornecedor, itens, frete e se pagou agora ou vai pagar " +
         "depois. O estoque sobe na hora.",
-      "A aba Compras mostra o histórico e o que ainda está a pagar.",
+      "A aba Compras mostra o histórico e o que ainda está a pagar. Compra lançada " +
+        "errada se cancela ali mesmo, até 24 h depois, desde que os produtos dela ainda " +
+        "não tenham sido vendidos nem baixados — e depois é só lançar a certa.",
       "Use Ajuste para registrar quebra, perda, doação ou uma correção de contagem.",
     ],
     atencao:
       "O saldo não é um número que se digita: é a soma de todas as entradas e saídas. " +
       "Para corrigir uma diferença, lance um Ajuste. O frete da compra é dividido entre " +
       "os itens conforme o valor de cada um, então o custo de cada caixa já vem com o " +
-      "frete embutido. E produto com compra ou venda no histórico não é apagado de " +
-      "verdade: sai das listas, para os relatórios antigos não mudarem.",
+      "frete embutido. Produto só pode ser excluído com o estoque zerado (dê baixa no " +
+      "Ajuste antes), e não é apagado de verdade: sai das listas, para os relatórios " +
+      "antigos não mudarem.",
   },
   {
     titulo: "Despesas",
@@ -260,9 +268,9 @@ export const DUVIDAS: Duvida[] = [
   {
     pergunta: "Errei uma venda no fiado. Como desfaço?",
     resposta:
-      "Se a conta ainda não tem nenhum pagamento, abra o lançamento e exclua: o sistema " +
-      "desfaz a venda inteira e devolve a mercadoria ao estoque. Se já tem pagamento, " +
-      "não é possível excluir — o caminho é acertar o valor com o cliente e registrar.",
+      "Abra a conta e toque em Cancelar venda — vale até 24 h depois de lançar. Se a " +
+      "conta já tem pagamento, estorne o pagamento primeiro (botão Estornar ao lado " +
+      "dele). Depois de 24 h a venda já está no fechamento do dia e não é desfeita.",
   },
   {
     pergunta: "Troquei de plano e o menu continua igual.",

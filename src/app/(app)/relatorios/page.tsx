@@ -3,7 +3,12 @@ import { getSession } from "@/lib/auth/session";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { PageHeader } from "@/components/data/page-header";
 import { ListaDeAcoes, LinhaDeAcao } from "@/components/ui/linha-de-acao";
-import { REPORT_GROUPS, REPORT_LABELS, isAdvancedReport } from "@/lib/reports/report.types";
+import {
+  MODULO_DO_RELATORIO,
+  REPORT_GROUPS,
+  REPORT_LABELS,
+  isAdvancedReport,
+} from "@/lib/reports/report.types";
 
 export const dynamic = "force-dynamic";
 
@@ -26,8 +31,14 @@ export default async function RelatoriosPage() {
           // pago, que aparece com a linha de upsell (cadeado) em vez de
           // seção vazia. É o que sustenta a decisão registrada em
           // `relatorios-grupos.test.ts` de permitir grupo 100% pago.
-          const disponiveis = grupo.relatorios.filter((t) => !isAdvancedReport(t) || avancadosOn);
-          const bloqueados = grupo.relatorios.length - disponiveis.length;
+          // Relatório de módulo que a empresa não tem nem aparece: não é
+          // upsell do pacote de relatórios, é dado que ela não tem.
+          const doPlano = grupo.relatorios.filter((t) => {
+            const dono = MODULO_DO_RELATORIO[t];
+            return !dono || isModuleEnabled(session?.modules, dono);
+          });
+          const disponiveis = doPlano.filter((t) => !isAdvancedReport(t) || avancadosOn);
+          const bloqueados = doPlano.length - disponiveis.length;
           if (disponiveis.length === 0 && bloqueados === 0) return null;
 
           return (
@@ -47,7 +58,7 @@ export default async function RelatoriosPage() {
                   icone={<Lock />}
                   tom="neutro"
                   titulo={`+ ${bloqueados} relatório(s) em outro plano`}
-                  descricao={grupo.relatorios
+                  descricao={doPlano
                     .filter((t) => isAdvancedReport(t))
                     .map((t) => REPORT_LABELS[t])
                     .join(" · ")}

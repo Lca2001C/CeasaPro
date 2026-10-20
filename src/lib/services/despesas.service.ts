@@ -130,6 +130,16 @@ export const ORIGENS_DE_COMPRA: readonly ExpenseOrigem[] = ["COMPRA", "FRETE_COM
 /** Filtro das despesas operacionais (as que entram no lucro). */
 export const SO_OPERACIONAIS = { origem: "MANUAL" } satisfies Prisma.ExpenseWhereInput;
 
+/**
+ * A conta é do mês do VENCIMENTO; sem vencimento, do mês em que foi lançada —
+ * o `COALESCE("dueDate","createdAt")` do Início e do relatório, no Prisma.
+ * Filtrar só por `dueDate` deixava a despesa sem vencimento fora de
+ * Fixas/Variáveis em /despesas enquanto o Início a descontava do lucro.
+ */
+function pelaDataDaConta(janela: { gte: Date; lte: Date }): Prisma.ExpenseWhereInput {
+  return { OR: [{ dueDate: janela }, { dueDate: null, createdAt: janela }] };
+}
+
 /** Teto do atalho "vence nos próximos N dias" vindo da URL. */
 export const PROXIMOS_DIAS_MAX = 90;
 
@@ -709,7 +719,8 @@ export const DespesasService = {
 
     const noMes = { gte: mes.inicio, lte: mes.fim };
 
-    const [aPagar, pagas, porTipo, porTipoAnterior, vencidas, vendas, hig] = await Promise.all([
+    const [aPagar, pagas, porTipo, porTipoAnterior, vencidas, vendas, hig, embalagens] =
+      await Promise.all([
       db.expense.aggregate({
         _sum: { amount: true },
         _count: { _all: true },
@@ -722,15 +733,20 @@ export const DespesasService = {
       }),
       // Fixas/Variáveis e o "% do que você vendeu" medem custo OPERACIONAL:
       // a compra já está no CMV e, aqui, viraria "Variáveis" do mês inteiro.
+      // Data = vencimento, ou o lançamento quando não há vencimento — a mesma
+      // regra (`COALESCE("dueDate","createdAt")`) do Início e do relatório.
       db.expense.groupBy({
         by: ["type"],
         _sum: { amount: true },
-        where: { ...SO_OPERACIONAIS, dueDate: noMes },
+        where: { ...SO_OPERACIONAIS, ...pelaDataDaConta(noMes) },
       }),
       db.expense.groupBy({
         by: ["type"],
         _sum: { amount: true },
-        where: { ...SO_OPERACIONAIS, dueDate: { gte: anterior.inicio, lte: anterior.fim } },
+        where: {
+          ...SO_OPERACIONAIS,
+          ...pelaDataDaConta({ gte: anterior.inicio, lte: anterior.fim }),
+        },
       }),
       db.expense.aggregate({
         _sum: { amount: true },
@@ -744,6 +760,11 @@ export const DespesasService = {
       isModuleEnabled(modules, "higienizacao")
         ? resumoDaHigienizacao(tenantId, mes, hoje, anterior)
         : Promise.resolve(HIGIENIZACAO_ZERADA),
+      // A venda avulsa de embalagem também é "o que você vendeu" — a mesma
+      // receita que o lucro do Início soma (`FinancialCalc.faturamento`).
+      isModuleEnabled(modules, "embalagens")
+        ? db.packagingSale.aggregate({ _sum: { totalAmount: true }, where: { saleDate: noMes } })
+        : Promise.resolve({ _sum: { totalAmount: null } }),
     ]);
 
     const doMes = FinancialCalc.totaisDespesas(
@@ -765,7 +786,10 @@ export const DespesasService = {
     const vencidasValor = money(toDecimal(vencidas._sum.amount ?? 0).plus(hig.vencido));
     const vencidasCount = vencidas._count._all + hig.vencidoCount;
 
-    const faturamento = money(toDecimal(vendas._sum.totalAmount ?? 0));
+    const faturamento = FinancialCalc.faturamento(
+      vendas._sum.totalAmount ?? 0,
+      embalagens._sum.totalAmount ?? 0,
+    );
     const geralDoMes = money(doMes.fixas.plus(variaveis));
 
     return {

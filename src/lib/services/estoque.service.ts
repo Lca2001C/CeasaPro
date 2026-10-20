@@ -5,6 +5,7 @@ import { audit } from "@/lib/audit";
 import { toDecimal, money, add } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
+import { ORIGEM_COMPRA, ORIGEM_COMPRA_CANCELADA } from "@/lib/estoque/origens";
 import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { AjusteEstoqueInput } from "@/lib/validations/estoque";
 import type { TenantCtx } from "@/lib/http/with-action";
@@ -87,6 +88,16 @@ export interface StockPosition {
  * e^−40 é zerado (não muda a 4ª casa e evita `EXP` com milhares de dígitos).
  * `tests/integration/estoque-custo-ajuste.test.ts` confere o SQL contra um
  * repasse linha a linha em TypeScript.
+ *
+ * ## Compra cancelada
+ *
+ * A ENTRADA da compra cancelada e o estorno dela (`ORIGEM_COMPRA_CANCELADA`)
+ * ficam no livro-razão — o histórico do produto mostra os dois — mas saem
+ * JUNTOS do repasse: a compra digitada errada não existiu, e o custo dela não
+ * pode continuar pesando na média. Um estorno comum (saída pela média) tiraria
+ * a quantidade e deixaria o preço errado misturado no custo de toda venda
+ * seguinte. Como o par soma zero, o saldo das consultas simples (que somam o
+ * livro-razão inteiro) fecha com o daqui.
  */
 function sqlCustoEstoque(filtrarProdutos: boolean): string {
   return `
@@ -96,8 +107,15 @@ function sqlCustoEstoque(filtrarProdutos: boolean): string {
            "unitCost" AS c,
            ROW_NUMBER() OVER w AS seq,
            SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END) OVER w AS saldo
-    FROM stock_movements
-    WHERE "tenantId" = $1${filtrarProdutos ? ` AND "productId" = ANY($2::text[])` : ""}
+    FROM stock_movements m
+    WHERE m."tenantId" = $1${filtrarProdutos ? ` AND m."productId" = ANY($2::text[])` : ""}
+      AND NOT EXISTS (
+        SELECT 1 FROM stock_movements estorno
+        WHERE m."sourceType" IN ('${ORIGEM_COMPRA}', '${ORIGEM_COMPRA_CANCELADA}')
+          AND estorno."tenantId" = m."tenantId"
+          AND estorno."sourceType" = '${ORIGEM_COMPRA_CANCELADA}'
+          AND estorno."sourceId" = m."sourceId"
+      )
     WINDOW w AS (PARTITION BY "productId" ORDER BY "createdAt", id)
   ),
   marcado AS (
@@ -228,7 +246,7 @@ function retiraDoEstoque(input: AjusteEstoqueInput): boolean {
 }
 
 /** Saldo do produto lido DENTRO da transação, depois do lock. */
-async function saldoNaTransacao(
+export async function saldoNaTransacao(
   tx: { $queryRawUnsafe<T = unknown>(query: string, ...values: unknown[]): Promise<T> },
   tenantId: string,
   productId: string,

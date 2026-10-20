@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { computeStatus, accessDecision } from "@/lib/billing/status";
+import { computeStatus, accessDecision, inicioDoPeriodoPago } from "@/lib/billing/status";
 import type { SubscriptionStatus, StatusSource } from "@prisma/client";
 
 const NOW = new Date("2026-07-15T12:00:00Z");
@@ -111,5 +111,37 @@ describe("accessDecision — o que cada status permite", () => {
   it("empresa suspensa/bloqueada pelo super-admin → blocked, mesmo com assinatura ATIVA", () => {
     expect(accessDecision("SUSPENDED", "ATIVO")).toBe("blocked");
     expect(accessDecision("BLOCKED", "ATIVO")).toBe("blocked");
+  });
+});
+
+describe("inicioDoPeriodoPago — onde começa o mês comprado", () => {
+  const vence = new Date("2026-10-01T03:00:00Z");
+  const base = {
+    activatedAt: new Date("2026-08-01T03:00:00Z"),
+    currentPeriodEnd: vence,
+    graceDays: 5,
+    statusSource: "AUTO" as StatusSource,
+    cancelledAt: null,
+  };
+
+  it("renovação adiantada: no vencimento", () => {
+    expect(inicioDoPeriodoPago(base, new Date("2026-09-29T12:00:00Z"))).toEqual(vence);
+  });
+
+  it("paga DENTRO da tolerância: no vencimento — a tolerância não sai de graça", () => {
+    // Recomeçar no dia 06 daria 5 dias grátis a cada mês.
+    expect(inicioDoPeriodoPago(base, new Date("2026-10-05T12:00:00Z"))).toEqual(vence);
+  });
+
+  it("paga depois de ficar sem acesso: hoje — os dias bloqueados não são cobrados", () => {
+    const hoje = new Date("2026-10-20T12:00:00Z");
+    expect(inicioDoPeriodoPago(base, hoje)).toEqual(hoje);
+  });
+
+  it("primeiro pagamento, estorno ou cancelamento: hoje", () => {
+    const hoje = new Date("2026-10-03T12:00:00Z");
+    expect(inicioDoPeriodoPago({ ...base, activatedAt: null }, hoje)).toEqual(hoje);
+    expect(inicioDoPeriodoPago({ ...base, statusSource: "MANUAL" }, hoje)).toEqual(hoje);
+    expect(inicioDoPeriodoPago({ ...base, cancelledAt: new Date("2026-09-10") }, hoje)).toEqual(hoje);
   });
 });

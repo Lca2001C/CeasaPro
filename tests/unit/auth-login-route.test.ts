@@ -170,6 +170,17 @@ describe("os dois limites de tentativa", () => {
     expect(verifyPassword).not.toHaveBeenCalled();
   });
 
+  it("tentativa barrada pelo IP NÃO conta no e-mail — um IP só não tranca a conta de ninguém", async () => {
+    // Contando tudo, 21 tentativas de UM IP a cada 15 min trancavam a conta
+    // da vítima para sempre (a recusa vem antes da senha).
+    rateLimitDb.mockImplementation(async (chave: string) =>
+      chave === "login:1.2.3.4:dono@box.com" ? { ok: false, retryAfterMs: 1000 } : { ok: true },
+    );
+    expect((await entrar()).status).toBe(429);
+    const chaves = rateLimitDb.mock.calls.map((c) => c[0]);
+    expect(chaves).not.toContain("login:email:dono@box.com");
+  });
+
   it("basta UM dos dois estourar", async () => {
     rateLimitDb
       .mockResolvedValueOnce({ ok: true })

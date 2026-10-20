@@ -76,7 +76,7 @@ export const PainelFinanceiroService = {
       prisma.$queryRaw<Linha[]>`
         SELECT ${mesDe('"purchaseDate"')} AS mes, SUM("totalAmount") AS total
         FROM purchases
-        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+        WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL
           AND "purchaseDate" >= ${inicioDaSerie} AND "purchaseDate" <= ${ateAgora}
         GROUP BY 1`,
       prisma.$queryRaw<Linha[]>`

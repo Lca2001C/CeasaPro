@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowLeft, Ban, ChevronRight, Container, Package } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { VendasService, HORAS_PARA_CANCELAR } from "@/lib/services/vendas.service";
+import { dentroDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
 import { formatBRL, formatDate, formatDateTime, formatPhone, formatQty } from "@/lib/format";
 import {
   CRATE_MOVEMENT_LABELS,
@@ -280,9 +281,21 @@ export default async function VendaDetalhePage({
         ) : (
           !cancelada && (
             <p className="px-1 text-sm text-muted-foreground">
-              {venda.creditAccount && venda.creditAccount.payments.length > 0
-                ? "Esta venda fiada já teve recebimento. Para desfazê-la, estorne o pagamento no fiado primeiro."
-                : `O cancelamento é permitido até ${HORAS_PARA_CANCELAR}h depois da venda. Para corrigir esta, faça um ajuste de estoque.`}
+              {venda.creditAccount &&
+              venda.creditAccount.payments.length > 0 &&
+              dentroDoPrazoDeDesfazer(venda.createdAt) ? (
+                <>
+                  Esta venda fiada tem recebimento lançado. Para cancelá-la, estorne o recebimento
+                  na{" "}
+                  <Link href={`/fiado/${venda.creditAccount.id}`} className="text-primary underline">
+                    tela do fiado
+                  </Link>{" "}
+                  (até {HORAS_PARA_CANCELAR} h depois de lançado) e volte aqui.
+                </>
+              ) : (
+                `Passou o prazo de ${HORAS_PARA_CANCELAR} h para cancelar: esta venda já está no ` +
+                "fechamento do dia em que foi feita e continua contando nele."
+              )}
             </p>
           )
         )}

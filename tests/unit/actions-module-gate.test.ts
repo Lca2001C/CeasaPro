@@ -35,9 +35,9 @@ const ARQUIVOS_POR_MODULO: Record<string, OptionalModuleKey> = {
  *
  * A lista é declarada à mão, com o motivo escrito, no mesmo molde do
  * `PLATAFORMA` de `models-tenant-cobertura.test.ts`. Heurística automática não
- * serve aqui: `excluirFiado` também menciona caixas — ela APAGA movimentos ao
- * desfazer a venda — e gateá-la seria errado, porque excluir um fiado é núcleo
- * e apagar o que não existe é inócuo. A diferença entre as duas é intenção, e
+ * serve aqui: `cancelarVendaDoFiado` também mexe em caixas — estorna as que a
+ * venda levou — e gateá-la seria errado, porque cancelar uma venda é núcleo e
+ * a venda só leva caixa com o módulo. A diferença entre as duas é intenção, e
  * intenção não se lê por regex.
  */
 const ACOES_DE_NUCLEO_COM_MODULO: {

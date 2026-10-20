@@ -1,10 +1,12 @@
 import { z } from "zod";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 
 export const higienizacaoSchema = z.object({
   cleanerName: z.string().trim().min(1, "Informe o higienizador").max(120),
   sentDate: z.string().min(1, "Informe a data de envio"),
-  sentQty: z.number().int().positive("Quantidade inválida"),
-  unitPrice: z.number().nonnegative("Valor inválido"),
+  sentQty: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
+  unitPrice: z.number().nonnegative("Valor inválido").refine(temAteDuasCasas, MSG_DUAS_CASAS),
   notes: z.string().trim().max(300).nullable().optional(),
 });
 export type HigienizacaoInput = z.infer<typeof higienizacaoSchema>;
@@ -19,7 +21,7 @@ export type HigienizacaoStatus = z.infer<typeof higienizacaoStatusEnum>;
 
 export const higienizacaoDevolucaoSchema = z.object({
   id: z.string().min(1),
-  quantity: z.number().int().positive("Quantidade inválida"),
+  quantity: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
   returnedDate: z.string().min(1, "Informe a data"),
 });
 export type HigienizacaoDevolucaoInput = z.infer<typeof higienizacaoDevolucaoSchema>;
@@ -27,7 +29,7 @@ export type HigienizacaoDevolucaoInput = z.infer<typeof higienizacaoDevolucaoSch
 /** Caixas que o higienizador perdeu ou quebrou — fecham o lote sem voltar. */
 export const higienizacaoPerdaSchema = z.object({
   id: z.string().min(1),
-  quantity: z.number().int().positive("Quantidade inválida"),
+  quantity: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
   movementDate: z.string().min(1, "Informe a data"),
   notes: z.string().trim().max(300).nullable().optional(),
 });
@@ -35,7 +37,7 @@ export type HigienizacaoPerdaInput = z.infer<typeof higienizacaoPerdaSchema>;
 
 export const higienizacaoPagamentoSchema = z.object({
   id: z.string().min(1),
-  amount: z.number().positive("Informe o valor"),
+  amount: z.number().positive("Informe o valor").refine(temAteDuasCasas, MSG_DUAS_CASAS),
   paidDate: z.string().min(1, "Informe a data"),
 });
 export type HigienizacaoPagamentoInput = z.infer<typeof higienizacaoPagamentoSchema>;

@@ -21,7 +21,10 @@ import { isoDateTz } from "@/lib/tz";
 import { PagamentoForm } from "./_components/pagamento-form";
 import { DevolucaoCaixasForm } from "./_components/devolucao-caixas-form";
 import { FiadoEditarForm } from "./_components/fiado-editar-form";
-import { ExcluirFiado } from "./_components/excluir-fiado";
+import { CancelarVendaDoFiado } from "./_components/cancelar-venda-fiado";
+import { EstornarRecebimentoButton } from "./_components/estornar-recebimento-button";
+import { Badge } from "@/components/ui/badge";
+import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
 
 export const dynamic = "force-dynamic";
 
@@ -216,25 +219,39 @@ export default async function FiadoDetailPage({
 
         <section>
           <h2 className="mb-2 px-1 text-sm font-semibold text-muted-foreground">
-            Pagamentos ({conta.payments.length})
+            Pagamentos ({conta.payments.filter((p) => !p.reversedAt).length})
           </h2>
           {conta.payments.length === 0 ? (
             <Card className="p-4 text-sm text-muted-foreground">Nenhum pagamento ainda.</Card>
           ) : (
             <Card className="divide-y divide-border/70 overflow-hidden">
               {conta.payments.map((p) => (
-                <div key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div key={p.id} className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
                   <div className="min-w-0">
-                    <span className="block font-semibold tabular-nums">
+                    <span className="flex flex-wrap items-center gap-2 font-semibold tabular-nums">
                       {formatDateTime(p.paidAt)}
+                      {p.reversedAt && <Badge variant="destructive">Estornado</Badge>}
                     </span>
                     <span className="block text-sm text-muted-foreground">
                       {PAYMENT_METHOD_LABELS[p.method]}
+                      {p.reversedAt &&
+                        ` · estornado em ${formatDateTime(p.reversedAt)}` +
+                          (p.reversedReason ? ` — ${p.reversedReason}` : "")}
                     </span>
                   </div>
-                  <span className="shrink-0 font-bold tabular-nums text-success">
-                    {formatBRL(p.amount)}
-                  </span>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span
+                      className={cn(
+                        "font-bold tabular-nums",
+                        p.reversedAt ? "text-muted-foreground line-through" : "text-success",
+                      )}
+                    >
+                      {formatBRL(p.amount)}
+                    </span>
+                    {p.podeEstornar && (
+                      <EstornarRecebimentoButton paymentId={p.id} valor={formatBRL(p.amount)} />
+                    )}
+                  </div>
                 </div>
               ))}
             </Card>
@@ -259,13 +276,23 @@ export default async function FiadoDetailPage({
           </CardContent>
         </Card>
 
-        <ExcluirFiado
-          accountId={conta.id}
-          customerName={conta.customerName}
-          temPagamento={conta.payments.length > 0}
-          itensCount={conta.itens.length}
-          caixasDaVenda={conta.plasticCrateQty}
-        />
+        {conta.podeCancelarVenda ? (
+          <CancelarVendaDoFiado
+            accountId={conta.id}
+            customerName={conta.customerName}
+            itensCount={conta.itens.length}
+            caixasDaVenda={conta.plasticCrateQty}
+            pagoNoBalcao={Number(conta.pagoNoBalcao) > 0 ? formatBRL(conta.pagoNoBalcao) : null}
+          />
+        ) : (
+          <p className="px-1 text-sm text-muted-foreground">
+            {conta.vendaNoPrazo && conta.temRecebimentoVivo
+              ? `Para cancelar esta venda, estorne antes os recebimentos (até ${HORAS_PARA_DESFAZER} h ` +
+                "depois de lançados)."
+              : `Passou o prazo de ${HORAS_PARA_DESFAZER} h para cancelar esta venda: ela já está no ` +
+                "fechamento do dia em que foi feita."}
+          </p>
+        )}
       </div>
     </div>
   );

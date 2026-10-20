@@ -16,6 +16,12 @@ import { ComprasService, type UltimaCompraDoProduto } from "./compras.service";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
 import { saldoECustoMedio } from "./estoque.service";
+import { ORIGEM_VENDA, ORIGEM_VENDA_CANCELADA } from "@/lib/estoque/origens";
+import {
+  HORAS_PARA_DESFAZER,
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+} from "@/lib/desfazer/prazo";
 import { addDaysTz, endOfDayTz, parseFormDateTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
 import { resolvePlasticCrateQty } from "@/lib/validations/venda";
 import {
@@ -43,14 +49,11 @@ export const VENDAS_POR_PAGINA = 50;
 export { resolvePlasticCrateQty };
 
 /**
- * Até quando uma venda pode ser cancelada.
- *
- * Cancelar devolve mercadoria ao estoque e desfaz caixas — mexer numa venda de
- * semanas atrás reescreveria fechamento de caixa e relatório já entregues ao
- * contador. O mesmo dia cobre o caso real (erro de digitação, cliente desistiu)
- * sem abrir essa porta.
+ * Até quando uma venda pode ser cancelada — a regra única de desfazer
+ * lançamento (`src/lib/desfazer/prazo.ts`), a mesma da compra e do
+ * recebimento de fiado.
  */
-export const HORAS_PARA_CANCELAR = 24;
+export const HORAS_PARA_CANCELAR = HORAS_PARA_DESFAZER;
 
 /**
  * Forma de pagamento "predominante" de uma venda mista.
@@ -67,6 +70,14 @@ export function formaPredominante(
   if (payments.length === 0) return fallback;
   if (payments.some((p) => p.method === "FIADO")) return "FIADO";
   return payments.reduce((maior, p) => (p.amount > maior.amount ? p : maior)).method;
+}
+
+/** Recusa por recebimento vivo no fiado — e o caminho para resolver. */
+function recebimentoNoFiado(): BusinessRuleError {
+  return new BusinessRuleError(
+    "Esta venda fiada tem recebimento lançado. Estorne o recebimento na tela do fiado " +
+      `(até ${HORAS_PARA_DESFAZER} h depois de lançado) e cancele a venda em seguida.`,
+  );
 }
 
 /** Nome do índice único que garante uma venda por chave de idempotência. */
@@ -376,7 +387,8 @@ export const VendasService = {
       where: { id },
       include: {
         items: { include: { product: true }, orderBy: { createdAt: "asc" } },
-        creditAccount: { include: { payments: true } },
+        // Recebimento estornado não conta: foi lançado errado e desfeito.
+        creditAccount: { include: { payments: { where: { reversedAt: null } } } },
         payments: { orderBy: { createdAt: "asc" } },
         crateMovements: { orderBy: { movementDate: "asc" } },
       },
@@ -384,7 +396,7 @@ export const VendasService = {
     if (!venda) throw new NotFoundError("Venda não encontrada");
 
     const movimentos = await db.stockMovement.findMany({
-      where: { sourceType: "SALE", sourceId: id },
+      where: { sourceType: ORIGEM_VENDA, sourceId: id },
       include: { product: { select: { name: true } } },
       orderBy: { movedAt: "asc" },
     });
@@ -399,15 +411,13 @@ export const VendasService = {
   /**
    * A venda ainda está na janela de cancelamento?
    *
-   * Fiado com pagamento recebido não cancela: o dinheiro já entrou, e desfazer
-   * a venda deixaria o recebimento órfão. Nesse caso o caminho é estornar o
-   * pagamento no fiado primeiro.
+   * Fiado com recebimento (não estornado) não cancela: o dinheiro já entrou, e
+   * desfazer a venda deixaria o recebimento órfão. O caminho é estornar o
+   * recebimento no fiado (`FiadoService.estornarPagamento`) e cancelar depois.
    *
-   * A janela conta do REGISTRO (`createdAt`), não de `saleDate`. No PDV os dois
-   * coincidem, mas o fiado manual grava `saleDate` como a meia-noite do dia
-   * escolhido: um fiado lançado às 20h tinha 4h de janela, um lançado com a
-   * data de ontem já nascia sem poder cancelar, e um com data futura ganhava
-   * janela até depois dela.
+   * A janela conta do REGISTRO (`createdAt`) — ver `dentroDoPrazoDeDesfazer`.
+   * `payments` aqui são só os recebimentos VIVOS (quem chama filtra
+   * `reversedAt: null`).
    */
   podeCancelar(
     venda: {
@@ -419,24 +429,25 @@ export const VendasService = {
   ): boolean {
     if (venda.cancelledAt) return false;
     if ((venda.creditAccount?.payments?.length ?? 0) > 0) return false;
-    const limite = venda.createdAt.getTime() + HORAS_PARA_CANCELAR * 3600_000;
-    return agora.getTime() <= limite;
+    return dentroDoPrazoDeDesfazer(venda.createdAt, agora);
   },
 
 
   /**
-   * Cancela uma venda registrada por engano.
+   * Cancela uma venda registrada por engano — à vista, fiada ou mista. É o
+   * ÚNICO caminho para desfazer venda: excluir o fiado também passa por aqui
+   * (`FiadoService.cancelarVendaDoFiado`), com o mesmo prazo e o mesmo
+   * resultado. A reversão é atômica e auditada:
    *
-   * Antes só existia saída pelo fiado (excluir a conta), e venda à vista errada
-   * obrigava a um ajuste manual de estoque — que ninguém faz na hora, com
-   * cliente na frente. Aqui a reversão é atômica e auditada:
-   *
-   *  1. marca a venda como cancelada (ela FICA na base, para auditoria);
-   *  2. devolve a mercadoria ao estoque com um `AJUSTE` — e não `ENTRADA`, de
-   *     propósito: `ENTRADA` alimenta a média de custo, e uma devolução por
-   *     cancelamento não é compra, distorceria o CMV das próximas vendas;
+   *  1. marca a venda como cancelada (ela FICA na base, para auditoria, e sai
+   *     de "Vendi", do CMV e do fluxo de caixa);
+   *  2. devolve a mercadoria ao estoque com um `AJUSTE` pelo custo com que ela
+   *     SAIU (`unitCostAtSale`) — é a mesma mercadoria, e esse é o custo que foi
+   *     pago por ela. Se outra compra entrou no meio, a média se recompõe com
+   *     os dois custos, como no estoque físico. Entrar pela média da hora daria
+   *     à mercadoria velha o preço da compra nova e inflaria o valor do estoque;
    *  3. estorna as caixas que saíram (voltam limpas: nunca saíram do box);
-   *  4. remove a conta de fiado gerada, se não houver recebimento nela.
+   *  4. remove a conta de fiado gerada, se não houver recebimento vivo nela.
    *
    * Fora da janela de {@link HORAS_PARA_CANCELAR} horas, recusa: cancelar venda
    * antiga reescreveria fechamento de caixa e relatório já entregues.
@@ -452,20 +463,20 @@ export const VendasService = {
     const db = getTenantPrisma(ctx.tenantId);
     const venda = await db.sale.findFirst({
       where: { id: input.id },
-      include: { items: true, creditAccount: { include: { payments: true } } },
+      include: {
+        items: true,
+        creditAccount: { include: { payments: { where: { reversedAt: null } } } },
+      },
     });
     if (!venda) throw new NotFoundError("Venda não encontrada");
     if (venda.cancelledAt) throw new BusinessRuleError("Esta venda já foi cancelada.");
-    if ((venda.creditAccount?.payments.length ?? 0) > 0) {
-      throw new BusinessRuleError(
-        "Esta venda fiada já teve recebimento. Estorne o pagamento no fiado antes de cancelar.",
-      );
+    // O prazo ANTES do recebimento: mandar estornar o recebimento de uma venda
+    // que já não pode ser cancelada tiraria do caixa um dinheiro real à toa.
+    if (!dentroDoPrazoDeDesfazer(venda.createdAt)) {
+      throw new BusinessRuleError(foraDoPrazoDeDesfazer("cancelar esta venda"));
     }
-    if (!this.podeCancelar(venda)) {
-      throw new BusinessRuleError(
-        `O cancelamento é permitido até ${HORAS_PARA_CANCELAR}h depois da venda. Para corrigir esta, faça um ajuste de estoque.`,
-      );
-    }
+    if ((venda.creditAccount?.payments.length ?? 0) > 0) throw recebimentoNoFiado();
+    const productIds = [...new Set(venda.items.map((it) => it.productId))].sort();
 
     // Quantas caixas voltam ao estoque é decidido DENTRO da transação (abaixo),
     // porque depende do saldo — e um retrato lido aqui fora outra operação já
@@ -494,6 +505,16 @@ export const VendasService = {
         throw new BusinessRuleError("Esta venda já foi cancelada.");
       }
 
+      // Trava os produtos, na ordem de toda escrita de estoque: o cancelamento
+      // de compra e a exclusão de produto decidem pelo que entrou no
+      // livro-razão, e precisam ver esta devolução ou esperar por ela.
+      await tx.$queryRaw`
+        SELECT id FROM products
+        WHERE "tenantId" = ${ctx.tenantId} AND id = ANY(${productIds}::text[])
+        ORDER BY id
+        FOR UPDATE
+      `;
+
       await tx.stockMovement.createMany({
         data: venda.items.map((it) => ({
           tenantId: ctx.tenantId,
@@ -502,7 +523,7 @@ export const VendasService = {
           quantity: it.quantity,
           unitCost: it.unitCostAtSale,
           reason: "Devolução por cancelamento de venda",
-          sourceType: "SALE_CANCELLED",
+          sourceType: ORIGEM_VENDA_CANCELADA,
           sourceId: venda.id,
         })),
       });
@@ -550,7 +571,7 @@ export const VendasService = {
       // pagamento que entrasse entre ela e aqui (outra tela aberta) era apagado
       // junto com a conta, e o `CreditPayment` ficava órfão, ainda somando no
       // fluxo de caixa. O filtro `paidAmount: 0` refaz a checagem de forma
-      // atômica na própria escrita — o mesmo padrão de `FiadoService.remove`.
+      // atômica na própria escrita.
       // Se não casar, a exceção desfaz a transação inteira: nem a venda fica
       // cancelada nem o estoque volta.
       if (venda.creditAccount) {
@@ -558,11 +579,7 @@ export const VendasService = {
           where: { id: venda.creditAccount.id, paidAmount: 0 },
           data: { deletedAt: new Date() },
         });
-        if (apagada.count !== 1) {
-          throw new BusinessRuleError(
-            "Esta venda fiada acabou de receber um pagamento. Estorne o pagamento no fiado antes de cancelar.",
-          );
-        }
+        if (apagada.count !== 1) throw recebimentoNoFiado();
       }
 
       await audit(
@@ -896,7 +913,7 @@ export const VendasService = {
           type: "SAIDA" as const,
           quantity: it.quantity,
           unitCost: it.unitCostAtSale,
-          sourceType: "SALE",
+          sourceType: ORIGEM_VENDA,
           sourceId: sale.id,
         })),
       });

@@ -3,6 +3,7 @@ import { DashboardService } from "@/lib/services/dashboard.service";
 import { AvisosService } from "@/lib/services/avisos.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { FiadoService } from "@/lib/services/fiado.service";
+import { ContasPagarService } from "@/lib/services/contas-pagar.service";
 import { PWA_SNAPSHOT_SCHEMA_VERSION, type PwaSnapshot } from "@/lib/pwa/snapshot";
 
 export const runtime = "nodejs";
@@ -39,15 +40,17 @@ export type { PwaSnapshot } from "@/lib/pwa/snapshot";
 
 export const GET = withTenantRoute({
   handler: async (_input, ctx): Promise<PwaSnapshot> => {
-    const [resumo, avisos, estoque, fiado] = await Promise.all([
-      // Com os módulos: sem eles `contasPagar` saía sem a higienização em
-      // aberto, e a consulta offline mostrava menos do que o Início.
+    const [resumo, avisos, estoque, fiado, contas] = await Promise.all([
       // Só os números do resumo: o valor do estoque sai das posições abaixo,
       // em vez de o custo sobre o livro-razão inteiro rodar duas vezes.
       DashboardService.getSummary(ctx.tenantId, ctx.session.modules, "resumo"),
       AvisosService.get(ctx.tenantId, ctx.session.modules),
       EstoqueService.getPositions(ctx.tenantId),
       FiadoService.listOpen(ctx.tenantId, "EM_ABERTO"),
+      // O MESMO "Tudo a pagar" do Início — atrasadas de outros meses, as que
+      // vencem depois e a higienização em aberto. O resumo do mês somava só
+      // o que vence no mês, e a consulta offline mostrava menos que o Início.
+      ContasPagarService.get(ctx.tenantId, ctx.session.modules),
     ]);
 
     return {
@@ -58,7 +61,7 @@ export const GET = withTenantRoute({
         hojeVendi: Number(resumo.hojeVendi),
         aReceber: Number(resumo.aReceber),
         estoqueValor: Number(EstoqueService.valorTotalDasPosicoes(estoque)),
-        contasPagar: Number(resumo.contasPagar),
+        contasPagar: Number(contas.total),
       },
       avisos: avisos.map((a) => ({
         tipo: a.tipo,

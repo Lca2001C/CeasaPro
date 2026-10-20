@@ -19,7 +19,8 @@ import {
 import { ADMIN_PLAN_SLUG } from "./plano.service";
 import { ALL_OPTIONAL_KEYS, isOptionalModuleKey, planModules } from "@/lib/plan/modules";
 import { snapshotDeModulos } from "@/lib/plan/features-vigentes";
-import { travarPlano } from "@/lib/billing/travas";
+import { travarAssinatura, travarPlano } from "@/lib/billing/travas";
+import { baixarPendentes, cancelarNoGateway } from "@/lib/payments/cobrancas-pendentes";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { inicioDaJanelaOnline } from "@/lib/auth/presence";
 import { situacaoCobranca, type SituacaoCobrancaDetalhe } from "@/lib/billing/status";
@@ -566,14 +567,28 @@ export const AdminService = {
     return { id };
   },
 
+  /**
+   * Reajusta a mensalidade de UMA empresa.
+   *
+   * O QR (ou o cartão no 3DS) já emitido pelo valor antigo é baixado aqui e
+   * cancelado no Mercado Pago depois do commit, como na troca de plano. Ficava
+   * vivo: a tela de pagamento só mostrava ele, o cliente pagava o valor velho,
+   * a aprovação caía em "valor a menor", o mês não era creditado e o dinheiro
+   * ficava parado. Com troca de plano agendada, a renovação cobra o preço do
+   * plano novo (`valorDevido`), que este reajuste não muda — nada a baixar.
+   */
   async updateMonthlyAmount(tenantId: string, monthlyAmount: number, ctx: AdminCtx) {
-    const sub = await prisma.tenantSubscription.findUnique({ where: { tenantId } });
-    if (!sub) throw new NotFoundError("Assinatura não encontrada");
-    await prisma.$transaction(async (tx) => {
+    const { sub, obsoletas } = await prisma.$transaction(async (tx) => {
+      await travarAssinatura(tx, { tenantId });
+      const sub = await tx.tenantSubscription.findUnique({ where: { tenantId } });
+      if (!sub) throw new NotFoundError("Assinatura não encontrada");
       await tx.tenantSubscription.update({
         where: { tenantId },
         data: { monthlyAmount },
       });
+      const obsoletas = sub.pendingPlanId
+        ? []
+        : await baixarPendentes(tx, { tenantId, amount: { not: monthlyAmount } });
       await audit(
         {
           tenantId,
@@ -583,12 +598,15 @@ export const AdminService = {
           entity: "TenantSubscription",
           entityId: sub.id,
           oldData: { monthlyAmount: sub.monthlyAmount.toString() },
-          newData: { monthlyAmount },
+          newData: { monthlyAmount, cobrancasBaixadas: obsoletas.length },
           ip: ctx.ip,
         },
         tx,
       );
+      return { sub, obsoletas };
     });
+    await cancelarNoGateway(obsoletas, { tenantId, motivo: "reajuste-da-mensalidade" });
+    return { id: sub.id };
   },
 
   /**

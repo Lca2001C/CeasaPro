@@ -7,7 +7,7 @@ import { isoDateTz } from "@/lib/tz";
 import { buildReport } from "@/lib/reports/report.service";
 import { toExcel } from "@/lib/reports/excel.exporter";
 import { toPdf } from "@/lib/reports/pdf.exporter";
-import { REPORT_TYPES, isAdvancedReport, type ReportKind } from "@/lib/reports/report.types";
+import { REPORT_TYPES, modulosDoRelatorio, type ReportKind } from "@/lib/reports/report.types";
 import { prisma } from "@/lib/db/prisma";
 import { logger } from "@/lib/logger";
 import type { ReportFormat, ReportType } from "@prisma/client";
@@ -32,8 +32,9 @@ export const GET = withTenantRoute({
     const kind = (parts[2] ?? "").toUpperCase() as ReportKind; // /api/reports/<kind>/export
     if (!REPORT_TYPES.includes(kind)) throw new NotFoundError("Relatorio invalido");
 
-    // Relatórios avançados exigem o módulo no plano (barreira de servidor).
-    if (isAdvancedReport(kind)) requireModule(ctx.session.modules, "relatorios_avancados");
+    // Relatórios avançados exigem o pacote no plano, e os de módulo opcional,
+    // o módulo dono dos dados (barreira de servidor).
+    for (const modulo of modulosDoRelatorio(kind)) requireModule(ctx.session.modules, modulo);
 
     const period = resolvePeriod({
       preset: (input.preset as PeriodPreset) ?? "mes",

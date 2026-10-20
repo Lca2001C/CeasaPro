@@ -2,7 +2,8 @@ import { after } from "next/server";
 import { hashPassword } from "@/lib/auth/password";
 import { resetSchema } from "@/lib/validations/auth";
 import { errorResponse } from "@/lib/http/error-response";
-import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
+import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
+import { chaveDeLoginPorEmail } from "@/lib/auth/limite-login";
 import { clientIp } from "@/lib/http/request";
 import { logger } from "@/lib/logger";
 import { absoluteUrl } from "@/lib/app-url";
@@ -80,6 +81,10 @@ async function redefinir(req: Request): Promise<Response> {
   });
   // Perdeu a corrida (o link já tinha sido usado ou expirou entre a checagem e a gravação).
   if (!applied) return invalidToken();
+
+  // Quem abriu o link provou ser dono da caixa de e-mail: tentativas de login
+  // erradas de outra pessoa não podem continuar trancando a conta.
+  await resetRateLimit(chaveDeLoginPorEmail(user.email));
 
   // Aviso de segurança — não pode atrasar a resposta nem falhar a troca.
   after(async () => {

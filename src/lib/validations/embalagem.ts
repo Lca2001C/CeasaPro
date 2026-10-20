@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
 
 /**
  * Teto de quantidade por lançamento de embalagem.
@@ -20,7 +21,7 @@ export const vendaEmbalagemSchema = z.object({
   customerName: z.string().trim().max(120).nullable().optional(),
   saleDate: z.string().min(1, "Informe a data"),
   quantity: z.number().int().positive("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
-  unitPrice: z.number().nonnegative("Valor inválido"),
+  unitPrice: z.number().nonnegative("Valor inválido").refine(temAteDuasCasas, MSG_DUAS_CASAS),
 });
 export type VendaEmbalagemInput = z.infer<typeof vendaEmbalagemSchema>;
 

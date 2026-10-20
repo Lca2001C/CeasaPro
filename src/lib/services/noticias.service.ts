@@ -28,6 +28,8 @@ const DIAS_NA_TELA = 7;
 const LIMITE_NA_TELA = 80;
 /** Coleta sob demanda só se a última passou disto. */
 export const IDADE_MAXIMA_MS = 2 * 60 * 60 * 1000;
+/** Sem nenhuma coleta boa ainda: intervalo mínimo entre tentativas na tela. */
+const INTERVALO_SEM_SUCESSO_MS = 10 * 60 * 1000;
 /** Item com data no futuro (fuso errado do feed) entra como "agora". */
 const FOLGA_DE_FUTURO_MS = 10 * 60 * 1000;
 
@@ -192,7 +194,15 @@ export const NoticiasService = {
 
     const falhas = resultados.filter((r) => !r.ok);
     const interrompida = falhas.length > 0 && falhas.every((r) => r.semTempo);
-    if (falhas.length === resultados.length && !interrompida) {
+    // Um aviso por vez: enquanto o anterior não for lido, repetir só enche a
+    // caixa do super-admin (a tela tenta coletar a cada abertura).
+    const avisoAberto =
+      falhas.length === resultados.length &&
+      (await prisma.adminNotification.findFirst({
+        where: { kind: "NOTICIAS_FALHA", readAt: null },
+        select: { id: true },
+      }));
+    if (falhas.length === resultados.length && !interrompida && !avisoAberto) {
       await AdminNotificationsService.criar({
         kind: "NOTICIAS_FALHA",
         title: "CeasaNews sem coleta",
@@ -242,9 +252,21 @@ export const NoticiasService = {
    * Primeira vez do módulo: nenhuma coleta jamais deu certo. Coleta já, com
    * prazo curto, e diz se coletou. Falha aqui é registrada e não derruba a tela.
    */
-  async primeiraColetaSeNunca(): Promise<boolean> {
+  async primeiraColetaSeNunca(agora = new Date()): Promise<boolean> {
     if (await this.ultimaColetaOk()) return false;
-    await this.coletar({ prazo: Date.now() + 20_000 }).catch((e) =>
+    // Sem coleta boa, mas tentada há pouco (os feeds estão fora, ou a rede do
+    // servidor não sai): não tenta de novo a cada abertura da tela — cada
+    // tentativa segurava a página por até 20 s. E a trava de sempre, para dois
+    // acessos ao mesmo tempo não dispararem duas coletas.
+    const tentativa = await prisma.noticiaColeta.findFirst({
+      orderBy: { createdAt: "desc" },
+      select: { createdAt: true },
+    });
+    if (tentativa && agora.getTime() - tentativa.createdAt.getTime() < INTERVALO_SEM_SUCESSO_MS) {
+      return false;
+    }
+    if (!(await pegarTravaDeColeta(agora))) return false;
+    await this.coletar({ agora, prazo: agora.getTime() + 20_000 }).catch((e) =>
       logger.error({ err: describeError(e) }, "Primeira coleta do CeasaNews falhou"),
     );
     return true;

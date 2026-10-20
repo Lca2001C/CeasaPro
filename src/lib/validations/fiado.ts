@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 import { dataDoFormularioValida, dataOpcionalSchema, vendaItemSchema } from "./venda";
 
 export const pagamentoFiadoSchema = z.object({
@@ -8,10 +10,24 @@ export const pagamentoFiadoSchema = z.object({
   amount: z
     .number()
     .positive("Informe o valor")
-    .refine((v) => Math.abs(v * 100 - Math.round(v * 100)) < 1e-6, "Use no máximo 2 casas decimais"),
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS),
   method: z.enum(["PIX", "DINHEIRO", "CARTAO"]),
 });
 export type PagamentoFiadoInput = z.infer<typeof pagamentoFiadoSchema>;
+
+/** Estorno de um recebimento lançado errado (ver `FiadoService.estornarPagamento`). */
+export const estornoRecebimentoSchema = z.object({
+  paymentId: z.string().min(1),
+  motivo: z.string().trim().max(200).nullable().optional(),
+});
+export type EstornoRecebimentoInput = z.infer<typeof estornoRecebimentoSchema>;
+
+/** "Excluir" o fiado = cancelar a venda dele (ver `FiadoService.cancelarVendaDoFiado`). */
+export const cancelarFiadoSchema = z.object({
+  id: z.string().min(1),
+  motivo: z.string().trim().max(200).nullable().optional(),
+});
+export type CancelarFiadoInput = z.infer<typeof cancelarFiadoSchema>;
 
 /** Data obrigatória de formulário que EXISTE ("2026-02-31" não passa). */
 const dataObrigatoria = (mensagem: string) =>
@@ -37,7 +53,7 @@ export const fiadoManualSchema = z.object({
   customerPhone: z.string().trim().max(20).nullable().optional(),
   saleDate: dataObrigatoria("Informe a data da venda"),
   dueDate: dataOpcionalSchema,
-  plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").optional(),
+  plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   notes: z.string().trim().max(300).nullable().optional(),
   items: z
     .array(vendaItemSchema)
@@ -57,7 +73,7 @@ export type FiadoUpdateInput = z.infer<typeof fiadoUpdateSchema>;
 
 export const devolucaoCaixasSchema = z.object({
   accountId: z.string().min(1),
-  quantity: z.number().int().positive("Quantidade inválida"),
+  quantity: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
   movementDate: dataObrigatoria("Informe a data"),
   notes: z.string().trim().max(300).nullable().optional(),
 });

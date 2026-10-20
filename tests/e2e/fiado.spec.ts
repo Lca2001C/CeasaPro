@@ -178,9 +178,11 @@ test.describe("Receber fiado", () => {
     await expect(page.getByRole("row").filter({ hasText: nome })).toContainText(TOTAL);
   });
 
-  test("excluir lançamento sem pagamento devolve a mercadoria ao estoque", async ({ page }) => {
+  test("cancelar a venda do fiado sem pagamento devolve a mercadoria ao estoque", async ({
+    page,
+  }) => {
     /*
-      "Excluir" aqui não é esconder a linha: desfaz a venda inteira e devolve o
+      Cancelar aqui não é esconder a linha: desfaz a venda inteira e devolve o
       estoque. O teste mede o SALDO antes e depois porque é esse o efeito que
       ninguém confere à mão — e o que faz o inventário fechar no fim do mês.
     */
@@ -194,14 +196,14 @@ test.describe("Receber fiado", () => {
     await page.getByRole("row").filter({ hasText: nome }).getByRole("link").first().click();
     await page.waitForURL(/\/fiado\/[a-z0-9]+/i, { timeout: 15_000 });
 
-    await page.getByRole("button", { name: "Excluir lançamento" }).click();
-    await page.getByRole("button", { name: "Excluir e desfazer" }).click();
+    await page.getByRole("button", { name: "Cancelar venda" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Cancelar a venda" }).click();
 
-    await expect(page.getByText(/venda desfeita/i)).toBeVisible();
+    await expect(page.getByText(/fiado desfeito/i)).toBeVisible();
     expect(await saldoEmEstoque()).toBe(antes);
   });
 
-  test("conta com pagamento não oferece excluir — o dinheiro que entrou não some", async ({
+  test("conta com pagamento não oferece cancelar — até o pagamento ser estornado", async ({
     page,
   }) => {
     const nome = cliente("ComPagamento");
@@ -216,9 +218,15 @@ test.describe("Receber fiado", () => {
     await page.getByRole("row").filter({ hasText: nome }).getByRole("link").first().click();
     await page.waitForURL(/\/fiado\/[a-z0-9]+/i, { timeout: 15_000 });
 
-    // A UI nem oferece o botão: apagar a conta sumiria com dinheiro que já
-    // entrou no caixa. O servidor também recusa (`fiado-crud.test.ts`), mas a
-    // tela não pode chegar a oferecer a ação.
-    await expect(page.getByRole("button", { name: "Excluir lançamento" })).toHaveCount(0);
+    // A UI nem oferece o botão: cancelar a venda sumiria com dinheiro que já
+    // entrou no caixa. O servidor também recusa (`fiado-crud.test.ts`).
+    await expect(page.getByRole("button", { name: "Cancelar venda" })).toHaveCount(0);
+
+    // O caminho existe: estornar o recebimento lançado errado libera o cancelamento.
+    await page.getByRole("button", { name: "Estornar" }).click();
+    await page.getByRole("dialog").getByRole("button", { name: "Estornar" }).click();
+    await expect(page.getByText(/voltou ao saldo/i)).toBeVisible();
+    await expect(page.getByText("Estornado", { exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Cancelar venda" })).toBeVisible();
   });
 });

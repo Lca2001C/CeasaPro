@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync, existsSync, readdirSync } from "node:fs";
+import { modulosDoRelatorio } from "@/lib/reports/report.types";
 import {
   OPTIONAL_MODULES,
   OPTIONAL_MODULE_KEYS,
@@ -112,7 +113,14 @@ describe("gate de módulo nas páginas", () => {
       `${APP}/relatorios/[tipo]/page.tsx`,
       "src/app/api/reports/[type]/export/route.ts",
     ]) {
-      expect(readFileSync(arquivo, "utf8")).toContain("relatorios_avancados");
+      expect(readFileSync(arquivo, "utf8")).toContain("modulosDoRelatorio(kind)");
     }
+    // O pacote de relatórios E o módulo dono dos dados (auditoria 18/10).
+    expect(modulosDoRelatorio("VENDAS")).toEqual([]);
+    expect(modulosDoRelatorio("LUCRO_PRODUTO")).toEqual(["relatorios_avancados"]);
+    expect(modulosDoRelatorio("HIGIENIZACAO")).toEqual(["relatorios_avancados", "higienizacao"]);
+    expect(modulosDoRelatorio("CAIXAS_PLASTICAS")).toEqual(["relatorios_avancados", "caixas"]);
+    expect(modulosDoRelatorio("EMBALAGENS")).toEqual(["relatorios_avancados", "embalagens"]);
+    expect(modulosDoRelatorio("CAIXAS_PAPELAO")).toEqual(["relatorios_avancados", "embalagens"]);
   });
 });

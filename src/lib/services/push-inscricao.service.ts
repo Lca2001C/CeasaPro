@@ -11,6 +11,9 @@ import type { PushSubscribeInput, PushUnsubscribeInput } from "@/lib/validations
  * o usuário só passa a receber errado — então ficam aqui, testáveis.
  */
 
+/** Aparelhos com aviso ligado por pessoa — celular, computador, tablet, com folga. */
+export const MAX_INSCRICOES_POR_USUARIO = 10;
+
 export interface DonoInscricao {
   userId: string;
   tenantId: string;
@@ -52,6 +55,21 @@ export const PushInscricaoService = {
         userAgent,
       },
     });
+
+    // Teto por pessoa: as mais antigas saem. Sem ele, um laço de inscrições
+    // punha milhares de envios no cron diário, que é o mesmo para todas as
+    // empresas — os avisos de todo mundo atrasavam junto.
+    const excedentes = await prisma.pushSubscription.findMany({
+      where: { userId: dono.userId },
+      orderBy: { createdAt: "desc" },
+      skip: MAX_INSCRICOES_POR_USUARIO,
+      select: { id: true },
+    });
+    if (excedentes.length > 0) {
+      await prisma.pushSubscription.deleteMany({
+        where: { id: { in: excedentes.map((e) => e.id) } },
+      });
+    }
 
     // Endpoint fora do log: com as chaves, ele permite enviar notificação para
     // aquele aparelho.
