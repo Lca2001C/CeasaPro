@@ -156,6 +156,8 @@ export interface ProvisionTenantInput {
     verifyTokenExpiresAt?: Date | null;
     /** Cadastro pelo admin: o contato já foi validado por quem cadastrou. */
     emailVerifiedAt?: Date | null;
+    /** Senha escolhida pela própria pessoa no cadastro público: não comprovada. */
+    senhaComprovada?: boolean;
   };
 }
 
@@ -205,6 +207,7 @@ export async function provisionTenant(
           verifyTokenHash: input.owner.verifyTokenHash ?? null,
           verifyTokenExpiresAt: input.owner.verifyTokenExpiresAt ?? null,
           emailVerifiedAt: input.owner.emailVerifiedAt ?? null,
+          senhaComprovada: input.owner.senhaComprovada ?? true,
         },
       },
     },

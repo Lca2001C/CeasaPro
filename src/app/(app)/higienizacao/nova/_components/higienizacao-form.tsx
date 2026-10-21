@@ -1,7 +1,8 @@
 "use client";
 
 import { isoDateTz } from "@/lib/tz";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -45,6 +46,8 @@ export function HigienizacaoForm({
   const [unitPrice, setUnitPrice] = useState<number | undefined>(initial?.unitPrice);
   const [notes, setNotes] = useState(initial?.notes ?? "");
   const [saving, setSaving] = useState(false);
+  // Chave por conteúdo: o reenvio do MESMO envio devolve o gravado.
+  const chave: RefDeChave = useRef(null);
 
   const qty = parseInt(sentQty, 10) || 0;
   const total = qty * (unitPrice ?? 0);
@@ -64,7 +67,9 @@ export function HigienizacaoForm({
     setSaving(true);
     const res = initial
       ? await chamarAction(() => atualizarHigienizacao({ ...values, id: initial.id }))
-      : await chamarAction(() => criarHigienizacao(values));
+      : await chamarAction(() =>
+          criarHigienizacao({ ...values, idempotencyKey: chavePorConteudo(chave, values) }),
+        );
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Envio atualizado." : "Envio registrado.");

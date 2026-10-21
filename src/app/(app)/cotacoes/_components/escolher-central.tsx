@@ -8,6 +8,7 @@ import { escolherCentral } from "@/actions/cotacoes.actions";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 interface Central {
   code: string;
@@ -45,7 +46,7 @@ export function EscolherCentral({
 
   async function salvar() {
     setSaving(true);
-    const res = await escolherCentral({ centralCode: valor || null });
+    const res = await chamarAction(() => escolherCentral({ centralCode: valor || null }));
     setSaving(false);
     if (res.ok) {
       toast.success("Central atualizada");

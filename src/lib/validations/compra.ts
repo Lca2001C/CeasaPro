@@ -2,6 +2,7 @@ import { z } from "zod";
 import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 import { recipientTypeEnum } from "./produto";
 import { expensePaymentMethodEnum } from "./despesa";
+import { MSG_DATA_ANTIGA, dataNaoAntesDoMesPassado } from "./venda";
 import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
 import {
   ITENS_MAX,
@@ -31,7 +32,10 @@ export const compraItemSchema = z.object({
 
 export const compraSchema = z.object({
   supplierId: z.string().nullable().optional(),
-  purchaseDate: z.string().min(1, "Informe a data"),
+  purchaseDate: z
+    .string()
+    .min(1, "Informe a data")
+    .refine((v) => dataNaoAntesDoMesPassado(v), MSG_DATA_ANTIGA),
   freight: dinheiro("Frete inválido"),
   notes: z.string().max(500).nullable().optional(),
   items: z

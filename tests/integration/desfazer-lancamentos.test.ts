@@ -277,7 +277,7 @@ describe("Excluir produto e fornecedor sem sumir com valor", () => {
     });
     expect(Number(baixa.quantity)).toBe(-5);
     expect(Number(baixa.unitCost)).toBe(3);
-    expect(baixa.sourceType).toBe("MANUAL");
+    expect(baixa.sourceType).toBe("PRODUCT_DELETED");
   });
 
   it("produto vendido nas últimas 24 h: recusa — a venda ainda pode voltar ao estoque", async () => {

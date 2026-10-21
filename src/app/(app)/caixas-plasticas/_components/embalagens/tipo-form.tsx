@@ -7,6 +7,8 @@ import { toast } from "sonner";
 import { criarTipoEmbalagem } from "@/actions/embalagens.actions";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { chamarAction } from "@/lib/http/chamar-action";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 export function TipoEmbalagemForm() {
   const router = useRouter();
@@ -16,14 +18,14 @@ export function TipoEmbalagemForm() {
   async function submit() {
     if (!name.trim()) return toast.error("Informe o nome do tipo.");
     setSaving(true);
-    const res = await criarTipoEmbalagem({ name: name.trim() });
+    const res = await chamarAction(() => criarTipoEmbalagem({ name: name.trim() }));
     setSaving(false);
     if (res.ok) {
       toast.success("Tipo cadastrado.");
       setName("");
       router.refresh();
     } else {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

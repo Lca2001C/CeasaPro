@@ -27,6 +27,7 @@ import { ImagemProduto, type FotoEscolhida } from "./imagem-produto";
 import { CustosDaCarga } from "./custos-da-carga";
 import { SeusProdutos, type ProdutoSugerido } from "./seus-produtos";
 import { calcularCustoDaCarga } from "@/lib/estoque/custo-carga";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 /** Produto como o modal precisa para EDITAR (números simples: Decimal não atravessa). */
 export interface ProdutoEditavel {
@@ -209,7 +210,7 @@ function FormularioProduto({
       toast.success(produto ? "Produto atualizado" : "Produto cadastrado");
       onSalvo({ id: res.data.id, name: res.data.name, saleUnit: res.data.saleUnit });
     } else {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

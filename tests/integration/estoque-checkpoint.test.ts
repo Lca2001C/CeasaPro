@@ -232,6 +232,37 @@ describe("checkpoint do custo médio dá o MESMO resultado que o repasse inteiro
     expect(comCheckpoint.custos[tomate!]).toBe("9");
   });
 
+  it("checkpoint POSITIVO dentro de um ciclo que recomeçou num saldo negativo", async () => {
+    // Entrada 10 a R$ 5, saída 11 (saldo -1: o ciclo recomeça ali), entrada 4 a
+    // R$ 7 — CHECKPOINT (saldo 3, mas o ciclo acumulou 4) — saída 2, entrada 10
+    // a R$ 9. Semeado com o saldo real (3), a entrada seguinte pesava diferente:
+    // R$ 8,8182 com checkpoint contra R$ 8,6667 sem.
+    const [tomate] = produtos;
+    const inicio = Date.now() - 20 * 24 * 3600 * 1000;
+    const em = (s: number) => new Date(inicio + s * 1000);
+    await prisma.stockMovement.createMany({
+      data: [
+        { tenantId, productId: tomate!, type: "ENTRADA", quantity: 10, unitCost: 5, createdAt: em(1) },
+        { tenantId, productId: tomate!, type: "SAIDA", quantity: 11, createdAt: em(2) },
+        { tenantId, productId: tomate!, type: "ENTRADA", quantity: 4, unitCost: 7, createdAt: em(3) },
+      ],
+    });
+    await EstoqueService.atualizarCheckpoints(tenantId, em(4));
+    const ck = await prisma.stockCostCheckpoint.findFirstOrThrow({ where: { tenantId, productId: tomate! } });
+    expect(Number(ck.saldo)).toBe(3);
+    expect(Number(ck.deslocamento)).toBe(-1);
+
+    await prisma.stockMovement.createMany({
+      data: [
+        { tenantId, productId: tomate!, type: "SAIDA", quantity: 2, createdAt: em(5) },
+        { tenantId, productId: tomate!, type: "ENTRADA", quantity: 10, unitCost: 9, createdAt: em(6) },
+      ],
+    });
+    const comCheckpoint = await retrato();
+    await prisma.stockCostCheckpoint.deleteMany({ where: { tenantId } });
+    expect(comCheckpoint).toEqual(await retrato());
+  });
+
   it("sem movimento depois do checkpoint, a última entrada e a última data vêm dele", async () => {
     const inicio = Date.now() - 20 * 24 * 3600 * 1000;
     const em = (s: number) => new Date(inicio + s * 1000);

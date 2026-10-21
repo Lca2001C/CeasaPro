@@ -7,6 +7,7 @@ import { ClipboardList } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { concluirOnboarding } from "@/actions/config.actions";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /**
  * Convite para completar o cadastro, no Início.
@@ -37,7 +38,7 @@ export function CompletarCadastroCard({ faltando }: { faltando: string[] }) {
     // Otimista: o cartão sai na hora. Se a action falhar ele volta no próximo
     // carregamento, que é o desfecho certo — nada se perde.
     setDispensado(true);
-    await concluirOnboarding();
+    await chamarAction(() => concluirOnboarding());
     setBusy(false);
     router.refresh();
   }

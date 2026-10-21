@@ -374,6 +374,25 @@ describe("resolverLoginGoogle", () => {
       expect(await verifyPassword(depois.passwordHash, "senhaLegitima1")).toBe(true);
       expect(depois.googleSub).toBe(p.sub);
     });
+
+    it("e-mail confirmado com senha que ninguém comprovou: a senha é descartada", async () => {
+      // O dono clicou no link de confirmação do cadastro que o impostor fez:
+      // o e-mail ficou confirmado, mas a senha continua sendo a do impostor.
+      const { user, p } = await cadastroPendente("senhaDoImpostor4");
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { emailVerifiedAt: new Date(), senhaComprovada: false },
+      });
+
+      await resolverLoginGoogle(p, { ip: null });
+
+      const depois = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+        omit: { passwordHash: false },
+      });
+      expect(await verifyPassword(depois.passwordHash, "senhaDoImpostor4")).toBe(false);
+      expect(depois.senhaComprovada).toBe(true);
+    });
   });
 
   it("empresa cadastrada pelo admin não ganha teste grátis ao entrar pelo Google", async () => {

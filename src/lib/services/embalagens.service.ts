@@ -11,7 +11,13 @@ import {
 } from "@/lib/desfazer/prazo";
 import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
 import type { Prisma } from "@prisma/client";
-import type { TipoEmbalagemInput, VendaEmbalagemInput } from "@/lib/validations/embalagem";
+import type {
+  BaixaEmbalagemInput,
+  TipoEmbalagemInput,
+  VendaEmbalagemInput,
+} from "@/lib/validations/embalagem";
+import { ORIGEM_BAIXA_EMBALAGEM } from "@/lib/estoque/origens";
+import { comIdempotencia } from "@/lib/http/idempotencia";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
 
@@ -164,7 +170,30 @@ export const EmbalagensService = {
 
   /** Entrada de embalagens: compra ou reposição. */
   async registrarEntrada(
-    input: { packagingTypeId: string; quantity: number; unitCost: number; notes?: string | null },
+    input: {
+      packagingTypeId: string;
+      quantity: number;
+      unitCost: number;
+      notes?: string | null;
+      idempotencyKey?: string;
+    },
+    ctx: TenantCtx,
+  ) {
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => getTenantPrisma(ctx.tenantId).packagingMovement.findFirst({ where: { idempotencyKey: k } }),
+      () => this.gravarEntrada(input, ctx),
+    );
+  },
+
+  async gravarEntrada(
+    input: {
+      packagingTypeId: string;
+      quantity: number;
+      unitCost: number;
+      notes?: string | null;
+      idempotencyKey?: string;
+    },
     ctx: TenantCtx,
   ) {
     const db = getTenantPrisma(ctx.tenantId);
@@ -189,6 +218,7 @@ export const EmbalagensService = {
           quantity: input.quantity,
           unitCost: input.unitCost,
           reason: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
       const hoje = new Date();
@@ -219,6 +249,79 @@ export const EmbalagensService = {
             quantity: input.quantity,
             unitCost: input.unitCost,
             conta: conta.id,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return mov;
+    });
+  },
+
+  /**
+   * Baixa de embalagem que saiu SEM ser vendida — rasgou, molhou, foi junto com
+   * a mercadoria. Não existia: o custo dessas caixas, cuja compra fica fora do
+   * lucro (`COMPRA_EMBALAGEM`, "o custo entra pela venda"), nunca chegava ao
+   * resultado, e o saldo ficava com embalagem que não existe. Sai pelo custo
+   * médio do tipo (QUEBRA, que não muda a média) e soma no "Custo das
+   * embalagens" do mês (`dashboard.service.ts`).
+   */
+  async registrarBaixa(input: BaixaEmbalagemInput, ctx: TenantCtx) {
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const travado = await tx.$queryRaw<{ name: string; tracksStock: boolean }[]>`
+        SELECT name, "tracksStock" FROM packaging_types
+        WHERE id = ${input.packagingTypeId} AND "tenantId" = ${ctx.tenantId}
+          AND "deletedAt" IS NULL
+        FOR UPDATE
+      `;
+      const tipo = travado[0];
+      if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
+      if (!tipo.tracksStock) {
+        throw new BusinessRuleError(
+          `O controle de estoque de "${tipo.name}" está desligado — não há saldo para baixar.`,
+        );
+      }
+      const movimentos = await tx.packagingMovement.findMany({
+        where: { packagingTypeId: input.packagingTypeId },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true, type: true, quantity: true, unitCost: true, sourceType: true, sourceId: true },
+      });
+      const saldo = movimentos.reduce(
+        (a, m) => a + (m.type === "ENTRADA" || m.type === "AJUSTE" ? m.quantity : -m.quantity),
+        0,
+      );
+      if (input.quantity > saldo) {
+        throw new BusinessRuleError(
+          `Há ${saldo} ${tipo.name} em estoque — não dá para baixar ${input.quantity}.`,
+        );
+      }
+      const custoMedio = custoMedioDoTipo(movimentos);
+      const mov = await tx.packagingMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          packagingTypeId: input.packagingTypeId,
+          type: "QUEBRA",
+          quantity: input.quantity,
+          unitCost: custoMedio,
+          reason: input.motivo,
+          sourceType: ORIGEM_BAIXA_EMBALAGEM,
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "PackagingMovement",
+          entityId: mov.id,
+          newData: {
+            baixa: true,
+            tipo: tipo.name,
+            quantity: input.quantity,
+            custoMedio: custoMedio?.toString() ?? null,
+            motivo: input.motivo,
           },
           ip: ctx.ip,
         },
@@ -369,6 +472,14 @@ export const EmbalagensService = {
   },
 
   async createSale(input: VendaEmbalagemInput, ctx: TenantCtx) {
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => getTenantPrisma(ctx.tenantId).packagingSale.findFirst({ where: { idempotencyKey: k } }),
+      () => this.gravarVenda(input, ctx),
+    );
+  },
+
+  async gravarVenda(input: VendaEmbalagemInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     const tipo = await db.packagingType.findFirst({ where: { id: input.packagingTypeId } });
     if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
@@ -440,6 +551,7 @@ export const EmbalagensService = {
           unitPrice: input.unitPrice,
           totalAmount,
           unitCostAtSale: custoMedio,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
 

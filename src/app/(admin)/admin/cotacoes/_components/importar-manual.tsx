@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { isoDateTz } from "@/lib/tz";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 interface Central {
   code: string;
@@ -56,7 +57,7 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
 
   async function enviar() {
     setBusy(true);
-    const res = await importarBoletimManual({ centralCode, quoteDate, texto });
+    const res = await chamarAction(() => importarBoletimManual({ centralCode, quoteDate, texto }));
     setBusy(false);
     if (!res.ok) {
       toast.error(res.error.message);
@@ -90,7 +91,7 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
     if (!ok) return;
 
     setBusy(true);
-    const res = await apagarBoletim({ centralCode, quoteDate });
+    const res = await chamarAction(() => apagarBoletim({ centralCode, quoteDate }));
     setBusy(false);
     if (!res.ok) {
       toast.error(res.error.message);

@@ -9,7 +9,7 @@ import { describeError, logger } from "@/lib/logger";
 import { formatQty } from "@/lib/format";
 import { Prisma } from "@prisma/client";
 import { saldoECustoMedio } from "./estoque.service";
-import { ORIGEM_AJUSTE } from "@/lib/estoque/origens";
+import { ORIGEM_PRODUTO_EXCLUIDO } from "@/lib/estoque/origens";
 import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
 import { isModuleEnabled } from "@/lib/plan/modules";
 
@@ -248,7 +248,7 @@ export const ProdutosService = {
             quantity: saldo.neg(),
             unitCost: custos.get(id) ?? new Prisma.Decimal(0),
             reason: `Baixa do saldo (${formatQty(saldo)}) na exclusão do produto`,
-            sourceType: ORIGEM_AJUSTE,
+            sourceType: ORIGEM_PRODUTO_EXCLUIDO,
           },
         });
       }
@@ -285,6 +285,11 @@ export const ProdutosService = {
           entity: "Product",
           entityId: id,
           oldData: before,
+          // O que saiu do estoque junto com o produto (vai para as perdas do mês).
+          newData: {
+            saldoBaixado: saldo.toString(),
+            custoUnitario: (custos.get(id) ?? new Prisma.Decimal(0)).toString(),
+          },
           ip: ctx.ip,
         },
         tx,

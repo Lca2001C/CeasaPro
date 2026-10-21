@@ -442,7 +442,7 @@ function Financeiro({
                 : []),
               ["Custo da mercadoria vendida", -Number(s.cmvMes)],
               ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
-                ? [["Custo das embalagens vendidas", -Number(s.custoEmbalagensMes)] as [string, number]]
+                ? [["Custo das embalagens (vendidas e baixadas)", -Number(s.custoEmbalagensMes)] as [string, number]]
                 : []),
               ...(Number(s.perdasEstoqueMes) !== 0
                 ? [["Perdas e acertos de estoque", -Number(s.perdasEstoqueMes)] as [string, number]]
@@ -481,7 +481,7 @@ function Financeiro({
               ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
                 ? [
                     {
-                      rotulo: "Custo das embalagens vendidas",
+                      rotulo: "Custo das embalagens (vendidas e baixadas)",
                       valor: Number(s.custoEmbalagensMes),
                       cor: COR_SERIE.compras,
                       prefixo: "− ",

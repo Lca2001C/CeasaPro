@@ -24,6 +24,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 export interface CategoriaItem {
   id: string;
@@ -55,7 +56,7 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
     const name = nova.trim();
     if (!name) return toast.error("Informe o nome da categoria.");
     start(async () => {
-      const res = await criarCategoriaDespesa({ name });
+      const res = await chamarAction(() => criarCategoriaDespesa({ name }));
       if (res.ok) {
         toast.success(`Categoria "${name}" criada`);
         setNova("");
@@ -70,7 +71,7 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
     const name = editandoNome.trim();
     if (!name) return toast.error("Informe o nome da categoria.");
     start(async () => {
-      const res = await renomearCategoriaDespesa({ id, name });
+      const res = await chamarAction(() => renomearCategoriaDespesa({ id, name }));
       if (res.ok) {
         toast.success("Categoria renomeada");
         setEditandoId(null);
@@ -83,7 +84,7 @@ export function CategoriasManager({ categorias }: { categorias: CategoriaItem[] 
 
   function excluir(c: CategoriaItem) {
     start(async () => {
-      const res = await excluirCategoriaDespesa(c.id);
+      const res = await chamarAction(() => excluirCategoriaDespesa(c.id));
       if (res.ok) {
         toast.success("Categoria excluída");
         setAExcluir(null);

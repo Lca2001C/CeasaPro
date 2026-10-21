@@ -198,7 +198,9 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           // compras em aberto entrava duas vezes e o rodapé mostrava o dobro de
           // caixas na rua. Mesma correção já feita na tela do fiado; o relatório
           // ficou de fora, e é ele que o comerciante usa para cobrar devolução.
-          aDevolver: [...new Set(rows.map((r) => r.customerName))].reduce(
+          aDevolver: [
+            ...new Set(rows.map((r) => r.customerName.trim().toLocaleLowerCase("pt-BR"))),
+          ].reduce(
             (a, nome) => a + (caixasPorCliente.get(nome) ?? 0),
             0,
           ),
@@ -665,7 +667,10 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         party: r.party,
         entrada: toDecimal(r.entrada),
         saida: toDecimal(r.saida),
-        total: money(toDecimal(r.total)),
+        // Compra é CUSTO e venda é RECEITA: somados numa coluna só, R$ 1.000
+        // comprados e R$ 1.500 vendidos davam um "Valor" de R$ 2.500 sem sentido.
+        valorEntrada: toDecimal(r.entrada).greaterThan(0) ? money(toDecimal(r.total)) : null,
+        valorSaida: toDecimal(r.entrada).greaterThan(0) ? null : money(toDecimal(r.total)),
       }));
       return {
         ...base,
@@ -676,14 +681,16 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "party", label: "Fornecedor/cliente" },
           { key: "entrada", label: "Entradas", align: "right", format: "qty" },
           { key: "saida", label: "Saidas", align: "right", format: "qty" },
-          { key: "total", label: "Valor", align: "right", format: "money" },
+          { key: "valorEntrada", label: "Custo (compras)", align: "right", format: "money" },
+          { key: "valorSaida", label: "Receita (vendas)", align: "right", format: "money" },
         ],
         rows: mapped,
         totals: {
           source: "TOTAL",
           entrada: add(...mapped.map((r) => r.entrada)),
           saida: add(...mapped.map((r) => r.saida)),
-          total: add(...mapped.map((r) => r.total)),
+          valorEntrada: add(...mapped.flatMap((r) => (r.valorEntrada ? [r.valorEntrada] : []))),
+          valorSaida: add(...mapped.flatMap((r) => (r.valorSaida ? [r.valorSaida] : []))),
         },
       };
     }
@@ -834,7 +841,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
               AND "saleDate" >= ${p.from} AND "saleDate" <= ${p.to} GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidDate"')} AS d, SUM(amount) AS total FROM expenses
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "paidDate" IS NOT NULL
+            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND status = 'PAGO'
+              AND "paidDate" IS NOT NULL
               AND "paidDate" >= ${p.from} AND "paidDate" <= ${p.to} GROUP BY 1`,
           // Soma os PAGAMENTOS, não o acumulado do lote.
           //

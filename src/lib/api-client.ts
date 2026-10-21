@@ -47,6 +47,25 @@ export function renovarSessao(): Promise<boolean> {
   return renovacaoEmVoo;
 }
 
+/** Folga antes do vencimento: renova se faltar menos que isto. */
+const FOLGA_MS = 60_000;
+
+/**
+ * Renova a sessão se o access já venceu ou está para vencer (`cp_exp`).
+ *
+ * Para quem chama Server Action: ao contrário de `apiPost`, a action não tem
+ * como repetir depois de um 401 — o POST dela volta como erro opaco. Sem o
+ * cookie (sessão de antes desta versão, ou já apagado), renova também: na pior
+ * das hipóteses é uma renovação a mais, e o cookie passa a existir.
+ */
+export async function garantirSessao(): Promise<void> {
+  if (typeof document === "undefined") return;
+  const m = document.cookie.match(/(?:^|;\s*)cp_exp=(\d+)/);
+  const expira = m ? Number(m[1]) : 0;
+  if (expira - Date.now() > FOLGA_MS) return;
+  await renovarSessao();
+}
+
 /**
  * Vale tentar renovar a sessão para esta URL?
  *

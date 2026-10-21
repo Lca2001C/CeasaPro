@@ -180,6 +180,32 @@ export async function consultarLimiteDb(
 }
 
 /**
+ * Devolve uma unidade consumida por {@link rateLimitDb} — para o limite que só
+ * deve contar FALHA (o balde só por IP do login): consome-se ANTES do trabalho
+ * caro, atomicamente, e devolve-se no acerto.
+ *
+ * Era "consultar antes, registrar depois" ({@link consultarLimiteDb} +
+ * {@link registrarFalhaDb}): as requisições em voo liam o mesmo contador antes
+ * de qualquer uma registrar a falha, e mil tentativas em paralelo de um IP
+ * passavam todas (mil Argon2) em vez de 60.
+ *
+ * Nunca lança nem desce de zero.
+ */
+export async function devolverUnidadeDb(key: string): Promise<void> {
+  try {
+    await prisma.$executeRaw`
+      UPDATE "rate_limits" SET "count" = GREATEST("count" - 1, 0)
+      WHERE "keyHash" = ${hashKey(key)} AND "expiresAt" > now()
+    `;
+  } catch (e) {
+    logger.warn(
+      { err: e instanceof Error ? e.message : String(e) },
+      "Não foi possível devolver a unidade do rate limit",
+    );
+  }
+}
+
+/**
  * Conta uma tentativa que falhou na janela da chave.
  *
  * Nunca lança: é chamado depois que a resposta já está decidida (credencial

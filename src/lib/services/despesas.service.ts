@@ -761,6 +761,12 @@ export const DespesasService = {
     const hoje = startOfDayTz(agora);
 
     const noMes = { gte: mes.inicio, lte: mes.fim };
+    // Venda com data futura não é faturamento realizado: no mês corrente a
+    // base do "% do que você vendeu" vai até HOJE, como o Início e o painel
+    // financeiro. Com o mês inteiro, a venda datada do dia 28 lançada no dia 10
+    // entrava aqui e não lá — dois faturamentos para o mesmo mês.
+    const fimDeHoje = endOfDayTz(agora);
+    const vendidoNoMes = { gte: mes.inicio, lte: mes.fim < fimDeHoje ? mes.fim : fimDeHoje };
 
     const [aPagar, pagas, porTipo, porTipoAnterior, vencidas, vendas, hig, embalagens] =
       await Promise.all([
@@ -798,7 +804,7 @@ export const DespesasService = {
       }),
       db.sale.aggregate({
         _sum: { totalAmount: true },
-        where: { saleDate: noMes, cancelledAt: null },
+        where: { saleDate: vendidoNoMes, cancelledAt: null },
       }),
       // Sem o módulo, só o que foi PAGO ao higienizador continua contando
       // (dinheiro que saiu é fato, e o fluxo de caixa já o soma): quem saiu do
@@ -813,7 +819,7 @@ export const DespesasService = {
       isModuleEnabled(modules, "embalagens")
         ? db.packagingSale.aggregate({
             _sum: { totalAmount: true },
-            where: { saleDate: noMes, cancelledAt: null },
+            where: { saleDate: vendidoNoMes, cancelledAt: null },
           })
         : Promise.resolve({ _sum: { totalAmount: null } }),
     ]);
@@ -912,7 +918,9 @@ export const DespesasService = {
         paymentMethod: input.paymentMethod ?? null,
         recurring: input.recurring ?? false,
         dueDate: toDate(input.dueDate),
-        paidDate: toDate(input.paidDate),
+        // Data de pagamento só existe em conta PAGA: pendente com `paidDate`
+        // (bundle antigo, chamada à API) entrava no fluxo de caixa sem ter saído.
+        paidDate: input.status === "PAGO" ? toDate(input.paidDate) : null,
       },
     });
     await audit({
@@ -971,7 +979,9 @@ export const DespesasService = {
         paymentMethod: input.paymentMethod ?? null,
         recurring: daCompra ? false : (input.recurring ?? false),
         dueDate: toDate(input.dueDate),
-        paidDate: toDate(input.paidDate),
+        // Data de pagamento só existe em conta PAGA: pendente com `paidDate`
+        // (bundle antigo, chamada à API) entrava no fluxo de caixa sem ter saído.
+        paidDate: input.status === "PAGO" ? toDate(input.paidDate) : null,
       },
     });
     await audit({

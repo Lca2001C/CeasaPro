@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -10,6 +11,7 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { QuantityInput } from "@/components/forms/quantity-input";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 /**
  * O que o operador escolhe na tela, e o que vai para a API.
@@ -46,6 +48,8 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
   // Trava SÍNCRONA contra toque duplo: `saving` só desabilita o botão no
   // próximo render, e dois toques no mesmo instante passariam os dois.
   const enviando = useRef(false);
+  // Chave por conteúdo: o reenvio do MESMO ajuste devolve o gravado.
+  const chave: RefDeChave = useRef(null);
 
   async function submit() {
     if (enviando.current) return;
@@ -54,11 +58,15 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
     const escolhido = TIPOS.find((t) => t.value === type) ?? TIPOS[0];
     enviando.current = true;
     setSaving(true);
-    const res = await apiPost("/api/estoque/ajuste", {
+    const corpo = {
       productId,
       type: escolhido.tipo,
       quantity: escolhido.sinal * quantity,
       reason: reason || null,
+    };
+    const res = await apiPost("/api/estoque/ajuste", {
+      ...corpo,
+      idempotencyKey: chavePorConteudo(chave, corpo),
     });
     if (res.ok) {
       // O botão continua travado no sucesso: a ida para /estoque é uma
@@ -69,7 +77,7 @@ export function AjusteForm({ produtos }: { produtos: { id: string; name: string 
     } else {
       enviando.current = false;
       setSaving(false);
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

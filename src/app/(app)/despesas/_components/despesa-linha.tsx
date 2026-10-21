@@ -41,6 +41,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 export type DespesaLinhaDados = ContaUnificada;
 
@@ -64,11 +65,11 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
   function pagar() {
     start(async () => {
       if (ehHigienizacao) {
-        const res = await registrarPagamentoHigienizacao({
+        const res = await chamarAction(() => registrarPagamentoHigienizacao({
           id: d.id,
           amount: Number(d.amount),
           paidDate: isoDateTz(),
-        });
+        }));
         if (res.ok) {
           toast.success(`${d.description} paga hoje`);
           router.refresh();
@@ -77,7 +78,7 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
         }
         return;
       }
-      const res = await marcarDespesaComoPaga({ id: d.id });
+      const res = await chamarAction(() => marcarDespesaComoPaga({ id: d.id }));
       if (res.ok) {
         toast.success(`${d.description} paga hoje`);
         router.refresh();
@@ -89,7 +90,7 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
 
   function desfazerPagamento() {
     start(async () => {
-      const res = await marcarDespesaComoPendente(d.id);
+      const res = await chamarAction(() => marcarDespesaComoPendente(d.id));
       if (res.ok) {
         toast.success("Despesa voltou para pendente");
         router.refresh();
@@ -101,7 +102,7 @@ export function DespesaLinha({ d }: { d: DespesaLinhaDados }) {
 
   function excluir() {
     start(async () => {
-      const res = await excluirDespesa(d.id);
+      const res = await chamarAction(() => excluirDespesa(d.id));
       if (res.ok) {
         toast.success("Excluído com sucesso");
         setConfirmarExclusao(false);

@@ -15,6 +15,7 @@ import type { TenantCtx } from "@/lib/http/with-action";
 import type { CrateCleaningStatus } from "@prisma/client";
 import { parseFormDateTz } from "@/lib/tz";
 import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
+import { comIdempotencia } from "@/lib/http/idempotencia";
 
 /**
  * Situação do lote a partir das DUAS pontas do ciclo: caixas e dinheiro.
@@ -199,6 +200,14 @@ export const HigienizacaoService = {
 
   /** Envia caixas sujas ao higienizador — baixa do estoque de sujas (atômico). */
   async create(input: HigienizacaoInput, ctx: TenantCtx) {
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => getTenantPrisma(ctx.tenantId).crateCleaning.findFirst({ where: { idempotencyKey: k } }),
+      () => this.gravarEnvio(input, ctx),
+    );
+  },
+
+  async gravarEnvio(input: HigienizacaoInput, ctx: TenantCtx) {
     const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
     const db = getTenantPrisma(ctx.tenantId);
 
@@ -212,6 +221,7 @@ export const HigienizacaoService = {
           unitPrice: input.unitPrice,
           totalAmount,
           notes: input.notes ?? null,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
 

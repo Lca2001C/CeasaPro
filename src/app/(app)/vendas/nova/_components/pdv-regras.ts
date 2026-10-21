@@ -114,21 +114,5 @@ export function normalizarBusca(texto: string): string {
 
 // ── Erro do servidor ────────────────────────────────────────────────────
 
-/**
- * A mensagem a mostrar para uma resposta de erro.
- *
- * Falha de schema chega como `message: "Dados inválidos"` e o motivo de verdade
- * em `fields` ("Informe o cliente para controlar as caixas plásticas"). Mostrar
- * só a `message` deixava o operador sem saber o que corrigir.
- */
-export function mensagemDoErro(error: {
-  code: string;
-  message: string;
-  fields?: Record<string, string>;
-}): string {
-  if (error.code === "VALIDATION" && error.fields) {
-    const primeira = Object.values(error.fields).find((m) => typeof m === "string" && m.trim());
-    if (primeira) return primeira;
-  }
-  return error.message;
-}
+/** Movida para `@/lib/http/mensagem-erro` (usada também fora do PDV). */
+export { mensagemDoErro } from "@/lib/http/mensagem-erro";

@@ -12,6 +12,12 @@ export const POST = withTenantRoute({
     // (mesma chave de idempotencia), nao uma venda nova. O PDV usa isso para
     // nao mostrar um resumo calculado sobre o carrinho atual, que descreveria
     // uma venda diferente da que ficou gravada.
-    return { id: sale.id, jaRegistrada: sale.jaRegistrada };
+    // `totalAmount` deixa o PDV conferir se a venda devolvida é ESTA: depois de
+    // um timeout o carrinho pode ter mudado (mais um item, o próximo cliente).
+    return {
+      id: sale.id,
+      jaRegistrada: sale.jaRegistrada,
+      totalAmount: sale.totalAmount.toString(),
+    };
   },
 });

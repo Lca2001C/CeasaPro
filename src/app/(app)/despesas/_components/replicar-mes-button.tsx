@@ -16,6 +16,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /**
  * "Replicar mês anterior" — a alternativa manual à recorrência automática.
@@ -31,7 +32,7 @@ export function ReplicarMesButton({ mesOrigem }: { mesOrigem: string }) {
 
   function replicar() {
     start(async () => {
-      const res = await replicarMesDeDespesas({ origem: mesOrigem });
+      const res = await chamarAction(() => replicarMesDeDespesas({ origem: mesOrigem }));
       if (res.ok) {
         toast.success(mensagemReplicacao(res.data, mesOrigem));
         setOpen(false);

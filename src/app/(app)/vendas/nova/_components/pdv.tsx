@@ -541,7 +541,7 @@ export function Pdv({
     // cliente, mesmos 10 kg de tomate) são corriqueiras e recusá-las seria
     // recusar dinheiro real.
     chaveDoCarrinho.current ??= crypto.randomUUID();
-    const res = await apiPost<{ id: string; jaRegistrada: boolean }>("/api/vendas", {
+    const res = await apiPost<{ id: string; jaRegistrada: boolean; totalAmount: string }>("/api/vendas", {
       idempotencyKey: chaveDoCarrinho.current,
       customerName: customer.trim() || null,
       customerPhone: phone.trim() || null,
@@ -579,6 +579,23 @@ export function Pdv({
 
     // Deu certo: a partir daqui o próximo carrinho é uma venda NOVA.
     chaveDoCarrinho.current = null;
+
+    if (
+      res.data.jaRegistrada &&
+      BigInt(Math.round(Number(res.data.totalAmount) * 100)) !== totais.totalCents
+    ) {
+      // A chave era de um envio que deu timeout MAS foi gravado, e o carrinho
+      // mudou desde então (mais um item, ou já é o do próximo cliente). Limpar
+      // e dizer "nada foi duplicado" engolia esta venda: ela nunca era lançada.
+      // O carrinho fica, a chave já foi zerada acima, e o operador decide.
+      toast.warning(
+        `A venda anterior (${formatBRL(Number(res.data.totalAmount))}) já tinha sido ` +
+          "registrada. Este carrinho é diferente e AINDA NÃO foi lançado: confira os itens " +
+          "e toque em Finalizar para lançá-lo como venda nova.",
+        { duration: 12_000 },
+      );
+      return;
+    }
 
     if (res.data.jaRegistrada) {
       // Retentativa de uma venda que já estava gravada. Não dá para mostrar o

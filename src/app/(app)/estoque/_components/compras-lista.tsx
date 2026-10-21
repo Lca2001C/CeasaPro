@@ -109,7 +109,7 @@ export function ComprasLista({ compras }: { compras: Compra[] }) {
                     estoque, custo nem contas a pagar.
                   </p>
                 )}
-                {!cancelada && (conta || ComprasService.podeCancelar(c, agora)) && (
+                {!cancelada && (conta || c.podeCancelarAgora) && (
                   <div className="mt-2 flex flex-wrap items-center gap-2">
                     {conta?.status === "PENDENTE" && <PagarCompraButton despesaId={conta.id} />}
                     {conta && (
@@ -117,7 +117,7 @@ export function ComprasLista({ compras }: { compras: Compra[] }) {
                         <Link href={`/despesas/${conta.id}`}>Ver a conta</Link>
                       </Button>
                     )}
-                    {ComprasService.podeCancelar(c, agora) && (
+                    {c.podeCancelarAgora && (
                       <CancelarCompraButton id={c.id} total={formatBRL(c.totalAmount)} />
                     )}
                   </div>

@@ -9,7 +9,7 @@ import {
   TOLERANCIA_CENTAVOS_BIG,
   totalDaVendaCents,
 } from "@/lib/venda/total";
-import { parseFormDateTz } from "@/lib/tz";
+import { addDaysTz, parseFormDateTz, startOfMonthTz } from "@/lib/tz";
 import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
 import {
   ITENS_MAX,
@@ -94,6 +94,30 @@ export function dataDoFormularioValida(v: string): boolean {
   }
 }
 
+/**
+ * Data de lançamento não anterior ao início do MÊS PASSADO.
+ *
+ * Venda, compra, embalagem e higienização entram no resultado pela data
+ * digitada. Sem piso, um fiado manual datado de janeiro, lançado em outubro,
+ * mudava o faturamento e o CMV de janeiro para sempre — e depois de 24 h
+ * ninguém desfazia: o "fechamento não é reescrito" (regra §3.13) valia para o
+ * desfazer, mas não para o lançamento retroativo. O mês passado continua
+ * aberto, para o acerto do começo do mês.
+ */
+export function dataNaoAntesDoMesPassado(v: string | null | undefined, agora = new Date()): boolean {
+  if (!v) return true;
+  try {
+    const d = parseFormDateTz(v);
+    const inicioDoMesPassado = startOfMonthTz(addDaysTz(startOfMonthTz(agora), -1));
+    return d.getTime() >= inicioDoMesPassado.getTime();
+  } catch {
+    return true; // a data inválida é recusada pela outra regra, com a mensagem dela
+  }
+}
+
+export const MSG_DATA_ANTIGA =
+  "Data muito antiga: lançamentos vão até o início do mês passado — os meses anteriores já estão fechados.";
+
 export const dataOpcionalSchema = z
   .string()
   .nullable()
@@ -109,12 +133,19 @@ const vendaBase = z.object({
    * Omitido (ou com uma parcela só) = venda de forma única, como sempre foi.
    */
   payments: z.array(vendaPagamentoSchema).max(4, "No máximo 4 formas de pagamento").optional(),
-  saleDate: dataOpcionalSchema,
+  saleDate: dataOpcionalSchema.refine((v) => dataNaoAntesDoMesPassado(v), MSG_DATA_ANTIGA),
   dueDate: dataOpcionalSchema,
   /** Caixas plásticas que saíram na venda. Se omitido, soma os itens PLASTICA. */
   plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /** Desconto sobre o total da venda (os descontos por item ficam na linha). */
-  discountAmount: z.number().nonnegative("Desconto inválido").optional(),
+  // 2 casas e teto, como o desconto da linha: R$ 0,005 gravava "desconto
+  // R$ 0,01" que o total (em precisão cheia, arredondado de volta) não aplicava.
+  discountAmount: z
+    .number()
+    .nonnegative("Desconto inválido")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS)
+    .optional(),
   discountReason: z.string().trim().max(200).nullable().optional(),
   /**
    * Dinheiro que o cliente entregou para a parte paga EM ESPÉCIE.

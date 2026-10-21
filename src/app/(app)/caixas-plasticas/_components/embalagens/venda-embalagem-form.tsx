@@ -1,7 +1,8 @@
 "use client";
 
 import { isoDateTz } from "@/lib/tz";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { criarVendaEmbalagem } from "@/actions/embalagens.actions";
@@ -13,6 +14,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { CurrencyInput } from "@/components/forms/currency-input";
 import { DialogFooter } from "@/components/ui/dialog";
+import { chamarAction } from "@/lib/http/chamar-action";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 /** O formulário da venda de embalagem — mora na folha de `NovaVendaEmbalagem`. */
 export function VendaEmbalagemForm({
@@ -30,6 +33,8 @@ export function VendaEmbalagemForm({
   const [quantity, setQuantity] = useState("");
   const [unitPrice, setUnitPrice] = useState<number | undefined>(undefined);
   const [saving, setSaving] = useState(false);
+  // Chave por conteúdo: o reenvio da MESMA venda devolve a gravada.
+  const chave: RefDeChave = useRef(null);
 
   const qty = parseInt(quantity, 10) || 0;
   const total = qty * (unitPrice ?? 0);
@@ -38,19 +43,22 @@ export function VendaEmbalagemForm({
     if (!packagingTypeId) return toast.error("Selecione o tipo de embalagem.");
     if (qty <= 0) return toast.error("Informe a quantidade.");
     setSaving(true);
-    const res = await criarVendaEmbalagem({
+    const corpo = {
       packagingTypeId,
       customerName: customerName.trim() || null,
       saleDate,
       quantity: qty,
       unitPrice: unitPrice ?? 0,
-    });
+    };
+    const res = await chamarAction(() =>
+      criarVendaEmbalagem({ ...corpo, idempotencyKey: chavePorConteudo(chave, corpo) }),
+    );
     setSaving(false);
     if (res.ok) {
       toast.success("Venda de embalagem registrada.");
       onSalvo();
     } else {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

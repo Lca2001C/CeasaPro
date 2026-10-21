@@ -15,6 +15,7 @@ import { Badge } from "@/components/ui/badge";
 import { SALE_UNIT_LABELS } from "@/lib/labels";
 import { rotuloDeEmbalagem } from "@/lib/cotacoes/embalagem-texto";
 import type { SaleUnit } from "@prisma/client";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 interface ItemDoBoletim {
   id: string;
@@ -138,13 +139,13 @@ export function VinculoForm({
   async function confirmar() {
     if (marcados.length === 0) return;
     setBusy(true);
-    const res = await vincularEmLoteCotacao({
+    const res = await chamarAction(() => vincularEmLoteCotacao({
       itens: marcados.map((p) => ({
         productId: p.id,
         ceasaProductId: escolhas[p.id].ceasaProductId,
         unit: escolhas[p.id].unit,
       })),
-    });
+    }));
     setBusy(false);
     if (res.ok) {
       toast.success(
@@ -289,7 +290,7 @@ function LinhaVinculada({ produto, busy }: { produto: ProdutoDoCliente; busy: bo
 
   async function desvincular() {
     setRemovendo(true);
-    const res = await desvincularCotacao({ productId: produto.id });
+    const res = await chamarAction(() => desvincularCotacao({ productId: produto.id }));
     setRemovendo(false);
     if (res.ok) {
       toast.success("Vínculo removido");

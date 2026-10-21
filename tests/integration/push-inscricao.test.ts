@@ -97,6 +97,7 @@ describe("PushInscricaoService.registrar", () => {
   it("celular compartilhado: o endpoint passa a pertencer a quem logou agora", async () => {
     const endpoint = endpointDe(uniq());
 
+    // No mesmo aparelho o navegador reenvia a MESMA inscrição: mesmas chaves.
     await PushInscricaoService.registrar(
       { userId: userB1, tenantId: tenantB },
       { endpoint, keys: chaves("b") },
@@ -104,7 +105,7 @@ describe("PushInscricaoService.registrar", () => {
     );
     await PushInscricaoService.registrar(
       { userId: userA2, tenantId: tenantA },
-      { endpoint, keys: chaves("a") },
+      { endpoint, keys: chaves("b") },
       null,
     );
 
@@ -119,6 +120,24 @@ describe("PushInscricaoService.registrar", () => {
       where: { userId: userB1, endpoint },
     });
     expect(doAntigo).toBe(0);
+  });
+
+  it("quem só conhece o endpoint de outro aparelho não o toma para si", async () => {
+    const endpoint = endpointDe(uniq());
+    await PushInscricaoService.registrar(
+      { userId: userB1, tenantId: tenantB },
+      { endpoint, keys: chaves("b") },
+      null,
+    );
+    // Chaves diferentes = não é a inscrição daquele navegador.
+    await PushInscricaoService.registrar(
+      { userId: userA2, tenantId: tenantA },
+      { endpoint, keys: chaves("a") },
+      null,
+    );
+    const linha = await prisma.pushSubscription.findUniqueOrThrow({ where: { endpoint } });
+    expect(linha.userId).toBe(userB1);
+    expect(linha.tenantId).toBe(tenantB);
   });
 
   it("um usuário pode ter vários aparelhos", async () => {

@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { useRouter } from "next/navigation";
 import { Loader2, Minus, Plus } from "lucide-react";
 import { toast } from "sonner";
@@ -13,6 +14,7 @@ import { QuantityInput } from "@/components/forms/quantity-input";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 /** Os motivos de baixa — os mesmos da tela de ajuste, sem o acerto para mais. */
 const MOTIVOS = [
@@ -59,7 +61,10 @@ export function AcoesRapidas({
   const [salvando, setSalvando] = useState(false);
   // Trava síncrona contra toque duplo: `salvando` só desabilita no próximo render.
   const enviando = useRef(false);
-  const chaveDaEntrada = useRef<string | null>(null);
+  // Chaves amarradas ao conteúdo (`chavePorConteudo`): o reenvio do mesmo
+  // lançamento devolve o gravado; outro valor é outro lançamento.
+  const chaveDaEntrada: RefDeChave = useRef(null);
+  const chaveDaBaixa: RefDeChave = useRef(null);
 
   const qtd = quantidade ?? 0;
   const prefixo = `rapida-${productId}`;
@@ -81,6 +86,7 @@ export function AcoesRapidas({
     setDescarga(null);
     setPainel(null);
     chaveDaEntrada.current = null;
+    chaveDaBaixa.current = null;
     router.refresh();
   }
 
@@ -93,20 +99,22 @@ export function AcoesRapidas({
     }
     enviando.current = true;
     setSalvando(true);
-    chaveDaEntrada.current ??= crypto.randomUUID();
-    const res = await apiPost<{ id: string }>("/api/compras", {
-      idempotencyKey: chaveDaEntrada.current,
+    const corpoEntrada = {
       supplierId: fornecedor || null,
       purchaseDate: isoDateTz(),
       freight: custo.totalDescarga,
       notes: null,
       items: [{ productId, quantity: qtd, unitPrice: mercadoria ?? 0 }],
-      pagamento: { status: "PAGO" },
+      pagamento: { status: "PAGO" as const },
+    };
+    const res = await apiPost<{ id: string }>("/api/compras", {
+      ...corpoEntrada,
+      idempotencyKey: chavePorConteudo(chaveDaEntrada, corpoEntrada),
     });
     enviando.current = false;
     setSalvando(false);
     if (res.ok) terminar(`Entrada de ${formatQty(qtd)} registrada.`);
-    else toast.error(res.error.message);
+    else toast.error(mensagemDoErro(res.error));
   }
 
   async function confirmarBaixa() {
@@ -118,16 +126,20 @@ export function AcoesRapidas({
     const escolhido = MOTIVOS.find((m) => m.value === motivo) ?? MOTIVOS[0];
     enviando.current = true;
     setSalvando(true);
-    const res = await apiPost("/api/estoque/ajuste", {
+    const corpoBaixa = {
       productId,
       type: escolhido.tipo,
       quantity: escolhido.tipo === "AJUSTE" ? -qtd : qtd,
       reason: null,
+    };
+    const res = await apiPost("/api/estoque/ajuste", {
+      ...corpoBaixa,
+      idempotencyKey: chavePorConteudo(chaveDaBaixa, corpoBaixa),
     });
     enviando.current = false;
     setSalvando(false);
     if (res.ok) terminar(`Baixa de ${formatQty(qtd)} registrada.`);
-    else toast.error(res.error.message);
+    else toast.error(mensagemDoErro(res.error));
   }
 
   return (
@@ -142,7 +154,6 @@ export function AcoesRapidas({
             onChange={(v) => {
               setQuantidade(v);
               setErro(undefined);
-              chaveDaEntrada.current = null;
             }}
           />
         </div>
@@ -184,12 +195,10 @@ export function AcoesRapidas({
           onMercadoria={(v) => {
             setMercadoria(v);
             setErro(undefined);
-            chaveDaEntrada.current = null;
           }}
           onDescarga={(v) => {
             setDescarga(v);
             setErro(undefined);
-            chaveDaEntrada.current = null;
           }}
           erro={erro}
         >

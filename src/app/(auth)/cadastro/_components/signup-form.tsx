@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useForm, useWatch } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { Eye, EyeOff, Loader2, MailCheck } from "lucide-react";
 import { signupSchema, type SignupInput } from "@/lib/validations/auth";
 import { apiPost } from "@/lib/api-client";
+import { limparSnapshotNoLogout } from "@/lib/pwa/offline-store";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +56,13 @@ export function SignupForm({
 }) {
   const [loading, setLoading] = useState(false);
   const [show, setShow] = useState(false);
+
+  // Desta tela também se entra (pelo Google): o snapshot offline e o "já vi" do
+  // sino que sobraram no aparelho são de quem saiu sem tocar em "Sair" — como
+  // na tela de login, o próximo a entrar não pode herdá-los.
+  useEffect(() => {
+    void limparSnapshotNoLogout().catch(() => {});
+  }, []);
   const [sentTo, setSentTo] = useState<string | null>(null);
   const {
     register,

@@ -123,6 +123,13 @@ model User {
   /// endereço já tem conta; `email` continua guardando o que a pessoa digitou,
   /// porque é para lá que a mensagem é entregue. Ver `src/lib/email-identity.ts`.
   emailIdentity        String?
+  /// A senha atual foi definida por um canal que COMPROVOU a caixa de e-mail
+  /// (cadastro pelo admin, redefinição pelo link, ou descarte no vínculo com o
+  /// Google)? A do cadastro público nasce `false`: qualquer pessoa pode ter
+  /// cadastrado o e-mail de outra. Confirmar o e-mail NÃO comprova a senha —
+  /// o link pode ser aberto pelo dono (ou pelo robô do provedor) com a senha do
+  /// impostor de pé. Ver `GoogleLoginService` (descarta senha não comprovada).
+  senhaComprovada      Boolean            @default(true)
   createdAt            DateTime           @default(now())
   updatedAt            DateTime           @updatedAt
   deletedAt            DateTime?
@@ -974,6 +981,11 @@ model StockMovement {
   product    Product           @relation(fields: [productId], references: [id])
   tenant     Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /// Uma por lançamento digitado: o reenvio (timeout depois do commit, toque
+  /// duplo) devolve o já gravado em vez de lançar de novo.
+  idempotencyKey String?
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, productId, movedAt])
   // A janela do custo médio (`sqlCustoEstoque`) ordena por gravação, não por
   // `movedAt`; o índice acima não serve a ela.
@@ -1002,21 +1014,26 @@ model StockMovement {
 /// compra cancelada e ajuste desfeito saem do repasse AOS PARES, e nenhum par
 /// pode ficar metade antes e metade depois de um checkpoint ainda por formar.
 model StockCostCheckpoint {
-  id                 String    @id @default(cuid())
+  id                 String   @id @default(cuid())
   tenantId           String
   productId          String
   ateCreatedAt       DateTime
   /// Saldo depois do último movimento coberto.
-  saldo              Decimal   @db.Decimal(14, 3)
+  saldo              Decimal  @db.Decimal(14, 3)
   /// Custo médio móvel SEM arredondar (o arredondamento é só na saída). Nulo
   /// quando o saldo é ≤ 0 — a média recomeça na próxima entrada.
-  custo              Decimal?  @db.Decimal(40, 20)
+  custo              Decimal? @db.Decimal(40, 20)
+  /// Saldo real na linha em que o ciclo atual da média começou (<= 0; zero se
+  /// o saldo nunca zerou). O ciclo acumula `saldo - deslocamento` pela média —
+  /// sem isto, o checkpoint dentro de um ciclo que começou num saldo negativo
+  /// dava outro custo que o repasse completo.
+  deslocamento       Decimal  @default(0) @db.Decimal(14, 3)
   /// Custo da última entrada coberta: o custo de referência sem saldo.
-  ultimoCustoEntrada Decimal?  @db.Decimal(14, 4)
+  ultimoCustoEntrada Decimal? @db.Decimal(14, 4)
   ultimoMovedAt      DateTime
-  updatedAt          DateTime  @updatedAt
-  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  product            Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+  updatedAt          DateTime @updatedAt
+  tenant             Tenant   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product            Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, productId])
   @@map("stock_cost_checkpoints")
@@ -1192,6 +1209,11 @@ model CrateCleaning {
   crateMovements PlasticCrateMovement[]
   payments       CrateCleaningPayment[]
 
+  /// Uma por lançamento digitado: o reenvio (timeout depois do commit, toque
+  /// duplo) devolve o já gravado em vez de lançar de novo.
+  idempotencyKey String?
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, sentDate])
   @@index([tenantId, status])
   @@map("crate_cleanings")
@@ -1262,6 +1284,11 @@ model PackagingMovement {
   packagingType   PackagingType         @relation(fields: [packagingTypeId], references: [id], onDelete: Cascade)
   tenant          Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /// Uma por lançamento digitado: o reenvio (timeout depois do commit, toque
+  /// duplo) devolve o já gravado em vez de lançar de novo.
+  idempotencyKey String?
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, packagingTypeId])
   @@index([tenantId, movedAt])
   @@index([sourceType, sourceId])
@@ -1291,6 +1318,11 @@ model PackagingSale {
   type            PackagingType @relation(fields: [packagingTypeId], references: [id])
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /// Uma por lançamento digitado: o reenvio (timeout depois do commit, toque
+  /// duplo) devolve o já gravado em vez de lançar de novo.
+  idempotencyKey String?
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, saleDate])
   @@index([tenantId, packagingTypeId])
   @@map("packaging_sales")

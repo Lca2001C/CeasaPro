@@ -88,14 +88,21 @@ export async function resolverLoginGoogle(
     // vítima — que só passa a ser usada de verdade porque este login liberou o
     // acesso. O Google acabou de provar quem é o dono; a senha de origem não
     // comprovada é descartada (a pessoa entra pelo Google ou usa /recuperar-senha).
-    const pendente = !porEmail.emailVerifiedAt;
+    // Também a conta JÁ confirmada cuja senha nunca foi comprovada: o link de
+    // confirmação pode ter sido aberto pelo dono (ou pelo robô do provedor que
+    // pré-carrega links) com a senha do impostor de pé, e só o vínculo do
+    // Google prova quem é o dono. Sem isto, o impostor seguia entrando com a
+    // senha dele e lendo a empresa que a vítima passou a usar.
+    const pendente = !porEmail.emailVerifiedAt || !porEmail.senhaComprovada;
     await prisma.user.update({
       where: { id: porEmail.id },
       data: pendente
         ? {
             googleSub: perfil.sub,
-            emailVerifiedAt: new Date(),
+            emailVerifiedAt: porEmail.emailVerifiedAt ?? new Date(),
             passwordHash: await hashPassword(randomBytes(32).toString("hex")),
+            // A senha agora é aleatória e ninguém a conhece: não há o que comprovar.
+            senhaComprovada: true,
             // Tokens em aberto também são do impostor: o de confirmação nasceu do
             // cadastro dele e o de recuperação ele pode ter pedido antes.
             verifyTokenHash: null,

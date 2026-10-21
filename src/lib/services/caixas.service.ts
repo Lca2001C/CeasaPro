@@ -365,9 +365,13 @@ export const CaixasService = {
    * o estorno já havia trazido de volta, e o formulário aceitava a devolução —
    * que então tirava do saldo global caixas que ninguém devia.
    */
-  async saldoPorCliente(tenantId: string): Promise<Map<string, number>> {
+  async saldoPorCliente(tenantId: string): Promise<SaldoDeCaixasPorCliente> {
+    // Agrupado pela IDENTIDADE do cliente (`lower(btrim())`, a mesma da aba
+    // Clientes): "Zé Silva" e "zé silva" eram dois saldos — a ficha juntava as
+    // vendas, mas o fiado do segundo nome mostrava 0 caixas e recusava a
+    // devolução.
     const rows = await prisma.$queryRaw<{ customer: string; saldo: bigint }[]>`
-      SELECT "customerName" AS customer,
+      SELECT MIN("customerName") AS customer,
              COALESCE(SUM(
                CASE WHEN type::text = 'SAIDA' THEN quantity
                     WHEN type::text IN ('RETORNO', 'QUEBRA', 'ESTORNO_SAIDA') THEN -quantity
@@ -375,12 +379,12 @@ export const CaixasService = {
              ), 0)::bigint AS saldo
       FROM plastic_crate_movements
       WHERE "tenantId" = ${tenantId} AND "customerName" IS NOT NULL
-      GROUP BY "customerName"
+      GROUP BY lower(btrim("customerName"))
     `;
-    const map = new Map<string, number>();
+    const map = new SaldoDeCaixasPorCliente();
     for (const r of rows) {
       const saldo = Number(r.saldo);
-      if (saldo > 0) map.set(r.customer, saldo);
+      if (saldo > 0) map.definir(r.customer, saldo);
     }
     return map;
   },
@@ -586,7 +590,9 @@ async function saldoDoClienteInTx(
   customerName: string,
 ): Promise<number> {
   const movs = await tx.plasticCrateMovement.findMany({
-    where: { tenantId, customerName },
+    // Sem diferenciar maiúscula/minúscula: a identidade do cliente (ver
+    // `saldoPorCliente`). Os nomes chegam aparados pelos schemas.
+    where: { tenantId, customerName: { equals: customerName.trim(), mode: "insensitive" } },
     select: { type: true, quantity: true },
   });
   let saldo = 0;
@@ -597,6 +603,28 @@ async function saldoDoClienteInTx(
     }
   }
   return saldo;
+}
+
+/**
+ * Saldo de caixas por cliente. Itera pelo nome de exibição, mas o `get` busca
+ * pela identidade do cliente (sem caixa nem espaços nas pontas) — quem chama
+ * passa o nome como está na conta ou na venda.
+ */
+export class SaldoDeCaixasPorCliente extends Map<string, number> {
+  private readonly porChave = new Map<string, number>();
+
+  definir(nome: string, saldo: number): void {
+    super.set(nome, saldo);
+    this.porChave.set(chaveDeCliente(nome), saldo);
+  }
+
+  override get(nome: string): number | undefined {
+    return this.porChave.get(chaveDeCliente(nome));
+  }
+}
+
+function chaveDeCliente(nome: string): string {
+  return nome.trim().toLocaleLowerCase("pt-BR");
 }
 
 export function computeCrateSaldo(r: SaldoRow): CrateSaldo {

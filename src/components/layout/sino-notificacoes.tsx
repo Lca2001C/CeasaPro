@@ -7,9 +7,24 @@ import { Bell, BellRing, CheckCircle2, CreditCard } from "lucide-react";
 import { listarNotificacoes, type Notificacao } from "@/actions/notificacoes.actions";
 import { chamarAction } from "@/lib/http/chamar-action";
 import { cn } from "@/lib/cn";
+import { CHAVE_NOTIFICACOES_VISTAS } from "@/lib/pwa/offline-store";
 import { Button } from "@/components/ui/button";
 
-const CHAVE_VISTAS = "ceasapro:notificacoes-vistas";
+const CHAVE_VISTAS = CHAVE_NOTIFICACOES_VISTAS;
+
+/**
+ * O id do aviso carrega o TEXTO dele ("<Cliente> ainda vai buscar…"): no
+ * aparelho fica só um resumo (FNV-1a), suficiente para "já vi", sem o nome do
+ * cliente no localStorage.
+ */
+function resumo(id: string): string {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < id.length; i++) {
+    h ^= id.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return (h >>> 0).toString(36) + ":" + id.length.toString(36);
+}
 const INTERVALO_MS = 5 * 60_000;
 
 /** Evento para uma tela pedir ao sino que releia (ex.: retirada marcada). */
@@ -58,7 +73,7 @@ export function SinoNotificacoes({ avisoAssinatura }: { avisoAssinatura?: string
     return [...assinatura, ...itens];
   }, [avisoAssinatura, itens]);
 
-  const novas = todas.filter((n) => !vistas.has(n.id)).length;
+  const novas = todas.filter((n) => !vistas.has(resumo(n.id))).length;
 
   const carregar = useCallback(async () => {
     const res = await chamarAction(() => listarNotificacoes());
@@ -107,9 +122,9 @@ export function SinoNotificacoes({ avisoAssinatura }: { avisoAssinatura?: string
     setRotaDoPainel(pathname);
     void carregar();
     // As novidades ficam marcadas "NOVO" dentro do painel; o sino apaga.
-    setDestacadas(new Set(todas.filter((n) => !vistas.has(n.id)).map((n) => n.id)));
+    setDestacadas(new Set(todas.filter((n) => !vistas.has(resumo(n.id))).map((n) => n.id)));
     // Guarda só os ids atuais: os que sumiram não precisam ficar para sempre.
-    const ids = todas.map((n) => n.id);
+    const ids = todas.map((n) => resumo(n.id));
     gravarVistas(ids);
     setVistas(new Set(ids));
   }

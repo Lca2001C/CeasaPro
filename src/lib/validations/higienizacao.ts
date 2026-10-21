@@ -1,13 +1,19 @@
 import { z } from "zod";
 import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
 import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
+import { MSG_DATA_ANTIGA, dataNaoAntesDoMesPassado } from "./venda";
 
 export const higienizacaoSchema = z.object({
   cleanerName: z.string().trim().min(1, "Informe o higienizador").max(120),
-  sentDate: z.string().min(1, "Informe a data de envio"),
+  sentDate: z
+    .string()
+    .min(1, "Informe a data de envio")
+    .refine((v) => dataNaoAntesDoMesPassado(v), MSG_DATA_ANTIGA),
   sentQty: z.number().int().positive("Quantidade inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG),
   unitPrice: z.number().nonnegative("Valor inválido").refine(temAteDuasCasas, MSG_DUAS_CASAS),
   notes: z.string().trim().max(300).nullable().optional(),
+  /** Um por envio digitado: o reenvio devolve o envio já gravado. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type HigienizacaoInput = z.infer<typeof higienizacaoSchema>;
 
@@ -38,6 +44,9 @@ export type HigienizacaoPerdaInput = z.infer<typeof higienizacaoPerdaSchema>;
 export const higienizacaoPagamentoSchema = z.object({
   id: z.string().min(1),
   amount: z.number().positive("Informe o valor").refine(temAteDuasCasas, MSG_DUAS_CASAS),
-  paidDate: z.string().min(1, "Informe a data"),
+  paidDate: z
+    .string()
+    .min(1, "Informe a data")
+    .refine((v) => dataNaoAntesDoMesPassado(v), MSG_DATA_ANTIGA),
 });
 export type HigienizacaoPagamentoInput = z.infer<typeof higienizacaoPagamentoSchema>;

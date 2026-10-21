@@ -30,9 +30,9 @@ export interface UltimaCompraDoProduto {
 }
 
 export const ComprasService = {
-  async list(tenantId: string) {
+  async list(tenantId: string, agora = new Date()) {
     const db = getTenantPrisma(tenantId);
-    return db.purchase.findMany({
+    const compras = await db.purchase.findMany({
       // O produto vem junto para a lista poder abrir os itens sem outra
       // consulta — conferir "o que veio nesta compra" era o buraco da tela.
       include: {
@@ -48,6 +48,29 @@ export const ComprasService = {
       orderBy: { purchaseDate: "desc" },
       take: 100,
     });
+    // O botão "Cancelar" só aparece quando o servidor vai aceitar: no prazo E
+    // sem saída/ajuste dos produtos depois da compra (a regra de
+    // `cancelarCompra`). No caso típico do box — comprou de manhã, vendeu à
+    // tarde — o botão aparecia, a pessoa confirmava e levava a recusa.
+    const noPrazo = compras.filter((c) => this.podeCancelar(c, agora)).map((c) => c.id);
+    const usadas = new Set<string>();
+    if (noPrazo.length > 0) {
+      const linhas = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT DISTINCT e."sourceId" AS id
+        FROM stock_movements e
+        JOIN stock_movements m
+          ON m."tenantId" = e."tenantId" AND m."productId" = e."productId"
+         AND m.type <> 'ENTRADA' AND m."createdAt" > e."createdAt"
+        WHERE e."tenantId" = ${tenantId}
+          AND e."sourceType" = ${ORIGEM_COMPRA}
+          AND e."sourceId" = ANY(${noPrazo}::text[])
+      `;
+      for (const l of linhas) usadas.add(l.id);
+    }
+    return compras.map((c) => ({
+      ...c,
+      podeCancelarAgora: this.podeCancelar(c, agora) && !usadas.has(c.id),
+    }));
   },
 
   /**

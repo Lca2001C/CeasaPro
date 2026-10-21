@@ -36,6 +36,8 @@ export const ajusteEstoqueSchema = z
       .refine((v) => Math.abs(v) <= QUANTIDADE_MAX, MSG_QUANTIDADE_MAX)
       .refine(temAteTresCasas, MSG_TRES_CASAS),
     reason: z.string().trim().max(200).nullable().optional(),
+    /** Uma por ajuste digitado (`chavePorConteudo`): o reenvio devolve o gravado. */
+    idempotencyKey: z.uuid().optional(),
     unitCost: z
       .number()
       .nonnegative()

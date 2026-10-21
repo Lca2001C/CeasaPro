@@ -21,6 +21,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { CurrencyInput } from "@/components/forms/currency-input";
+import { chamarAction } from "@/lib/http/chamar-action";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 
 interface Props {
   categories: { id: string; name: string }[];
@@ -45,6 +47,7 @@ export function DespesaForm({ categories, fornecedores = [], initial, preenchido
     handleSubmit,
     control,
     setValue,
+    setError,
     formState: { errors },
   } = useForm<DespesaInput>({
     resolver: zodResolver(despesaSchema),
@@ -84,15 +87,20 @@ export function DespesaForm({ categories, fornecedores = [], initial, preenchido
   async function onSubmit(values: DespesaInput) {
     setSaving(true);
     const res = initial
-      ? await atualizarDespesa({ ...values, id: initial.id })
-      : await criarDespesa(values);
+      ? await chamarAction(() => atualizarDespesa({ ...values, id: initial.id }))
+      : await chamarAction(() => criarDespesa(values));
     setSaving(false);
     if (res.ok) {
       toast.success(initial ? "Despesa atualizada" : "Despesa cadastrada");
       router.push("/despesas");
       router.refresh();
     } else {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
+      // O servidor revalida (data inexistente, tetos, mês fechado): o campo
+      // recusado fica destacado, não só o toast genérico.
+      for (const [campo, msg] of Object.entries(res.error.fields ?? {})) {
+        setError(campo as keyof DespesaInput, { message: msg });
+      }
     }
   }
 

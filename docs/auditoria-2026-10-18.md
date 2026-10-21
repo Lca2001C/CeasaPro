@@ -145,6 +145,41 @@ Cobrança, segurança, fluxo do balcão e consistência dos números, revisados 
 | Aviso de higienização | Conta só lote com dinheiro a pagar, como "Contas a pagar". |
 | Descrição do módulo Cotações | Inclui o Entreposto de São Paulo (CEAGESP). |
 
+## 2e. Varredura de 21/10 (quinta rodada)
+
+Busca no código inteiro depois do merge de `e1e61e3`. 25 apontamentos; 24 corrigidos, 1 falso positivo.
+
+| Assunto | O que mudou |
+|---|---|
+| Google adotava senha plantada já confirmada | `User.senhaComprovada` (cadastro público = `false`; redefinir senha = `true`). O Google descarta a senha não comprovada. |
+| Server Action com access vencido perdia o formulário | Cookie `cp_exp` + `garantirSessao()` antes de `chamarAction`; proxy responde 401 JSON na escrita e renova antes do download de relatório. 13 componentes passaram a usar `chamarAction`. |
+| Login: tentativas paralelas furavam o balde por IP | Consumo atômico antes do Argon2, devolvido no acerto. |
+| Produto excluído com ajuste desfazível | Baixa da exclusão vira `PRODUCT_DELETED` (entra nas perdas); desfazer ajuste recusa produto excluído; lista mostra só o que pode ser desfeito (`podeDesfazer`). |
+| Compra: botão "Cancelar" oferecido quando o servidor recusa | `podeCancelarAgora` na lista. |
+| Reenvio depois de timeout duplicava ajuste, embalagem e higienização | `idempotencyKey` único por empresa nas quatro tabelas + `comIdempotencia`. |
+| Chave de idempotência sobrevivia à edição (ou zerava a cada tecla) | `chavePorConteudo` nos formulários. |
+| PDV: reenvio devolvia venda diferente do carrinho | A rota devolve `totalAmount`; o PDV confere e avisa. |
+| Embalagem que molhou/sumiu ficava no saldo | `registrarBaixa` (QUEBRA `PACKAGING_LOSS`), no custo das embalagens do mês. |
+| Caixas: "João" ≠ "joão" | Identidade sem caixa nem espaços, no saldo, no retorno e nos totais. |
+| Checkpoint do custo errava ciclo recomeçado em saldo negativo | Coluna `deslocamento`; checkpoints antigos apagados pela migration. |
+| Erro de validação mostrava "Dados inválidos" | `mensagemDoErro` (primeiro motivo de `fields`) nos formulários. |
+| Nome do cliente na URL ia ao Sentry | `/vendas/clientes/:cliente`. |
+| Sino: ids das notificações vistas guardados em claro e não limpos no logout | Hash curto; limpo no logout e no cadastro (que também limpa o snapshot offline). |
+| Relatório de papelão somava entrada e saída num "total" | Colunas `valorEntrada` / `valorSaida`. |
+| Fluxo de caixa com despesa pendente | Só `PAGO`. |
+| Despesa pendente com `paidDate` | Gravado só quando paga. |
+| "Vendi no mês" contava venda com data futura | Até o fim de hoje. |
+| Desconto, valor de despesa, preço de embalagem e itens do fiado sem teto | Tetos e 2 casas. |
+| Ajuste de saída com custo digitado | Custo só na entrada; saída pelo custo médio. |
+| Lançamento retroativo reescrevia meses fechados | Piso: início do mês passado (despesa fora). |
+| Configurações carregava "Meu plano" em toda aba | Só na aba do plano (`IrParaAba`). |
+| Push: endpoint de outro aparelho tomado só pelo endereço | Reatribuição exige as mesmas chaves. |
+| Desvincular cotação sem gravar recusa | **Falso positivo**: `desvincular` já grava `TenantCeasaLinkRecusa`. |
+
+**Depois do deploy:** `npx prisma migrate deploy` (cria as colunas e apaga os checkpoints); o cron de billing refaz os checkpoints, ou rode `npx tsx scripts/recalcular-checkpoints.ts`. Usuários antigos ficam com `senhaComprovada = true` (não há como distinguir); a proteção vale para cadastros novos.
+
+Testes: `tests/unit/varredura-21-10.test.ts`, `tests/integration/varredura-2026-10-21.test.ts`, casos novos em `google-login.test.ts`, `push-inscricao.test.ts` e `estoque-checkpoint.test.ts`.
+
 ## 3. Pendentes — prioridade baixa
 
 - **Navegação no cliente com sessão revogada** continua lendo até o access expirar (15 min): o layout já montado não roda de novo. Limite do App Router, aceito — a escrita é barrada e toda página carregada do servidor confere a sessão.

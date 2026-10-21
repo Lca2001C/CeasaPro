@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { HandCoins, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 import { formatBRL } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -44,22 +46,21 @@ export function ReceberRapido({
   const [amount, setAmount] = useState<number | undefined>(saldo);
   const [method, setMethod] = useState("DINHEIRO");
   const [saving, setSaving] = useState(false);
-  // Uma chave por recebimento digitado (ver `PagamentoForm`).
-  const chave = useRef<string | null>(null);
+  // Chave amarrada ao conteúdo (ver `PagamentoForm`).
+  const chave: RefDeChave = useRef(null);
 
   async function submit() {
     if (!amount || amount <= 0) return toast.error("Informe o valor recebido.");
     setSaving(true);
-    chave.current ??= crypto.randomUUID();
+    const corpo = { accountId, amount, method };
     const res = await apiPost("/api/fiado/pagamento", {
-      accountId,
-      amount,
-      method,
-      idempotencyKey: chave.current,
+      ...corpo,
+      idempotencyKey: chavePorConteudo(chave, corpo),
     });
     setSaving(false);
     if (!res.ok) {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
+      if (res.error.code === "TIMEOUT" || res.error.code === "NETWORK") router.refresh();
       return;
     }
     chave.current = null;
@@ -119,10 +120,7 @@ export function ReceberRapido({
               <CurrencyInput
                 aria-label="Valor recebido"
                 value={amount}
-                onChange={(v) => {
-                  chave.current = null;
-                  setAmount(v);
-                }}
+                onChange={setAmount}
               />
             </div>
             <div className="flex flex-col gap-1.5">
@@ -130,10 +128,7 @@ export function ReceberRapido({
               <Select
                 aria-label="Forma de recebimento"
                 value={method}
-                onChange={(e) => {
-                  chave.current = null;
-                  setMethod(e.target.value);
-                }}
+                onChange={(e) => setMethod(e.target.value)}
               >
                 <option value="DINHEIRO">Dinheiro</option>
                 <option value="PIX">PIX</option>

@@ -1,7 +1,14 @@
 import { z } from "zod";
 import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
 import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
-import { dataDoFormularioValida, dataOpcionalSchema, vendaItemSchema } from "./venda";
+import {
+  MSG_DATA_ANTIGA,
+  dataDoFormularioValida,
+  dataNaoAntesDoMesPassado,
+  dataOpcionalSchema,
+  vendaItemSchema,
+} from "./venda";
+import { ITENS_MAX, MSG_ITENS_MAX } from "./quantidade";
 
 export const pagamentoFiadoSchema = z.object({
   accountId: z.string().min(1),
@@ -64,13 +71,17 @@ const dataObrigatoria = (mensagem: string) =>
 export const fiadoManualSchema = z.object({
   customerName: z.string().trim().min(1, "Informe o cliente").max(120),
   customerPhone: z.string().trim().max(20).nullable().optional(),
-  saleDate: dataObrigatoria("Informe a data da venda"),
+  saleDate: dataObrigatoria("Informe a data da venda").refine(
+    (v) => dataNaoAntesDoMesPassado(v),
+    MSG_DATA_ANTIGA,
+  ),
   dueDate: dataOpcionalSchema,
   plasticCrateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   notes: z.string().trim().max(300).nullable().optional(),
   items: z
     .array(vendaItemSchema)
     .min(1, "Adicione ao menos um item")
+    .max(ITENS_MAX, MSG_ITENS_MAX)
     .refine((itens) => itens.every((i) => i.unitPrice > 0), "Informe o preço de todos os itens."),
   /** Uma por lançamento digitado: o reenvio devolve a venda já gravada. */
   idempotencyKey: z.uuid().optional(),

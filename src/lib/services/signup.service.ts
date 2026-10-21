@@ -156,6 +156,8 @@ export const SignupService = {
             verifyTokenHash: token.tokenHash,
             verifyTokenExpiresAt: token.expiresAt,
             emailVerifiedAt: null,
+            // Quem cadastrou pode não ser o dono da caixa (ver `senhaComprovada`).
+            senhaComprovada: false,
           },
         });
         await audit(

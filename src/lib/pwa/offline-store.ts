@@ -121,11 +121,21 @@ async function descartarSnapshot(): Promise<void> {
  * inclusive sem sessão, porque a tela offline lê do IndexedDB e não do servidor.
  */
 export async function limparSnapshotNoLogout(): Promise<void> {
+  // O "já vi" do sino é desta conta: no aparelho compartilhado, valia para a
+  // próxima (e carregava texto dos avisos). Sai junto.
+  try {
+    localStorage.removeItem(CHAVE_NOTIFICACOES_VISTAS);
+  } catch {
+    // armazenamento bloqueado: nada gravado para apagar
+  }
   // O debounce vai junto (`descartarSnapshot`): sem isto, quem entra em seguida
   // no mesmo aparelho herdava a marca "sincronizei há 2 min" e ficava até 5 min
   // sem snapshot próprio — offline, a tela mostraria o da conta anterior.
   await descartarSnapshot();
 }
+
+/** O "já vi" do sino de notificações (`sino-notificacoes.tsx`). */
+export const CHAVE_NOTIFICACOES_VISTAS = "ceasapro:notificacoes-vistas";
 
 /** Marca do último sync (debounce do `OfflineSync`). Mora aqui para o logout limpar. */
 export const CHAVE_ULTIMO_SYNC = "pwa-last-snapshot-at";

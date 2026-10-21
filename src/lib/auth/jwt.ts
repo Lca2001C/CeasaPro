@@ -106,4 +106,11 @@ export async function verifyAccess(token: string): Promise<AccessPayload | null>
 }
 
 export const ACCESS_COOKIE = "cp_access";
+/**
+ * Quando o access vence (epoch em ms). NÃO é httpOnly de propósito, e não é
+ * segredo: é o que deixa o cliente renovar ANTES de chamar uma Server Action
+ * (`garantirSessao`). A action com access vencido não tem como se recuperar —
+ * o POST dela recebe 401 do proxy e vira "falha de conexão".
+ */
+export const EXPIRA_COOKIE = "cp_exp";
 export const REFRESH_COOKIE = "cp_refresh";

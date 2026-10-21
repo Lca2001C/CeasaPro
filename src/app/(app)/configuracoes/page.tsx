@@ -12,6 +12,7 @@ import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { MeuPlanoConteudo } from "../plano/_components/meu-plano-conteudo";
+import { IrParaAba } from "./_components/ir-para-aba";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { PushOptIn } from "@/components/pwa/push-opt-in";
 import { EmpresaConfigForm } from "./_components/empresa-form";
@@ -166,7 +167,12 @@ export default async function ConfiguracoesPage({
             </Card>
           </TabsContent>
           <TabsContent value="plano" className="flex flex-col gap-5">
-            <MeuPlanoConteudo tenantId={tenantId} bloqueado={sp.bloqueado} />
+            {/* Só a aba pedida carrega o plano no servidor (ver `IrParaAba`). */}
+            {aba === "plano" ? (
+              <MeuPlanoConteudo tenantId={tenantId} bloqueado={sp.bloqueado} />
+            ) : (
+              <IrParaAba href="/configuracoes?aba=plano" />
+            )}
           </TabsContent>
           <TabsContent value="assinatura" className="flex flex-col gap-5">
             <Card>

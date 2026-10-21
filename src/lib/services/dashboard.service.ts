@@ -7,9 +7,14 @@ import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { ORIGEM_BAIXA_EMBALAGEM } from "@/lib/estoque/origens";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/linhas-vendidas";
 import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
-import { ORIGEM_AJUSTE, ORIGEM_AJUSTE_DESFEITO } from "@/lib/estoque/origens";
+import {
+  ORIGEM_AJUSTE,
+  ORIGEM_AJUSTE_DESFEITO,
+  ORIGEM_PRODUTO_EXCLUIDO,
+} from "@/lib/estoque/origens";
 
 /**
  * Higienização do mês para o painel: saldo em aberto e o custo dos lotes
@@ -166,6 +171,7 @@ export const DashboardService = {
       despOperacional,
       higLotes,
       embalagensRows,
+      baixasEmbalagemRows,
       perdasRows,
       perdaEstoqueRows,
       recuperadoRows,
@@ -297,6 +303,15 @@ export const DashboardService = {
             WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL
               AND "saleDate" >= ${monthStart} AND "saleDate" <= ${ateAgora}
           `,
+      // Embalagem baixada sem ser vendida (quebra, uso), pelo custo médio.
+      !(lucro && comEmbalagens)
+        ? pula([] as { total: Prisma.Decimal | string }[])
+        : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+            SELECT COALESCE(SUM(ROUND(quantity * COALESCE("unitCost", 0), 2)), 0) AS total
+            FROM packaging_movements
+            WHERE "tenantId" = ${tenantId} AND "sourceType" = ${ORIGEM_BAIXA_EMBALAGEM}
+              AND "movedAt" >= ${monthStart} AND "movedAt" <= ${ateAgora}
+          `,
       // Fiado baixado como perda NESTE mês (data da baixa, não da venda). Pela
       // marca da baixa e não pelo status: a conta recuperada por inteiro depois
       // vira PAGO, e a perda daquele mês continua tendo acontecido.
@@ -319,7 +334,7 @@ export const DashboardService = {
                           ELSE 0 END * COALESCE(m."unitCost", 0), 2)), 0) AS total
             FROM stock_movements m
             WHERE m."tenantId" = ${tenantId}
-              AND (m."sourceType" = ${ORIGEM_AJUSTE}
+              AND (m."sourceType" IN (${ORIGEM_AJUSTE}, ${ORIGEM_PRODUTO_EXCLUIDO})
                    OR (m."sourceType" IS NULL AND m.type IN ('QUEBRA', 'DOACAO')))
               AND m."movedAt" >= ${monthStart} AND m."movedAt" <= ${ateAgora}
               AND NOT EXISTS (
@@ -364,7 +379,13 @@ export const DashboardService = {
     );
     const linhaEmb = embalagensRows[0];
     const embalagens = money(toDecimal((linhaEmb?.total ?? 0) as Prisma.Decimal.Value));
-    const custoEmbalagens = money(toDecimal((linhaEmb?.custo ?? 0) as Prisma.Decimal.Value));
+    // Custo das embalagens = as vendidas (custo gravado na venda) + as baixadas
+    // sem venda (quebra, uso).
+    const custoEmbalagens = money(
+      toDecimal((linhaEmb?.custo ?? 0) as Prisma.Decimal.Value).plus(
+        toDecimal((baixasEmbalagemRows[0]?.total ?? 0) as Prisma.Decimal.Value),
+      ),
+    );
     const perdasFiado = money(toDecimal((perdasRows[0]?.total ?? 0) as Prisma.Decimal.Value));
     const recuperadoFiado = money(
       toDecimal((recuperadoRows[0]?.total ?? 0) as Prisma.Decimal.Value),

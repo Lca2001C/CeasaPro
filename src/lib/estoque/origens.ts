@@ -18,3 +18,12 @@ export const ORIGEM_AJUSTE = "MANUAL";
  * par sai junto do repasse do custo médio, como o da compra cancelada.
  */
 export const ORIGEM_AJUSTE_DESFEITO = "MANUAL_CANCELLED";
+/**
+ * Baixa do saldo na EXCLUSÃO do produto. Entra nas perdas do mês como o ajuste
+ * manual, mas NÃO é desfazível: era `MANUAL`, aparecia na lista de "Desfazer"
+ * e devolvia a mercadoria a um produto que nenhuma tela mostra — a perda e o
+ * valor do estoque sumiam juntos.
+ */
+export const ORIGEM_PRODUTO_EXCLUIDO = "PRODUCT_DELETED";
+/** Embalagem baixada sem ser vendida (quebra, uso) — `EmbalagensService.registrarBaixa`. */
+export const ORIGEM_BAIXA_EMBALAGEM = "PACKAGING_LOSS";

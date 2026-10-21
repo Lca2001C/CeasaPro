@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/format";
 import { BOLETIM_ENVIADO_STATUS_LABELS } from "@/lib/labels";
 import { isoDateTz } from "@/lib/tz";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /*
   O exemplo usa unidades REAIS de boletim.
@@ -67,7 +68,7 @@ export function EnviarBoletimForm({
   async function enviar() {
     setBusy(true);
     setErros({});
-    const res = await enviarBoletimDaPraca({ quoteDate, texto });
+    const res = await chamarAction(() => enviarBoletimDaPraca({ quoteDate, texto }));
     setBusy(false);
     if (!res.ok) {
       setErros(res.error.fields ?? {});

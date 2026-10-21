@@ -1,15 +1,18 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { useRouter } from "next/navigation";
-import { Loader2, PackagePlus, Warehouse } from "lucide-react";
+import { Loader2, PackageMinus, PackagePlus, Warehouse } from "lucide-react";
 import { toast } from "sonner";
 import {
   ativarEstoqueEmbalagem,
   desfazerEntradaEmbalagem,
+  registrarBaixaEmbalagem,
   registrarEntradaEmbalagem,
 } from "@/actions/embalagens.actions";
 import { chamarAction } from "@/lib/http/chamar-action";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 import { nivelEstoque } from "@/lib/estoque/nivel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -48,6 +51,10 @@ export function EstoqueTipo({
   const router = useRouter();
   const [ligando, setLigando] = useState(false);
   const [entrando, setEntrando] = useState(false);
+  // Chave por conteúdo: o reenvio da MESMA entrada devolve a gravada.
+  const chaveEntrada: RefDeChave = useRef(null);
+  const [baixando, setBaixando] = useState(false);
+  const [motivo, setMotivo] = useState("");
   const [quantidade, setQuantidade] = useState("");
   const [custo, setCusto] = useState("");
   const [pending, start] = useTransition();
@@ -71,18 +78,39 @@ export function EstoqueTipo({
     const custoUnitario = custoInformado();
     if (qtd > 0 && custoUnitario === null) return toast.error("Informe quanto custou cada uma.");
     start(async () => {
-      const res = await ativarEstoqueEmbalagem({
+      const res = await chamarAction(() => ativarEstoqueEmbalagem({
         packagingTypeId: id,
         quantidadeAtual: qtd,
         ...(qtd > 0 && custoUnitario !== null ? { custoUnitario } : {}),
-      });
+      }));
       if (!res.ok) {
-        toast.error(res.error.message);
+        toast.error(mensagemDoErro(res.error));
         return;
       }
       toast.success(`Controle de estoque ligado para ${nome}.`);
       setLigando(false);
       setQuantidade("");
+      router.refresh();
+    });
+  }
+
+  /** Embalagem que saiu sem ser vendida (rasgou, molhou, foi com a mercadoria). */
+  function baixa() {
+    const qtd = parseInt(quantidade, 10);
+    if (!qtd || qtd <= 0) return toast.error("Informe quantas saíram.");
+    if (motivo.trim().length < 3) return toast.error("Diga o motivo da baixa.");
+    start(async () => {
+      const res = await chamarAction(() =>
+        registrarBaixaEmbalagem({ packagingTypeId: id, quantity: qtd, motivo: motivo.trim() }),
+      );
+      if (!res.ok) {
+        toast.error(mensagemDoErro(res.error));
+        return;
+      }
+      toast.success(`-${qtd} ${nome}. O custo entra nas contas do mês.`);
+      setBaixando(false);
+      setQuantidade("");
+      setMotivo("");
       router.refresh();
     });
   }
@@ -93,9 +121,12 @@ export function EstoqueTipo({
     const unitCost = custoInformado();
     if (unitCost === null) return toast.error("Informe quanto custou cada uma.");
     start(async () => {
-      const res = await registrarEntradaEmbalagem({ packagingTypeId: id, quantity: qtd, unitCost });
+      const corpo = { packagingTypeId: id, quantity: qtd, unitCost };
+      const res = await chamarAction(() =>
+        registrarEntradaEmbalagem({ ...corpo, idempotencyKey: chavePorConteudo(chaveEntrada, corpo) }),
+      );
       if (!res.ok) {
-        toast.error(res.error.message);
+        toast.error(mensagemDoErro(res.error));
         return;
       }
       const entradaId = res.data.id;
@@ -138,15 +169,24 @@ export function EstoqueTipo({
         </span>
 
         {controlaEstoque ? (
-          <Button
-            size="sm"
-            variant="outline"
-            className="shrink-0"
-            onClick={() => abrir(setEntrando)}
-          >
-            <PackagePlus className="size-4" />
-            <span className="hidden sm:inline">Entrada</span>
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              aria-label={`Baixa de ${nome}`}
+              onClick={() => {
+                setMotivo("");
+                abrir(setBaixando);
+              }}
+            >
+              <PackageMinus className="size-4" />
+              <span className="hidden sm:inline">Baixa</span>
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => abrir(setEntrando)}>
+              <PackagePlus className="size-4" />
+              <span className="hidden sm:inline">Entrada</span>
+            </Button>
+          </div>
         ) : (
           <Button
             size="sm"
@@ -190,6 +230,48 @@ export function EstoqueTipo({
             <Button onClick={ligar} disabled={pending}>
               {pending && <Loader2 className="size-4 animate-spin" />}
               Ligar controle
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={baixando} onOpenChange={(o) => !o && setBaixando(false)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Baixa de {nome}</DialogTitle>
+            <DialogDescription>
+              Embalagem que saiu sem ser vendida — rasgou, molhou ou foi junto com a mercadoria.
+              Sai pelo custo médio e entra no custo do mês. O saldo atual é <b>{saldo ?? 0}</b>.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`qtd-baixa-${id}`}>Quantidade</Label>
+            <Input
+              id={`qtd-baixa-${id}`}
+              type="number"
+              inputMode="numeric"
+              min={1}
+              autoFocus
+              value={quantidade}
+              onChange={(e) => setQuantidade(e.target.value)}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`motivo-baixa-${id}`}>Motivo</Label>
+            <Input
+              id={`motivo-baixa-${id}`}
+              placeholder="Ex.: rasgaram na chuva"
+              value={motivo}
+              onChange={(e) => setMotivo(e.target.value)}
+            />
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setBaixando(false)} disabled={pending}>
+              Cancelar
+            </Button>
+            <Button variant="warning" onClick={baixa} disabled={pending}>
+              {pending && <Loader2 className="size-4 animate-spin" />}
+              Registrar baixa
             </Button>
           </DialogFooter>
         </DialogContent>

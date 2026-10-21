@@ -42,7 +42,13 @@ export default async function AjusteEstoquePage() {
                     {a.reason ? ` · ${a.reason}` : ""}
                   </span>
                 </div>
-                <DesfazerAjusteButton id={a.id} />
+                {a.podeDesfazer ? (
+                  <DesfazerAjusteButton id={a.id} />
+                ) : (
+                  <span className="text-xs text-muted-foreground">
+                    Já houve movimento depois — lance um novo ajuste para corrigir.
+                  </span>
+                )}
               </div>
             ))}
           </Card>

@@ -12,6 +12,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { formatDateOnly } from "@/lib/format";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /** Quantas linhas do texto colado mostrar antes de o operador pedir mais. */
 const LINHAS_NA_PREVIA = 8;
@@ -69,7 +70,7 @@ function LinhaDaFila({ envio }: { envio: Envio }) {
 
   async function publicar() {
     setBusy(true);
-    const res = await publicarBoletimEnviado({ id: envio.id });
+    const res = await chamarAction(() => publicarBoletimEnviado({ id: envio.id }));
     setBusy(false);
     if (!res.ok) {
       toast.error(res.error.message);
@@ -98,7 +99,7 @@ function LinhaDaFila({ envio }: { envio: Envio }) {
       return;
     }
     setBusy(true);
-    const res = await recusarBoletimEnviado({ id: envio.id, motivo });
+    const res = await chamarAction(() => recusarBoletimEnviado({ id: envio.id, motivo }));
     setBusy(false);
     if (!res.ok) {
       toast.error(res.error.message);

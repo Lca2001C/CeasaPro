@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 import { formatBRL } from "@/lib/format";
 import { RECIPIENT_TYPE_LABELS, SALE_UNIT_LABELS, toOptions } from "@/lib/labels";
 import { Input } from "@/components/ui/input";
@@ -59,7 +61,9 @@ export function FiadoForm({
   const [saving, setSaving] = useState(false);
   // Uma chave por fiado digitado: o reenvio depois de um timeout devolve a venda
   // já gravada em vez de lançar venda, baixa de estoque e conta em dobro.
-  const chave = useRef<string | null>(null);
+  // Amarrada ao CONTEÚDO (`chavePorConteudo`): o fiado corrigido depois de um
+  // timeout ganha chave nova em vez de ser "devolvido" como o anterior.
+  const chave: RefDeChave = useRef(null);
 
   const total = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
 
@@ -82,9 +86,7 @@ export function FiadoForm({
       return toast.error("Informe a quantidade de caixas plásticas.");
 
     setSaving(true);
-    chave.current ??= crypto.randomUUID();
-    const res = await apiPost<{ id: string }>("/api/fiado", {
-      idempotencyKey: chave.current,
+    const corpo = {
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim() || null,
       saleDate,
@@ -98,6 +100,10 @@ export function FiadoForm({
         recipientType: i.recipientType || null,
         crateQty: i.crateQty || 0,
       })),
+    };
+    const res = await apiPost<{ id: string }>("/api/fiado", {
+      ...corpo,
+      idempotencyKey: chavePorConteudo(chave, corpo),
     });
     setSaving(false);
     if (res.ok) {
@@ -105,11 +111,7 @@ export function FiadoForm({
       router.push("/fiado");
       router.refresh();
     } else {
-      // Falha de schema chega como "Dados inválidos", com o motivo em `fields`.
-      const motivo = res.error.fields
-        ? Object.values(res.error.fields).find((m) => typeof m === "string" && m.trim())
-        : undefined;
-      toast.error(motivo ?? res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

@@ -156,7 +156,10 @@ export const FiadoService = {
     // duas vezes tem duas contas em aberto — e somar linha a linha contava o
     // saldo dele uma vez por conta. O painel mostrava o dobro (ou o triplo) de
     // caixas na rua, justamente para o cliente que mais compra.
-    const totalCaixas = [...new Set(emAberto.map((c) => c.customerName))].reduce(
+    // Por identidade do cliente: "Zé" e "zé" são o mesmo saldo (ver `saldoPorCliente`).
+    const totalCaixas = [
+      ...new Set(emAberto.map((c) => c.customerName.trim().toLocaleLowerCase("pt-BR"))),
+    ].reduce(
       (a, nome) => a + (caixasPorCliente.get(nome) ?? 0),
       0,
     );

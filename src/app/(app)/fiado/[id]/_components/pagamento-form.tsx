@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
@@ -21,19 +23,17 @@ export function PagamentoForm({
   const [amount, setAmount] = useState<number | undefined>(saldo);
   const [method, setMethod] = useState("DINHEIRO");
   const [saving, setSaving] = useState(false);
-  // Uma chave por recebimento digitado: o reenvio depois de um timeout devolve
-  // o já gravado. Mudar valor ou forma é outro recebimento — chave nova.
-  const chave = useRef<string | null>(null);
+  // Chave amarrada ao conteúdo (valor + forma): o reenvio do MESMO recebimento
+  // depois de um timeout devolve o já gravado; outro valor é outro recebimento.
+  const chave: RefDeChave = useRef(null);
 
   async function submit() {
     if (!amount || amount <= 0) return toast.error("Informe o valor do pagamento.");
     setSaving(true);
-    chave.current ??= crypto.randomUUID();
+    const corpo = { accountId, amount, method };
     const res = await apiPost("/api/fiado/pagamento", {
-      accountId,
-      amount,
-      method,
-      idempotencyKey: chave.current,
+      ...corpo,
+      idempotencyKey: chavePorConteudo(chave, corpo),
     });
     setSaving(false);
     if (res.ok) {
@@ -41,7 +41,9 @@ export function PagamentoForm({
       toast.success("Pagamento registrado.");
       router.refresh();
     } else {
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
+      // Timeout pode ter gravado: o saldo atualizado na tela evita relançar.
+      if (res.error.code === "TIMEOUT" || res.error.code === "NETWORK") router.refresh();
     }
   }
 
@@ -54,10 +56,7 @@ export function PagamentoForm({
         <CurrencyInput
           aria-label="Valor recebido"
           value={amount}
-          onChange={(v) => {
-            chave.current = null;
-            setAmount(v);
-          }}
+          onChange={setAmount}
         />
       </div>
       <div className="flex flex-col gap-1.5">
@@ -65,10 +64,7 @@ export function PagamentoForm({
         <Select
           aria-label="Forma de pagamento"
           value={method}
-          onChange={(e) => {
-            chave.current = null;
-            setMethod(e.target.value);
-          }}
+          onChange={(e) => setMethod(e.target.value)}
         >
           <option value="DINHEIRO">Dinheiro</option>
           <option value="PIX">PIX</option>

@@ -37,6 +37,22 @@ export const PushInscricaoService = {
     input: PushSubscribeInput,
     userAgent: string | null,
   ): Promise<{ ok: true }> {
+    // A reatribuição exige as MESMAS chaves da inscrição: no celular
+    // compartilhado o navegador manda a mesma inscrição (mesmas chaves) para a
+    // conta nova. Quem só conhece o endereço (o `endpoint` de outro aparelho)
+    // não tem as chaves — sem esta conferência, passava os avisos de outra
+    // empresa para si. Recusa calada: nada muda e nada é revelado.
+    const atual = await prisma.pushSubscription.findUnique({
+      where: { endpoint: input.endpoint },
+      select: { userId: true, p256dh: true, auth: true },
+    });
+    if (
+      atual &&
+      atual.userId !== dono.userId &&
+      (atual.p256dh !== input.keys.p256dh || atual.auth !== input.keys.auth)
+    ) {
+      return { ok: true };
+    }
     await prisma.pushSubscription.upsert({
       where: { endpoint: input.endpoint },
       create: {

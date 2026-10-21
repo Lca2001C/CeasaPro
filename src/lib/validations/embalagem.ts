@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import { MSG_VALOR_MAX, VALOR_MAX } from "./quantidade";
+import { MSG_DATA_ANTIGA, dataNaoAntesDoMesPassado } from "./venda";
 
 /**
  * Teto de quantidade por lançamento de embalagem.
@@ -19,9 +21,18 @@ export type TipoEmbalagemInput = z.infer<typeof tipoEmbalagemSchema>;
 export const vendaEmbalagemSchema = z.object({
   packagingTypeId: z.string().min(1, "Selecione o tipo"),
   customerName: z.string().trim().max(120).nullable().optional(),
-  saleDate: z.string().min(1, "Informe a data"),
+  saleDate: z
+    .string()
+    .min(1, "Informe a data")
+    .refine((v) => dataNaoAntesDoMesPassado(v), MSG_DATA_ANTIGA),
   quantity: z.number().int().positive("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
-  unitPrice: z.number().nonnegative("Valor inválido").refine(temAteDuasCasas, MSG_DUAS_CASAS),
+  unitPrice: z
+    .number()
+    .nonnegative("Valor inválido")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS),
+  /** Uma por venda digitada: o reenvio devolve a venda já gravada. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type VendaEmbalagemInput = z.infer<typeof vendaEmbalagemSchema>;
 
@@ -59,5 +70,18 @@ export const entradaEmbalagemSchema = z.object({
   // Obrigatório: sem ele a venda não teria custo e o lucro sairia inflado.
   unitCost: custoUnitarioSchema,
   notes: z.string().trim().max(300).nullable().optional(),
+  /** Uma por entrada digitada: o reenvio devolve a entrada já gravada. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type EntradaEmbalagemInput = z.infer<typeof entradaEmbalagemSchema>;
+
+/**
+ * Baixa de embalagem que saiu sem ser vendida: rasgou, molhou, foi junto com a
+ * mercadoria. Sai pelo custo médio do tipo e entra no custo do mês.
+ */
+export const baixaEmbalagemSchema = z.object({
+  packagingTypeId: z.string().min(1, "Selecione o tipo"),
+  quantity: z.number().int().positive("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
+  motivo: z.string().trim().min(3, "Diga o motivo da baixa").max(200),
+});
+export type BaixaEmbalagemInput = z.infer<typeof baixaEmbalagemSchema>;

@@ -10,6 +10,7 @@ import { formatBRL } from "@/lib/format";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { chamarAction } from "@/lib/http/chamar-action";
 
 /**
  * "Me avise se este item mexer" — na tela do próprio produto.
@@ -58,14 +59,14 @@ export function AlertaForm({
   async function salvar() {
     setSalvando(true);
     setErros({});
-    const res = await salvarAlertaDeCotacao({
+    const res = await chamarAction(() => salvarAlertaDeCotacao({
       ceasaProductId,
       unit,
       variacaoMinima: Number(variacao),
       // Campo em branco é "não quero teto", e não zero — que dispararia sempre.
       precoTeto: teto.trim() === "" ? null : Number(teto),
       precoPiso: piso.trim() === "" ? null : Number(piso),
-    });
+    }));
     setSalvando(false);
     if (res.ok) {
       toast.success("Alerta salvo. Ele entra no seu aviso diário.");
@@ -81,7 +82,7 @@ export function AlertaForm({
 
   async function remover() {
     setSalvando(true);
-    const res = await removerAlertaDeCotacao({ ceasaProductId, unit });
+    const res = await chamarAction(() => removerAlertaDeCotacao({ ceasaProductId, unit }));
     setSalvando(false);
     if (res.ok) {
       toast.success("Alerta removido.");

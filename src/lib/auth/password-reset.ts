@@ -104,6 +104,8 @@ export async function consumeResetToken(args: {
         resetTokenHash: null,
         resetTokenExpiresAt: null,
         mustChangePassword: false,
+        // Definida por quem recebeu o link na caixa: comprovada.
+        senhaComprovada: true,
       },
     });
     if (result.count === 0) return false;

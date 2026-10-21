@@ -236,6 +236,36 @@ export async function proxy(req: NextRequest) {
   const isApi = pathname.startsWith("/api");
 
   if (!session) {
+    const podeRenovarSessao =
+      Boolean(req.cookies.get(REFRESH_COOKIE)?.value) &&
+      !req.cookies.get(COOKIE_TENTATIVA_RENOVACAO)?.value;
+    // "Baixar Excel/PDF" é NAVEGAÇÃO para uma rota de API: com o access vencido
+    // a pessoa caía numa página com o JSON cru "Nao autenticado" (no PWA do
+    // iPhone, sem botão de voltar). Navegação renovável passa pelo desvio de
+    // renovação e volta ao arquivo.
+    if (
+      isApi &&
+      podeRenovarSessao &&
+      req.method === "GET" &&
+      req.headers.get("sec-fetch-mode") === "navigate" &&
+      pathname.startsWith("/api/reports/")
+    ) {
+      const renovar = new URL("/api/auth/renovar", req.url);
+      renovar.searchParams.set("next", pathname + (search || ""));
+      return comCsp(NextResponse.redirect(renovar));
+    }
+    // Escrita sem sessão (Server Action, form POST) não pode ir para o desvio de
+    // renovação: ele só aceita navegação GET, e o POST redirecionado virava 405
+    // — a action aparecia como "falha de conexão". 401 claro; o cliente renova
+    // antes (`garantirSessao`) e repete.
+    if (!isApi && req.method !== "GET" && req.method !== "HEAD") {
+      return comCsp(
+        NextResponse.json(
+          { ok: false, error: { code: "UNAUTHORIZED", message: "Nao autenticado" } },
+          { status: 401 },
+        ),
+      );
+    }
     if (isApi) {
       // O cliente (`api-client`) reconhece este 401, renova com o refresh token
       // e repete a requisição — por isso aqui não há redirecionamento: uma

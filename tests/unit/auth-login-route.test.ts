@@ -16,8 +16,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const rateLimitDb = vi.fn();
 const resetRateLimit = vi.fn();
-const consultarLimiteDb = vi.fn();
-const registrarFalhaDb = vi.fn();
+const devolverUnidadeDb = vi.fn();
 const verifyPassword = vi.fn();
 const hashDeIsca = vi.fn();
 const buildAccessPayload = vi.fn();
@@ -55,8 +54,7 @@ vi.mock("@/lib/security/rate-limit-db", async () => {
     ...real,
     rateLimitDb: (k: string, o: unknown) => rateLimitDb(k, o),
     resetRateLimit: (k: string) => resetRateLimit(k),
-    consultarLimiteDb: (k: string, o: unknown) => consultarLimiteDb(k, o),
-    registrarFalhaDb: (k: string, o: unknown) => registrarFalhaDb(k, o),
+    devolverUnidadeDb: (k: string) => devolverUnidadeDb(k),
   };
 });
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -88,8 +86,7 @@ const entrar = (corpo: unknown = { email: "dono@box.com", password: "senha-certa
 beforeEach(() => {
   rateLimitDb.mockResolvedValue({ ok: true });
   resetRateLimit.mockResolvedValue(undefined);
-  consultarLimiteDb.mockResolvedValue({ ok: true, retryAfterMs: 0 });
-  registrarFalhaDb.mockResolvedValue(undefined);
+  devolverUnidadeDb.mockResolvedValue(undefined);
   verifyPassword.mockResolvedValue(true);
   hashDeIsca.mockResolvedValue("$argon2id$isca");
   buildAccessPayload.mockResolvedValue({ sub: "user-1", role: "OWNER" });
@@ -211,33 +208,37 @@ describe("o limite só por IP conta apenas falhas", () => {
     consumia o balde de 60 por 15 min, o 61º dono que entrava com a senha certa
     levava 429 — na abertura do mercado, quando todo mundo entra junto.
   */
-  it("login correto só CONSULTA o balde do IP — não consome nem zera", async () => {
+  it("login correto consome o balde do IP ANTES do Argon2 e devolve a unidade — não zera", async () => {
     await entrar();
 
-    expect(consultarLimiteDb).toHaveBeenCalledWith("login:ip:1.2.3.4", expect.anything());
-    expect(registrarFalhaDb).not.toHaveBeenCalled();
-    expect(rateLimitDb.mock.calls.map((c) => c[0])).not.toContain("login:ip:1.2.3.4");
+    // Consumido atomicamente antes da senha (fecha a corrida das tentativas em paralelo)…
+    expect(rateLimitDb).toHaveBeenCalledWith(
+      "login:ip:1.2.3.4",
+      expect.objectContaining({ limit: 60 }),
+    );
+    // …e devolvido no acerto: só a falha conta.
+    expect(devolverUnidadeDb).toHaveBeenCalledWith("login:ip:1.2.3.4");
     // Quem espalha tentativas pode ter UMA conta válida: o acerto não libera o balde.
     expect(resetRateLimit.mock.calls.map((c) => c[0])).not.toContain("login:ip:1.2.3.4");
   });
 
-  it("senha errada registra a falha no balde do IP", async () => {
+  it("senha errada fica contada no balde do IP (não devolve)", async () => {
     verifyPassword.mockResolvedValue(false);
     expect((await entrar()).status).toBe(401);
-    expect(registrarFalhaDb).toHaveBeenCalledWith(
-      "login:ip:1.2.3.4",
-      expect.objectContaining({ limit: 60 }),
-    );
+    expect(rateLimitDb.mock.calls.map((c) => c[0])).toContain("login:ip:1.2.3.4");
+    expect(devolverUnidadeDb).not.toHaveBeenCalled();
   });
 
   it("e-mail inexistente também conta — é o caso do password spraying", async () => {
     findFirst.mockResolvedValue(null);
     await entrar();
-    expect(registrarFalhaDb).toHaveBeenCalledTimes(1);
+    expect(devolverUnidadeDb).not.toHaveBeenCalled();
   });
 
   it("balde do IP cheio devolve 429 antes do Argon2", async () => {
-    consultarLimiteDb.mockResolvedValue({ ok: false, retryAfterMs: 60_000 });
+    rateLimitDb.mockImplementation((k: string) =>
+      Promise.resolve(k === "login:ip:1.2.3.4" ? { ok: false, retryAfterMs: 60_000 } : { ok: true }),
+    );
 
     const r = await entrar();
 
@@ -253,8 +254,10 @@ describe("o limite só por IP conta apenas falhas", () => {
 
     await entrar();
 
-    expect(consultarLimiteDb).not.toHaveBeenCalled();
-    expect(registrarFalhaDb).not.toHaveBeenCalled();
+    expect(rateLimitDb.mock.calls.map((c) => c[0]).some((k) => k.startsWith("login:ip:"))).toBe(
+      false,
+    );
+    expect(devolverUnidadeDb).not.toHaveBeenCalled();
   });
 });
 

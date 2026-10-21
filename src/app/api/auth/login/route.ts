@@ -6,9 +6,8 @@ import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshSession } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
 import {
-  consultarLimiteDb,
+  devolverUnidadeDb,
   rateLimitDb,
-  registrarFalhaDb,
   resetRateLimit,
   respostaDeLimite,
 } from "@/lib/security/rate-limit-db";
@@ -68,9 +67,13 @@ async function entrar(req: Request): Promise<Response> {
   const rateKeySoIp = ip === "unknown" ? null : `login:ip:${ip}`;
   const janela = 15 * 60 * 1000;
   const limiteSoIp = { limit: 60, windowMs: janela };
+  // O balde só por IP é CONSUMIDO aqui, atomicamente, e devolvido no acerto
+  // (`devolverUnidadeDb`). Consultar antes e registrar a falha depois deixava
+  // as tentativas em paralelo passarem todas: cada uma lia o contador antes de
+  // qualquer outra registrar.
   const [rlIp, rlSoIp] = await Promise.all([
     rateLimitDb(rateKeyIp, { limit: 5, windowMs: janela }),
-    rateKeySoIp ? consultarLimiteDb(rateKeySoIp, limiteSoIp) : Promise.resolve(null),
+    rateKeySoIp ? rateLimitDb(rateKeySoIp, limiteSoIp) : Promise.resolve(null),
   ]);
   // O contador do e-mail só recebe a tentativa que passou nos de IP. Contando
   // tudo, UM IP com 21 tentativas a cada 15 min trancava a conta de qualquer
@@ -100,16 +103,15 @@ async function entrar(req: Request): Promise<Response> {
   // Verifica SEMPRE um hash, mesmo sem usuário: é o tempo de resposta, e não a
   // mensagem, que revelaria se o e-mail existe. Contra a isca nenhuma senha bate.
   const okPass = await verifyPassword(user?.passwordHash ?? (await hashDeIsca()), password);
-  if (!user || !okPass) {
-    if (rateKeySoIp) await registrarFalhaDb(rateKeySoIp, limiteSoIp);
-    return invalid();
-  }
+  // Falha: a unidade consumida no balde só por IP fica (é ela que conta).
+  if (!user || !okPass) return invalid();
 
   const payload = await buildAccessPayload(user.id);
-  if (!payload) {
-    if (rateKeySoIp) await registrarFalhaDb(rateKeySoIp, limiteSoIp);
-    return invalid();
-  }
+  if (!payload) return invalid();
+
+  // Acerto não conta no balde só por IP — senão o 61º box atrás do mesmo Wi-Fi
+  // do CEASA era barrado com a senha certa.
+  if (rateKeySoIp) await devolverUnidadeDb(rateKeySoIp);
 
   // Credencial correta: a janela é liberada. O limite existe para conter
   // adivinhação de senha, então só tentativa que falha deve consumi-lo — senão

@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
+import { mensagemDoErro } from "@/lib/http/mensagem-erro";
 import { formatBRL, formatDateOnly } from "@/lib/format";
 import { EXPENSE_PAYMENT_METHOD_LABELS, toOptions } from "@/lib/labels";
 import { ProdutoModal } from "@/components/produtos/produto-modal";
@@ -75,7 +77,9 @@ export function CompraForm({
   const enviando = useRef(false);
   // Uma chave por compra digitada: se o envio sair duas vezes (toque duplo,
   // retentativa depois de timeout), o servidor devolve a compra já gravada.
-  const chaveDaCompra = useRef<string | null>(null);
+  // Amarrada ao CONTEÚDO (`chavePorConteudo`): a compra corrigida depois de um
+  // timeout ganha chave nova em vez de ser "devolvida" como a anterior.
+  const chaveDaCompra: RefDeChave = useRef(null);
   const [veioEmCaixa, setVeioEmCaixa] = useState(false);
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
@@ -117,9 +121,7 @@ export function CompraForm({
 
     enviando.current = true;
     setSaving(true);
-    chaveDaCompra.current ??= crypto.randomUUID();
-    const res = await apiPost<{ id: string }>("/api/compras", {
-      idempotencyKey: chaveDaCompra.current,
+    const corpo = {
       supplierId: supplierId || null,
       purchaseDate,
       freight: freight || 0,
@@ -134,6 +136,10 @@ export function CompraForm({
         quantity: i.quantity,
         unitPrice: i.unitPrice || 0,
       })),
+    };
+    const res = await apiPost<{ id: string }>("/api/compras", {
+      ...corpo,
+      idempotencyKey: chavePorConteudo(chaveDaCompra, corpo),
     });
     if (res.ok) {
       // No sucesso o botão CONTINUA travado. A ida para o Estoque é uma
@@ -150,7 +156,7 @@ export function CompraForm({
     } else {
       enviando.current = false;
       setSaving(false);
-      toast.error(res.error.message);
+      toast.error(mensagemDoErro(res.error));
     }
   }
 

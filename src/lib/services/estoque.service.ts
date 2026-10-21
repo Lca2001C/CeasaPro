@@ -20,6 +20,7 @@ import {
   podeDesfazer,
 } from "@/lib/desfazer/prazo";
 import type { AjusteEstoqueInput } from "@/lib/validations/estoque";
+import { comIdempotencia } from "@/lib/http/idempotencia";
 import type { TenantCtx } from "@/lib/http/with-action";
 
 export interface StockPosition {
@@ -134,7 +135,7 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
   const porProduto = filtrarProdutos ? ` AND "productId" = ANY($2::text[])` : "";
   return `
   WITH ck AS (
-    SELECT "productId", "ateCreatedAt", saldo, custo, "ultimoCustoEntrada", "ultimoMovedAt"
+    SELECT "productId", "ateCreatedAt", saldo, custo, deslocamento, "ultimoCustoEntrada", "ultimoMovedAt"
     FROM stock_cost_checkpoints
     WHERE "tenantId" = $1${porProduto}
   ),
@@ -166,8 +167,17 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
           AND estorno."sourceId" =
             CASE WHEN m."sourceType" = '${ORIGEM_AJUSTE}' THEN m.id ELSE m."sourceId" END
       )
+    -- Semente em DUAS linhas, para reproduzir o repasse completo também quando
+    -- o ciclo recomeçou num saldo negativo: a primeira (deslocamento, <= 0)
+    -- marca onde o ciclo zerou; a segunda é o que o ciclo acumulou desde então,
+    -- pela média. Uma linha só com o saldo REAL pesava as entradas seguintes
+    -- por outra quantidade (q_ciclo != saldo) e mudava o custo em silêncio.
     UNION ALL
-    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '', 0, saldo, custo FROM ck
+    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '', 0, deslocamento, NULL::numeric FROM ck
+    UNION ALL
+    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '~', 0, saldo - deslocamento, custo
+    FROM ck
+    WHERE saldo - deslocamento <> 0
   ),
   mov AS (
     SELECT "productId", "movedAt", ordem, q, c,
@@ -225,8 +235,15 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
     FROM mov
     GROUP BY "productId"
   ),
+  -- Saldo real na linha onde o ciclo atual começou (<= 0; 0 sem recomeço).
+  desloc AS (
+    SELECT "productId", saldo AS deslocamento
+    FROM marcado
+    WHERE seq = zerou_em
+  ),
   resultado AS (
     SELECT s."productId", s.quantidade, s.ultimo_mov,
+           COALESCE(d.deslocamento, 0) AS deslocamento,
            ROUND(CASE WHEN s.quantidade > 0 THEN m.custo ELSE u.custo END, 4) AS custo,
            -- Só para gravar o checkpoint: a média sem arredondar e a última entrada.
            CASE WHEN s.quantidade > 0 THEN m.custo END AS custo_bruto,
@@ -234,6 +251,7 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
     FROM saldo s
     LEFT JOIN medio m ON m."productId" = s."productId"
     LEFT JOIN ultima u ON u."productId" = s."productId"
+    LEFT JOIN desloc d ON d."productId" = s."productId"
   )`;
 }
 
@@ -469,7 +487,7 @@ export const EstoqueService = {
     const db = getTenantPrisma(tenantId);
     const desde = new Date(agora.getTime() - HORAS_PARA_DESFAZER * 3600_000);
     const ajustes = await db.stockMovement.findMany({
-      where: { sourceType: ORIGEM_AJUSTE, createdAt: { gte: desde } },
+      where: { sourceType: ORIGEM_AJUSTE, createdAt: { gte: desde }, product: { deletedAt: null } },
       include: { product: { select: { name: true, saleUnit: true } } },
       orderBy: { createdAt: "desc" },
       take: 50,
@@ -480,7 +498,22 @@ export const EstoqueService = {
       select: { sourceId: true },
     });
     const jaDesfeitos = new Set(desfeitos.map((d) => d.sourceId));
-    return ajustes.filter((a) => !jaDesfeitos.has(a.id));
+    const vivos = ajustes.filter((a) => !jaDesfeitos.has(a.id));
+    // A mesma regra de `desfazerAjuste`: com movimento do produto depois, o
+    // servidor recusa — a tela mostra o motivo em vez do botão.
+    const comMovimentoDepois = new Set<string>();
+    if (vivos.length > 0) {
+      const linhas = await prisma.$queryRaw<{ id: string }[]>`
+        SELECT DISTINCT a.id
+        FROM stock_movements a
+        JOIN stock_movements m
+          ON m."tenantId" = a."tenantId" AND m."productId" = a."productId"
+         AND (m."createdAt" > a."createdAt" OR (m."createdAt" = a."createdAt" AND m.id > a.id))
+        WHERE a."tenantId" = ${tenantId} AND a.id = ANY(${vivos.map((a) => a.id)}::text[])
+      `;
+      for (const l of linhas) comMovimentoDepois.add(l.id);
+    }
+    return vivos.map((a) => ({ ...a, podeDesfazer: !comMovimentoDepois.has(a.id) }));
   },
 
   /**
@@ -510,11 +543,17 @@ export const EstoqueService = {
         throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer este ajuste"));
       }
       // Mesma trava do ajuste e da venda: a ordem do livro-razão do produto.
-      await tx.$queryRaw`
+      // Produto excluído não recebe estorno: a mercadoria voltaria a um produto
+      // que nenhuma tela mostra e nenhum ajuste alcança.
+      const travado = await tx.$queryRaw<{ id: string }[]>`
         SELECT id FROM products
         WHERE "tenantId" = ${ctx.tenantId} AND id = ${ajuste.productId}
+          AND "deletedAt" IS NULL
         FOR UPDATE
       `;
+      if (travado.length === 0) {
+        throw new BusinessRuleError("O produto deste ajuste foi excluído; não dá para desfazer.");
+      }
       const jaDesfeito = await tx.stockMovement.findFirst({
         where: { sourceType: ORIGEM_AJUSTE_DESFEITO, sourceId: ajuste.id },
         select: { id: true },
@@ -574,6 +613,16 @@ export const EstoqueService = {
 
   /** Ajuste manual de estoque: quebra/perda, doação ou acerto. */
   async registrarAjuste(input: AjusteEstoqueInput, ctx: TenantCtx) {
+    // O reenvio do MESMO ajuste (timeout depois do commit) devolve o gravado:
+    // repetir lançava a quebra duas vezes.
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => getTenantPrisma(ctx.tenantId).stockMovement.findFirst({ where: { idempotencyKey: k } }),
+      () => this.gravarAjuste(input, ctx),
+    );
+  },
+
+  async gravarAjuste(input: AjusteEstoqueInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction(async (tx) => {
       // Trava a linha do produto ANTES de ler o saldo — mesmo motivo da venda:
@@ -606,13 +655,16 @@ export const EstoqueService = {
         }
       }
 
-      // Custo unitário: informado, senão o custo médio móvel do estoque atual
-      // (sem saldo, o da última entrada — ver `sqlCustoEstoque`).
+      // Custo unitário: o médio móvel do estoque atual (sem saldo, o da última
+      // entrada — ver `sqlCustoEstoque`). O informado só vale para o que ENTRA
+      // (acerto para cima, que pondera a média). Na saída (quebra, doação,
+      // acerto para baixo) a mercadoria sai pela média: aceitar o digitado
+      // deixava a API lançar R$ 99.999 de perda no lucro — ou zerá-la — sem o
+      // estoque ter perdido mais que a média.
       const custos = await custoMedioPonderado(tx, ctx.tenantId, [input.productId]);
+      const media = custos.get(input.productId) ?? new Prisma.Decimal(0);
       const unitCost =
-        input.unitCost != null
-          ? toDecimal(input.unitCost)
-          : (custos.get(input.productId) ?? new Prisma.Decimal(0));
+        input.unitCost != null && !retiraDoEstoque(input) ? toDecimal(input.unitCost) : media;
 
       const movement = await tx.stockMovement.create({
         data: {
@@ -623,6 +675,7 @@ export const EstoqueService = {
           unitCost,
           reason: input.reason ?? null,
           sourceType: ORIGEM_AJUSTE,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
 
@@ -661,14 +714,15 @@ export const EstoqueService = {
     return db.$executeRawUnsafe(
       `${sqlCustoEstoque(false, corte)}
        INSERT INTO stock_cost_checkpoints
-         (id, "tenantId", "productId", "ateCreatedAt", saldo, custo, "ultimoCustoEntrada", "ultimoMovedAt", "updatedAt")
+         (id, "tenantId", "productId", "ateCreatedAt", saldo, custo, deslocamento, "ultimoCustoEntrada", "ultimoMovedAt", "updatedAt")
        SELECT gen_random_uuid()::text, $1, r."productId", ${corte},
-              r.quantidade, r.custo_bruto, r.ultimo_custo_entrada, r.ultimo_mov, now()
+              r.quantidade, r.custo_bruto, r.deslocamento, r.ultimo_custo_entrada, r.ultimo_mov, now()
        FROM resultado r
        ON CONFLICT ("tenantId", "productId") DO UPDATE SET
          "ateCreatedAt" = EXCLUDED."ateCreatedAt",
          saldo = EXCLUDED.saldo,
          custo = EXCLUDED.custo,
+         deslocamento = EXCLUDED.deslocamento,
          "ultimoCustoEntrada" = EXCLUDED."ultimoCustoEntrada",
          "ultimoMovedAt" = EXCLUDED."ultimoMovedAt",
          "updatedAt" = now()

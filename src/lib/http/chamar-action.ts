@@ -1,4 +1,5 @@
 import type { ActionResult } from "./action-result";
+import { garantirSessao } from "@/lib/api-client";
 
 /**
  * Chama uma Server Action do lado do cliente sem deixar a falha de TRANSPORTE
@@ -22,6 +23,9 @@ export async function chamarAction<T>(
   fn: () => Promise<ActionResult<T>>,
 ): Promise<ActionResult<T>> {
   try {
+    // Access vencido derrubava TODA action com "falha de conexão" (o proxy
+    // recusa o POST e a action não tem como renovar e repetir). Renova antes.
+    await garantirSessao();
     return await fn();
   } catch {
     return {

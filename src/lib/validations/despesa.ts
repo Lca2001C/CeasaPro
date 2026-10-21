@@ -1,4 +1,6 @@
 import { z } from "zod";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import { MSG_VALOR_MAX, VALOR_MAX } from "./quantidade";
 
 export const expenseTypeEnum = z.enum(["FIXA", "VARIAVEL"]);
 export const expenseStatusEnum = z.enum(["PENDENTE", "PAGO"]);
@@ -14,7 +16,13 @@ const dateStr = z.string().trim().min(1).nullable().optional();
 
 const despesaBase = z.object({
   description: z.string().trim().min(1, "Informe a descrição").max(200),
-  amount: z.number().positive("Informe o valor"),
+  // 2 casas e teto: R$ 0,004 gravava uma conta "positiva" de R$ 0,00, e um
+  // número gigante estourava a coluna como erro 500.
+  amount: z
+    .number()
+    .positive("Informe o valor")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS),
   type: expenseTypeEnum,
   status: expenseStatusEnum,
   categoryId: z.string().nullable().optional(),

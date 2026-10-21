@@ -6,6 +6,7 @@ import { EmbalagensService } from "@/lib/services/embalagens.service";
 import {
   ativarEstoqueEmbalagemSchema,
   entradaEmbalagemSchema,
+  baixaEmbalagemSchema,
   tipoEmbalagemSchema,
   vendaEmbalagemSchema,
 } from "@/lib/validations/embalagem";
@@ -44,6 +45,16 @@ export const ativarEstoqueEmbalagem = withTenantAction({
   schema: ativarEstoqueEmbalagemSchema,
   module: "embalagens",
   handler: (input, ctx) => EmbalagensService.ativarControleEstoque(input, ctx),
+});
+
+/** Baixa de embalagem que não foi vendida (quebra, uso). Ver `EmbalagensService.registrarBaixa`. */
+export const registrarBaixaEmbalagem = withTenantAction({
+  schema: baixaEmbalagemSchema,
+  module: "embalagens",
+  handler: async (input, ctx) => {
+    const mov = await EmbalagensService.registrarBaixa(input, ctx);
+    return { id: mov.id, quantity: mov.quantity };
+  },
 });
 
 /** Entrada de embalagens (compra ou reposição). */

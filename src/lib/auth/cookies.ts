@@ -1,5 +1,5 @@
 import { cookies, headers } from "next/headers";
-import { ACCESS_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
+import { ACCESS_COOKIE, EXPIRA_COOKIE, REFRESH_COOKIE, accessTokenMaxAgeSeconds } from "./jwt";
 import { COOKIE_TENTATIVA_RENOVACAO, TENTATIVA_MAX_AGE_SEGUNDOS } from "./renovacao";
 import { GOOGLE_OAUTH_COOKIE, oauthCookieMaxAge } from "./google-oauth";
 
@@ -43,6 +43,12 @@ async function cookieBase() {
   };
 }
 
+/** Ver `EXPIRA_COOKIE`: legível pelo cliente, só com o horário de vencimento. */
+function gravarExpiracao(c: Awaited<ReturnType<typeof cookies>>, base: Awaited<ReturnType<typeof cookieBase>>) {
+  const maxAge = accessTokenMaxAgeSeconds();
+  c.set(EXPIRA_COOKIE, String(Date.now() + maxAge * 1000), { ...base, httpOnly: false, maxAge });
+}
+
 export async function setAuthCookies(accessToken: string, refreshToken: string) {
   const [c, base] = await Promise.all([cookies(), cookieBase()]);
   c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessTokenMaxAgeSeconds() });
@@ -50,11 +56,13 @@ export async function setAuthCookies(accessToken: string, refreshToken: string) 
     ...base,
     maxAge: refreshDays * 24 * 60 * 60,
   });
+  gravarExpiracao(c, base);
 }
 
 export async function setAccessCookie(accessToken: string) {
   const [c, base] = await Promise.all([cookies(), cookieBase()]);
   c.set(ACCESS_COOKIE, accessToken, { ...base, maxAge: accessTokenMaxAgeSeconds() });
+  gravarExpiracao(c, base);
 }
 
 /**
@@ -83,6 +91,7 @@ export async function clearAuthCookies() {
   const [c, base] = await Promise.all([cookies(), cookieBase()]);
   c.set(ACCESS_COOKIE, "", { ...base, maxAge: 0 });
   c.set(REFRESH_COOKIE, "", { ...base, maxAge: 0 });
+  c.set(EXPIRA_COOKIE, "", { ...base, httpOnly: false, maxAge: 0 });
 }
 
 export async function readAccessCookie(): Promise<string | undefined> {

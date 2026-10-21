@@ -39,9 +39,19 @@ export const SEM_DADOS_PESSOAIS: NonNullable<Parameters<typeof Sentry.init>[0]["
  * erro nessas telas (e nos breadcrumbs de navegação do navegador).
  */
 const CAMINHO_COM_TOKEN = /\/(recuperar-senha|cadastro\/confirmar)\/[^/?#\s]+/g;
+/**
+ * A ficha do cliente leva o NOME do comprador na URL (`/vendas/clientes/<nome>`,
+ * e o redirecionamento antigo `/clientes/<nome>`): dado pessoal de terceiro,
+ * que não pode ir ao Sentry em `request.url`, `transaction` nem breadcrumb.
+ */
+const CAMINHO_COM_CLIENTE = /\/(vendas\/clientes|clientes)\/[^/?#\s]+/g;
 
 export function semTokenNaUrl<T extends string | undefined>(url: T): T {
-  return (url ? url.replace(CAMINHO_COM_TOKEN, "/$1/:token") : url) as T;
+  return (
+    url
+      ? url.replace(CAMINHO_COM_TOKEN, "/$1/:token").replace(CAMINHO_COM_CLIENTE, "/$1/:cliente")
+      : url
+  ) as T;
 }
 
 /** `beforeSend` comum (servidor e navegador): nenhum token de URL sai daqui. */
