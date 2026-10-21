@@ -5,6 +5,7 @@ import { ShieldCheck } from "lucide-react";
 import { usePathname } from "next/navigation";
 import { BottomNav } from "./bottom-nav";
 import { BotaoTutorial } from "./botao-tutorial";
+import { SinoNotificacoes } from "./sino-notificacoes";
 import { SideNav } from "./side-nav";
 import { PularParaConteudo } from "./pular-para-conteudo";
 import { Button } from "@/components/ui/button";
@@ -110,6 +111,7 @@ export function AppShell({
             </div>
           </div>
           <div className="flex shrink-0 items-center gap-1">
+            <SinoNotificacoes avisoAssinatura={billingWarning} />
             <BotaoModoEscuro />
             <BotaoTutorial />
             {isSuperAdmin && (

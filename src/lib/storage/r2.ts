@@ -2,6 +2,7 @@ import "server-only";
 import { AwsClient } from "aws4fetch";
 import { XMLParser } from "fast-xml-parser";
 import { AppError } from "@/lib/http/app-error";
+import { logger } from "@/lib/logger";
 
 /**
  * Cloudflare R2 (API compatível com S3) para as fotos de produto.
@@ -72,6 +73,13 @@ export async function putObject(key: string, body: Uint8Array, contentType: stri
     },
   });
   if (!res.ok) {
+    // O código do R2 (SignatureDoesNotMatch, AccessDenied, NoSuchBucket…) diz
+    // se é credencial, permissão ou bucket — sem ele, o erro era invisível.
+    const corpo = await res.text().catch(() => "");
+    logger.error(
+      { status: res.status, codigo: corpo.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? null },
+      "R2: falha ao gravar foto",
+    );
     throw new AppError("STORAGE_FALHA", "Não foi possível enviar a foto. Tente de novo.", 502);
   }
 }
