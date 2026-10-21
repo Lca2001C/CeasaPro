@@ -14,7 +14,6 @@ import {
   Settings,
   Container,
   Droplets,
-  BadgeCheck,
   TrendingUp,
   Newspaper,
   LogOut,
@@ -32,7 +31,7 @@ const items = [
   // Produtos e Compras vivem dentro do Estoque (cadastro, entrada e saldo).
   { href: "/estoque", label: "Estoque", icon: Package },
   { href: "/fornecedores", label: "Fornecedores", icon: Truck },
-  { href: "/vendas", label: "Vendas", icon: Receipt },
+  { href: "/vendas", label: "Vendas e clientes", icon: Receipt },
   { href: "/fiado", label: "Fiado", icon: HandCoins },
   { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
   { href: "/ceasanews", label: "CeasaNews", icon: Newspaper },
@@ -45,7 +44,6 @@ const items = [
   // dia a dia do box: mistura eventos técnicos com operação e não tem ação
   // associada para quem está vendendo.
   // O guia e o tour ficam no botão Tutorial do header, não no menu operacional.
-  { href: "/plano", label: "Meu plano", icon: BadgeCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

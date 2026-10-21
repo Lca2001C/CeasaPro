@@ -825,6 +825,12 @@ model Sale {
   /// Nula nas vendas antigas e no fiado manual (que não tem carrinho); no
   /// Postgres vários NULL não colidem no índice único, então convivem sem
   /// precisar de índice parcial.
+  /// O cliente leva a mercadoria depois? Escolha OBRIGATÓRIA no PDV.
+  /// `false` = levou na hora (`retiradoEm` = registro). Venda antiga e fiado
+  /// manual ficam `false`.
+  retirarDepois   Boolean                @default(false)
+  /// Quando a mercadoria foi buscada. Nulo com `retirarDepois` = aguardando.
+  retiradoEm      DateTime?
   idempotencyKey  String?
   createdAt       DateTime               @default(now())
   updatedAt       DateTime               @updatedAt

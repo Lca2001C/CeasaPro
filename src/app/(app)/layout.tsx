@@ -84,7 +84,7 @@ export default async function AppLayout({
           : null;
   const billingCta =
     notice?.kind === "cancelled"
-      ? { href: "/plano", label: "Ver plano" }
+      ? { href: "/configuracoes?aba=plano", label: "Ver plano" }
       : undefined;
 
   return (

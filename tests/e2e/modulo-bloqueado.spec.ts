@@ -90,7 +90,7 @@ test.describe("Módulo fora do plano", () => {
       await expect(side.getByRole("link", { name: item, exact: true })).toHaveCount(0);
     }
     // E o que é núcleo continua lá — o bloqueio é do módulo, não da conta.
-    await expect(side.getByRole("link", { name: "Vendas", exact: true })).toBeVisible();
+    await expect(side.getByRole("link", { name: "Vendas e clientes", exact: true })).toBeVisible();
   });
 
   test("a URL direta leva ao plano, dizendo qual recurso falta", async ({ page }) => {
@@ -101,15 +101,15 @@ test.describe("Módulo fora do plano", () => {
     */
     await entrar(page);
     await page.goto("/cotacoes");
-    await expect(page).toHaveURL(/\/plano\?bloqueado=cotacoes/);
-    await expect(page.getByRole("heading", { name: "Meu plano" })).toBeVisible();
+    await expect(page).toHaveURL(/aba=plano&bloqueado=cotacoes/);
+    await expect(page.getByRole("tab", { name: "Meu plano", selected: true })).toBeVisible();
 
     // A tela de caixas e embalagens abre com QUALQUER um dos dois módulos — e
     // por isso mesmo sem nenhum dos dois ela não abre.
     await page.goto("/caixas-plasticas?aba=embalagens");
-    await expect(page).toHaveURL(/\/plano\?bloqueado=caixas/);
+    await expect(page).toHaveURL(/aba=plano&bloqueado=caixas/);
     await page.goto("/embalagens/nova");
-    await expect(page).toHaveURL(/\/plano\?bloqueado=embalagens/);
+    await expect(page).toHaveURL(/aba=plano&bloqueado=embalagens/);
   });
 
   test("relatório avançado também cai no plano, e o básico abre", async ({ page }) => {
@@ -117,7 +117,7 @@ test.describe("Módulo fora do plano", () => {
 
     // Avançado (lucro por produto) exige `relatorios_avancados`.
     await page.goto("/relatorios/lucro_produto");
-    await expect(page).toHaveURL(/\/plano\?bloqueado=relatorios_avancados/);
+    await expect(page).toHaveURL(/aba=plano&bloqueado=relatorios_avancados/);
 
     // O básico continua disponível: o plano não some, ele encolhe.
     await page.goto("/relatorios/vendas");

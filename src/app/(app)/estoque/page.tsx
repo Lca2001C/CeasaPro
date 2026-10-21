@@ -7,6 +7,7 @@ import {
   ShoppingBag,
   ShoppingCart,
   SlidersHorizontal,
+  Plus,
 } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { EstoqueService } from "@/lib/services/estoque.service";
@@ -135,11 +136,21 @@ export default async function EstoquePage({
         description="Seus produtos, quanto tem de cada um e quanto isso vale."
         action={
           <div className="flex gap-2">
-            <Button asChild size="sm" data-tour="registrar-compra">
-              <Link href="/estoque/compra">
-                <ShoppingBag /> <span className="hidden sm:inline">Registrar</span> compra
-              </Link>
-            </Button>
+            {/* Na aba Compras a ação principal é registrar compra (cartão
+                verde abaixo); o cadastro de produto sobe para cá. */}
+            {aba === "compras" ? (
+              <Button asChild size="sm" data-tour="novo-produto">
+                <Link href="/estoque?novo=1" scroll={false}>
+                  <Plus /> <span className="hidden sm:inline">Adicionar</span> produto
+                </Link>
+              </Button>
+            ) : (
+              <Button asChild size="sm" data-tour="registrar-compra">
+                <Link href="/estoque/compra">
+                  <ShoppingBag /> <span className="hidden sm:inline">Registrar</span> compra
+                </Link>
+              </Button>
+            )}
             <Button asChild size="sm" variant="outline">
               <Link href="/estoque/ajuste">
                 <SlidersHorizontal /> Ajuste
@@ -150,13 +161,23 @@ export default async function EstoquePage({
       />
 
       {/* O caminho mais curto até vender. */}
-      <CartaoDeAcao
-        href="/estoque?novo=1"
-        scroll={false}
-        data-tour="novo-produto"
-        titulo="Adicionar Novo Produto"
-        descricao="Cadastre com estoque inicial, preço de venda e foto"
-      />
+      {aba === "compras" ? (
+        <CartaoDeAcao
+          href="/estoque/compra"
+          data-tour="registrar-compra"
+          icone={<ShoppingBag />}
+          titulo="Registrar Compra"
+          descricao="Lance o que chegou do fornecedor: o estoque sobe e a conta vai para Despesas"
+        />
+      ) : (
+        <CartaoDeAcao
+          href="/estoque?novo=1"
+          scroll={false}
+          data-tour="novo-produto"
+          titulo="Adicionar Novo Produto"
+          descricao="Cadastre com estoque inicial, preço de venda e foto"
+        />
+      )}
 
       <div
         className="mb-4 grid grid-cols-2 rounded-lg bg-muted p-1 text-sm font-medium"

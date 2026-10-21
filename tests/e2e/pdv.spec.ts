@@ -38,6 +38,8 @@ test.describe("Frente de caixa (PDV) — carrinho e botões", () => {
 
     // Botões da barra: forma de pagamento + finalizar
     await page.getByRole("button", { name: "Dinheiro" }).click();
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
     await page.getByRole("button", { name: "Finalizar venda" }).click();
 
     await expect(page.getByText(/Venda registrada/i)).toBeVisible();
@@ -111,6 +113,9 @@ test.describe("Frente de caixa (PDV) — carrinho e botões", () => {
     await segundo.fill("50");
     await expect(page.getByText("Fecha com o total")).toBeVisible();
 
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
+
     await page.getByRole("button", { name: "Finalizar venda" }).click();
     await expect(page.getByText(/Venda registrada/i)).toBeVisible();
   });
@@ -124,6 +129,9 @@ test.describe("Frente de caixa (PDV) — carrinho e botões", () => {
     // Zera o preço sugerido, se houver: o caso é "produto sem preço".
     const preco = page.getByLabel(`Preço de ${PRODUTO}`);
     await preco.fill("");
+
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
 
     await page.getByRole("button", { name: "Finalizar venda" }).click();
 

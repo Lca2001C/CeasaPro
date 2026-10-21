@@ -17,7 +17,7 @@ test.describe("Meu plano e assinatura", () => {
     page,
   }) => {
     await page.goto("/plano");
-    await expect(page.getByRole("heading", { name: "Meu plano" })).toBeVisible();
+    await expect(page.getByRole("tab", { name: "Meu plano", selected: true })).toBeVisible();
 
     await page.goto("/assinatura");
     await expect(page.getByRole("heading", { name: "Assinatura" })).toBeVisible();

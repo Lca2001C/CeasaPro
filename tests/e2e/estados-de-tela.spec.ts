@@ -105,6 +105,9 @@ test.describe("o PDV continua vendendo", () => {
     await page.setViewportSize({ width: 320, height: 720 });
     await page.goto("/vendas/nova");
 
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
+
     await page.getByRole("button", { name: "Finalizar venda" }).click();
 
     const alerta = page.getByRole("alert").filter({ hasText: /adicione ao menos um produto/i });
@@ -123,6 +126,8 @@ test.describe("o PDV continua vendendo", () => {
     // estado — guardar o texto deixaria um aviso velho na tela depois de o
     // problema ter sido resolvido.
     await page.goto("/vendas/nova");
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
     await page.getByRole("button", { name: "Finalizar venda" }).click();
     await expect(page.getByRole("alert").filter({ hasText: /adicione ao menos/i })).toBeVisible();
 

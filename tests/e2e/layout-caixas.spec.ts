@@ -32,7 +32,7 @@ const PAGINAS = [
   { url: "/caixas-plasticas?aba=embalagens", nome: "Embalagens" },
   { url: "/caixas-plasticas", nome: "Caixas plásticas" },
   { url: "/higienizacao", nome: "Higienização" },
-  { url: "/plano", nome: "Meu plano" },
+  { url: "/configuracoes?aba=plano", nome: "Meu plano (aba de Configurações)" },
 ];
 
 const DEMO = { email: "demo@ceasapro.com.br", senha: "demo123" };
@@ -183,6 +183,7 @@ test.describe("Cartões de número — tela estreita (320px)", () => {
  */
 const OUTRAS_PAGINAS = [
   { url: "/vendas", nome: "Vendas (histórico)" },
+  { url: "/vendas?aba=clientes", nome: "Clientes (aba de Vendas)" },
   // Produtos e Compras viraram o Estoque. A lista de produtos (`/estoque`) já
   // está na varredura de cartões acima; aqui entra a outra aba, o histórico de
   // compras — linhas `details` com valor, outra forma de tela.

@@ -15,7 +15,6 @@ import {
   Settings,
   Container,
   Droplets,
-  BadgeCheck,
   TrendingUp,
   Newspaper,
   LogOut,
@@ -44,7 +43,7 @@ const primary = [
 const more = [
   // Produtos e Compras vivem dentro do Estoque (barra de baixo).
   { href: "/fornecedores", label: "Fornecedores", icon: Truck },
-  { href: "/vendas", label: "Vendas (histórico)", icon: Receipt },
+  { href: "/vendas", label: "Vendas e clientes", icon: Receipt },
   { href: "/despesas", label: "Despesas", icon: Wallet },
   { href: "/cotacoes", label: "Cotações", icon: TrendingUp },
   { href: "/ceasanews", label: "CeasaNews", icon: Newspaper },
@@ -54,7 +53,6 @@ const more = [
   { href: "/relatorios", label: "Relatórios", icon: FileBarChart },
   // Auditoria vive na administração da plataforma (`/admin/auditoria`).
   // O guia e o tour ficam no botão Tutorial do header, não no menu Mais.
-  { href: "/plano", label: "Meu plano", icon: BadgeCheck },
   { href: "/configuracoes", label: "Configurações", icon: Settings },
 ];
 

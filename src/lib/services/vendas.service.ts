@@ -33,6 +33,7 @@ import {
 } from "@/lib/venda/total";
 import type {
   CancelarVendaInput,
+  MarcarRetiradaInput,
   VendaFiltro,
   VendaInput,
   VendaPagamentoInput,
@@ -294,6 +295,10 @@ export const VendasService = {
       ];
     }
     if (f.q) where.customerName = { contains: f.q, mode: "insensitive" };
+    if (f.aguardandoRetirada) {
+      where.retirarDepois = true;
+      where.retiradoEm = null;
+    }
 
     if (f.preset && f.preset !== "todas") {
       const de =
@@ -323,6 +328,16 @@ export const VendasService = {
       orderBy: { saleDate: "desc" },
       take: opts.take ?? VENDAS_POR_PAGINA,
       skip: opts.skip ?? 0,
+    });
+  },
+
+  /** Vendas vivas que o cliente ainda não buscou (filtro e aviso do sino). */
+  async aguardandoRetirada(tenantId: string) {
+    return getTenantPrisma(tenantId).sale.findMany({
+      where: { retirarDepois: true, retiradoEm: null, cancelledAt: null },
+      select: { id: true, customerName: true, saleDate: true },
+      orderBy: { saleDate: "asc" },
+      take: 200,
     });
   },
 
@@ -380,6 +395,48 @@ export const VendasService = {
       descontos: money(toDecimal(r._sum.discountAmount ?? 0)),
       quantidade: r._count._all,
     };
+  },
+
+  /**
+   * Checkbox "Buscado" da lista de vendas: marca ou desmarca a retirada.
+   *
+   * Só para venda viva com `retirarDepois` (a que saiu na hora já nasceu
+   * retirada). Desmarcar existe para o toque errado; fica na auditoria.
+   */
+  async marcarRetirada(input: MarcarRetiradaInput, ctx: TenantCtx) {
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const venda = await tx.sale.findFirst({
+        where: { id: input.id },
+        select: { id: true, retirarDepois: true, retiradoEm: true, cancelledAt: true },
+      });
+      if (!venda) throw new NotFoundError("Venda não encontrada");
+      if (venda.cancelledAt) throw new BusinessRuleError("Venda cancelada não tem retirada.");
+      if (!venda.retirarDepois) {
+        throw new BusinessRuleError("Esta venda foi levada na hora — não há retirada para marcar.");
+      }
+      const retiradoEm = input.retirado ? (venda.retiradoEm ?? new Date()) : null;
+      const depois = await tx.sale.update({
+        where: { id: input.id },
+        data: { retiradoEm },
+        select: { id: true, retiradoEm: true },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "Sale",
+          entityId: input.id,
+          oldData: { retiradoEm: venda.retiradoEm },
+          newData: { retiradoEm },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return depois;
+    });
   },
 
   async get(tenantId: string, id: string) {
@@ -892,6 +949,10 @@ export const VendasService = {
           changeGiven,
           plasticCrateQty,
           idempotencyKey: input.idempotencyKey ?? null,
+          // Levou na hora = retirada no próprio registro; buscar depois fica
+          // aguardando até o checkbox da lista de vendas.
+          retirarDepois: input.retirarDepois ?? false,
+          retiradoEm: input.retirarDepois ? null : new Date(),
           items: {
             create: input.items.map((i, idx) => ({
               tenantId: ctx.tenantId,

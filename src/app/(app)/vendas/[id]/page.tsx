@@ -26,6 +26,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { CancelarVendaButton } from "./_components/cancelar-venda-button";
+import { CheckboxRetirada } from "../_components/checkbox-retirada";
 
 export const dynamic = "force-dynamic";
 
@@ -82,6 +83,28 @@ export default async function VendaDetalhePage({
                 : "Sem motivo informado."}{" "}
               Ela não entra em faturamento, lucro nem fluxo de caixa; o estoque já foi devolvido.
             </span>
+          </Card>
+        )}
+
+        {venda.cancelledAt === null && (
+          <Card className="flex flex-wrap items-center justify-between gap-3 p-4">
+            <span className="text-sm">
+              <b className="block">Retirada</b>
+              <span className="text-muted-foreground">
+                {venda.retirarDepois
+                  ? venda.retiradoEm
+                    ? `Buscado em ${formatDateTime(venda.retiradoEm)}`
+                    : "O cliente vai buscar mais tarde"
+                  : "Levou na hora"}
+              </span>
+            </span>
+            {venda.retirarDepois && (
+              <CheckboxRetirada
+                vendaId={venda.id}
+                retirado={venda.retiradoEm !== null}
+                cliente={venda.customerName || "Cliente"}
+              />
+            )}
           </Card>
         )}
 

@@ -205,7 +205,7 @@ Duas abas por URL: **Visão Geral** (números do dia, avisos, contas a pagar, li
 
 Uma tela só: `/estoque` (abas Produtos | Compras), `/estoque/compra` e `/estoque/ajuste`. `/produtos*` e `/compras*` só redirecionam; Produtos e Compras saíram do menu.
 
-**Produto** (Server Actions, soft delete, sem histórico não apaga de fato; **só exclui com estoque zerado** — com saldo o valor sumiria do painel sem baixa): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
+**Produto** (Server Actions, soft delete, sem histórico não apaga de fato; **exclui também com saldo**, depois da confirmação na tela: a exclusão lança antes um `AJUSTE` negativo `MANUAL` do saldo pelo custo médio, que entra nas perdas do mês — o valor nunca some sem registro): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
 
 **Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`; **só foto em domínio público ou CC0** — nada que exija crédito; a origem de cada uma fica em `src/lib/imagem/creditos-banco.ts`, que alimenta a página pública `/creditos-fotos`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados. Envio limitado a 100 fotos/empresa/dia (`rate_limits`); foto de empresa que nenhum produto usa há mais de 24 h (formulário abandonado) é apagada do bucket pelo cron de billing (`limparOrfas`, por último, com prazo).
 
@@ -222,6 +222,12 @@ CRUD Server Actions. Soft delete — **recusado com conta a pagar pendente** (a 
 `/vendas/nova` = frente de caixa. Pagamento: Dinheiro / PIX / Cartão / Fiado. Cliente obrigatório se fiado. Valida saldo de estoque. Grava `unitCostAtSale` para lucro. Fiado cria `CreditAccount` na mesma transação. Pode gerar saída de caixas plásticas.
 
 **Cancelar venda** (`VendasService.cancelarVenda`) é o **único** caminho para desfazer venda — o fiado também passa por ele. Regra §3.13; recusa com recebimento de fiado vivo. A mercadoria volta com `AJUSTE` `SALE_CANCELLED` pelo **custo com que saiu** (`unitCostAtSale`): é a mesma mercadoria, e a média se recompõe com ela. Não use a média da hora — daria à mercadoria velha o preço da compra nova e inflaria o valor do estoque.
+
+**Retirada** (`Sale.retirarDepois` / `retiradoEm`): no PDV a etapa "Retirada" é **obrigatória** (`vendaPdvSchema`, só na rota `/api/vendas`; o fiado manual omite = levou na hora). "Busca depois" exige nome do cliente e nasce com `retiradoEm` nulo; o checkbox "Buscado" da lista de vendas, da venda e da ficha do cliente chama `VendasService.marcarRetirada` (auditado; desmarcar é permitido). Pendentes viram o aviso `retirada_pendente` (sino, Início e push), depois do dinheiro e antes da cotação. A lista de vendas mostra a foto e o nome dos produtos.
+
+### Clientes (aba de Vendas, núcleo)
+
+Vendas e Clientes são uma tela só: `/vendas` (abas Vendas | Clientes, `?aba=clientes`) e a ficha em `/vendas/clientes/[chave]`. `/clientes*` só redireciona; no menu o item é "Vendas e clientes". Sem tabela própria: cliente = nome da venda sem caixa e sem espaços nas pontas (`chaveDoCliente`, a mesma identidade do fiado). `ClientesService.list` agrupa as vendas vivas; a ficha mostra todas as compras com itens e fotos, fiado em aberto e retiradas pendentes.
 
 ### Fiado
 
@@ -322,7 +328,7 @@ A tela `/atividades` saiu no commit `f644e78` e não existe mais. A auditoria co
 
 ### Configurações / Meu plano
 
-`/configuracoes` (empresa + assinatura). `/plano` (módulos, troca de plano, cancelar).
+`/configuracoes` em abas: Empresa, Meu perfil, **Meu plano** (`?aba=plano`: módulos, uso, troca de plano — `MeuPlanoConteudo`) e Assinatura (pagar, cancelar). "Meu plano" saiu do menu. `/plano` só redireciona para `/configuracoes?aba=plano`, preservando `?bloqueado=` — proxy, `requireModulo` e relatórios continuam mandando para `/plano?bloqueado=<módulo>`.
 
 ---
 

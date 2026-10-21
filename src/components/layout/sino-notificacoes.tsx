@@ -12,6 +12,9 @@ import { Button } from "@/components/ui/button";
 const CHAVE_VISTAS = "ceasapro:notificacoes-vistas";
 const INTERVALO_MS = 5 * 60_000;
 
+/** Evento para uma tela pedir ao sino que releia (ex.: retirada marcada). */
+export const EVENTO_ATUALIZAR_NOTIFICACOES = "ceasapro:notificacoes";
+
 function lerVistas(): Set<string> {
   try {
     const bruto = localStorage.getItem(CHAVE_VISTAS);
@@ -71,9 +74,12 @@ export function SinoNotificacoes({ avisoAssinatura }: { avisoAssinatura?: string
       if (document.visibilityState === "visible") void carregar();
     };
     document.addEventListener("visibilitychange", aoVoltar);
+    const aoPedir = () => void carregar();
+    window.addEventListener(EVENTO_ATUALIZAR_NOTIFICACOES, aoPedir);
     return () => {
       clearInterval(t);
       document.removeEventListener("visibilitychange", aoVoltar);
+      window.removeEventListener(EVENTO_ATUALIZAR_NOTIFICACOES, aoPedir);
     };
   }, [carregar]);
 

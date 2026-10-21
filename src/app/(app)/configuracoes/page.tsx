@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { Badge, type BadgeProps } from "@/components/ui/badge";
 import { IconeRedondo } from "@/components/ui/icone-redondo";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { MeuPlanoConteudo } from "../plano/_components/meu-plano-conteudo";
 import { InstallPrompt } from "@/components/pwa/install-prompt";
 import { PushOptIn } from "@/components/pwa/push-opt-in";
 import { EmpresaConfigForm } from "./_components/empresa-form";
@@ -69,7 +70,15 @@ function Linha({ rotulo, children }: { rotulo: string; children: ReactNode }) {
   );
 }
 
-export default async function ConfiguracoesPage() {
+const ABAS = ["empresa", "perfil", "plano", "assinatura"] as const;
+
+export default async function ConfiguracoesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ aba?: string; bloqueado?: string }>;
+}) {
+  const sp = await searchParams;
+  const aba = ABAS.find((a) => a === sp.aba) ?? "empresa";
   const { tenantId, session } = await requireTenant();
   const t = await ConfigService.getCompany(tenantId);
   const sub = t?.subscription;
@@ -91,13 +100,14 @@ export default async function ConfiguracoesPage() {
     <div>
       <PageHeader
         title="Configurações"
-        description="Seus dados, os da empresa e a assinatura."
+        description="Seus dados, os da empresa, o plano e a assinatura."
       />
       <div className="flex flex-col gap-5">
-        <Tabs defaultValue="empresa">
+        <Tabs defaultValue={aba}>
           <TabsList>
             <TabsTrigger value="empresa">Empresa</TabsTrigger>
             <TabsTrigger value="perfil">Meu perfil</TabsTrigger>
+            <TabsTrigger value="plano">Meu plano</TabsTrigger>
             <TabsTrigger value="assinatura">Assinatura</TabsTrigger>
           </TabsList>
           <TabsContent value="empresa" className="flex flex-col gap-5">
@@ -154,6 +164,9 @@ export default async function ConfiguracoesPage() {
                 <SeletorDeTema />
               </CardContent>
             </Card>
+          </TabsContent>
+          <TabsContent value="plano" className="flex flex-col gap-5">
+            <MeuPlanoConteudo tenantId={tenantId} bloqueado={sp.bloqueado} />
           </TabsContent>
           <TabsContent value="assinatura" className="flex flex-col gap-5">
             <Card>

@@ -12,6 +12,7 @@ export type TipoDeAviso =
   | "despesa_vencida"
   | "despesa_a_vencer"
   | "higienizacao_pendente"
+  | "retirada_pendente"
   | "cotacao_variacao";
 
 export interface Aviso {
@@ -69,7 +70,7 @@ export const AvisosService = {
 
     // A cotação entra no MESMO `Promise.all`: antes ela só começava depois das
     // quatro leituras acima terminarem, sem depender de nenhuma delas.
-    const [fiadoVenc, despVenc, despAVencer, higPend, cotacoes] = await Promise.all([
+    const [fiadoVenc, despVenc, despAVencer, higPend, retiradas, cotacoes] = await Promise.all([
       db.creditAccount.findMany({
         where: { status: "EM_ABERTO", dueDate: { lt: hoje } },
         select: { customerName: true, totalAmount: true, paidAmount: true },
@@ -92,6 +93,13 @@ export const AvisosService = {
             select: { totalAmount: true, paidAmount: true },
           })
         : [],
+      // Mercadoria vendida que o cliente ainda não buscou (PDV "Busca depois").
+      db.sale.findMany({
+        where: { retirarDepois: true, retiradoEm: null, cancelledAt: null },
+        select: { id: true, customerName: true },
+        orderBy: { saleDate: "asc" },
+        take: 200,
+      }),
       isModuleEnabled(modules, "cotacoes")
         ? import("./cotacoes-alertas.service").then(({ CotacoesAlertasService }) =>
             CotacoesAlertasService.disparosDoBoletim(tenantId, agora),
@@ -165,6 +173,24 @@ export const AvisosService = {
           label: `Higienização a pagar`,
         });
       }
+    }
+
+    // Depois do dinheiro (o push leva ao avisos[0]) e antes da cotação.
+    if (retiradas.length > 0) {
+      const nomes = [...new Set(retiradas.map((v) => v.customerName?.trim() || "Cliente"))];
+      avisos.push({
+        tipo: "retirada_pendente",
+        count: retiradas.length,
+        total: null,
+        href:
+          retiradas.length === 1
+            ? `/vendas/${retiradas[0]!.id}`
+            : "/vendas?retirada=pendente&periodo=todas",
+        label:
+          retiradas.length === 1
+            ? `${nomes[0]} ainda vai buscar a mercadoria`
+            : `${retiradas.length} venda(s) aguardando o cliente buscar`,
+      });
     }
 
     /*

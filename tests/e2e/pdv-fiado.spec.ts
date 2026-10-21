@@ -110,6 +110,9 @@ test.describe("Venda fiada no balcão", () => {
     await page.getByLabel("Cliente (opcional)").fill(CLIENTE);
     await expect(page.getByText(/a parte fiada precisa de nome/i)).toHaveCount(0);
 
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
+
     await page.getByRole("button", { name: "Finalizar venda" }).click();
     await expect(page.getByText(/Venda registrada/i)).toBeVisible();
 
@@ -139,6 +142,9 @@ test.describe("Venda fiada no balcão", () => {
       continua valendo se alguém mexer no cálculo do browser.
     */
     await expect(page.getByText(/só tem/i).first()).toBeVisible();
+
+    await page.getByRole("radio", { name: /Leva agora/ }).click();
+
 
     await page.getByRole("button", { name: "Finalizar venda" }).click();
     await expect(page.getByText(/Estoque insuficiente/i)).toBeVisible();

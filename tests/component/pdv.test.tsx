@@ -99,6 +99,7 @@ describe("pagamento em dinheiro", () => {
         estoquePorProduto={{ limao: 10 }}
       />,
     );
+    await user.click(screen.getByRole("radio", { name: /Leva agora/ }));
     await user.click(screen.getByRole("button", { name: "Finalizar venda" }));
     const corpo = apiPost.mock.calls[0]![1] as Record<string, unknown>;
     expect(corpo.paymentMethod).toBe("DINHEIRO");
@@ -226,6 +227,7 @@ describe("erro do servidor", () => {
         estoquePorProduto={{ limao: 10 }}
       />,
     );
+    await user.click(screen.getByRole("radio", { name: /Leva agora/ }));
     await user.click(screen.getByRole("button", { name: "Finalizar venda" }));
     expect(toast.error).toHaveBeenCalledWith("Data inválida. Use o seletor de data.");
   });
@@ -244,6 +246,7 @@ describe("próxima venda", () => {
         estoquePorProduto={{ limao: 10 }}
       />,
     );
+    await user.click(screen.getByRole("radio", { name: /Leva agora/ }));
     await user.click(screen.getByRole("button", { name: "Finalizar venda" }));
     await user.click(await screen.findByRole("button", { name: /Próxima venda/ }));
 

@@ -2,7 +2,7 @@
 
 import { withTenantAction } from "@/lib/http/with-action";
 import { VendasService } from "@/lib/services/vendas.service";
-import { cancelarVendaSchema } from "@/lib/validations/venda";
+import { cancelarVendaSchema, marcarRetiradaSchema } from "@/lib/validations/venda";
 
 /**
  * Cancelamento de venda.
@@ -13,4 +13,10 @@ import { cancelarVendaSchema } from "@/lib/validations/venda";
 export const cancelarVenda = withTenantAction({
   schema: cancelarVendaSchema,
   handler: (input, ctx) => VendasService.cancelarVenda(input, ctx),
+});
+
+/** Checkbox "Buscado" da lista de vendas. */
+export const marcarRetirada = withTenantAction({
+  schema: marcarRetiradaSchema,
+  handler: (input, ctx) => VendasService.marcarRetirada(input, ctx),
 });

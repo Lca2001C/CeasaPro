@@ -14,7 +14,6 @@ test.describe("Navegação (botões do menu)", () => {
       ["Estoque", "Controle de Estoque"],
       ["Fiado", "Fiado"],
       ["Relatórios", "Relatórios"],
-      ["Meu plano", "Meu plano"],
       ["Configurações", "Configurações"],
     ];
 
@@ -40,7 +39,7 @@ test.describe("Navegação (botões do menu)", () => {
     const side = page.locator("aside");
 
     const opcionais: [string, string][] = [
-      ["Vendas", "Vendas"],
+      ["Vendas e clientes", "Vendas e clientes"],
       ["Cotações", "Cotações"],
       // Caixas e embalagens são uma tela só, em abas (a demo tem os dois módulos).
       ["Caixas e embalagens", "Caixas e embalagens"],

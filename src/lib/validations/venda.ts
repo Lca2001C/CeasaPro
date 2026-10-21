@@ -139,6 +139,11 @@ const vendaBase = z.object({
    * funcionando depois do deploy, e o fiado manual não tem carrinho.
    */
   idempotencyKey: z.uuid().optional(),
+  /**
+   * O cliente vai buscar a mercadoria mais tarde? Obrigatório no PDV
+   * (`vendaPdvSchema`); o fiado manual não tem retirada e omite.
+   */
+  retirarDepois: z.boolean().optional(),
   items: z
     .array(vendaItemSchema)
     .min(1, "Adicione ao menos um item")
@@ -274,6 +279,28 @@ export const vendaSchema = vendaBase
     path: ["items"],
   });
 
+/**
+ * Venda do PDV: a escolha "leva agora / busca depois" é obrigatória, e quem
+ * busca depois precisa de nome — senão ninguém sabe de quem é a mercadoria
+ * separada no box.
+ */
+export const vendaPdvSchema = vendaSchema
+  .refine((v) => v.retirarDepois !== undefined, {
+    message: "Informe se o cliente leva agora ou vai buscar mais tarde",
+    path: ["retirarDepois"],
+  })
+  .refine((v) => !v.retirarDepois || Boolean(v.customerName?.trim()), {
+    message: "Informe o cliente que vai buscar mais tarde",
+    path: ["customerName"],
+  });
+
+/** Marca/desmarca a retirada de uma venda. */
+export const marcarRetiradaSchema = z.object({
+  id: z.string().min(1),
+  retirado: z.boolean(),
+});
+export type MarcarRetiradaInput = z.infer<typeof marcarRetiradaSchema>;
+
 /** Cancelamento de venda — o motivo fica na auditoria. */
 export const cancelarVendaSchema = z.object({
   id: z.string().min(1),
@@ -291,5 +318,7 @@ export const vendaFiltroSchema = z.object({
   paymentMethod: paymentMethodEnum.optional(),
   /** Incluir as vendas canceladas na listagem. */
   incluirCanceladas: z.boolean().optional(),
+  /** Só as que aguardam o cliente buscar. */
+  aguardandoRetirada: z.boolean().optional(),
 });
 export type VendaFiltro = z.infer<typeof vendaFiltroSchema>;

@@ -23,6 +23,8 @@ import {
   Star,
   Trash2,
   WifiOff,
+  Clock,
+  PackageCheck,
 } from "lucide-react";
 import { toast } from "sonner";
 import { apiPost } from "@/lib/api-client";
@@ -51,6 +53,7 @@ import {
   subtrairQuantidade,
 } from "./pdv-regras";
 import { cn } from "@/lib/cn";
+import { EVENTO_ATUALIZAR_NOTIFICACOES } from "@/components/layout/sino-notificacoes";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
@@ -190,6 +193,12 @@ export function Pdv({
   const [dividido, setDividido] = useState(false);
   const [parcelas, setParcelas] = useState<Parcela[]>([]);
   const [customer, setCustomer] = useState("");
+  /**
+   * O cliente leva agora ou busca depois? Começa SEM escolha de propósito: é
+   * obrigatória, e um padrão pré-marcado viraria "leva agora" por descuido —
+   * a mercadoria separada no box ficaria sem dono na lista de retiradas.
+   */
+  const [retirarDepois, setRetirarDepois] = useState<boolean | null>(null);
   const [phone, setPhone] = useState("");
   const [dueDate, setDueDate] = useState("");
   const [descontoAberto, setDescontoAberto] = useState(false);
@@ -483,6 +492,10 @@ export function Pdv({
       return "Informe o valor de cada forma de pagamento (ou remova a que ficou zerada).";
     if (!parcelasValidas)
       return `As formas de pagamento somam ${formatBRL(somaParcelas)} e o total é ${formatBRL(total)}.`;
+    if (retirarDepois === null)
+      return "Informe se o cliente leva agora ou vai buscar mais tarde.";
+    if (retirarDepois && !customer.trim())
+      return "Informe o nome do cliente que vai buscar mais tarde.";
     if (parteFiada > 0 && !customer.trim())
       return "Informe o cliente: parte da venda é fiada.";
     if (caixasHabilitado && usaCaixaPlastica) {
@@ -532,6 +545,7 @@ export function Pdv({
       idempotencyKey: chaveDoCarrinho.current,
       customerName: customer.trim() || null,
       customerPhone: phone.trim() || null,
+      retirarDepois: retirarDepois ?? undefined,
       paymentMethod: dividido ? (parcelas[0]?.method ?? payment) : payment,
       payments: dividido ? parcelas.map((p) => ({ method: p.method, amount: p.amount })) : undefined,
       dueDate: parteFiada > 0 && dueDate ? dueDate : null,
@@ -598,12 +612,15 @@ export function Pdv({
       })),
     });
 
+    // O sino relê: uma venda "Busca depois" vira aviso na hora.
+    window.dispatchEvent(new Event(EVENTO_ATUALIZAR_NOTIFICACOES));
     setCart([]);
     // Venda nova começa sem aviso vermelho: a tentativa era do carrinho que
     // acabou de ser gravado.
     setJaTentouFinalizar(false);
     setCustomer("");
     setPhone("");
+    setRetirarDepois(null);
     setDueDate("");
     setUsaCaixaPlastica(false);
     setCrateQty("");
@@ -700,7 +717,7 @@ export function Pdv({
   const unidades = cart.length;
 
   return (
-    <div className="flex flex-col gap-4 pb-[11rem] [&_section]:scroll-mb-[11rem] md:pb-0 md:[&_section]:scroll-mb-0">
+    <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-end justify-between gap-2">
         <div className="min-w-0">
           <h1 className="text-xl font-bold">Nova venda</h1>
@@ -1339,6 +1356,49 @@ export function Pdv({
             </div>
           </Etapa>
 
+          <Etapa
+            numero={5}
+            titulo="Retirada"
+            dica="Obrigatório — o cliente leva agora ou vai buscar mais tarde?"
+          >
+            <div className="grid grid-cols-2 gap-2" role="radiogroup" aria-label="Retirada da mercadoria">
+              {[
+                { valor: false, titulo: "Leva agora", detalhe: "Sai do balcão já", Icone: PackageCheck },
+                { valor: true, titulo: "Busca depois", detalhe: "Fica separado no box", Icone: Clock },
+              ].map(({ valor, titulo, detalhe, Icone }) => {
+                const ativo = retirarDepois === valor;
+                return (
+                  <button
+                    key={titulo}
+                    type="button"
+                    role="radio"
+                    aria-checked={ativo}
+                    onClick={() => setRetirarDepois(valor)}
+                    className={cn(
+                      "flex min-h-16 items-center gap-2.5 rounded-lg border-2 px-3 py-2 text-left outline-none motion-safe:transition-colors focus-visible:ring-2 focus-visible:ring-ring",
+                      ativo
+                        ? "border-primary bg-primary/10"
+                        : retirarDepois === null && jaTentouFinalizar
+                          ? "border-destructive/60 hover:bg-muted"
+                          : "border-border hover:bg-muted",
+                    )}
+                  >
+                    <Icone className={cn("size-5 shrink-0", ativo ? "text-primary" : "text-muted-foreground")} aria-hidden="true" />
+                    <span className="leading-tight">
+                      <span className="block text-sm font-semibold">{titulo}</span>
+                      <span className="block text-xs text-muted-foreground">{detalhe}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+            {retirarDepois && !customer.trim() && (
+              <p className="mt-2 text-xs text-warning">
+                Preencha o nome do cliente (etapa 1) para saber de quem é a mercadoria.
+              </p>
+            )}
+          </Etapa>
+
           {/* Autocomplete nativo: sem JS extra, funciona em qualquer navegador e
               no teclado do celular. Evita o mesmo cliente virar "João", "joao" e
               "JOÃO" — três saldos separados no fiado e nas caixas. */}
@@ -1348,14 +1408,12 @@ export function Pdv({
             ))}
           </datalist>
 
-          {/* Total + finalizar.
-              No celular é `fixed` (não `sticky`): `sticky` deixa os últimos campos
-              passarem por baixo da barra enquanto o operador ainda está
-              preenchendo. O recuo `pb-[11rem]` no casco da tela reserva o espaço.
-              Do `md` para cima a barra volta para o fluxo, no fim da coluna. */}
+          {/* Total + finalizar: o ÚLTIMO passo, no fim da tela, em todo
+              tamanho. Fixo no rodapé do celular ele cobria a tela o tempo todo;
+              aqui a pessoa confere o pedido e só então confirma. */}
           <div
             data-testid="pdv-resumo"
-            className="fixed inset-x-4 bottom-[calc(4.25rem+env(safe-area-inset-bottom))] z-30 rounded-lg border bg-background p-3 shadow-lg md:static md:inset-auto md:bottom-auto md:z-10"
+            className="rounded-lg border-2 border-primary/40 bg-background p-3 shadow-sm"
           >
             {semEstoque.length > 0 && (
               // Aviso ANTES do clique. A validação de verdade continua no servidor;
