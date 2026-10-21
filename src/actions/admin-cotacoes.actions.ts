@@ -50,11 +50,14 @@ export const importarBoletimManual = withAdminAction({
       );
     }
 
+    // `parseFormDateTz` é obrigatório para data vinda de `<input type="date">`:
+    // `new Date("2026-09-10")` é meia-noite UTC, que no Brasil é o dia 9.
+    const quoteDate = parseFormDateTz(input.quoteDate);
+    await CotacoesImportService.conferirColagemManual(input.centralCode, quoteDate);
+
     const r = await CotacoesImportService.gravar({
       centralCode: input.centralCode,
-      // `parseFormDateTz` é obrigatório para data vinda de `<input type="date">`:
-      // `new Date("2026-09-10")` é meia-noite UTC, que no Brasil é o dia 9.
-      quoteDate: parseFormDateTz(input.quoteDate),
+      quoteDate,
       linhas,
       sourceKey: "manual",
     });

@@ -244,7 +244,11 @@ export default async function AdminCotacoesPage() {
           <CardTitle className="text-base">Importar boletim manualmente</CardTitle>
         </CardHeader>
         <CardContent>
-          <ImportarManual centrais={centrais.filter((c) => c.active)} />
+          <ImportarManual
+            centrais={centrais
+              .filter((c) => c.active)
+              .map((c) => ({ ...c, automatica: c.sourceKey !== "manual" }))}
+          />
         </CardContent>
       </Card>
     </div>

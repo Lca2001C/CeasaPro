@@ -159,15 +159,18 @@ export const AvisosService = {
       });
     }
 
-    if (higPend.length > 0) {
-      const total = higPend.reduce(
+    // `status != PAGO` inclui o lote já quitado com caixa ainda fora: só conta
+    // o que tem dinheiro a pagar, como em `ContasPagarService`.
+    const higComSaldo = higPend.filter((c) => c.totalAmount.minus(c.paidAmount).greaterThan(0));
+    if (higComSaldo.length > 0) {
+      const total = higComSaldo.reduce(
         (a, c) => a.plus(c.totalAmount).minus(c.paidAmount),
         new Prisma.Decimal(0),
       );
       if (total.greaterThan(0)) {
         avisos.push({
           tipo: "higienizacao_pendente",
-          count: higPend.length,
+          count: higComSaldo.length,
           total,
           href: "/higienizacao",
           label: `Higienização a pagar`,

@@ -17,11 +17,13 @@ import { planModules } from "./modules";
  *  2. `heldFeatures` enquanto `heldFeaturesUntil > now` — o congelamento que
  *     `AdminService.updatePlan` (e a virada da troca agendada) grava para o
  *     período pago por pagamento de antes destas colunas;
- *  3. `plan.features` do plano vigente.
+ *  3. período vencido (tolerância): interseção do que o último pagamento
+ *     APROVADO comprou com `plan.features` do plano vigente;
+ *  4. `plan.features` do plano vigente.
  *
- * Trial (`activatedAt` nulo) vai direto ao 3: não há período comprado a
- * proteger. E nada segura módulo depois do vencimento — período vencido cai no
- * plano vivo, como qualquer contratação nova.
+ * Trial (`activatedAt` nulo) vai direto ao 4: não há período comprado a
+ * proteger. Depois do vencimento nada segura módulo A MAIS: a interseção só
+ * tira o que o plano novo não tem ou o que ainda não foi pago.
  *
  * Usado por `buildAccessPayload` (claim `modules`), `PlanoService.getPlanoView`
  * (tela de plano) e `push-avisos.service.ts` (avisos sem sessão). Uma quarta
@@ -62,6 +64,27 @@ export async function featuresVigentes(
     sub.heldFeatures != null
   ) {
     return sub.heldFeatures;
+  }
+
+  // Vencido (tolerância): só o que o último período pago comprou E o plano de
+  // agora tem. Sem isto, subir de plano em VENCIDO — inclusive ao gerar a
+  // cobrança do plano caro em /assinatura — liberava os módulos antes de pagar,
+  // e descer mantinha os caros até o fim da tolerância.
+  if (sub.currentPeriodEnd <= now) {
+    const ultimo = await prisma.subscriptionPayment.findFirst({
+      where: {
+        subscriptionId: sub.id,
+        status: "APROVADO",
+        features: { not: Prisma.DbNull },
+        periodEnd: { lte: now },
+      },
+      orderBy: { periodEnd: "desc" },
+      select: { features: true },
+    });
+    if (ultimo?.features != null) {
+      const pagos = new Set(planModules(ultimo.features));
+      return { modules: planModules(planFeatures).filter((m) => pagos.has(m)) };
+    }
   }
   return planFeatures;
 }

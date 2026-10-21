@@ -127,7 +127,9 @@ export function resolvePeriod(input?: {
       break;
     }
     case "personalizado": {
-      from = startOfDay(personalizado?.from ?? startOfMonth(now));
+      // Só com "até": o mês dele. Com o mês de hoje, um "até" antigo deixava o
+      // início depois do fim e o relatório saía vazio.
+      from = startOfDay(personalizado?.from ?? startOfMonth(personalizado?.to ?? now));
       to = endOfDay(personalizado?.to ?? now);
       break;
     }

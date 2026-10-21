@@ -54,12 +54,12 @@ export const OPTIONAL_MODULES: Record<OptionalModuleKey, OptionalModule> = {
       1. É BOLETIM, não preço do momento. O preço de agora é negociado no balcão
          e nenhuma central divulga.
       2. A busca automática ainda não cobre o país. Das 65 centrais do catálogo,
-         8 são buscadas sozinhas; nas outras o boletim depende de envio manual.
+         9 são buscadas sozinhas; nas outras o boletim depende de envio manual.
          Vender "preços do CEASA" para quem compra em Recife, sem essa ressalva,
          seria vender o que não se entrega.
     */
     description:
-      "Preços do boletim da sua central do CEASA, com destaque para os produtos que você tem em estoque. A busca automática cobre hoje as centrais de MG e ES; nas demais praças, o boletim depende de envio manual.",
+      "Preços do boletim da sua central do CEASA, com destaque para os produtos que você tem em estoque. A busca automática cobre hoje as centrais de MG, ES e o Entreposto de São Paulo (CEAGESP); nas demais praças, o boletim depende de envio manual.",
     pathPrefixes: ["/cotacoes"],
   },
   ceasanews: {

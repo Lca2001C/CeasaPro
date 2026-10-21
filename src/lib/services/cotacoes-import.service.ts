@@ -7,7 +7,7 @@ import { frescorAlarma, frescorDoBoletim } from "@/lib/cotacoes/frescor";
 import { civilParts } from "@/lib/tz";
 import { fontePara, type FonteDeCotacao } from "@/lib/cotacoes/fontes";
 import { AdminNotificationsService } from "./admin-notifications.service";
-import { NotFoundError } from "@/lib/http/app-error";
+import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
 import type { LinhaDeCotacao } from "@/lib/cotacoes/csv";
 import { serieDaFonte } from "@/lib/cotacoes/serie";
 import { normalizarEmbalagem } from "@/lib/cotacoes/embalagem";
@@ -104,6 +104,50 @@ export interface ResultadoDaGravacao {
 }
 
 export const CotacoesImportService = {
+  /**
+   * Recusa a colagem do super-admin por cima de um dia que a busca automática
+   * já trouxe e que ainda está gravado. `gravar` sobrescreve o dia, e o boletim
+   * colado na praça errada viraria o preço de todos os clientes dela.
+   *
+   * Olha a existência, não a última execução: uma falha posterior (retry, queda
+   * da fonte) grava `FALHA` no mesmo dia e não pode reabrir a colagem por cima
+   * do boletim que já entrou. Dia sem busca, ou cujo boletim foi apagado,
+   * continua aceitando a colagem de emergência.
+   */
+  async conferirColagemManual(centralCode: string, quoteDate: Date) {
+    const central = await prisma.ceasaCentral.findUnique({
+      where: { code: centralCode },
+      select: { sourceKey: true },
+    });
+    if (!central) throw new NotFoundError("Central não encontrada.");
+    if (fontePara(central.sourceKey) === null) return;
+
+    const dia = new Date(
+      Date.UTC(quoteDate.getUTCFullYear(), quoteDate.getUTCMonth(), quoteDate.getUTCDate()),
+    );
+    const [buscaOk, cotacao] = await Promise.all([
+      prisma.ceasaImportRun.findFirst({
+        where: {
+          centralCode,
+          quoteDate: dia,
+          sourceKey: central.sourceKey,
+          status: "OK",
+          rowsUpserted: { gt: 0 },
+        },
+        select: { id: true },
+      }),
+      prisma.ceasaQuote.findFirst({
+        where: { centralCode, quoteDate: dia },
+        select: { ceasaProductId: true },
+      }),
+    ]);
+    if (buscaOk && cotacao) {
+      throw new BusinessRuleError(
+        "Este dia já veio da busca automática. Apague o boletim do dia antes de colar outro.",
+      );
+    }
+  },
+
   /**
    * Grava um boletim inteiro, de forma idempotente.
    *

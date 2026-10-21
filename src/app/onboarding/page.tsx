@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireTenant } from "@/lib/auth/session";
+import { sessaoAindaValida } from "@/lib/auth/revogacao";
+import { rotaDeSessaoRevogada } from "@/lib/auth/renovacao";
 import { prisma } from "@/lib/db/prisma";
 import { empresaSemNome } from "@/lib/tenant-defaults";
 import { OnboardingWizard } from "./_components/wizard";
@@ -7,7 +9,9 @@ import { OnboardingWizard } from "./_components/wizard";
 export const dynamic = "force-dynamic";
 
 export default async function OnboardingPage() {
-  const { tenantId } = await requireTenant();
+  const { session, tenantId } = await requireTenant();
+  // Fora do grupo `(app)`, então sem o layout que recusa sessão revogada.
+  if (!(await sessaoAindaValida(session))) redirect(rotaDeSessaoRevogada("/onboarding"));
   // Busca os campos que o passo 1 EDITA — nome, telefone e endereço.
   //
   // Telefone e endereço não vinham, e o formulário partia de string vazia: o

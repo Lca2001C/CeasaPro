@@ -228,3 +228,61 @@ describe("embalagem do boletim digitado (#57)", () => {
     expect(units.map((u) => u.unit)).toEqual(["Kg"]);
   });
 });
+
+describe("Colagem do super-admin em praça com busca automática", () => {
+  const PRACA = `AUT${uniq().slice(0, 5)}`.toUpperCase();
+  const slug = `cenoura-aut-${uniq()}`;
+  const linha = `${slug.replace(/-/g, " ").toUpperCase()};KG;1;2;3`;
+
+  beforeAll(async () => {
+    await prisma.ceasaCentral.create({
+      data: { code: PRACA, name: "Praca Automatica", city: "X", uf: "MG", sourceKey: "ceasaminas" },
+    });
+    slugsCriados.push(slug);
+  });
+  afterAll(async () => {
+    await prisma.ceasaQuote.deleteMany({ where: { centralCode: PRACA } });
+    await prisma.ceasaImportRun.deleteMany({ where: { centralCode: PRACA } });
+    await prisma.ceasaCentral.deleteMany({ where: { code: PRACA } });
+  });
+
+  const gravar = (data: string, sourceKey: string) =>
+    CotacoesImportService.gravar({
+      centralCode: PRACA,
+      quoteDate: parseFormDateTz(data),
+      linhas: lerCsvDeCotacoes(linha).linhas,
+      sourceKey,
+    });
+  const conferir = (data: string) =>
+    CotacoesImportService.conferirColagemManual(PRACA, parseFormDateTz(data));
+
+  it("aceita o dia em que a busca não trouxe nada", async () => {
+    await expect(conferir("2026-09-15")).resolves.toBeUndefined();
+  });
+
+  it("recusa o dia que já veio da busca, mesmo depois de uma falha, e volta a aceitar depois de apagado", async () => {
+    await gravar("2026-09-16", "ceasaminas");
+    // Retry que falha grava FALHA por cima do OK. A colagem continua recusada:
+    // o boletim da busca ainda está lá.
+    await prisma.ceasaImportRun.create({
+      data: {
+        centralCode: PRACA,
+        sourceKey: "ceasaminas",
+        quoteDate: parseFormDateTz("2026-09-16"),
+        status: "FALHA",
+        error: "timeout",
+        finishedAt: new Date(),
+      },
+    });
+    await expect(conferir("2026-09-16")).rejects.toThrow(/busca automática/);
+
+    await CotacoesImportService.apagarBoletim(PRACA, parseFormDateTz("2026-09-16"));
+    await expect(conferir("2026-09-16")).resolves.toBeUndefined();
+  });
+
+  it("praça manual nunca recusa", async () => {
+    await expect(
+      CotacoesImportService.conferirColagemManual(CENTRAL, parseFormDateTz("2026-09-10")),
+    ).resolves.toBeUndefined();
+  });
+});

@@ -15,6 +15,7 @@ interface Central {
   code: string;
   name: string;
   uf: string;
+  automatica: boolean;
 }
 
 /*
@@ -44,6 +45,7 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
   const [quoteDate, setQuoteDate] = useState(isoDateTz(new Date()));
   const [texto, setTexto] = useState("");
   const [busy, setBusy] = useState(false);
+  const centralEscolhida = centrais.find((c) => c.code === centralCode);
 
   const porUf = Object.entries(
     centrais.reduce<Record<string, Central[]>>((acc, c) => {
@@ -139,6 +141,13 @@ export function ImportarManual({ centrais }: { centrais: Central[] }) {
           />
         </div>
       </div>
+
+      {centralEscolhida?.automatica && (
+        <p className="rounded-md border border-warning/40 bg-warning/10 p-3 text-sm">
+          Esta central tem busca automática. Cole aqui só o dia em que a busca falhou: um dia que já
+          veio da busca é recusado (apague o boletim do dia antes, se precisar substituir).
+        </p>
+      )}
 
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="texto">Boletim</Label>

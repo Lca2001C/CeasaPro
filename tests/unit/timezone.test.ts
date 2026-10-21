@@ -186,6 +186,12 @@ describe("períodos do painel", () => {
     expect(p.from.toISOString()).toBe("2026-08-10T03:00:00.000Z");
     expect(p.to.toISOString()).toBe("2026-08-21T02:59:59.999Z");
   });
+
+  it('só com "até" num mês anterior, começa no dia 1º daquele mês', () => {
+    const p = resolvePeriod({ preset: "personalizado", to: "2026-06-15", now: agora });
+    expect(p.from.toISOString()).toBe("2026-06-01T03:00:00.000Z");
+    expect(p.to.toISOString()).toBe("2026-06-16T02:59:59.999Z");
+  });
 });
 
 /**

@@ -134,12 +134,20 @@ Cobrança, segurança, fluxo do balcão e consistência dos números, revisados 
 | 23 | Logout não derrubava o access (15 min). | Claim `fid` + linhagem encerrada em `sessaoAindaValida`. |
 | 24 | Venda e compra sem limite de itens. | Máximo 200. |
 
+## 2d. Correções de 21/10 (pendências baixas)
+
+| Item | O que mudou |
+|---|---|
+| Resíduo do P1: troca de plano em `VENCIDO` | `featuresVigentes`: na tolerância, os módulos são a interseção do último período pago com o plano atual. Subir não libera nada antes do pagamento (nem gerando a cobrança do plano caro em `/assinatura`); descer tira na hora. Teste: `plano-tolerancia-modulos.test.ts`. |
+| Colagem do admin em praça com raspador | `CotacoesImportService.conferirColagemManual`: recusa o dia que a busca automática gravou e cujas cotações ainda existem (uma falha posterior no mesmo dia não reabre a colagem); dia sem busca ou apagado continua aceitando. A tela avisa quando a central é automática. |
+| Sessão revogada em `/assinatura` e `/onboarding` | As duas páginas conferem `sessaoAindaValida` (ficam fora do layout `(app)`). |
+| Período personalizado só com "até" | Começa no dia 1º do mês do "até", não no do mês corrente. |
+| Aviso de higienização | Conta só lote com dinheiro a pagar, como "Contas a pagar". |
+| Descrição do módulo Cotações | Inclui o Entreposto de São Paulo (CEAGESP). |
+
 ## 3. Pendentes — prioridade baixa
 
-- **Período personalizado só com "até" anterior ao mês corrente:** gera relatório vazio, sem erro (`dates.ts:91-117`).
-- **Aviso de higienização conta lotes já quitados** (`avisos.service.ts:178`).
-- **Admin publica boletim manual em praça com raspador** (`admin-cotacoes.actions.ts:41-61`, `cotacoes-envio.service.ts:219-256`).
-- **Sessão revogada ainda LÊ páginas até o access expirar (15 min):** `/assinatura`, `/onboarding` e páginas acessadas por navegação no cliente. Escrita já é barrada.
+- **Navegação no cliente com sessão revogada** continua lendo até o access expirar (15 min): o layout já montado não roda de novo. Limite do App Router, aceito — a escrita é barrada e toda página carregada do servidor confere a sessão.
 - **Lotes de higienização antigos marcados PAGO com caixas ainda fora,** de antes de `80130fa` (dado de produção).
 - **Caixas de compras feitas antes do deploy desta versão não são estornadas** se a compra for cancelada nas 24 h seguintes (não têm `purchaseId`).
 

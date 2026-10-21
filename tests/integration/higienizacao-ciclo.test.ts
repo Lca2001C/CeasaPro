@@ -369,6 +369,40 @@ describe("Aviso de higienização e o plano", () => {
     const semModulo = await AvisosService.get(tenantId, []);
     expect(semModulo.some((a) => a.tipo === "higienizacao_pendente")).toBe(false);
   });
+
+  it("não conta o lote já pago que ainda tem caixa no higienizador", async () => {
+    const proprio = await createTestTenant("HIGIENIZACAO AVISO");
+    tenants.push(proprio);
+    const ctxProprio = makeCtx(proprio);
+    const aviso = async () =>
+      (await AvisosService.get(proprio, ["higienizacao"])).find(
+        (a) => a.tipo === "higienizacao_pendente",
+      );
+    await CaixasService.registrar(
+      { type: "ENTRADA", quantity: 20, dirty: true, movementDate: hoje() },
+      ctxProprio,
+    );
+    const novoEnvio = () =>
+      HigienizacaoService.create(
+        { cleanerName: `Silva-${uniq()}`, sentDate: hoje(), sentQty: 10, unitPrice: 3, notes: null },
+        ctxProprio,
+      );
+
+    const pago = await novoEnvio();
+    await HigienizacaoService.registrarPagamento(
+      { id: pago.id, amount: 30, paidDate: hoje() },
+      ctxProprio,
+    );
+    expect((await prisma.crateCleaning.findUniqueOrThrow({ where: { id: pago.id } })).status).toBe(
+      "ENVIADO",
+    );
+    expect(await aviso()).toBeUndefined();
+
+    await novoEnvio();
+    const comSaldo = await aviso();
+    expect(comSaldo?.count).toBe(1);
+    expect(Number(comSaldo?.total)).toBe(30);
+  });
 });
 
 /**

@@ -1,5 +1,8 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { requireTenant } from "@/lib/auth/session";
+import { sessaoAindaValida } from "@/lib/auth/revogacao";
+import { rotaDeSessaoRevogada } from "@/lib/auth/renovacao";
 import { BillingService } from "@/lib/services/billing.service";
 import { PlanoService } from "@/lib/services/plano.service";
 import { formatBRL, formatDate } from "@/lib/format";
@@ -18,6 +21,8 @@ export const dynamic = "force-dynamic";
 
 export default async function AssinaturaPage() {
   const { session, tenantId } = await requireTenant();
+  // Fora do grupo `(app)`, então sem o layout que recusa sessão revogada.
+  if (!(await sessaoAindaValida(session))) redirect(rotaDeSessaoRevogada("/assinatura"));
   const [status, plans] = await Promise.all([
     BillingService.getStatus(tenantId),
     PlanoService.listAvailablePlans(tenantId),
