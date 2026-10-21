@@ -7,7 +7,9 @@ import { ProdutoImagemService } from "./produto-imagem.service";
 import { CotacoesService } from "./cotacoes.service";
 import { describeError, logger } from "@/lib/logger";
 import { formatQty } from "@/lib/format";
-import { saldoNaTransacao } from "./estoque.service";
+import { Prisma } from "@prisma/client";
+import { saldoECustoMedio } from "./estoque.service";
+import { ORIGEM_AJUSTE } from "@/lib/estoque/origens";
 import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
 import { isModuleEnabled } from "@/lib/plan/modules";
 
@@ -211,13 +213,13 @@ export const ProdutosService = {
   },
 
   /**
-   * Exclui (soft delete) o produto — só com o estoque ZERADO.
+   * Exclui (soft delete) o produto — também com saldo, depois da confirmação
+   * na tela.
    *
    * A posição de estoque, o valor em estoque e os relatórios ignoram produto
-   * excluído. Excluir com saldo fazia o valor daquela mercadoria sumir do
-   * painel sem quebra, doação nem saída — enquanto a conta da compra que a
-   * trouxe continuava em Contas a Pagar. A baixa tem de ser lançada (e fica no
-   * livro-razão) antes.
+   * excluído. Para o valor da mercadoria não sumir do painel sem registro, o
+   * saldo é baixado no livro-razão (AJUSTE negativo, origem manual) na mesma
+   * transação, e conta como perda do mês.
    *
    * Trava a linha do produto, como a venda: uma venda ou compra em andamento
    * espera, e o saldo lido aqui é o definitivo.
@@ -233,13 +235,22 @@ export const ProdutosService = {
       const produto = travado[0];
       if (!produto) throw new NotFoundError("Produto não encontrado");
 
-      const saldo = await saldoNaTransacao(tx, ctx.tenantId, id);
+      // Saldo que sobrou sai pelo livro-razão (acerto para baixo, pelo custo
+      // médio da hora) — entra nas perdas do mês em vez de sumir sem registro.
+      const { saldo: saldos, custo: custos } = await saldoECustoMedio(tx, ctx.tenantId, [id]);
+      const saldo = saldos.get(id) ?? new Prisma.Decimal(0);
       if (saldo.greaterThan(0)) {
-        throw new BusinessRuleError(
-          `${produto.name} ainda tem ${formatQty(saldo)} em estoque. Dê baixa no Ajuste de ` +
-            "estoque (quebra, doação ou acerto) antes de excluir — excluir com saldo sumiria " +
-            "com o valor dessa mercadoria sem registro. Para só tirá-lo da venda, desative-o.",
-        );
+        await tx.stockMovement.create({
+          data: {
+            tenantId: ctx.tenantId,
+            productId: id,
+            type: "AJUSTE",
+            quantity: saldo.neg(),
+            unitCost: custos.get(id) ?? new Prisma.Decimal(0),
+            reason: `Baixa do saldo (${formatQty(saldo)}) na exclusão do produto`,
+            sourceType: ORIGEM_AJUSTE,
+          },
+        });
       }
 
       // Venda ainda cancelável devolveria a mercadoria a um produto excluído —

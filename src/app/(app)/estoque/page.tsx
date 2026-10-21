@@ -373,6 +373,11 @@ export default async function EstoquePage({
                         action={excluirProduto}
                         id={p.productId}
                         entityLabel={`o produto ${p.name}`}
+                        aviso={
+                          Number(p.quantity) > 0
+                            ? `Ainda há ${formatQty(p.quantity)} em estoque: esse saldo será baixado como perda do mês.`
+                            : undefined
+                        }
                       />
                     </div>
                   </Card>

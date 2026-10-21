@@ -22,10 +22,12 @@ interface Props {
   action: (id: string) => Promise<ActionResult<unknown>>;
   id: string;
   entityLabel: string; // ex.: "o produto Tomate"
+  /** Aviso extra no diálogo de confirmação (ex.: o saldo que será baixado). */
+  aviso?: string;
   onDeleted?: () => void;
 }
 
-export function DeleteButton({ action, id, entityLabel, onDeleted }: Props) {
+export function DeleteButton({ action, id, entityLabel, aviso, onDeleted }: Props) {
   const [open, setOpen] = useState(false);
   const [pending, start] = useTransition();
   const router = useRouter();
@@ -57,7 +59,7 @@ export function DeleteButton({ action, id, entityLabel, onDeleted }: Props) {
         <DialogHeader>
           <DialogTitle>Excluir {entityLabel}?</DialogTitle>
           <DialogDescription>
-            Esta ação não poderá ser desfeita.
+            {aviso ? `${aviso} ` : ""}Esta ação não poderá ser desfeita.
           </DialogDescription>
         </DialogHeader>
         <DialogFooter>

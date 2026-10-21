@@ -40,6 +40,9 @@ process.env.CEASAPRO_SW_VERSION ||=
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // A foto do produto vai em base64 por Server Action (~1,37 MB no teto de 1 MB
+  // de arquivo). O padrão de 1 MB do corpo derrubava o envio antes da validação.
+  experimental: { serverActions: { bodySizeLimit: "2mb" } },
   // Substituído pelo literal no bundle; só `pwa-register.tsx` lê.
   env: { CEASAPRO_SW_VERSION: process.env.CEASAPRO_SW_VERSION },
   // Next 16 bloqueia por padrão o acesso a recursos de DEV (_next/*, incluindo o

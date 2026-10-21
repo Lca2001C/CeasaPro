@@ -263,18 +263,21 @@ describe("Cancelar compra lançada errada", () => {
 });
 
 describe("Excluir produto e fornecedor sem sumir com valor", () => {
-  it("produto com estoque: recusa; com o estoque zerado: exclui", async () => {
+  it("produto com estoque: exclui e baixa o saldo no livro-razão pelo custo médio", async () => {
     const db = getTenantPrisma(tenantId);
     const p = await db.product.create({ data: { tenantId, name: "Pepino", saleUnit: "CAIXA" } });
     await prisma.stockMovement.create({
       data: { tenantId, productId: p.id, type: "ENTRADA", quantity: 5, unitCost: 3 },
     });
-    await expect(ProdutosService.remove(p.id, ctx)).rejects.toThrow(/ainda tem 5/);
-    expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).deletedAt).toBeNull();
-
-    await EstoqueService.registrarAjuste({ productId: p.id, type: "QUEBRA", quantity: 5 }, ctx);
     await ProdutosService.remove(p.id, ctx);
     expect((await prisma.product.findUniqueOrThrow({ where: { id: p.id } })).deletedAt).toBeTruthy();
+
+    const baixa = await prisma.stockMovement.findFirstOrThrow({
+      where: { productId: p.id, type: "AJUSTE" },
+    });
+    expect(Number(baixa.quantity)).toBe(-5);
+    expect(Number(baixa.unitCost)).toBe(3);
+    expect(baixa.sourceType).toBe("MANUAL");
   });
 
   it("produto vendido nas últimas 24 h: recusa — a venda ainda pode voltar ao estoque", async () => {
