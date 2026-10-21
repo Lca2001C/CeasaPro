@@ -4,6 +4,7 @@ import { gerarRecorrentesDeTodosOsTenants } from "@/lib/services/despesas.servic
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { NoticiasService } from "@/lib/services/noticias.service";
 import { ProdutoImagemService } from "@/lib/services/produto-imagem.service";
+import { EstoqueService } from "@/lib/services/estoque.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
 import { purgeDeadRefreshTokens } from "@/lib/auth/refresh";
 import { describeError, logger } from "@/lib/logger";
@@ -11,7 +12,7 @@ import { describeError, logger } from "@/lib/logger";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 /**
- * 60 s, o teto do plano Hobby.
+ * 60 s.
  *
  * Necessário desde que a importação dos boletins passou a rodar aqui: ela fala
  * com um site externo lento, e o padrão da função serverless (~10 s) a mataria no
@@ -31,6 +32,8 @@ const ORCAMENTO_DA_ROTA_MS = 45_000;
  * consulta tem prazo próprio de 8 s, então o pior caso fica perto de 28 s.
  */
 const ORCAMENTO_RECONCILIACAO_MS = 20_000;
+/** Fatia dos checkpoints do custo médio; o que não couber vai primeiro amanhã. */
+const ORCAMENTO_CHECKPOINTS_MS = 8_000;
 /** Abaixo disto não vale começar: não dá para importar praça nenhuma. */
 const MINIMO_PARA_IMPORTAR_MS = 5_000;
 
@@ -50,7 +53,8 @@ function authorized(req: Request): boolean {
  *  2. recalcula o status das assinaturas (ATIVO/VENCIDO/SUSPENSO);
  *  3. avisa por e-mail quem vence nos próximos dias;
  *  4. gera as parcelas das despesas fixas marcadas como "repetir todo mês";
- *  5. limpa as janelas de rate limit já vencidas (só higiene de tabela);
+ *  5. limpa as janelas de rate limit já vencidas (só higiene de tabela) e
+ *     avança os checkpoints do custo médio do estoque;
  *  6. por último, importa os boletins de cotação.
  * A ordem importa: reconciliar antes evita suspender quem já pagou, e recalcular
  * antes do aviso evita mandar "vence em 3 dias" para quem acabou de pagar.
@@ -104,6 +108,15 @@ async function handle(req: Request): Promise<Response> {
     // Idem para as sessões mortas: cada login e cada renovação deixam uma linha,
     // e nada as apagava. Falhar aqui não afeta cobrança nenhuma.
     const sessoesRemovidas = await purgeDeadRefreshTokens().catch(() => 0);
+    // Checkpoints do custo médio: sem eles cada venda relê o livro-razão inteiro
+    // do produto. Tabela derivada — atrasar um dia só deixa a conta mais cara,
+    // nunca errada —, então tem teto de tempo e não derruba nada.
+    const checkpointsDeCusto = await EstoqueService.atualizarCheckpointsDeTodos({
+      prazo: Date.now() + ORCAMENTO_CHECKPOINTS_MS,
+    }).catch((e) => {
+      logger.error({ err: describeError(e) }, "Falha ao atualizar checkpoints de custo");
+      return { erro: "falhou" as const };
+    });
 
     /*
       Importação dos boletins de cotação — POR ÚLTIMO, e não por acaso.
@@ -181,6 +194,7 @@ async function handle(req: Request): Promise<Response> {
         despesasRecorrentes,
         rateLimitsRemovidos,
         sessoesRemovidas,
+        checkpointsDeCusto,
         cotacoes,
         noticias,
         fotosOrfas,

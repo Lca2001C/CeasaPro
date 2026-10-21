@@ -44,6 +44,8 @@ export const TENANT_MODELS = new Set<string>([
   // justamente essa invisibilidade que permite ao envio existir sem um tenant
   // escrever na tabela global de cotações.
   "TenantBoletimEnviado",
+  // Ponto de partida do custo médio: derivado, mas é o estoque de UMA empresa.
+  "StockCostCheckpoint",
 ]);
 
 export const SOFT_DELETE_MODELS = new Set<string>([

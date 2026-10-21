@@ -36,6 +36,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  await prisma.stockCostCheckpoint.deleteMany({ where: { tenantId } });
   await prisma.saleItem.deleteMany({ where: { tenantId } });
   await prisma.salePayment.deleteMany({ where: { tenantId } });
   await prisma.sale.deleteMany({ where: { tenantId } });
@@ -458,6 +459,14 @@ describe("o SQL do custo médio confere com o repasse linha a linha", () => {
     expect((await EstoqueService.getTotalValue(tenantId)).toFixed(2)).toBe(
       valorEsperado.toFixed(2),
     );
+
+    // O mesmo repasse partindo de checkpoints (ver `estoque-checkpoint.test.ts`):
+    // cortes em pontos diferentes não mudam nada.
+    for (const corte of [37, 90, 149]) {
+      await EstoqueService.atualizarCheckpoints(tenantId, new Date(inicio + corte * 1000));
+      expect((await custoAtual())!.toFixed(4), `checkpoint na linha ${corte}`).toBe(esperado.toFixed(4));
+      expect((await posicao()).value.toFixed(2)).toBe(valorEsperado.toFixed(2));
+    }
   });
 });
 

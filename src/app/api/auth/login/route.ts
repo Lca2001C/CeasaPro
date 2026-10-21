@@ -5,7 +5,13 @@ import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
 import { createRefreshSession } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
-import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
+import {
+  consultarLimiteDb,
+  rateLimitDb,
+  registrarFalhaDb,
+  resetRateLimit,
+  respostaDeLimite,
+} from "@/lib/security/rate-limit-db";
 import { chaveDeLoginPorEmail } from "@/lib/auth/limite-login";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
@@ -51,18 +57,20 @@ async function entrar(req: Request): Promise<Response> {
   //
   // O terceiro, só por IP, fecha o "password spraying": uma senha comum
   // testada contra milhares de e-mails, um por vez, nunca estourava os outros
-  // dois — e cada tentativa custa um Argon2 de ~19 MB. Folgado porque o CEASA
-  // tem muitos boxes atrás do mesmo Wi-Fi, e não é liberado no acerto (quem
-  // espalha tentativas pode ter UMA conta válida para zerar a janela). Com IP
-  // desconhecido fica de fora: todo mundo cairia no mesmo balde.
+  // dois — e cada tentativa custa um Argon2 de ~19 MB. Ele conta só a tentativa
+  // que FALHOU: o CEASA tem dezenas de boxes atrás do mesmo Wi-Fi (e a
+  // operadora móvel põe muitos clientes num IP só), e contar o acerto barrava o
+  // 61º dono que entrava com a senha certa. O acerto também não zera a janela —
+  // quem espalha tentativas pode ter UMA conta válida. Com IP desconhecido fica
+  // de fora: todo mundo cairia no mesmo balde.
   const rateKeyIp = `login:${ip}:${email}`;
   const rateKeyEmail = chaveDeLoginPorEmail(email);
+  const rateKeySoIp = ip === "unknown" ? null : `login:ip:${ip}`;
   const janela = 15 * 60 * 1000;
+  const limiteSoIp = { limit: 60, windowMs: janela };
   const [rlIp, rlSoIp] = await Promise.all([
     rateLimitDb(rateKeyIp, { limit: 5, windowMs: janela }),
-    ip === "unknown"
-      ? Promise.resolve(null)
-      : rateLimitDb(`login:ip:${ip}`, { limit: 60, windowMs: janela }),
+    rateKeySoIp ? consultarLimiteDb(rateKeySoIp, limiteSoIp) : Promise.resolve(null),
   ]);
   // O contador do e-mail só recebe a tentativa que passou nos de IP. Contando
   // tudo, UM IP com 21 tentativas a cada 15 min trancava a conta de qualquer
@@ -92,10 +100,16 @@ async function entrar(req: Request): Promise<Response> {
   // Verifica SEMPRE um hash, mesmo sem usuário: é o tempo de resposta, e não a
   // mensagem, que revelaria se o e-mail existe. Contra a isca nenhuma senha bate.
   const okPass = await verifyPassword(user?.passwordHash ?? (await hashDeIsca()), password);
-  if (!user || !okPass) return invalid();
+  if (!user || !okPass) {
+    if (rateKeySoIp) await registrarFalhaDb(rateKeySoIp, limiteSoIp);
+    return invalid();
+  }
 
   const payload = await buildAccessPayload(user.id);
-  if (!payload) return invalid();
+  if (!payload) {
+    if (rateKeySoIp) await registrarFalhaDb(rateKeySoIp, limiteSoIp);
+    return invalid();
+  }
 
   // Credencial correta: a janela é liberada. O limite existe para conter
   // adivinhação de senha, então só tentativa que falha deve consumi-lo — senão

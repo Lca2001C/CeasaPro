@@ -67,6 +67,7 @@ export async function cleanupTenants(ids: string[]) {
   await prisma.crateCleaning.deleteMany({ where });
   await prisma.packagingSale.deleteMany({ where });
   await prisma.packagingType.deleteMany({ where });
+  await prisma.stockCostCheckpoint.deleteMany({ where });
   await prisma.stockMovement.deleteMany({ where });
   await prisma.creditPayment.deleteMany({ where });
   await prisma.creditAccount.deleteMany({ where });

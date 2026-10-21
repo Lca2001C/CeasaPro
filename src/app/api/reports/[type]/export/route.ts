@@ -13,6 +13,8 @@ import { logger } from "@/lib/logger";
 import type { ReportFormat, ReportType } from "@prisma/client";
 
 export const runtime = "nodejs";
+// PDF/Excel de período longo passa dos ~10 s padrão da função.
+export const maxDuration = 60;
 
 const querySchema = z.object({
   preset: z.string().optional(),

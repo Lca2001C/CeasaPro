@@ -129,7 +129,7 @@ WhatsApp de suporte (só dígitos, com DDI):
 O Prisma usa **duas** URLs: `DATABASE_URL` para as consultas da aplicação e `DIRECT_URL` para as migrations.
 
 1. [console.neon.tech](https://console.neon.tech) → **New Project**.
-2. Name: `ceasapro`. Region: **São Paulo (sa-east-1)** se aparecer; senão a mais próxima da América do Sul.
+2. Name: `ceasapro`. Region: **AWS São Paulo (sa-east-1)** — obrigatória, é a região das funções da Vercel (`gru1`, §3.3). A região não muda depois de criado.
 3. Postgres 16. Crie o projeto.
 4. Em **Dashboard → Connection details**, copie as duas strings: a **Pooled** (host contém `-pooler`) e a **Direct** (host **sem** `-pooler`).
 5. Monte as variáveis:
@@ -235,13 +235,20 @@ Uma variável Sensitive continua disponível normalmente em build e runtime: `pr
 
 ### 3.3 Região e limites do plano
 
-O `vercel.json` **não** fixa região, de propósito: escolher região de função exige plano **Pro** e, no Hobby, o build reclama. Se você assinar o Pro e quiser latência menor no Brasil, acrescente:
+O projeto pressupõe o plano **Pro** da Vercel. O Hobby é só para uso não comercial — um SaaS que cobra mensalidade não pode rodar nele — e ainda limita região e duração de função.
+
+**Região.** O `vercel.json` fixa as funções em São Paulo:
 
 ```json
 "regions": ["gru1"]
 ```
 
-No **Hobby** a duração de cada função é limitada (~10s). Duas rotas podem esbarrar nisso com volume grande: `/api/reports/[type]/export` (gera PDF/Excel com `pdfmake`/`exceljs`) e `/api/cron/billing`. No Pro, dá para declarar `export const maxDuration = 60` nessas rotas.
+O banco **tem de estar na mesma região**: Neon em **AWS São Paulo (`sa-east-1`)**. Função e banco em continentes diferentes (o padrão da Vercel sem `regions` é `iad1`, Washington) custam ~120 ms **por consulta**; uma tela que faz 10 idas ao banco passa de 1 s só de rede, com um usuário só. Para conferir:
+
+- Vercel → Project → **Settings → Functions → Function Region** deve mostrar `São Paulo, Brazil (gru1)`; no log de uma requisição, o campo *Region* também.
+- Neon → Project → **Settings → General → Region** deve ser `AWS South America East 1 (São Paulo)`. A região de um projeto Neon não muda: se estiver em outra, crie um projeto novo em `sa-east-1` e migre com `pg_dump`/`pg_restore` (§6).
+
+**Duração.** As rotas longas declaram `export const maxDuration = 60`: `/api/reports/[type]/export` (PDF/Excel com `pdfmake`/`exceljs`), `/api/cron/billing` e `/api/cron/avisos`. No Hobby elas seriam cortadas em ~10 s.
 
 ### 3.4 Primeiro deploy
 
@@ -273,6 +280,12 @@ DATABASE_URL="<unpooled do Neon>" DIRECT_URL="<unpooled do Neon>" npx prisma mig
 ```
 
 > Em rede corporativa isso costuma falhar: muitas bloqueiam a saída na porta 5432. Teste antes com `Test-NetConnection <host-do-neon> -Port 5432`. Se der `False`, use o caminho do GitHub Actions.
+
+**Checkpoints do custo de estoque.** Depois do deploy que cria `stock_cost_checkpoints` (migration `20261023120000_checkpoint_custo_estoque`), preencha a tabela uma vez — senão o custo continua certo, mas lendo o histórico inteiro até o cron diário alcançar todas as empresas:
+
+```bash
+DATABASE_URL="<unpooled do Neon>" npx tsx scripts/recalcular-checkpoints.ts
+```
 
 ### 3.6 Super-admin
 
@@ -510,7 +523,8 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 | Painel recusa a variável: "prefixo público reservado para o framework" | Marcou uma `NEXT_PUBLIC_*` como **Sensitive** | `NEXT_PUBLIC_*` só existe como Plain Text — o valor vai para o browser no build (§3.2). Se precisa ser segredo, tire o prefixo |
 | Build: `Environment variable not found: DIRECT_URL` | Só `DATABASE_URL` foi configurada | `prisma generate` valida o datasource inteiro — configure `DIRECT_URL` também |
 | Build: `Environment variable not found: DATABASE_URL` | Env não marcada para Production | Recrie a variável e redeploy com **Clear build cache** |
-| Build reclama de `gru1` | Região de função exige plano Pro | Não use `regions` no Hobby (§3.3) |
+| Build reclama de `gru1` | Projeto no plano Hobby | Região de função exige o plano Pro, que o projeto pressupõe (§3.3) |
+| Toda tela lenta, mesmo com poucos usuários | Função e banco em regiões diferentes | Vercel em `gru1` e Neon em `sa-east-1` (§3.3) |
 | Login 500 com `JWT_SECRET não configurado` | Variável ausente | Configure e redeploy com **Clear build cache** |
 | Login 500 com `kind: Closed` | String sem `pgbouncer=true&connection_limit=1`, ou endpoint não-pooled | Use a **pooled** com os dois parâmetros |
 | Login 500 com `relation "users" does not exist` | Migrations não aplicadas no Neon | §3.5 |
@@ -522,7 +536,7 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 | Pagou no MP e continua suspenso | Webhook 401/404 ou URL antiga | Confira a URL, o secret, e rode o cron |
 | `too many connections` | Sem `connection_limit=1` | Ajuste a `DATABASE_URL` |
 | E-mail não sai | Senha de app inválida / `EMAIL_FROM` diferente do `SMTP_USER` | Gere a senha de app com a verificação em duas etapas ligada; o From tem que ser o próprio endereço do `SMTP_USER` |
-| Função excede o tempo limite | Relatório grande no plano Hobby | §3.3 |
+| Função excede o tempo limite | Projeto no Hobby (corta em ~10 s), ou rota longa nova sem `maxDuration` | Plano Pro e `export const maxDuration = 60` na rota (§3.3) |
 | Argon2 falha no build | Binário nativo | Confirme Node 22 e runtime `nodejs` (as rotas já estão marcadas) |
 
 ---

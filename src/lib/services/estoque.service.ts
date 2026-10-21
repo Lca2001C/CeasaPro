@@ -2,6 +2,7 @@ import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
+import { describeError, logger } from "@/lib/logger";
 import { toDecimal, money, add } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
@@ -109,17 +110,45 @@ export interface StockPosition {
  * a quantidade e deixaria o preço errado misturado no custo de toda venda
  * seguinte. Como o par soma zero, o saldo das consultas simples (que somam o
  * livro-razão inteiro) fecha com o daqui.
+ *
+ * ## Checkpoint
+ *
+ * O livro-razão só cresce, e o repasse relia a história inteira do produto a
+ * cada venda. `stock_cost_checkpoints` guarda o estado do repasse (saldo,
+ * média sem arredondar, custo da última entrada, último `movedAt`) até um
+ * instante `ateCreatedAt`; o repasse começa dele, como uma linha-semente
+ * (entrada de `saldo` unidades a `custo`), e lê só os movimentos gravados
+ * depois. A conta é a mesma: o valor acumulado no checkpoint é `saldo × média`,
+ * exatamente o que a semente põe no ciclo. Com saldo ≤ 0 a semente zera o
+ * ciclo, como o movimento que o zerou faria. A última entrada e o último
+ * `movedAt` vêm do checkpoint quando não há movimento novo que os substitua.
+ *
+ * Os pares cancelados continuam certos mesmo atravessando o checkpoint: o
+ * `NOT EXISTS` procura o estorno no livro-razão INTEIRO, e o checkpoint só cobre
+ * movimentos com mais de 24 h (o prazo de desfazer), cujo estorno, se houver,
+ * já está gravado quando o checkpoint é calculado.
+ *
+ * `ate` (só para montar o checkpoint) corta o repasse num instante.
  */
-function sqlCustoEstoque(filtrarProdutos: boolean): string {
+function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
+  const porProduto = filtrarProdutos ? ` AND "productId" = ANY($2::text[])` : "";
   return `
-  WITH mov AS (
-    SELECT "productId", "movedAt",
-           CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END AS q,
-           "unitCost" AS c,
-           ROW_NUMBER() OVER w AS seq,
-           SUM(CASE WHEN type IN ('ENTRADA','AJUSTE') THEN quantity ELSE -quantity END) OVER w AS saldo
+  WITH ck AS (
+    SELECT "productId", "ateCreatedAt", saldo, custo, "ultimoCustoEntrada", "ultimoMovedAt"
+    FROM stock_cost_checkpoints
+    WHERE "tenantId" = $1${porProduto}
+  ),
+  base AS (
+    SELECT m."productId", m."movedAt", m."createdAt", m.id, 1 AS ordem,
+           CASE WHEN m.type IN ('ENTRADA','AJUSTE') THEN m.quantity ELSE -m.quantity END AS q,
+           m."unitCost" AS c
     FROM stock_movements m
     WHERE m."tenantId" = $1${filtrarProdutos ? ` AND m."productId" = ANY($2::text[])` : ""}
+      -- Limite inferior comum (usa o índice); o corte exato por produto vem abaixo.
+      AND m."createdAt" > (SELECT COALESCE(MIN("ateCreatedAt"), '-infinity'::timestamp) FROM ck)
+      AND NOT EXISTS (
+        SELECT 1 FROM ck WHERE ck."productId" = m."productId" AND m."createdAt" <= ck."ateCreatedAt"
+      )${ate ? `\n      AND m."createdAt" <= ${ate}` : ""}
       AND NOT EXISTS (
         SELECT 1 FROM stock_movements estorno
         WHERE m."sourceType" IN ('${ORIGEM_COMPRA}', '${ORIGEM_COMPRA_CANCELADA}')
@@ -137,7 +166,15 @@ function sqlCustoEstoque(filtrarProdutos: boolean): string {
           AND estorno."sourceId" =
             CASE WHEN m."sourceType" = '${ORIGEM_AJUSTE}' THEN m.id ELSE m."sourceId" END
       )
-    WINDOW w AS (PARTITION BY "productId" ORDER BY "createdAt", id)
+    UNION ALL
+    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '', 0, saldo, custo FROM ck
+  ),
+  mov AS (
+    SELECT "productId", "movedAt", ordem, q, c,
+           ROW_NUMBER() OVER w AS seq,
+           SUM(q) OVER w AS saldo
+    FROM base
+    WINDOW w AS (PARTITION BY "productId" ORDER BY ordem, "createdAt", id)
   ),
   marcado AS (
     SELECT mov.*,
@@ -170,11 +207,18 @@ function sqlCustoEstoque(filtrarProdutos: boolean): string {
     FROM pesos
     GROUP BY "productId"
   ),
-  ultima AS (
+  ultima_mov AS (
     SELECT DISTINCT ON ("productId") "productId", COALESCE(c, 0) AS custo
     FROM mov
-    WHERE q > 0
+    WHERE q > 0 AND ordem = 1
     ORDER BY "productId", seq DESC
+  ),
+  -- A semente não é entrada de verdade: sem entrada nova, vale a do checkpoint.
+  ultima AS (
+    SELECT COALESCE(u."productId", ck."productId") AS "productId",
+           COALESCE(u.custo, ck."ultimoCustoEntrada") AS custo
+    FROM ultima_mov u
+    FULL JOIN ck ON ck."productId" = u."productId"
   ),
   saldo AS (
     SELECT "productId", SUM(q) AS quantidade, MAX("movedAt") AS ultimo_mov
@@ -183,12 +227,21 @@ function sqlCustoEstoque(filtrarProdutos: boolean): string {
   ),
   resultado AS (
     SELECT s."productId", s.quantidade, s.ultimo_mov,
-           ROUND(CASE WHEN s.quantidade > 0 THEN m.custo ELSE u.custo END, 4) AS custo
+           ROUND(CASE WHEN s.quantidade > 0 THEN m.custo ELSE u.custo END, 4) AS custo,
+           -- Só para gravar o checkpoint: a média sem arredondar e a última entrada.
+           CASE WHEN s.quantidade > 0 THEN m.custo END AS custo_bruto,
+           u.custo AS ultimo_custo_entrada
     FROM saldo s
     LEFT JOIN medio m ON m."productId" = s."productId"
     LEFT JOIN ultima u ON u."productId" = s."productId"
   )`;
 }
+
+/**
+ * Checkpoints do custo médio ficam pelo menos isto no passado. Precisa passar
+ * do prazo de desfazer (24 h): ver "Checkpoint" em {@link sqlCustoEstoque}.
+ */
+export const IDADE_MINIMA_CHECKPOINT_MS = 7 * 24 * 60 * 60 * 1000;
 
 /**
  * Valor de UMA linha de estoque: saldo × custo médio, zero sem saldo.
@@ -589,5 +642,76 @@ export const EstoqueService = {
 
       return movement;
     });
+  },
+
+  /**
+   * Avança os checkpoints do custo médio da empresa até `ate` (todos os
+   * produtos, numa instrução só — ou a empresa inteira avança, ou nada).
+   *
+   * `ate` precisa estar além do prazo de desfazer; o padrão é
+   * {@link IDADE_MINIMA_CHECKPOINT_MS} atrás. Checkpoint mais novo que `ate`
+   * não é rebaixado. Devolve quantos produtos foram gravados.
+   */
+  async atualizarCheckpoints(
+    tenantId: string,
+    ate: Date = new Date(Date.now() - IDADE_MINIMA_CHECKPOINT_MS),
+    db: { $executeRawUnsafe(query: string, ...values: unknown[]): Promise<number> } = prisma,
+  ): Promise<number> {
+    const corte = `($2::timestamptz AT TIME ZONE 'UTC')`;
+    return db.$executeRawUnsafe(
+      `${sqlCustoEstoque(false, corte)}
+       INSERT INTO stock_cost_checkpoints
+         (id, "tenantId", "productId", "ateCreatedAt", saldo, custo, "ultimoCustoEntrada", "ultimoMovedAt", "updatedAt")
+       SELECT gen_random_uuid()::text, $1, r."productId", ${corte},
+              r.quantidade, r.custo_bruto, r.ultimo_custo_entrada, r.ultimo_mov, now()
+       FROM resultado r
+       ON CONFLICT ("tenantId", "productId") DO UPDATE SET
+         "ateCreatedAt" = EXCLUDED."ateCreatedAt",
+         saldo = EXCLUDED.saldo,
+         custo = EXCLUDED.custo,
+         "ultimoCustoEntrada" = EXCLUDED."ultimoCustoEntrada",
+         "ultimoMovedAt" = EXCLUDED."ultimoMovedAt",
+         "updatedAt" = now()
+       WHERE stock_cost_checkpoints."ateCreatedAt" < EXCLUDED."ateCreatedAt"`,
+      tenantId,
+      ate.toISOString(),
+    );
+  },
+
+  /**
+   * Avança os checkpoints de todas as empresas, as mais atrasadas primeiro,
+   * até `prazo` (epoch ms). Chamado pelo cron diário; o que não couber hoje
+   * vai primeiro amanhã. Uma empresa que falha não para as outras.
+   */
+  async atualizarCheckpointsDeTodos(opts: {
+    prazo: number;
+    /** Restringe a estas empresas (testes). */
+    somente?: string[];
+  }): Promise<{ empresas: number; falhas: number }> {
+    const ate = new Date(Date.now() - IDADE_MINIMA_CHECKPOINT_MS);
+    const filtro = opts.somente ? Prisma.sql`AND t.id = ANY(${opts.somente}::text[])` : Prisma.empty;
+    const pendentes = await prisma.$queryRaw<{ id: string }[]>`
+      SELECT t.id
+      FROM tenants t
+      LEFT JOIN LATERAL (
+        SELECT MIN(c."ateCreatedAt") AS ate FROM stock_cost_checkpoints c WHERE c."tenantId" = t.id
+      ) ck ON true
+      WHERE EXISTS (SELECT 1 FROM stock_movements m WHERE m."tenantId" = t.id) ${filtro}
+        AND (ck.ate IS NULL OR ck.ate < (${ate.toISOString()}::timestamptz AT TIME ZONE 'UTC') - interval '20 hours')
+      ORDER BY ck.ate NULLS FIRST
+    `;
+    let empresas = 0;
+    let falhas = 0;
+    for (const { id } of pendentes) {
+      if (Date.now() >= opts.prazo) break;
+      try {
+        await EstoqueService.atualizarCheckpoints(id, ate);
+        empresas++;
+      } catch (e) {
+        falhas++;
+        logger.error({ err: describeError(e), tenantId: id }, "Falha ao atualizar checkpoint de custo");
+      }
+    }
+    return { empresas, falhas };
   },
 };

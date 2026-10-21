@@ -16,6 +16,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 const rateLimitDb = vi.fn();
 const resetRateLimit = vi.fn();
+const consultarLimiteDb = vi.fn();
+const registrarFalhaDb = vi.fn();
 const verifyPassword = vi.fn();
 const hashDeIsca = vi.fn();
 const buildAccessPayload = vi.fn();
@@ -53,6 +55,8 @@ vi.mock("@/lib/security/rate-limit-db", async () => {
     ...real,
     rateLimitDb: (k: string, o: unknown) => rateLimitDb(k, o),
     resetRateLimit: (k: string) => resetRateLimit(k),
+    consultarLimiteDb: (k: string, o: unknown) => consultarLimiteDb(k, o),
+    registrarFalhaDb: (k: string, o: unknown) => registrarFalhaDb(k, o),
   };
 });
 vi.mock("@/lib/audit", () => ({ audit: vi.fn() }));
@@ -84,6 +88,8 @@ const entrar = (corpo: unknown = { email: "dono@box.com", password: "senha-certa
 beforeEach(() => {
   rateLimitDb.mockResolvedValue({ ok: true });
   resetRateLimit.mockResolvedValue(undefined);
+  consultarLimiteDb.mockResolvedValue({ ok: true, retryAfterMs: 0 });
+  registrarFalhaDb.mockResolvedValue(undefined);
   verifyPassword.mockResolvedValue(true);
   hashDeIsca.mockResolvedValue("$argon2id$isca");
   buildAccessPayload.mockResolvedValue({ sub: "user-1", role: "OWNER" });
@@ -196,6 +202,59 @@ describe("os dois limites de tentativa", () => {
       .mockResolvedValueOnce({ ok: true })
       .mockResolvedValueOnce({ ok: false, retryAfterMs: 1000 });
     expect((await entrar()).status).toBe(429);
+  });
+});
+
+describe("o limite só por IP conta apenas falhas", () => {
+  /*
+    O CEASA tem dezenas de boxes atrás do mesmo Wi-Fi. Quando o acerto também
+    consumia o balde de 60 por 15 min, o 61º dono que entrava com a senha certa
+    levava 429 — na abertura do mercado, quando todo mundo entra junto.
+  */
+  it("login correto só CONSULTA o balde do IP — não consome nem zera", async () => {
+    await entrar();
+
+    expect(consultarLimiteDb).toHaveBeenCalledWith("login:ip:1.2.3.4", expect.anything());
+    expect(registrarFalhaDb).not.toHaveBeenCalled();
+    expect(rateLimitDb.mock.calls.map((c) => c[0])).not.toContain("login:ip:1.2.3.4");
+    // Quem espalha tentativas pode ter UMA conta válida: o acerto não libera o balde.
+    expect(resetRateLimit.mock.calls.map((c) => c[0])).not.toContain("login:ip:1.2.3.4");
+  });
+
+  it("senha errada registra a falha no balde do IP", async () => {
+    verifyPassword.mockResolvedValue(false);
+    expect((await entrar()).status).toBe(401);
+    expect(registrarFalhaDb).toHaveBeenCalledWith(
+      "login:ip:1.2.3.4",
+      expect.objectContaining({ limit: 60 }),
+    );
+  });
+
+  it("e-mail inexistente também conta — é o caso do password spraying", async () => {
+    findFirst.mockResolvedValue(null);
+    await entrar();
+    expect(registrarFalhaDb).toHaveBeenCalledTimes(1);
+  });
+
+  it("balde do IP cheio devolve 429 antes do Argon2", async () => {
+    consultarLimiteDb.mockResolvedValue({ ok: false, retryAfterMs: 60_000 });
+
+    const r = await entrar();
+
+    expect(r.status).toBe(429);
+    expect(verifyPassword).not.toHaveBeenCalled();
+    expect(rateLimitDb.mock.calls.map((c) => c[0])).not.toContain("login:email:dono@box.com");
+  });
+
+  it("IP desconhecido fica fora do balde — todo mundo cairia no mesmo", async () => {
+    const { clientIp } = await import("@/lib/http/request");
+    vi.mocked(clientIp).mockResolvedValueOnce(null);
+    verifyPassword.mockResolvedValue(false);
+
+    await entrar();
+
+    expect(consultarLimiteDb).not.toHaveBeenCalled();
+    expect(registrarFalhaDb).not.toHaveBeenCalled();
   });
 });
 

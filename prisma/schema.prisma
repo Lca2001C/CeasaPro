@@ -66,6 +66,7 @@ model Tenant {
   reportExports         ReportExport[]
   sales                 Sale[]
   stockMovements        StockMovement[]
+  stockCostCheckpoints  StockCostCheckpoint[]
   suppliers             Supplier[]
   subscription          TenantSubscription?
   users                 User[]
@@ -710,6 +711,7 @@ model Product {
   purchaseItems    PurchaseItem[]
   saleItems        SaleItem[]
   stockMovements   StockMovement[]
+  costCheckpoints  StockCostCheckpoint[]
 
   @@index([tenantId, active])
   @@index([tenantId, name])
@@ -982,7 +984,42 @@ model StockMovement {
   // Detalhe da venda e exclusão de fiado buscam os movimentos pela ORIGEM;
   // sem isto, varriam o livro-razão inteiro da empresa.
   @@index([tenantId, sourceType, sourceId])
+  // O repasse do custo médio a partir do checkpoint lê só o que veio DEPOIS
+  // dele, para a empresa inteira (tela de Estoque, painel).
+  @@index([tenantId, createdAt])
   @@map("stock_movements")
+}
+
+/// Ponto de partida do repasse do custo médio (`sqlCustoEstoque`): o estado do
+/// produto depois de todos os movimentos gravados até `ateCreatedAt`.
+///
+/// É DERIVADO do livro-razão e pode ser apagado a qualquer hora — sem ele o
+/// repasse volta a ler o histórico inteiro, com o mesmo resultado. Existe porque
+/// o livro-razão só cresce: sem ponto de partida, cada venda relia anos de
+/// movimentos do produto dentro da transação.
+///
+/// `ateCreatedAt` fica sempre mais de 24 h no passado (o prazo de desfazer):
+/// compra cancelada e ajuste desfeito saem do repasse AOS PARES, e nenhum par
+/// pode ficar metade antes e metade depois de um checkpoint ainda por formar.
+model StockCostCheckpoint {
+  id                 String    @id @default(cuid())
+  tenantId           String
+  productId          String
+  ateCreatedAt       DateTime
+  /// Saldo depois do último movimento coberto.
+  saldo              Decimal   @db.Decimal(14, 3)
+  /// Custo médio móvel SEM arredondar (o arredondamento é só na saída). Nulo
+  /// quando o saldo é ≤ 0 — a média recomeça na próxima entrada.
+  custo              Decimal?  @db.Decimal(40, 20)
+  /// Custo da última entrada coberta: o custo de referência sem saldo.
+  ultimoCustoEntrada Decimal?  @db.Decimal(14, 4)
+  ultimoMovedAt      DateTime
+  updatedAt          DateTime  @updatedAt
+  tenant             Tenant    @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  product            Product   @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([tenantId, productId])
+  @@map("stock_cost_checkpoints")
 }
 
 model ExpenseCategory {

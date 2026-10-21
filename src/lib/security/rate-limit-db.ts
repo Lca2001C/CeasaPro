@@ -140,6 +140,66 @@ async function consumirJanela(
 }
 
 /**
+ * Diz se a janela de uma chave ainda tem folga, SEM consumir unidade.
+ *
+ * Par de {@link registrarFalhaDb}: para o limite que só deve contar tentativa
+ * que falhou, mas que o acerto também não pode zerar (o balde só por IP do
+ * login). Consultar antes e registrar só na falha deixa passar algumas falhas a
+ * mais quando chegam juntas — aceitável num limite que existe para conter
+ * volume, não uma tentativa isolada.
+ *
+ * Fail-closed como {@link rateLimitDb}: banco indisponível recusa.
+ */
+export async function consultarLimiteDb(
+  key: string,
+  opts: { limit: number },
+): Promise<RateLimitResult> {
+  for (let tentativa = 0; ; tentativa++) {
+    try {
+      const rows = await prisma.$queryRaw<{ count: number; expiresAt: Date }[]>`
+        SELECT "count", "expiresAt" FROM "rate_limits"
+        WHERE "keyHash" = ${hashKey(key)} AND "expiresAt" > now()
+      `;
+      const row = rows[0];
+      if (row && row.count >= opts.limit) {
+        return { ok: false, retryAfterMs: Math.max(0, row.expiresAt.getTime() - Date.now()) };
+      }
+      return { ok: true, retryAfterMs: 0 };
+    } catch (e) {
+      if (tentativa === 0) {
+        await new Promise((r) => setTimeout(r, 100));
+        continue;
+      }
+      logger.error(
+        { err: e instanceof Error ? e.message : String(e) },
+        "Rate limit no banco indisponível — requisição RECUSADA (fail-closed)",
+      );
+      return { ok: false, retryAfterMs: 1000, indisponivel: true };
+    }
+  }
+}
+
+/**
+ * Conta uma tentativa que falhou na janela da chave.
+ *
+ * Nunca lança: é chamado depois que a resposta já está decidida (credencial
+ * errada), e perder uma contagem aqui só deixa a janela um pouco mais folgada.
+ */
+export async function registrarFalhaDb(
+  key: string,
+  opts: { limit: number; windowMs: number },
+): Promise<void> {
+  try {
+    await consumirJanela(key, opts);
+  } catch (e) {
+    logger.warn(
+      { err: e instanceof Error ? e.message : String(e) },
+      "Não foi possível registrar a tentativa no rate limit",
+    );
+  }
+}
+
+/**
  * Zera o contador de uma chave.
  *
  * Serve para não punir quem acertou: num limite que existe para conter

@@ -1,7 +1,13 @@
 import { describe, it, expect, beforeEach, afterAll } from "vitest";
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db/prisma";
-import { rateLimitDb, purgeExpiredRateLimits, resetRateLimit } from "@/lib/security/rate-limit-db";
+import {
+  consultarLimiteDb,
+  rateLimitDb,
+  purgeExpiredRateLimits,
+  registrarFalhaDb,
+  resetRateLimit,
+} from "@/lib/security/rate-limit-db";
 
 // Rate limit das rotas de auth contra o Postgres de verdade. É aqui que se
 // verifica o que o contador em memória não dava: contagem correta sob
@@ -149,5 +155,52 @@ describe("Rate limit persistido no banco", () => {
     expect(removidas).toBeGreaterThanOrEqual(1);
     expect(await prisma.rateLimit.findUnique({ where: { keyHash: hashDe(vencida) } })).toBeNull();
     expect(await prisma.rateLimit.findUnique({ where: { keyHash: hashDe(ativa) } })).not.toBeNull();
+  });
+});
+
+describe("Balde que conta só falhas (consultar + registrar)", () => {
+  it("consultar não consome — quantos acertos vierem, todos passam", async () => {
+    const k = chave("a");
+    for (let i = 0; i < JANELA.limit * 3; i++) {
+      expect((await consultarLimiteDb(k, JANELA)).ok).toBe(true);
+    }
+    expect(await prisma.rateLimit.findUnique({ where: { keyHash: hashDe(k) } })).toBeNull();
+  });
+
+  it("depois de `limit` falhas registradas, a consulta recusa", async () => {
+    const k = chave("a");
+    for (let i = 1; i < JANELA.limit; i++) {
+      await registrarFalhaDb(k, JANELA);
+      expect((await consultarLimiteDb(k, JANELA)).ok, `após ${i} falhas`).toBe(true);
+    }
+    await registrarFalhaDb(k, JANELA);
+
+    const r = await consultarLimiteDb(k, JANELA);
+    expect(r.ok).toBe(false);
+    expect(r.retryAfterMs).toBeGreaterThan(0);
+    expect(r.retryAfterMs).toBeLessThanOrEqual(JANELA.windowMs);
+  });
+
+  it("janela vencida volta a liberar", async () => {
+    const k = chave("expira");
+    for (let i = 0; i < JANELA.limit; i++) await registrarFalhaDb(k, JANELA);
+    expect((await consultarLimiteDb(k, JANELA)).ok).toBe(false);
+
+    await prisma.rateLimit.update({
+      where: { keyHash: hashDe(k) },
+      data: { expiresAt: new Date(Date.now() - 60 * 60 * 1000) },
+    });
+
+    expect((await consultarLimiteDb(k, JANELA)).ok).toBe(true);
+    await registrarFalhaDb(k, JANELA);
+    const row = await prisma.rateLimit.findUniqueOrThrow({ where: { keyHash: hashDe(k) } });
+    expect(row.count).toBe(1);
+  });
+
+  it("registrar falhas concorrentes não perde contagem", async () => {
+    const k = chave("concorrente");
+    await Promise.all(Array.from({ length: 10 }, () => registrarFalhaDb(k, JANELA)));
+    const row = await prisma.rateLimit.findUniqueOrThrow({ where: { keyHash: hashDe(k) } });
+    expect(row.count).toBe(10);
   });
 });

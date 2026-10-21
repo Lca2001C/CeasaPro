@@ -58,3 +58,7 @@ tmp-*
 
 # Capturas de tela geradas na verificação visual (fases do redesenho)
 /capturas/
+
+# Teste de carga (k6): logins gerados pelo seed e resultados locais
+/tests/load/usuarios.json
+/tests/load/resultados/
