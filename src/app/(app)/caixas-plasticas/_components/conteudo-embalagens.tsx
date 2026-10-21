@@ -1,15 +1,16 @@
 import { Info } from "lucide-react";
 import { EmbalagensService } from "@/lib/services/embalagens.service";
-import { excluirVendaEmbalagem } from "@/actions/embalagens.actions";
 import { formatBRL, formatDate } from "@/lib/format";
 import { APP_TIME_ZONE } from "@/lib/tz";
 import { EmptyState } from "@/components/data/empty-state";
 import { StatCard } from "@/components/data/stat-card";
 import { Card } from "@/components/ui/card";
-import { DeleteButton } from "@/components/crud/delete-button";
+import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/cn";
 import { TipoEmbalagemForm } from "./embalagens/tipo-form";
 import { EstoqueTipo } from "./embalagens/estoque-tipo";
 import { NovaVendaEmbalagem } from "./embalagens/nova-venda";
+import { CancelarVendaEmbalagem } from "./embalagens/cancelar-venda";
 
 /**
  * A aba "Embalagens": papelão, sacaria e afins vendidos à parte — o cliente
@@ -91,19 +92,31 @@ export async function ConteudoEmbalagens({
             {vendas.map((v) => (
               <Card key={v.id} className="flex items-center justify-between gap-3 p-4">
                 <div className="min-w-0">
-                  <span className="block truncate font-semibold">{v.type.name}</span>
+                  <span className="flex items-center gap-2">
+                    <span className="truncate font-semibold">{v.type.name}</span>
+                    {v.cancelledAt && <Badge variant="destructive">Cancelada</Badge>}
+                  </span>
                   <span className="block text-sm text-muted-foreground">
                     {formatDate(v.saleDate)} · {v.quantity} un ·{" "}
                     {v.customerName ?? "Cliente"}
+                    {v.cancelReason ? ` · ${v.cancelReason}` : ""}
                   </span>
                 </div>
                 <div className="flex shrink-0 flex-col items-end gap-2 sm:flex-row sm:items-center">
-                  <span className="font-bold tabular-nums">{formatBRL(v.totalAmount)}</span>
-                  <DeleteButton
-                    action={excluirVendaEmbalagem}
-                    id={v.id}
-                    entityLabel="esta venda de embalagem"
-                  />
+                  <span
+                    className={cn(
+                      "font-bold tabular-nums",
+                      v.cancelledAt && "text-muted-foreground line-through",
+                    )}
+                  >
+                    {formatBRL(v.totalAmount)}
+                  </span>
+                  {v.podeCancelar && (
+                    <CancelarVendaEmbalagem
+                      id={v.id}
+                      descricao={`${v.quantity} ${v.type.name}`}
+                    />
+                  )}
                 </div>
               </Card>
             ))}

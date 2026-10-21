@@ -4,7 +4,7 @@ import { hashPassword } from "@/lib/auth/password";
 import { signAccess } from "@/lib/auth/jwt";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
-import { createRefreshToken, revokeAllForUser } from "@/lib/auth/refresh";
+import { createRefreshSession, revokeAllForUser } from "@/lib/auth/refresh";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
 import { trialEndFrom } from "@/lib/billing/status";
@@ -130,12 +130,12 @@ export async function abrirSessaoGoogle(
   const payload = await buildAccessPayload(userId);
   if (!payload) return null;
 
-  const accessToken = await signAccess(payload);
-  const refreshToken = await createRefreshToken(userId, {
+  const sessao = await createRefreshSession(userId, {
     ip: ctx.ip ?? undefined,
     userAgent: ctx.userAgent,
   });
-  await setAuthCookies(accessToken, refreshToken);
+  const accessToken = await signAccess({ ...payload, fid: sessao.familyId });
+  await setAuthCookies(accessToken, sessao.raw);
 
   const user = await prisma.user.update({
     where: { id: userId },

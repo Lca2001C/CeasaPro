@@ -3,6 +3,7 @@ import { BillingService } from "@/lib/services/billing.service";
 import { gerarRecorrentesDeTodosOsTenants } from "@/lib/services/despesas.service";
 import { CotacoesImportService } from "@/lib/services/cotacoes-import.service";
 import { NoticiasService } from "@/lib/services/noticias.service";
+import { ProdutoImagemService } from "@/lib/services/produto-imagem.service";
 import { purgeExpiredRateLimits } from "@/lib/security/rate-limit-db";
 import { purgeDeadRefreshTokens } from "@/lib/auth/refresh";
 import { describeError, logger } from "@/lib/logger";
@@ -158,6 +159,19 @@ async function handle(req: Request): Promise<Response> {
             return { erro: "falhou" };
           });
 
+    // Fotos de produto que ninguém usa (formulário abandonado): higiene do
+    // bucket, a última da fila e com o tempo que sobrou.
+    const restanteFotos = ORCAMENTO_DA_ROTA_MS - (Date.now() - comecou);
+    const fotosOrfas =
+      restanteFotos < 2_000
+        ? { pulado: "sem tempo no orcamento da rota" }
+        : await ProdutoImagemService.limparOrfas({ prazo: Date.now() + restanteFotos }).catch(
+            (e) => {
+              logger.error({ err: describeError(e) }, "Limpeza de fotos órfãs falhou");
+              return { erro: "falhou" };
+            },
+          );
+
     return Response.json(
       {
         ok: !statusFalhou,
@@ -169,6 +183,7 @@ async function handle(req: Request): Promise<Response> {
         sessoesRemovidas,
         cotacoes,
         noticias,
+        fotosOrfas,
       },
       { status: statusFalhou ? 500 : 200 },
     );

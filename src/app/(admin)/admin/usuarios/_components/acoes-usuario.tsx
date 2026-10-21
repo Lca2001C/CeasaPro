@@ -32,12 +32,15 @@ export function AcoesUsuario({
   nome,
   ativo,
   ehVoce,
+  superAdmin,
 }: {
   userId: string;
   nome: string;
   ativo: boolean;
   /** A própria conta do super-admin: desativar-se travaria o painel. */
   ehVoce: boolean;
+  /** Super-admin não tem a senha redefinida por aqui (o servidor recusa). */
+  superAdmin: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -94,7 +97,7 @@ export function AcoesUsuario({
           aria-label={`Resetar senha de ${nome}`}
           title="Resetar senha"
           onClick={() => setConfirmando(true)}
-          disabled={pending}
+          disabled={pending || superAdmin}
         >
           <KeyRound /> Resetar senha
         </Button>

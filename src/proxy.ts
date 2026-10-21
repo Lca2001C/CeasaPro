@@ -109,9 +109,25 @@ function homeFor(role: string) {
  * `CSP_REPORT_ONLY=1` publica a política sem aplicá-la — útil para observar
  * violações antes de endurecer alguma diretiva.
  */
+/**
+ * Origem para onde o navegador manda os erros (o host do DSN público do
+ * Sentry). Só ela, e só com o DSN configurado — ver `src/instrumentation-client.ts`.
+ */
+function origemDoSentry(): string | null {
+  const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN?.trim();
+  if (!dsn) return null;
+  try {
+    const u = new URL(dsn);
+    return u.protocol === "https:" ? `https://${u.host}` : null;
+  } catch {
+    return null;
+  }
+}
+
 function buildCsp(nonce: string, isHttps: boolean): string {
   const isDev = process.env.NODE_ENV === "development";
   const mp = "https://*.mercadopago.com https://*.mercadolibre.com https://*.mlstatic.com";
+  const sentry = origemDoSentry();
 
   return [
     `default-src 'self'`,
@@ -120,7 +136,7 @@ function buildCsp(nonce: string, isHttps: boolean): string {
     `style-src 'self' 'unsafe-inline'`,
     `img-src 'self' data: blob: https:`,
     `font-src 'self' data:`,
-    `connect-src 'self' ${mp}${isDev ? " ws: wss:" : ""}`,
+    `connect-src 'self' ${mp}${sentry ? ` ${sentry}` : ""}${isDev ? " ws: wss:" : ""}`,
     // 3DS abre o desafio do banco emissor: domínio arbitrário.
     `frame-src 'self' ${mp} https:`,
     `form-action 'self' https:`,

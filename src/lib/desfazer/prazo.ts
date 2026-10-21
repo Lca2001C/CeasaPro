@@ -18,6 +18,15 @@
  */
 export const HORAS_PARA_DESFAZER = 24;
 
+/**
+ * Quem pode desfazer: o responsável pela empresa. O super-admin também, porque
+ * a sessão dele só tem `tenantId` do PRÓPRIO ambiente (`requireTenant`), nunca
+ * o de um cliente; recusá-lo lá o deixava sem conseguir testar o desfazer.
+ */
+export function podeDesfazer(role: string): boolean {
+  return role === "OWNER" || role === "SUPER_ADMIN";
+}
+
 /** O lançamento registrado em `registradoEm` ainda pode ser desfeito? */
 export function dentroDoPrazoDeDesfazer(registradoEm: Date, agora = new Date()): boolean {
   return agora.getTime() <= registradoEm.getTime() + HORAS_PARA_DESFAZER * 3600_000;

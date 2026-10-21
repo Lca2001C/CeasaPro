@@ -10,6 +10,7 @@ import { FornecedoresService } from "@/lib/services/fornecedores.service";
 import { DashboardService } from "@/lib/services/dashboard.service";
 import { DespesasService } from "@/lib/services/despesas.service";
 import { EmbalagensService } from "@/lib/services/embalagens.service";
+import { FiadoService } from "@/lib/services/fiado.service";
 import { buildReport } from "@/lib/reports/report.service";
 import { resolvePeriod } from "@/lib/dates";
 import { isoDateTz } from "@/lib/tz";
@@ -222,10 +223,16 @@ describe("Cancelar compra lançada errada", () => {
     expect(Number(await saldo())).toBe(10); // a velha continua; a nova saiu uma vez só
   });
 
-  it("só o dono cancela", async () => {
+  it("só o dono cancela — e o super-admin, no ambiente próprio dele", async () => {
     const p = await ComprasService.registrarCompra(compra(), ctx);
-    const outro = { ...ctx, session: { ...ctx.session, role: "SUPER_ADMIN" as const } };
+    // Papel que não é dono (não existe hoje; é a porta que tem de ficar fechada).
+    const outro = { ...ctx, session: { ...ctx.session, role: "STAFF" as never } };
     await expect(ComprasService.cancelarCompra({ id: p.id }, outro)).rejects.toThrow(/responsável/);
+
+    // A sessão do super-admin só carrega o tenant do AMBIENTE dele (`requireTenant`).
+    const admin = { ...ctx, session: { ...ctx.session, role: "SUPER_ADMIN" as const } };
+    const r = await ComprasService.cancelarCompra({ id: p.id }, admin);
+    expect(r.contaCancelada).toBe(true);
   });
 
   it("estorna as caixas plásticas que chegaram com a compra", async () => {
@@ -328,5 +335,137 @@ describe("Resultado do mês no Início", () => {
     // "Vendi" continua sendo a venda de mercadoria (o histórico de vendas).
     expect(depois.mesVendi.toString()).toBe(antes.mesVendi.toString());
     expect(Number(depoisDespesas.faturamento) - Number(antesDespesas.faturamento)).toBe(15);
+  });
+});
+
+describe("Baixar fiado como perda", () => {
+  async function fiado(total: number) {
+    await ComprasService.registrarCompra(compra({ items: [{ productId, quantity: 10, unitPrice: 5 }] }), ctx);
+    const venda = await VendasService.registrarVenda(
+      {
+        customerName: "Cliente que sumiu",
+        paymentMethod: "FIADO",
+        items: [{ productId, quantity: 2, unitPrice: total / 2 }],
+      },
+      ctx,
+    );
+    return prisma.creditAccount.findFirstOrThrow({ where: { saleId: venda.id } });
+  }
+
+  it("tira o saldo do 'a receber' e desconta a perda no resultado do mês da baixa", async () => {
+    const conta = await fiado(40);
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 10, method: "PIX" }, ctx);
+    const antes = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+
+    const baixada = await FiadoService.baixarComoPerda({ id: conta.id, motivo: "fechou o box" }, ctx);
+    expect(baixada.status).toBe("PERDA");
+    expect(Number(baixada.writtenOffAmount)).toBe(30);
+
+    const depois = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+    expect(Number(depois.perdasFiadoMes) - Number(antes.perdasFiadoMes)).toBe(30);
+    expect(Number(antes.lucroMes) - Number(depois.lucroMes)).toBe(30);
+    expect(Number(antes.aReceber) - Number(depois.aReceber)).toBe(30);
+    // A venda continua faturamento: a mercadoria saiu.
+    expect(depois.mesVendi.toString()).toBe(antes.mesVendi.toString());
+  });
+
+  it("cliente pagou depois da baixa: entra no resultado do mês do recebimento, a perda fica", async () => {
+    const conta = await fiado(20);
+    await FiadoService.baixarComoPerda({ id: conta.id, motivo: "sumiu" }, ctx);
+    const antes = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+
+    const parcial = await FiadoService.registrarPagamento(
+      { accountId: conta.id, amount: 5, method: "PIX" },
+      ctx,
+    );
+    expect(parcial.status).toBe("PERDA");
+    const meio = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+    expect(Number(meio.recuperadoFiadoMes) - Number(antes.recuperadoFiadoMes)).toBe(5);
+    expect(Number(meio.lucroMes) - Number(antes.lucroMes)).toBe(5);
+
+    const quitada = await FiadoService.registrarPagamento(
+      { accountId: conta.id, amount: 15, method: "DINHEIRO" },
+      ctx,
+    );
+    expect(quitada.status).toBe("PAGO");
+    const depois = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+    // A perda continua lançada (é a data da baixa que manda), e a recuperação soma.
+    expect(depois.perdasFiadoMes.toString()).toBe(antes.perdasFiadoMes.toString());
+    expect(Number(depois.lucroMes) - Number(antes.lucroMes)).toBe(20);
+  });
+
+  it("depois da baixa: só o recebimento de DEPOIS é estornável; a venda não é cancelada", async () => {
+    const conta = await fiado(20);
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 5, method: "PIX" }, ctx);
+    await FiadoService.baixarComoPerda({ id: conta.id, motivo: "não vai pagar" }, ctx);
+    const antesDaBaixa = await prisma.creditPayment.findFirstOrThrow({
+      where: { accountId: conta.id, aposBaixa: false },
+    });
+    await expect(
+      FiadoService.estornarPagamento({ paymentId: antesDaBaixa.id }, ctx),
+    ).rejects.toThrow(/perda/i);
+    await expect(
+      VendasService.cancelarVenda({ id: conta.saleId!, motivo: null }, ctx),
+    ).rejects.toThrow();
+
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 3, method: "PIX" }, ctx);
+    const depoisDaBaixa = await prisma.creditPayment.findFirstOrThrow({
+      where: { accountId: conta.id, aposBaixa: true },
+    });
+    // Com recebimento depois da baixa, desfazer a baixa pede o estorno antes.
+    await expect(FiadoService.desfazerBaixa({ id: conta.id }, ctx)).rejects.toThrow(/estorne/i);
+    const estornada = await FiadoService.estornarPagamento({ paymentId: depoisDaBaixa.id }, ctx);
+    expect(estornada.status).toBe("PERDA");
+  });
+
+  it("desfaz em até 24 h; depois disso, não", async () => {
+    const conta = await fiado(20);
+    await FiadoService.baixarComoPerda({ id: conta.id, motivo: "engano" }, ctx);
+    const reaberta = await FiadoService.desfazerBaixa({ id: conta.id }, ctx);
+    expect(reaberta.status).toBe("EM_ABERTO");
+    expect(reaberta.writtenOffAmount).toBeNull();
+
+    await FiadoService.baixarComoPerda({ id: conta.id, motivo: "agora é verdade" }, ctx);
+    await prisma.creditAccount.update({
+      where: { id: conta.id },
+      data: { writtenOffAt: new Date(Date.now() - 25 * 3600_000) },
+    });
+    await expect(FiadoService.desfazerBaixa({ id: conta.id }, ctx)).rejects.toThrow(/prazo/i);
+  });
+
+  it("recusa baixar conta quitada e baixar duas vezes", async () => {
+    const conta = await fiado(10);
+    await FiadoService.registrarPagamento({ accountId: conta.id, amount: 10, method: "DINHEIRO" }, ctx);
+    await expect(
+      FiadoService.baixarComoPerda({ id: conta.id, motivo: "teste" }, ctx),
+    ).rejects.toThrow(/saldo/i);
+
+    const outra = await fiado(10);
+    await FiadoService.baixarComoPerda({ id: outra.id, motivo: "teste" }, ctx);
+    await expect(
+      FiadoService.baixarComoPerda({ id: outra.id, motivo: "teste" }, ctx),
+    ).rejects.toThrow(/já foi baixado/i);
+  });
+});
+
+describe("Custo da embalagem vendida no resultado do mês", () => {
+  it("o lucro sobe pela venda MENOS o custo médio da embalagem", async () => {
+    const tipo = await getTenantPrisma(tenantId).packagingType.create({
+      data: { tenantId, name: `Sacaria ${Date.now()}` },
+    });
+    await EmbalagensService.ativarControleEstoque(
+      { packagingTypeId: tipo.id, quantidadeAtual: 20, custoUnitario: 0.5 },
+      ctx,
+    );
+    const antes = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+    await EmbalagensService.createSale(
+      { packagingTypeId: tipo.id, saleDate: hoje, quantity: 10, unitPrice: 1.5 },
+      ctx,
+    );
+    const depois = await DashboardService.getSummary(tenantId, ctx.session.modules, "financeiro");
+
+    expect(Number(depois.embalagensMes) - Number(antes.embalagensMes)).toBe(15);
+    expect(Number(depois.custoEmbalagensMes) - Number(antes.custoEmbalagensMes)).toBe(5);
+    expect(Number(depois.lucroMes) - Number(antes.lucroMes)).toBe(10);
   });
 });

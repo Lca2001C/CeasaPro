@@ -9,20 +9,20 @@ datasource db {
 }
 
 model Tenant {
-  id                    String                 @id @default(cuid())
+  id                    String                  @id @default(cuid())
   tradeName             String
   legalName             String?
-  cnpj                  String?                @unique
+  cnpj                  String?                 @unique
   phone                 String?
   address               String?
   logoUrl               String?
   businessHours         String?
-  status                TenantStatus           @default(ACTIVE)
+  status                TenantStatus            @default(ACTIVE)
   /// Contador de revogação de sessão da EMPRESA (vai no token como `tev`).
   ///
   /// Bloqueio pelo super-admin, exclusão e estorno/chargeback derrubam todas as
   /// sessões da empresa na hora, em vez de esperar o access token vencer.
-  sessionEpoch          Int                    @default(0)
+  sessionEpoch          Int                     @default(0)
   /// Tipo de estabelecimento / número do box no Ceasa, informado no cadastro
   /// público. Livre e opcional: no Ceasa a mesma pessoa opera box, banca ou
   /// galpão, e travar em enum obrigaria migration a cada arranjo novo.
@@ -33,7 +33,7 @@ model Tenant {
   /// estado vizinho, e o módulo de cotações é opcional e pago — quem não o
   /// contrata continua tendo UF. Serve ao cadastro, aos relatórios e a filtrar a
   /// lista de centrais na hora de escolher.
-  uf                    String?                @db.Char(2)
+  uf                    String?                 @db.Char(2)
   /// Central do CEASA em que esta empresa compra — governa quais cotações ela vê.
   /// Anulável: quem não escolheu ainda cai no estado vazio do módulo, e quem não
   /// tem o módulo no plano nunca preenche. `SetNull` para desativar uma central
@@ -45,10 +45,10 @@ model Tenant {
   termsAcceptedAt       DateTime?
   termsAcceptedIp       String?
   termsVersion          String?
-  createdAt             DateTime               @default(now())
-  updatedAt             DateTime               @updatedAt
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @updatedAt
   deletedAt             DateTime?
-  ceasaCentral          CeasaCentral?          @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
+  ceasaCentral          CeasaCentral?           @relation(fields: [ceasaCentralCode], references: [code], onDelete: SetNull)
   ceasaLinks            TenantCeasaLink[]
   ceasaLinkRecusas      TenantCeasaLinkRecusa[]
   ceasaAlertas          TenantCeasaAlerta[]
@@ -238,7 +238,7 @@ model CeasaCentral {
   /// Código estável do entreposto na fonte (ex.: "CEAMG"). É PK textual porque o
   /// importador referencia a central por código, não por id gerado — mesmo
   /// raciocínio de `RateLimit.keyHash`.
-  code              String           @id
+  code              String                 @id
   name              String
   city              String
   uf                String
@@ -248,7 +248,7 @@ model CeasaCentral {
   /// para uma central nova não exigir migration.
   sourceParams      Json?
   /// Permite desligar uma fonte quebrada SEM deploy.
-  active            Boolean          @default(true)
+  active            Boolean                @default(true)
   /// Quantos dias sem boletim ainda são NORMAIS para esta central.
   ///
   /// Medido contra a fonte real: Grande BH e Grande Vitória publicam quase todo
@@ -259,10 +259,10 @@ model CeasaCentral {
   ///
   /// É o mesmo número que a tela do cliente usa para o selo de "boletim antigo",
   /// para tela e alarme nunca discordarem.
-  maxDiasSemBoletim Int              @default(7)
-  sortOrder         Int              @default(0)
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+  maxDiasSemBoletim Int                    @default(7)
+  sortOrder         Int                    @default(0)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
   quotes            CeasaQuote[]
   importRuns        CeasaImportRun[]
   tenants           Tenant[]
@@ -277,7 +277,7 @@ model CeasaCentral {
 /// Catálogo GLOBAL, não por central: assim o vínculo que a empresa fez sobrevive
 /// à troca de central quando o nome coincide.
 model CeasaProduct {
-  id          String            @id @default(cuid())
+  id          String              @id @default(cuid())
   /// Nome de exibição, como veio da fonte.
   name        String
   /// A que TAXONOMIA este produto pertence.
@@ -300,14 +300,14 @@ model CeasaProduct {
   /// PROIBIR o casamento entre taxonomias em vez de apenas documentá-lo: um
   /// produto de catálogo pertence a exatamente uma série, e não há como gravar um
   /// produto alimentado pelas duas fontes.
-  serie       CeasaSerie        @default(CENTRAL)
+  serie       CeasaSerie          @default(CENTRAL)
   /// `normalizarNome(name)` — minúsculas, sem acento, espaços colapsados.
   /// Impede o catálogo de ganhar linha nova todo dia só porque o boletim imprimiu
   /// dois espaços. Único DENTRO da série (ver `@@unique` abaixo).
   slug        String
-  firstSeenAt DateTime          @default(now())
-  lastSeenAt  DateTime          @default(now())
-  active      Boolean           @default(true)
+  firstSeenAt DateTime            @default(now())
+  lastSeenAt  DateTime            @default(now())
+  active      Boolean             @default(true)
   quotes      CeasaQuote[]
   links       TenantCeasaLink[]
   alertas     TenantCeasaAlerta[]
@@ -494,22 +494,22 @@ model TenantCeasaLinkRecusa {
 /// receberia "subiu 1.900%" toda vez que a praça trocasse de embalagem no
 /// boletim.
 model TenantCeasaAlerta {
-  id             String   @id @default(cuid())
+  id             String       @id @default(cuid())
   tenantId       String
   ceasaProductId String
-  unit           String   @default("")
+  unit           String       @default("")
   /// De quantos por cento para cima OU para baixo o movimento merece aviso.
   ///
   /// Guardado por alerta, e não fixo no código, porque a tolerância é do
   /// produto: cebola oscila muito mais que batata, e um limiar único faria a
   /// cebola avisar todo dia (virando ruído) e a batata quase nunca.
-  variacaoMinima Decimal  @db.Decimal(5, 2)
+  variacaoMinima Decimal      @db.Decimal(5, 2)
   /// Avisar quando o preço PASSAR deste valor — está caro para comprar.
-  precoTeto      Decimal? @db.Decimal(14, 2)
+  precoTeto      Decimal?     @db.Decimal(14, 2)
   /// Avisar quando o preço CAIR abaixo deste valor — é hora de comprar.
-  precoPiso      Decimal? @db.Decimal(14, 2)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  precoPiso      Decimal?     @db.Decimal(14, 2)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
   tenant         Tenant       @relation(fields: [tenantId], references: [id], onDelete: Cascade)
   ceasaProduct   CeasaProduct @relation(fields: [ceasaProductId], references: [id], onDelete: Cascade)
 
@@ -568,54 +568,54 @@ enum BoletimEnviadoStatus {
 }
 
 model TenantSubscription {
-  id               String                @id @default(cuid())
-  tenantId         String                @unique
-  planId           String
-  status           SubscriptionStatus    @default(SUSPENSO)
-  statusSource     StatusSource          @default(AUTO)
-  statusReason     String?
-  monthlyAmount    Decimal               @db.Decimal(10, 2)
-  startedAt        DateTime              @default(now())
+  id                  String                @id @default(cuid())
+  tenantId            String                @unique
+  planId              String
+  status              SubscriptionStatus    @default(SUSPENSO)
+  statusSource        StatusSource          @default(AUTO)
+  statusReason        String?
+  monthlyAmount       Decimal               @db.Decimal(10, 2)
+  startedAt           DateTime              @default(now())
   /// Data do PRIMEIRO pagamento aprovado. Enquanto for null a empresa nunca pagou,
   /// então não tem direito à tolerância de `graceDays` — só ao trial, se houver.
-  activatedAt      DateTime?
+  activatedAt         DateTime?
   /// Fim dos 7 dias grátis do cadastro público. Só é preenchido quando o e-mail é
   /// confirmado (sem isso, e-mail descartável renderia trial ilimitado). Null =
   /// nunca teve trial; passado = trial encerrado.
-  trialEndsAt      DateTime?
-  currentPeriodEnd DateTime
+  trialEndsAt         DateTime?
+  currentPeriodEnd    DateTime
   /// Tolerância em dias após o vencimento — só vale para quem já tem `activatedAt`.
-  graceDays        Int                   @default(5)
-  mpCustomerId     String?
+  graceDays           Int                   @default(5)
+  mpCustomerId        String?
   /// Plano contratado enquanto a competência corrente JÁ ESTAVA PAGA. Não vale
   /// agora: a empresa pagou o mês pelo plano antigo, e aplicar a troca na hora
   /// entregaria os módulos do plano caro ao preço do barato (ou tiraria módulos
   /// já pagos, no downgrade). Vira o plano vigente em `pendingPlanFrom`.
-  pendingPlanId    String?
+  pendingPlanId       String?
   /// Quando a troca agendada passa a valer — sempre o `currentPeriodEnd` do
   /// momento da contratação, isto é, o primeiro instante da competência seguinte.
-  pendingPlanFrom  DateTime?
+  pendingPlanFrom     DateTime?
   /// Preço do plano agendado NO INSTANTE do agendamento. É o que a renovação
   /// cobra (`valorDevido`) e o que vira `monthlyAmount` na virada: reajuste do
   /// catálogo depois de agendado não muda o que o cliente contratou. Nulo em
   /// agendamento anterior a esta coluna — aí vale o preço vivo do plano.
-  pendingPriceMonthly Decimal?         @db.Decimal(10, 2)
+  pendingPriceMonthly Decimal?              @db.Decimal(10, 2)
   /// Módulos do plano agendado no instante do agendamento (mesmo formato de
   /// `Plan.features`). Pela mesma razão do preço.
-  pendingFeatures  Json?
+  pendingFeatures     Json?
   /// Módulos que o período JÁ PAGO entrega, congelados quando o super-admin
   /// edita o plano no meio dele (ou quando a troca agendada vira com a
   /// renovação já paga). Valem até `heldFeaturesUntil`, nunca depois.
   /// Quem lê: `featuresVigentes` (src/lib/plan/features-vigentes.ts).
-  heldFeatures     Json?
-  heldFeaturesUntil DateTime?
-  cancelledAt      DateTime?
-  createdAt        DateTime              @default(now())
-  updatedAt        DateTime              @updatedAt
-  payments         SubscriptionPayment[]
-  plan             Plan                  @relation(fields: [planId], references: [id])
-  pendingPlan      Plan?                 @relation("PlanoAgendado", fields: [pendingPlanId], references: [id])
-  tenant           Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  heldFeatures        Json?
+  heldFeaturesUntil   DateTime?
+  cancelledAt         DateTime?
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  payments            SubscriptionPayment[]
+  plan                Plan                  @relation(fields: [planId], references: [id])
+  pendingPlan         Plan?                 @relation("PlanoAgendado", fields: [pendingPlanId], references: [id])
+  tenant              Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([status, currentPeriodEnd])
   @@index([pendingPlanFrom])
@@ -623,31 +623,31 @@ model TenantSubscription {
 }
 
 model SubscriptionPayment {
-  id             String             @id @default(cuid())
-  subscriptionId String
-  tenantId       String
-  amount         Decimal            @db.Decimal(10, 2)
-  status         PaymentStatus      @default(PENDENTE)
-  method         ChargeMethod?
-  statusDetail   String?
-  referenceMonth String
-  mpPaymentId    String?            @unique
-  mpPreferenceId String?
-  mpExternalRef  String?
-  qrCode         String?
-  qrCodeBase64   String?
-  ticketUrl      String?
-  threeDsUrl     String?
-  expiresAt      DateTime?
-  paidAt         DateTime?
-  periodStart    DateTime?
-  periodEnd      DateTime?
+  id               String             @id @default(cuid())
+  subscriptionId   String
+  tenantId         String
+  amount           Decimal            @db.Decimal(10, 2)
+  status           PaymentStatus      @default(PENDENTE)
+  method           ChargeMethod?
+  statusDetail     String?
+  referenceMonth   String
+  mpPaymentId      String?            @unique
+  mpPreferenceId   String?
+  mpExternalRef    String?
+  qrCode           String?
+  qrCodeBase64     String?
+  ticketUrl        String?
+  threeDsUrl       String?
+  expiresAt        DateTime?
+  paidAt           DateTime?
+  periodStart      DateTime?
+  periodEnd        DateTime?
   /// Módulos que esta aprovação comprou para `periodStart`–`periodEnd` (formato
   /// de `Plan.features`). Gravado só na aprovação que credita o mês; editar o
   /// plano depois não muda o que este período entrega. Nulo em pagamento
   /// anterior a esta coluna ou que não creditou.
-  features       Json?
-  rawPayload     Json?
+  features         Json?
+  rawPayload       Json?
   /// `<tenantId>:<referenceMonth>` ENQUANTO esta cobrança está APROVADA; `null`
   /// em qualquer outro status. Sendo `@unique`, é o banco — e não a corrida
   /// entre dois webhooks — que garante **uma única cobrança aprovada por
@@ -656,7 +656,7 @@ model SubscriptionPayment {
   /// o outro pago. Vários `null` não colidem em índice único no Postgres, então
   /// recusada/estornada/cancelada continuam podendo repetir à vontade.
   /// Mantida por `BillingService.applyPaymentStatus` (`chaveDeAprovacao`).
-  approvedKey    String?            @unique
+  approvedKey      String?            @unique
   /// Última vez que a reconciliação diária consultou esta cobrança no Mercado
   /// Pago. É a ROTAÇÃO do lote: `BillingService.reconcilePendingPayments` lê
   /// primeiro as nunca conferidas (`NULL`) e depois as conferidas há mais tempo,
@@ -671,9 +671,9 @@ model SubscriptionPayment {
   uncreditedAt     DateTime?
   /// Por que não creditou: `VALOR_MENOR` ou `DUPLICADO`.
   uncreditedReason String?
-  createdAt      DateTime           @default(now())
-  updatedAt      DateTime           @updatedAt
-  subscription   TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  subscription     TenantSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, createdAt])
   @@index([status])
@@ -683,33 +683,33 @@ model SubscriptionPayment {
 }
 
 model Product {
-  id              String            @id @default(cuid())
-  tenantId        String
-  name            String
-  saleUnit        SaleUnit
-  qtyPerRecipient Decimal?          @db.Decimal(14, 3)
-  recipientType   RecipientType?
-  sackCapacity    Decimal?          @db.Decimal(14, 3)
+  id               String                  @id @default(cuid())
+  tenantId         String
+  name             String
+  saleUnit         SaleUnit
+  qtyPerRecipient  Decimal?                @db.Decimal(14, 3)
+  recipientType    RecipientType?
+  sackCapacity     Decimal?                @db.Decimal(14, 3)
   /// Preço de venda que o dono cadastrou. É o primeiro preço sugerido no PDV;
   /// sem ele, o PDV cai no sugerido da última compra.
-  salePrice       Decimal?          @db.Decimal(14, 2)
+  salePrice        Decimal?                @db.Decimal(14, 2)
   /// Alerta de estoque deste produto. Nulo = usa o limite global
   /// (`ESTOQUE_BAIXO` em `src/lib/estoque/nivel.ts`).
-  minStock        Decimal?          @db.Decimal(14, 3)
+  minStock         Decimal?                @db.Decimal(14, 3)
   /// Chave do objeto no R2 (`tenants/<tenantId>/produtos/...` ou
   /// `catalogo/...`). Guardamos a chave, não a URL: trocar o domínio público
   /// do bucket não pode quebrar as fotos já gravadas.
-  imageKey        String?
-  active          Boolean           @default(true)
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
-  deletedAt       DateTime?
-  tenant          Tenant            @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  ceasaLinks      TenantCeasaLink[]
+  imageKey         String?
+  active           Boolean                 @default(true)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  deletedAt        DateTime?
+  tenant           Tenant                  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  ceasaLinks       TenantCeasaLink[]
   ceasaLinkRecusas TenantCeasaLinkRecusa[]
-  purchaseItems   PurchaseItem[]
-  saleItems       SaleItem[]
-  stockMovements  StockMovement[]
+  purchaseItems    PurchaseItem[]
+  saleItems        SaleItem[]
+  stockMovements   StockMovement[]
 
   @@index([tenantId, active])
   @@index([tenantId, name])
@@ -736,32 +736,32 @@ model Supplier {
 }
 
 model Purchase {
-  id           String         @id @default(cuid())
-  tenantId     String
-  supplierId   String?
-  purchaseDate DateTime
-  freight      Decimal        @default(0) @db.Decimal(14, 2)
-  totalAmount  Decimal        @db.Decimal(14, 2)
-  notes        String?
+  id              String                 @id @default(cuid())
+  tenantId        String
+  supplierId      String?
+  purchaseDate    DateTime
+  freight         Decimal                @default(0) @db.Decimal(14, 2)
+  totalAmount     Decimal                @db.Decimal(14, 2)
+  notes           String?
   /// Chave gerada pelo formulário, uma por compra digitada. Com o índice único
   /// abaixo, o segundo envio da mesma compra (toque duplo, retentativa depois
   /// de timeout) devolve a primeira em vez de dar entrada no estoque de novo.
   /// Nula nas compras antigas — vários NULL não colidem no índice.
-  idempotencyKey String?
+  idempotencyKey  String?
   /// Cancelamento (compra lançada errada, até 24 h depois do registro — ver
   /// `ComprasService.cancelarCompra`). Como na venda, a compra FICA na base e
   /// sai dos totais; o estoque, o custo médio, as caixas e a conta a pagar
   /// voltam ao que eram antes dela.
   cancelledAt     DateTime?
   cancelledReason String?
-  createdAt    DateTime       @default(now())
-  updatedAt    DateTime       @updatedAt
-  deletedAt    DateTime?
-  items        PurchaseItem[]
-  expenses     Expense[]
-  crateMovements PlasticCrateMovement[]
-  supplier     Supplier?      @relation(fields: [supplierId], references: [id])
-  tenant       Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+  deletedAt       DateTime?
+  items           PurchaseItem[]
+  expenses        Expense[]
+  crateMovements  PlasticCrateMovement[]
+  supplier        Supplier?              @relation(fields: [supplierId], references: [id])
+  tenant          Tenant                 @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@unique([tenantId, idempotencyKey])
   @@index([tenantId, purchaseDate])
@@ -891,22 +891,28 @@ model SaleItem {
 }
 
 model CreditAccount {
-  id            String          @id @default(cuid())
-  tenantId      String
-  saleId        String?         @unique
-  customerName  String
-  customerPhone String?
-  totalAmount   Decimal         @db.Decimal(14, 2)
-  paidAmount    Decimal         @default(0) @db.Decimal(14, 2)
-  status        CreditStatus    @default(EM_ABERTO)
-  dueDate       DateTime?
-  notes         String?
-  createdAt     DateTime        @default(now())
-  updatedAt     DateTime        @updatedAt
-  deletedAt     DateTime?
-  sale          Sale?           @relation(fields: [saleId], references: [id])
-  tenant        Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
-  payments      CreditPayment[]
+  id               String          @id @default(cuid())
+  tenantId         String
+  saleId           String?         @unique
+  customerName     String
+  customerPhone    String?
+  totalAmount      Decimal         @db.Decimal(14, 2)
+  paidAmount       Decimal         @default(0) @db.Decimal(14, 2)
+  status           CreditStatus    @default(EM_ABERTO)
+  dueDate          DateTime?
+  notes            String?
+  /// Baixa como perda (`FiadoService.baixarComoPerda`): o saldo que o cliente
+  /// não vai pagar sai da lista de cobrança e entra no resultado do mês da
+  /// BAIXA como "Perda com fiado" — o mês da venda não é reescrito.
+  writtenOffAt     DateTime?
+  writtenOffAmount Decimal?        @db.Decimal(14, 2)
+  writtenOffReason String?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+  deletedAt        DateTime?
+  sale             Sale?           @relation(fields: [saleId], references: [id])
+  tenant           Tenant          @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  payments         CreditPayment[]
 
   // `status` + data: os avisos de fiado vencido filtram (status, dueDate) e a
   // lista ordena por createdAt dentro do status. O antigo `[tenantId, status]`
@@ -914,24 +920,32 @@ model CreditAccount {
   @@index([tenantId, status, dueDate])
   @@index([tenantId, status, createdAt])
   @@index([tenantId, customerName])
+  @@index([tenantId, writtenOffAt])
   @@map("credit_accounts")
 }
 
 model CreditPayment {
-  id        String        @id @default(cuid())
-  tenantId  String
-  accountId String
-  amount    Decimal       @db.Decimal(14, 2)
-  method    PaymentMethod @default(DINHEIRO)
-  paidAt    DateTime      @default(now())
-  createdAt DateTime      @default(now())
+  id             String        @id @default(cuid())
+  tenantId       String
+  accountId      String
+  amount         Decimal       @db.Decimal(14, 2)
+  method         PaymentMethod @default(DINHEIRO)
+  paidAt         DateTime      @default(now())
+  createdAt      DateTime      @default(now())
   /// Estorno de recebimento lançado errado (até 24 h — ver
   /// `FiadoService.estornarPagamento`). A linha fica no extrato, marcada; sai
   /// do fluxo de caixa e o valor volta ao saldo do cliente.
   reversedAt     DateTime?
   reversedReason String?
-  account   CreditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  /// Recebido DEPOIS de a conta ser baixada como perda: é dinheiro recuperado,
+  /// e entra no resultado do mês do recebimento ("Recebido de fiado baixado").
+  aposBaixa      Boolean       @default(false)
+  /// Uma por recebimento digitado: o reenvio (timeout depois do commit) devolve
+  /// o já gravado em vez de baixar a dívida duas vezes.
+  idempotencyKey String?
+  account        CreditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, paidAt])
   @@index([accountId])
   @@map("credit_payments")
@@ -993,21 +1007,23 @@ model Expense {
 
   /// Como a conta foi/será paga. Opcional: muita conta é lançada antes de se
   /// saber por onde vai sair o dinheiro.
-  paymentMethod ExpensePaymentMethod?
+  paymentMethod       ExpensePaymentMethod?
   /// "Repetir todo mês". Fica marcado apenas na ÚLTIMA parcela da corrente —
   /// quem gera a parcela do mês seguinte passa a marca adiante. Assim existe
   /// exatamente um gerador ativo por conta fixa, e reexecutar o job não duplica.
-  recurring     Boolean               @default(false)
+  recurring           Boolean               @default(false)
   /// Parcela anterior da mesma conta recorrente (ou a despesa de origem, quando
   /// duplicada/replicada à mão).
-  parentId      String?
+  parentId            String?
   /// Compra que originou esta despesa. Com `origem = COMPRA`, um índice único
   /// parcial (SQL na migration `estoque_unificado_compra_despesa`) garante uma
   /// despesa viva por compra.
-  purchaseId    String?
+  purchaseId          String?
+  /// Conta gerada pela entrada de embalagem (`origem = COMPRA_EMBALAGEM`).
+  packagingMovementId String?               @unique
   /// Fornecedor a quem a conta é devida. Preenchido pela compra; opcional na
   /// despesa lançada à mão.
-  supplierId    String?
+  supplierId          String?
   /// De onde a despesa veio. É ISTO, e não a categoria (que o usuário renomeia),
   /// que separa conta operacional de conta de compra:
   ///
@@ -1017,16 +1033,16 @@ model Expense {
   ///   NUNCA no lucro.
   /// - `FRETE_COMPRA`: frete lançado à parte antes desta versão (legado). Mesma
   ///   regra da `COMPRA`.
-  origem        ExpenseOrigem         @default(MANUAL)
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  deletedAt     DateTime?
-  category      ExpenseCategory?      @relation(fields: [categoryId], references: [id])
-  parent        Expense?              @relation("ExpenseRecurrence", fields: [parentId], references: [id], onDelete: SetNull)
-  children      Expense[]             @relation("ExpenseRecurrence")
-  purchase      Purchase?             @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
-  supplier      Supplier?             @relation(fields: [supplierId], references: [id], onDelete: SetNull)
-  tenant        Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  origem              ExpenseOrigem         @default(MANUAL)
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @updatedAt
+  deletedAt           DateTime?
+  category            ExpenseCategory?      @relation(fields: [categoryId], references: [id])
+  parent              Expense?              @relation("ExpenseRecurrence", fields: [parentId], references: [id], onDelete: SetNull)
+  children            Expense[]             @relation("ExpenseRecurrence")
+  purchase            Purchase?             @relation(fields: [purchaseId], references: [id], onDelete: SetNull)
+  supplier            Supplier?             @relation(fields: [supplierId], references: [id], onDelete: SetNull)
+  tenant              Tenant                @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
   @@index([tenantId, dueDate])
   @@index([tenantId, status])
@@ -1218,6 +1234,14 @@ model PackagingSale {
   quantity        Int
   unitPrice       Decimal       @db.Decimal(14, 2)
   totalAmount     Decimal       @db.Decimal(14, 2)
+  /// Custo médio da embalagem na hora da venda (o "CMV" dela). Nulo quando o
+  /// tipo não controla estoque ou nenhuma entrada informou custo — aí o lucro
+  /// não tem o que descontar, e a tela avisa.
+  unitCostAtSale  Decimal?      @db.Decimal(14, 4)
+  /// Venda desfeita (regra única de desfazer, até 24 h): fica na base marcada,
+  /// sai dos totais, e o estoque volta por AJUSTE de estorno.
+  cancelledAt     DateTime?
+  cancelReason    String?
   createdAt       DateTime      @default(now())
   updatedAt       DateTime      @updatedAt
   deletedAt       DateTime?
@@ -1308,6 +1332,10 @@ enum AdminNotificationKind {
   /// paga volta a usar —, mas o bloqueio era uma decisão humana e quem a tomou
   /// precisa saber que ela foi desfeita.
   BLOQUEIO_DESFEITO_POR_PAGAMENTO
+  /// Pagamento aprovado ACIMA da mensalidade devida (QR antigo de valor maior,
+  /// pago depois de uma descida de plano ou reajuste). O mês foi creditado; a
+  /// diferença precisa ser devolvida ou abatida.
+  PAGAMENTO_ACIMA_DO_DEVIDO
   /// Nenhum feed do CeasaNews respondeu numa coleta inteira. Feed isolado fora
   /// do ar não avisa (as outras fontes cobrem); TODOS fora é o módulo parado.
   NOTICIAS_FALHA
@@ -1355,6 +1383,8 @@ enum PaymentMethod {
 enum CreditStatus {
   EM_ABERTO
   PAGO
+  /// Baixado como perda: o cliente não vai pagar o saldo (ver `writtenOffAt`).
+  PERDA
 }
 
 enum StockMovementType {
@@ -1387,6 +1417,10 @@ enum ExpenseOrigem {
   MANUAL
   COMPRA
   FRETE_COMPRA
+  /// Entrada de embalagem com custo (`EmbalagensService.registrarEntrada`). O
+  /// custo entra no lucro pela venda (custo médio); a conta fica fora do lucro
+  /// e dentro do caixa e das contas a pagar, como a compra de mercadoria.
+  COMPRA_EMBALAGEM
 }
 
 enum TenantStatus {
@@ -1465,6 +1499,7 @@ enum PlasticCrateMovementType {
   SAIDA_HIGIENIZACAO
   RETORNO_HIGIENIZACAO
   ESTORNO_SAIDA // cancelamento de venda: as caixas nunca saíram de fato
+  ESTORNO_SAIDA_HIGIENIZACAO // envio corrigido/excluído: as caixas voltam SUJAS, nunca foram lavadas
 }
 
 enum CrateCleaningStatus {

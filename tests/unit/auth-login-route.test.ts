@@ -40,6 +40,10 @@ vi.mock("@/lib/auth/cookies", () => ({
 }));
 vi.mock("@/lib/auth/refresh", () => ({
   createRefreshToken: (id: string, m: unknown) => createRefreshToken(id, m),
+  createRefreshSession: async (id: string, m: unknown) => ({
+    raw: await createRefreshToken(id, m),
+    familyId: "familia-1",
+  }),
 }));
 vi.mock("@/lib/security/rate-limit-db", async () => {
   const real = await vi.importActual<typeof import("@/lib/security/rate-limit-db")>(
@@ -69,7 +73,13 @@ const USUARIO = {
 };
 
 const entrar = (corpo: unknown = { email: "dono@box.com", password: "senha-certa" }) =>
-  POST(new Request("http://localhost/api/auth/login", { method: "POST", body: JSON.stringify(corpo) }));
+  POST(
+    new Request("http://localhost/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify(corpo),
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
 
 beforeEach(() => {
   rateLimitDb.mockResolvedValue({ ok: true });
@@ -251,7 +261,11 @@ describe("entrada malformada", () => {
 
   it("corpo que não é JSON também é 422", async () => {
     const r = await POST(
-      new Request("http://localhost/api/auth/login", { method: "POST", body: "{ truncado" }),
+      new Request("http://localhost/api/auth/login", {
+        method: "POST",
+        body: "{ truncado",
+        headers: { "Content-Type": "application/json" },
+      }),
     );
     expect(r.status).toBe(422);
   });

@@ -21,6 +21,7 @@ import {
   HORAS_PARA_DESFAZER,
   dentroDoPrazoDeDesfazer,
   foraDoPrazoDeDesfazer,
+  podeDesfazer,
 } from "@/lib/desfazer/prazo";
 import { addDaysTz, endOfDayTz, parseFormDateTz, startOfDayTz, startOfMonthTz } from "@/lib/tz";
 import { resolvePlasticCrateQty } from "@/lib/validations/venda";
@@ -456,7 +457,7 @@ export const VendasService = {
     // Só o dono da empresa cancela. `requireTenant` já garante OWNER hoje, mas
     // a checagem fica explícita: se um dia existir perfil de operador, esta
     // operação não deve passar a valer para ele em silêncio.
-    if (ctx.session.role !== "OWNER") {
+    if (!podeDesfazer(ctx.session.role)) {
       throw new ForbiddenError("Só o responsável pela empresa pode cancelar uma venda.");
     }
 
@@ -476,6 +477,13 @@ export const VendasService = {
       throw new BusinessRuleError(foraDoPrazoDeDesfazer("cancelar esta venda"));
     }
     if ((venda.creditAccount?.payments.length ?? 0) > 0) throw recebimentoNoFiado();
+    // A perda já entrou no resultado do mês da baixa; cancelar a venda por
+    // baixo deixaria a perda de uma venda que não existe mais.
+    if (venda.creditAccount?.status === "PERDA") {
+      throw new BusinessRuleError(
+        "O fiado desta venda foi baixado como perda. Desfaça a baixa antes de cancelar a venda.",
+      );
+    }
     const productIds = [...new Set(venda.items.map((it) => it.productId))].sort();
 
     // Quantas caixas voltam ao estoque é decidido DENTRO da transação (abaixo),
@@ -555,7 +563,10 @@ export const VendasService = {
             type: "ESTORNO_SAIDA",
             quantity: caixasEstornadas,
             customerName: venda.customerName,
-            movementDate: new Date().toISOString(),
+            // Na data da VENDA, como a saída que ele anula: com a data de hoje,
+            // a venda de 30/09 cancelada em 01/10 deixava 8 caixas "com o
+            // cliente" no relatório de setembro e um estorno solto em outubro.
+            movementDate: venda.saleDate.toISOString(),
             saleId: venda.id,
             notes: "Estorno pelo cancelamento da venda",
           },

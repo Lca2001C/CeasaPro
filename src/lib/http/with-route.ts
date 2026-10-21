@@ -7,6 +7,7 @@ import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { errorResponse } from "./error-response";
 import { clientIp } from "./request";
 import { assertSessaoValida } from "@/lib/auth/revogacao";
+import { assertMesmaOrigem } from "./mesma-origem";
 
 export interface RouteTenantCtx {
   session: Session;
@@ -47,6 +48,7 @@ export function withTenantRoute<I, O>(opts: {
 }) {
   return async (req: Request): Promise<Response> => {
     try {
+      assertMesmaOrigem(req, !!opts.schema && (opts.source ?? "json") === "json");
       const { session, tenantId } = await requireTenant();
       await assertSessaoValida(session);
       assertPasswordReady(session);
@@ -88,6 +90,7 @@ export function withAdminRoute<I, O>(opts: {
 }) {
   return async (req: Request): Promise<Response> => {
     try {
+      assertMesmaOrigem(req, !!opts.schema && (opts.source ?? "json") === "json");
       const session = await requireSuperAdmin();
       await assertSessaoValida(session);
       assertPasswordReady(session);

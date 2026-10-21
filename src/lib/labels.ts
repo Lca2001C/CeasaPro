@@ -45,11 +45,13 @@ export const EXPENSE_ORIGEM_LABELS: Record<string, string> = {
   MANUAL: "Operacional",
   COMPRA: "Compra",
   FRETE_COMPRA: "Frete de compra",
+  COMPRA_EMBALAGEM: "Compra de embalagem",
 };
 
 export const CREDIT_STATUS_LABELS: Record<string, string> = {
   EM_ABERTO: "Em aberto",
   PAGO: "Pago",
+  PERDA: "Baixado como perda",
 };
 
 export const STOCK_MOVEMENT_LABELS: Record<string, string> = {
@@ -91,6 +93,7 @@ export const CRATE_MOVEMENT_LABELS: Record<string, string> = {
   SAIDA_HIGIENIZACAO: "Enviada p/ higienização",
   RETORNO_HIGIENIZACAO: "Voltou da higienização",
   ESTORNO_SAIDA: "Estorno de venda cancelada",
+  ESTORNO_SAIDA_HIGIENIZACAO: "Estorno de envio p/ higienização",
 };
 
 export const CRATE_CLEANING_STATUS_LABELS: Record<string, string> = {

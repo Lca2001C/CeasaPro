@@ -8,6 +8,7 @@ import { audit } from "@/lib/audit";
 import { absoluteUrl, hasConfiguredAppUrl } from "@/lib/app-url";
 import { findResettableUserByEmail, issueResetToken } from "@/lib/auth/password-reset";
 import { RESET_TOKEN_TTL_MINUTES } from "@/lib/auth/reset-token";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
@@ -24,6 +25,9 @@ export const runtime = "nodejs";
  * Resend no meio, que é uma chamada de rede de centenas de ms).
  */
 export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, true);
+  if (recusa) return recusa;
   const ip = (await clientIp()) ?? "unknown";
   const body = await req.json().catch(() => ({}));
   const parsed = forgotSchema.safeParse(body);

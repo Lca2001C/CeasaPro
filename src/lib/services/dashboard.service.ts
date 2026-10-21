@@ -9,6 +9,7 @@ import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/linhas-vendidas";
 import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
+import { ORIGEM_AJUSTE, ORIGEM_AJUSTE_DESFEITO } from "@/lib/estoque/origens";
 
 /**
  * Higienização do mês para o painel: saldo em aberto e o custo dos lotes
@@ -49,10 +50,24 @@ export interface DashboardSummary {
   cmvMes: Prisma.Decimal;
   /**
    * Venda avulsa de embalagem (papelão, sacaria…) no mês. Não é "Vendi" — não
-   * passa pelo PDV nem tem CMV (a embalagem comprada entra como conta) —, mas é
-   * receita: soma no lucro bruto, e o "Resultado do mês" a mostra numa linha.
+   * passa pelo PDV —, mas é receita: soma no lucro bruto, e o "Resultado do
+   * mês" a mostra numa linha.
    */
   embalagensMes: Prisma.Decimal;
+  /** Custo médio das embalagens vendidas no mês (o "CMV" delas). */
+  custoEmbalagensMes: Prisma.Decimal;
+  /** Vendas de embalagem do mês sem custo conhecido (tipo sem controle de estoque). */
+  embalagensSemCusto: number;
+  /**
+   * Perdas e acertos de estoque do mês, pelo custo do movimento: quebra,
+   * doação e acerto para baixo menos o acerto para cima. Ajuste desfeito fica
+   * de fora (o par se anula).
+   */
+  perdasEstoqueMes: Prisma.Decimal;
+  /** Fiado baixado como perda no mês (pela data da BAIXA). */
+  perdasFiadoMes: Prisma.Decimal;
+  /** Recebido no mês de fiado JÁ baixado como perda (recuperação). */
+  recuperadoFiadoMes: Prisma.Decimal;
   /**
    * Contas que o lucro líquido desconta: as operacionais do mês e a
    * higienização ENVIADA no mês. É exatamente "Contas fixas" + "Contas
@@ -150,7 +165,10 @@ export const DashboardService = {
       estoqueParadoRows,
       despOperacional,
       higLotes,
-      embalagensMes,
+      embalagensRows,
+      perdasRows,
+      perdaEstoqueRows,
+      recuperadoRows,
     ] = await Promise.all([
       db.sale.aggregate({
         _sum: { totalAmount: true },
@@ -265,12 +283,61 @@ export const DashboardService = {
       (contas || lucro) && comHigienizacao
         ? higienizacaoDoMes(tenantId, monthStart, fimDoMes)
         : Promise.resolve(HIGIENIZACAO_ZERADA),
-      lucro && comEmbalagens
-        ? db.packagingSale.aggregate({
-            _sum: { totalAmount: true },
-            where: { saleDate: { gte: monthStart, lte: ateAgora } },
-          })
-        : pula(somaVazia),
+      // Receita E custo da embalagem vendida. O custo é o médio gravado na
+      // venda (`unitCostAtSale`); sem ele (tipo sem controle de estoque), a
+      // venda conta como receita sem custo — e a tela avisa quantas são.
+      !(lucro && comEmbalagens)
+        ? pula([] as LinhaEmbalagens[])
+        : prisma.$queryRaw<LinhaEmbalagens[]>`
+            SELECT COALESCE(SUM("totalAmount"), 0) AS total,
+                   -- Arredondado POR VENDA, como FinancialCalc.custoVendaEmbalagem.
+                   COALESCE(SUM(ROUND(quantity * "unitCostAtSale", 2)), 0) AS custo,
+                   COUNT(*) FILTER (WHERE "unitCostAtSale" IS NULL)::int AS sem_custo
+            FROM packaging_sales
+            WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL
+              AND "saleDate" >= ${monthStart} AND "saleDate" <= ${ateAgora}
+          `,
+      // Fiado baixado como perda NESTE mês (data da baixa, não da venda). Pela
+      // marca da baixa e não pelo status: a conta recuperada por inteiro depois
+      // vira PAGO, e a perda daquele mês continua tendo acontecido.
+      !lucro
+        ? pula([] as { total: Prisma.Decimal | string }[])
+        : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+            SELECT COALESCE(SUM("writtenOffAmount"), 0) AS total
+            FROM credit_accounts
+            WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+              AND "writtenOffAt" IS NOT NULL
+              AND "writtenOffAt" >= ${monthStart} AND "writtenOffAt" <= ${ateAgora}
+          `,
+      // Perdas e acertos de estoque do mês (ver `perdasEstoqueMes`).
+      !lucro
+        ? pula([] as { total: Prisma.Decimal | string }[])
+        : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+            SELECT COALESCE(SUM(ROUND(
+                     CASE WHEN m.type IN ('QUEBRA', 'DOACAO') THEN m.quantity
+                          WHEN m.type = 'AJUSTE' THEN -m.quantity
+                          ELSE 0 END * COALESCE(m."unitCost", 0), 2)), 0) AS total
+            FROM stock_movements m
+            WHERE m."tenantId" = ${tenantId}
+              AND (m."sourceType" = ${ORIGEM_AJUSTE}
+                   OR (m."sourceType" IS NULL AND m.type IN ('QUEBRA', 'DOACAO')))
+              AND m."movedAt" >= ${monthStart} AND m."movedAt" <= ${ateAgora}
+              AND NOT EXISTS (
+                SELECT 1 FROM stock_movements e
+                WHERE e."tenantId" = m."tenantId"
+                  AND e."sourceType" = ${ORIGEM_AJUSTE_DESFEITO}
+                  AND e."sourceId" = m.id
+              )
+          `,
+      // Recebido NESTE mês de fiado já baixado: volta ao resultado.
+      !lucro
+        ? pula([] as { total: Prisma.Decimal | string }[])
+        : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
+            SELECT COALESCE(SUM(amount), 0) AS total
+            FROM credit_payments
+            WHERE "tenantId" = ${tenantId} AND "aposBaixa" AND "reversedAt" IS NULL
+              AND "paidAt" >= ${monthStart} AND "paidAt" <= ${ateAgora}
+          `,
     ]);
 
     const porProduto = porProdutoDoMes(linhasDoMes);
@@ -295,10 +362,27 @@ export const DashboardService = {
     const despesasLucro = money(
       toDecimal((despOperacional[0]?.total ?? 0) as Prisma.Decimal.Value).plus(higEnviadaMes),
     );
-    const embalagens = money(toDecimal(embalagensMes._sum.totalAmount ?? 0));
+    const linhaEmb = embalagensRows[0];
+    const embalagens = money(toDecimal((linhaEmb?.total ?? 0) as Prisma.Decimal.Value));
+    const custoEmbalagens = money(toDecimal((linhaEmb?.custo ?? 0) as Prisma.Decimal.Value));
+    const perdasFiado = money(toDecimal((perdasRows[0]?.total ?? 0) as Prisma.Decimal.Value));
+    const recuperadoFiado = money(
+      toDecimal((recuperadoRows[0]?.total ?? 0) as Prisma.Decimal.Value),
+    );
     const faturamentoMes = FinancialCalc.faturamento(vendasMesTotal, embalagens);
-    const lucroBrutoMes = FinancialCalc.lucroBruto(faturamentoMes, cmvMes);
-    const lucroMes = FinancialCalc.lucroLiquido(lucroBrutoMes, despesasLucro);
+    const perdasEstoque = money(
+      toDecimal((perdaEstoqueRows[0]?.total ?? 0) as Prisma.Decimal.Value),
+    );
+    const lucroBrutoMes = FinancialCalc.lucroBruto(
+      faturamentoMes,
+      FinancialCalc.custoDoVendido(cmvMes, custoEmbalagens, perdasEstoque),
+    );
+    const lucroMes = FinancialCalc.lucroLiquido(
+      lucroBrutoMes,
+      despesasLucro,
+      perdasFiado,
+      recuperadoFiado,
+    );
 
     const aReceber = FinancialCalc.saldoFiado(
       cred._sum.totalAmount ?? 0,
@@ -333,6 +417,11 @@ export const DashboardService = {
       lucroBrutoMes,
       cmvMes: money(cmvMes),
       embalagensMes: embalagens,
+      custoEmbalagensMes: custoEmbalagens,
+      embalagensSemCusto: Number(linhaEmb?.sem_custo ?? 0),
+      perdasEstoqueMes: perdasEstoque,
+      perdasFiadoMes: perdasFiado,
+      recuperadoFiadoMes: recuperadoFiado,
       despesasLucroMes: despesasLucro,
       lucroMes,
       margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, faturamentoMes),
@@ -358,6 +447,12 @@ export const DashboardService = {
     };
   },
 };
+
+interface LinhaEmbalagens {
+  total: Prisma.Decimal | string;
+  custo: Prisma.Decimal | string;
+  sem_custo: number;
+}
 
 interface IdleProductRow {
   productId: string;

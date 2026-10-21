@@ -19,6 +19,7 @@ import { BusinessRuleError } from "@/lib/http/app-error";
 import {
   provisionTenant,
   emailEmUso,
+  ehColisaoDeIdentidadeDeEmail,
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
 import { AdminNotificationsService } from "./admin-notifications.service";
@@ -60,6 +61,22 @@ export interface SignupResult {
   devToken?: string;
 }
 
+/** Nada é criado; o aviso vai para quem é dono do endereço. */
+async function avisarContaExistente(email: string, ip: string | null): Promise<SignupResult> {
+  const { subject, html } = signupAttemptOnExistingAccountEmail({
+    loginUrl: absoluteUrl("/login"),
+    forgotUrl: absoluteUrl("/recuperar-senha"),
+  });
+  const sent = await sendEmail(email, subject, html, {
+    tags: [{ name: "tipo", value: "cadastro-conta-existente" }],
+  });
+  if (!sent.ok) {
+    logger.error({ err: sent.error }, "Falha ao avisar sobre cadastro em conta existente");
+  }
+  logger.info({ ip }, "Cadastro em e-mail que já tem conta — nada criado");
+  return { outcome: "email_already_in_use" };
+}
+
 export const SignupService = {
   /**
    * Cria a empresa em estado pendente de confirmação e dispara o e-mail.
@@ -70,19 +87,7 @@ export const SignupService = {
    */
   async register(input: SignupInput, ctx: { ip: string | null }): Promise<SignupResult> {
     if (await emailEmUso(input.email)) {
-      // Nada é criado. O aviso vai para quem é dono do endereço.
-      const { subject, html } = signupAttemptOnExistingAccountEmail({
-        loginUrl: absoluteUrl("/login"),
-        forgotUrl: absoluteUrl("/recuperar-senha"),
-      });
-      const sent = await sendEmail(input.email, subject, html, {
-        tags: [{ name: "tipo", value: "cadastro-conta-existente" }],
-      });
-      if (!sent.ok) {
-        logger.error({ err: sent.error }, "Falha ao avisar sobre cadastro em conta existente");
-      }
-      logger.info({ ip: ctx.ip }, "Cadastro em e-mail que já tem conta — nada criado");
-      return { outcome: "email_already_in_use" };
+      return avisarContaExistente(input.email, ctx.ip);
     }
 
     await liberarEmailDeContaExcluida(input.email);
@@ -125,47 +130,57 @@ export const SignupService = {
       );
     }
 
-    const { tenantId, userId } = await prisma.$transaction(async (tx) => {
-      const criado = await provisionTenant(tx, {
-        tradeName: NOME_EMPRESA_PADRAO,
-        phone: null,
-        establishmentType: null,
-        uf: input.uf || null,
-        ceasaCentralCode: centralValida?.code ?? null,
-        planId: plan.id,
-        // O valor mensal vem SEMPRE do plano, nunca do cliente — mesma regra de
-        // `PlanoService.trocarPlano`.
-        monthlyAmount: plan.priceMonthly,
-        graceDays: 5,
-        // Sem período pago ainda. `computeStatus` ignora esta data enquanto não
-        // houver `activatedAt`, então ela não abre acesso.
-        currentPeriodEnd: now,
-        owner: {
-          name: nomeDaPessoa,
-          email: input.email,
-          passwordHash,
-          // Senha escolhida pela própria pessoa: não há o que trocar no 1º acesso.
-          mustChangePassword: false,
-          verifyTokenHash: token.tokenHash,
-          verifyTokenExpiresAt: token.expiresAt,
-          emailVerifiedAt: null,
-        },
+    let criado: { tenantId: string; userId: string };
+    try {
+      criado = await prisma.$transaction(async (tx) => {
+        const novo = await provisionTenant(tx, {
+          tradeName: NOME_EMPRESA_PADRAO,
+          phone: null,
+          establishmentType: null,
+          uf: input.uf || null,
+          ceasaCentralCode: centralValida?.code ?? null,
+          planId: plan.id,
+          // O valor mensal vem SEMPRE do plano, nunca do cliente — mesma regra de
+          // `PlanoService.trocarPlano`.
+          monthlyAmount: plan.priceMonthly,
+          graceDays: 5,
+          // Sem período pago ainda. `computeStatus` ignora esta data enquanto não
+          // houver `activatedAt`, então ela não abre acesso.
+          currentPeriodEnd: now,
+          owner: {
+            name: nomeDaPessoa,
+            email: input.email,
+            passwordHash,
+            // Senha escolhida pela própria pessoa: não há o que trocar no 1º acesso.
+            mustChangePassword: false,
+            verifyTokenHash: token.tokenHash,
+            verifyTokenExpiresAt: token.expiresAt,
+            emailVerifiedAt: null,
+          },
+        });
+        await audit(
+          {
+            tenantId: novo.tenantId,
+            userId: novo.userId,
+            actorEmail: input.email,
+            action: "CREATE",
+            entity: "Tenant",
+            entityId: novo.tenantId,
+            newData: { tradeName: NOME_EMPRESA_PADRAO, origem: "cadastro-publico" },
+            ip: ctx.ip,
+          },
+          tx,
+        );
+        return novo;
       });
-      await audit(
-        {
-          tenantId: criado.tenantId,
-          userId: criado.userId,
-          actorEmail: input.email,
-          action: "CREATE",
-          entity: "Tenant",
-          entityId: criado.tenantId,
-          newData: { tradeName: NOME_EMPRESA_PADRAO, origem: "cadastro-publico" },
-          ip: ctx.ip,
-        },
-        tx,
-      );
-      return criado;
-    });
+    } catch (e) {
+      // Outro cadastro da MESMA caixa (`dono+1@` e `dono+2@` ao mesmo tempo)
+      // passou por `emailEmUso` junto com este e gravou primeiro: o índice
+      // parcial recusou o segundo. Mesma resposta de "já tem conta".
+      if (ehColisaoDeIdentidadeDeEmail(e)) return avisarContaExistente(input.email, ctx.ip);
+      throw e;
+    }
+    const { tenantId, userId } = criado;
 
     // ANTES do e-mail, de propósito: o aviso ao admin não depende do SMTP, e
     // deixá-lo depois fazia um servidor de e-mail lento atrasar o aviso pelo

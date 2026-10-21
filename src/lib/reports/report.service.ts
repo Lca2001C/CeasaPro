@@ -6,7 +6,7 @@ import { CaixasService } from "@/lib/services/caixas.service";
 import { perdasPorLote } from "@/lib/services/higienizacao.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
 import { add, sub, toDecimal, money } from "@/lib/money";
-import { formatDate, formatQty } from "@/lib/format";
+import { formatBRL, formatDate, formatQty } from "@/lib/format";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "./linhas-vendidas";
 import { addDaysTz, APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
 import {
@@ -279,12 +279,27 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
      * não querem. Aqui o recorte é a data de pagamento, e só o que está pago.
      */
     case "CONTAS_PAGAS": {
-      const pagas = await db.expense.findMany({
-        where: { status: "PAGO", paidDate: { gte: p.from, lte: p.to } },
-        include: { category: true, supplier: { select: { name: true } } },
-        orderBy: [{ paidDate: "asc" }],
-      });
-      const linhas = pagas.map((d) => ({
+      const [pagas, higienizacao] = await Promise.all([
+        db.expense.findMany({
+          where: { status: "PAGO", paidDate: { gte: p.from, lte: p.to } },
+          include: { category: true, supplier: { select: { name: true } } },
+          orderBy: [{ paidDate: "asc" }],
+        }),
+        // O pagamento ao higienizador também saiu do caixa: o cartão "Pagas"
+        // de /despesas já o soma (`resumoDaHigienizacao`), e o relatório
+        // ficava menor que o cartão. Sem gate de módulo: dinheiro pago é fato,
+        // e o fluxo de caixa soma estes pagamentos para todo mundo.
+        prisma.crateCleaningPayment.findMany({
+          where: {
+            tenantId: p.tenantId,
+            paidAt: { gte: p.from, lte: p.to },
+            cleaning: { tenantId: p.tenantId, deletedAt: null },
+          },
+          include: { cleaning: { select: { cleanerName: true, sentDate: true } } },
+          orderBy: [{ paidAt: "asc" }],
+        }),
+      ]);
+      const linhasDespesa = pagas.map((d) => ({
         categoria: d.category?.name ?? "Sem categoria",
         paidDate: d.paidDate,
         description: d.description,
@@ -298,6 +313,21 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         dueDate: d.dueDate,
         amount: d.amount,
       }));
+      const linhasHigienizacao = higienizacao.map((h) => ({
+        categoria: "Higienização",
+        paidDate: h.paidAt,
+        description: `Higienização enviada em ${formatDate(h.cleaning.sentDate)}`,
+        origem: "Higienização",
+        supplier: h.cleaning.cleanerName,
+        category: "Higienização",
+        type: EXPENSE_TYPE_LABELS.VARIAVEL,
+        paymentMethod: "-",
+        dueDate: null,
+        amount: h.amount,
+      }));
+      const linhas = [...linhasDespesa, ...linhasHigienizacao].sort(
+        (a, b) => (a.paidDate?.getTime() ?? 0) - (b.paidDate?.getTime() ?? 0),
+      );
       return {
         ...base,
         columns: [
@@ -312,7 +342,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "amount", label: "Valor", align: "right", format: "money" },
         ],
         rows: p.agruparPorCategoria ? agruparPorCategoria(linhas) : linhas,
-        totals: { description: "TOTAL PAGO", amount: add(...pagas.map((d) => d.amount)) },
+        totals: { description: "TOTAL PAGO", amount: add(...linhas.map((d) => d.amount)) },
       };
     }
 
@@ -602,6 +632,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         JOIN packaging_types pt ON pt.id = ps."packagingTypeId"
         WHERE ps."tenantId" = ${p.tenantId}
           AND ps."deletedAt" IS NULL
+          AND ps."cancelledAt" IS NULL
           AND ps."saleDate" >= ${p.from}
           AND ps."saleDate" <= ${p.to}
           AND pt.name ILIKE '%papel%'
@@ -799,7 +830,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
               AND "paidAt" >= ${p.from} AND "paidAt" <= ${p.to} GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"saleDate"')} AS d, SUM("totalAmount") AS total FROM packaging_sales
-            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL
+            WHERE "tenantId" = ${p.tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL
               AND "saleDate" >= ${p.from} AND "saleDate" <= ${p.to} GROUP BY 1`,
           prisma.$queryRaw<{ d: Date; total: Prisma.Decimal }[]>`
             SELECT ${dayExpr('"paidDate"')} AS d, SUM(amount) AS total FROM expenses
@@ -971,18 +1002,29 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
     case "EMBALAGENS": {
       const vendas = await db.packagingSale.findMany({
-        where: { saleDate: { gte: p.from, lte: p.to } },
+        where: { saleDate: { gte: p.from, lte: p.to }, cancelledAt: null },
         include: { type: true },
         orderBy: { saleDate: "asc" },
       });
-      const rows = vendas.map((v) => ({
-        saleDate: v.saleDate,
-        type: v.type.name,
-        customerName: v.customerName ?? "—",
-        quantity: v.quantity,
-        unitPrice: v.unitPrice,
-        totalAmount: v.totalAmount,
-      }));
+      // Custo e lucro da venda pelo custo médio gravado nela — a mesma conta do
+      // "Custo das embalagens vendidas" do Início. Sem custo conhecido (tipo
+      // sem controle de estoque), as duas colunas ficam vazias.
+      const rows = vendas.map((v) => {
+        const custo =
+          v.unitCostAtSale === null
+            ? null
+            : FinancialCalc.custoVendaEmbalagem(v.quantity, v.unitCostAtSale);
+        return {
+          saleDate: v.saleDate,
+          type: v.type.name,
+          customerName: v.customerName ?? "—",
+          quantity: v.quantity,
+          unitPrice: v.unitPrice,
+          totalAmount: v.totalAmount,
+          custo,
+          lucro: custo === null ? null : FinancialCalc.lucroBruto(v.totalAmount, custo),
+        };
+      });
       return {
         ...base,
         columns: [
@@ -992,12 +1034,73 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "quantity", label: "Qtd.", align: "right", format: "int" },
           { key: "unitPrice", label: "Unitario", align: "right", format: "money" },
           { key: "totalAmount", label: "Total", align: "right", format: "money" },
+          { key: "custo", label: "Custo", align: "right", format: "money" },
+          { key: "lucro", label: "Lucro", align: "right", format: "money" },
         ],
         rows,
         totals: {
           type: "TOTAL",
           quantity: rows.reduce((a, r) => a + r.quantity, 0),
           totalAmount: add(...rows.map((r) => r.totalAmount)),
+          custo: add(...rows.flatMap((r) => (r.custo === null ? [] : [r.custo]))),
+          lucro: add(...rows.flatMap((r) => (r.lucro === null ? [] : [r.lucro]))),
+        },
+      };
+    }
+
+    /**
+     * Fiado baixado como perda e o que foi recebido DEPOIS da baixa, por data.
+     * É o que explica as linhas "Perda com fiado" e "Recebido de fiado baixado"
+     * do resultado de um mês que já passou — o Início só mostra o mês corrente.
+     */
+    case "FIADO_PERDAS": {
+      const [baixas, recuperados] = await Promise.all([
+        db.creditAccount.findMany({
+          where: { writtenOffAt: { gte: p.from, lte: p.to } },
+          orderBy: { writtenOffAt: "asc" },
+        }),
+        db.creditPayment.findMany({
+          where: { aposBaixa: true, reversedAt: null, paidAt: { gte: p.from, lte: p.to } },
+          include: { account: { select: { customerName: true } } },
+          orderBy: { paidAt: "asc" },
+        }),
+      ]);
+      const rows = [
+        ...baixas.map((c) => ({
+          data: c.writtenOffAt,
+          customerName: c.customerName,
+          tipo: "Baixa como perda",
+          detalhe: c.writtenOffReason ?? "-",
+          perda: c.writtenOffAmount ?? new Prisma.Decimal(0),
+          recuperado: null as Prisma.Decimal | null,
+        })),
+        ...recuperados.map((r) => ({
+          data: r.paidAt,
+          customerName: r.account.customerName,
+          tipo: "Recebido depois da baixa",
+          detalhe: PAYMENT_METHOD_LABELS[r.method] ?? r.method,
+          perda: null as Prisma.Decimal | null,
+          recuperado: r.amount,
+        })),
+      ].sort((a, b) => (a.data?.getTime() ?? 0) - (b.data?.getTime() ?? 0));
+      const totalPerda = add(...rows.flatMap((r) => (r.perda ? [r.perda] : [])));
+      const totalRecuperado = add(...rows.flatMap((r) => (r.recuperado ? [r.recuperado] : [])));
+      return {
+        ...base,
+        columns: [
+          { key: "data", label: "Data", format: "date" },
+          { key: "customerName", label: "Cliente" },
+          { key: "tipo", label: "Lancamento" },
+          { key: "detalhe", label: "Motivo / forma" },
+          { key: "perda", label: "Perda", align: "right", format: "money" },
+          { key: "recuperado", label: "Recuperado", align: "right", format: "money" },
+        ],
+        rows,
+        totals: {
+          customerName: "TOTAL",
+          detalhe: `Liquido: ${formatBRL(sub(totalPerda, totalRecuperado))}`,
+          perda: totalPerda,
+          recuperado: totalRecuperado,
         },
       };
     }

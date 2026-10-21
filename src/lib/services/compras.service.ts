@@ -15,7 +15,11 @@ import { COMPRA_EXPENSE_CATEGORY } from "@/lib/constants";
 import { isModuleEnabled } from "@/lib/plan/modules";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { ORIGEM_COMPRA, ORIGEM_COMPRA_CANCELADA } from "@/lib/estoque/origens";
-import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
+import {
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 
 export interface UltimaCompraDoProduto {
   productId: string;
@@ -358,7 +362,7 @@ export const ComprasService = {
    */
   async cancelarCompra(input: CancelarCompraInput, ctx: TenantCtx) {
     // Mesma barreira explícita de `VendasService.cancelarVenda`.
-    if (ctx.session.role !== "OWNER") {
+    if (!podeDesfazer(ctx.session.role)) {
       throw new ForbiddenError("Só o responsável pela empresa pode cancelar uma compra.");
     }
 

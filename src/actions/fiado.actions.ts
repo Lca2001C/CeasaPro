@@ -7,7 +7,27 @@ import {
   devolucaoCaixasSchema,
   cancelarFiadoSchema,
   estornoRecebimentoSchema,
+  baixaPerdaSchema,
+  desfazerBaixaSchema,
 } from "@/lib/validations/fiado";
+
+/** Fiado que não vai ser pago sai da cobrança como perda. Ver `FiadoService.baixarComoPerda`. */
+export const baixarFiadoComoPerda = withTenantAction({
+  schema: baixaPerdaSchema,
+  handler: async (input, ctx) => {
+    const conta = await FiadoService.baixarComoPerda(input, ctx);
+    return { id: conta.id, status: conta.status };
+  },
+});
+
+/** Desfaz a baixa lançada errada (até 24 h). */
+export const desfazerBaixaDoFiado = withTenantAction({
+  schema: desfazerBaixaSchema,
+  handler: async (input, ctx) => {
+    const conta = await FiadoService.desfazerBaixa(input, ctx);
+    return { id: conta.id, status: conta.status };
+  },
+});
 
 export const atualizarFiado = withTenantAction({
   schema: fiadoUpdateSchema,

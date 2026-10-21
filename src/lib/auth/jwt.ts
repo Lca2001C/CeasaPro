@@ -23,6 +23,12 @@ export interface AccessPayload {
    */
   sev?: number;
   tev?: number;
+  /**
+   * Linhagem do refresh deste aparelho. O logout revoga a linhagem e
+   * `sessaoAindaValida` recusa o access que a carrega — antes ele seguia
+   * escrevendo por até 15 min depois do "Sair".
+   */
+  fid?: string;
 }
 
 const ACCESS_TTL = process.env.ACCESS_TOKEN_TTL ?? "15m";
@@ -92,6 +98,7 @@ export async function verifyAccess(token: string): Promise<AccessPayload | null>
         : undefined,
       sev: typeof payload.sev === "number" ? payload.sev : undefined,
       tev: typeof payload.tev === "number" ? payload.tev : undefined,
+      fid: typeof payload.fid === "string" ? payload.fid : undefined,
     };
   } catch {
     return null;

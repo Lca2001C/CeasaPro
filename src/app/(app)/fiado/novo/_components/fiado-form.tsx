@@ -1,7 +1,7 @@
 "use client";
 
 import { isoDateTz } from "@/lib/tz";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Plus, Trash2, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -57,6 +57,9 @@ export function FiadoForm({
   const [notes, setNotes] = useState("");
   const [items, setItems] = useState<Item[]>([novoItem(produtos)]);
   const [saving, setSaving] = useState(false);
+  // Uma chave por fiado digitado: o reenvio depois de um timeout devolve a venda
+  // já gravada em vez de lançar venda, baixa de estoque e conta em dobro.
+  const chave = useRef<string | null>(null);
 
   const total = items.reduce((a, i) => a + i.quantity * (i.unitPrice || 0), 0);
 
@@ -79,7 +82,9 @@ export function FiadoForm({
       return toast.error("Informe a quantidade de caixas plásticas.");
 
     setSaving(true);
+    chave.current ??= crypto.randomUUID();
     const res = await apiPost<{ id: string }>("/api/fiado", {
+      idempotencyKey: chave.current,
       customerName: customerName.trim(),
       customerPhone: customerPhone.trim() || null,
       saleDate,

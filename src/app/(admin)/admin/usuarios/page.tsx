@@ -268,6 +268,7 @@ export default async function AdminUsuariosPage({
                     nome={u.name}
                     ativo={u.active}
                     ehVoce={ehVoce}
+                    superAdmin={u.role === "SUPER_ADMIN"}
                   />
                 </Card>
               </li>

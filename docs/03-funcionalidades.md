@@ -181,7 +181,7 @@ Aba **Embalagens** de `/caixas-plasticas` (`?aba=embalagens`); `/embalagens` e `
 - **Tipos** cadastráveis (caixa plástica, papelão, madeira, sacaria… — os padrões vêm no cadastro da empresa).
 - Venda: tipo, cliente (opcional), data, quantidade, valor unitário (→ total).
 - Totais: embalagens vendidas e total vendido. Abas *Vendas* | *Tipos*.
-- A venda de embalagem é **receita**: entra no lucro do Início ("Vendi em embalagens" no Resultado do mês) e no "% do que você vendeu" de Despesas. Não entra em "Vendi" (que é a venda de mercadoria do PDV) nem tem CMV — a embalagem comprada entra como conta.
+- A venda de embalagem é **receita**: entra no lucro do Início ("Vendi em embalagens" no Resultado do mês) e no "% do que você vendeu" de Despesas. Não entra em "Vendi" (que é a venda de mercadoria do PDV). Com o controle de estoque ligado, a venda grava o custo médio e o lucro desconta "Custo das embalagens vendidas"; a entrada com custo gera a conta da compra (origem "Compra de embalagem"), fora do lucro e dentro do caixa. **Não lance mais a compra de embalagem como despesa manual** — ela contaria duas vezes.
 
 ## Relatórios
 

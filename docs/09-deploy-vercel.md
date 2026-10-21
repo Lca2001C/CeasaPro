@@ -459,6 +459,21 @@ O app marca o cookie `Secure` quando o proxy manda `x-forwarded-proto: https` (a
 
 Deployment → **Runtime Logs**. Não devem aparecer senha, token ou payload de cartão (o logger redige esses campos).
 
+### Erros (Sentry)
+
+O código já vem integrado e fica **desligado** sem DSN.
+
+1. Crie a conta em sentry.io → **Create Project** → plataforma **Next.js**.
+2. Copie o **DSN** (Settings → Client Keys).
+3. Na Vercel, ponha o mesmo valor em `SENTRY_DSN` e `NEXT_PUBLIC_SENTRY_DSN` (Production) e faça **build novo** (o `NEXT_PUBLIC_*` é embutido no build).
+4. Em Alerts, crie a regra "um problema novo" → e-mail. Erro inesperado no servidor chega com a tag `errorId` — o mesmo `ref:` que o cliente vê na tela.
+
+Só erros: sem tracing, sem replay e sem dado de cliente (cookies, cabeçalhos, corpo da requisição e variáveis da pilha desligados em `src/lib/observabilidade/sentry.ts`). Para a pilha do navegador vir legível: em Settings → Auth Tokens crie um token (escopo de release/source map) e ponha na Vercel `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` (o slug da organização) e `SENTRY_PROJECT` (o slug do projeto). O build envia os source maps e os apaga da saída publicada. Sem os três, a pilha vem minificada e o build não muda.
+
+### Site fora do ar (monitor externo)
+
+`/api/health` é público. Num serviço gratuito (UptimeRobot, Better Stack): monitor **HTTP(s)** em `https://<seu-domínio>/api/health`, a cada 5 minutos, com alerta por e-mail/WhatsApp. É o único jeito de saber que o site caiu sem um cliente reclamar — o Sentry só vê erro de quem conseguiu chegar ao app.
+
 ### Backup
 
 PITR / backup do Neon no plano contratado, mais um `pg_dump` periódico:
@@ -466,6 +481,17 @@ PITR / backup do Neon no plano contratado, mais um `pg_dump` periódico:
 ```bash
 pg_dump "$DIRECT_URL" -Fc -f ceasapro-$(date +%Y%m%d).dump
 ```
+
+No Windows, `scripts/backup-producao.ps1` faz isso de 3 em 3 dias pelo Agendador de Tarefas (`-Configurar` uma vez, depois `-Agendar`). O arquivo sai **criptografado** (`.dump.cpbk`, AES-256 + HMAC, chave derivada da senha do backup escolhida no `-Configurar`) em `C:\Backups\CeasaPro` — pasta do OneDrive é recusada, porque o dump tem os dados de todos os clientes. **Guarde a senha do backup fora do PC**: sem ela nenhum backup abre.
+
+**Teste uma restauração** de vez em quando num banco local — backup nunca restaurado não é backup:
+
+```powershell
+.\scripts\backup-producao.ps1 -Decifrar C:\Backups\CeasaPro\ceasapro-producao-AAAA-MM-DD_HHmm.dump.cpbk
+pg_restore --no-owner --no-privileges --dbname "postgresql://postgres:postgres@localhost:5432/restore_teste" C:\Backups\CeasaPro\ceasapro-producao-AAAA-MM-DD_HHmm.dump
+```
+
+O `.dump` decifrado está em claro: apague depois de restaurar.
 
 ### Rollback
 

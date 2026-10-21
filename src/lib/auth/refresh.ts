@@ -41,32 +41,46 @@ export type MotivoRevogacao =
 const GRACA_MS = 30_000;
 const GRACA_MAX_USOS = 3;
 
-/** Cria um refresh token opaco, guarda apenas o hash, e devolve o token cru. */
-export async function createRefreshToken(
+/**
+ * Cria a sessão de um aparelho: refresh token opaco (só o hash é guardado) e a
+ * linhagem dele. A `familyId` vai também no access token (`fid`): é por ela que
+ * o logout deste aparelho derruba o access que ainda não venceu
+ * (`sessaoAindaValida`), sem mexer nos outros aparelhos.
+ */
+export async function createRefreshSession(
   userId: string,
   meta?: { userAgent?: string; ip?: string },
-): Promise<string> {
+): Promise<{ raw: string; familyId: string }> {
   const raw = randomBytes(48).toString("base64url");
   const expiresAt = new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000);
+  // Aparelho novo, linhagem nova.
+  const familyId = randomBytes(16).toString("base64url");
   await prisma.refreshToken.create({
     data: {
       userId,
       tokenHash: hashToken(raw),
       expiresAt,
-      // Aparelho novo, linhagem nova.
-      familyId: randomBytes(16).toString("base64url"),
+      familyId,
       userAgent: meta?.userAgent,
       ip: meta?.ip,
     },
   });
-  return raw;
+  return { raw, familyId };
+}
+
+/** Cria um refresh token opaco, guarda apenas o hash, e devolve o token cru. */
+export async function createRefreshToken(
+  userId: string,
+  meta?: { userAgent?: string; ip?: string },
+): Promise<string> {
+  return (await createRefreshSession(userId, meta)).raw;
 }
 
 /** O que aconteceu ao apresentar um refresh token. */
 export type ResultadoRotacao =
-  | { tipo: "ok"; userId: string; newToken: string }
+  | { tipo: "ok"; userId: string; newToken: string; familyId: string }
   /** Corrida legítima: token recém-rotacionado, dentro da janela de graça. */
-  | { tipo: "corrida"; userId: string; newToken: string }
+  | { tipo: "corrida"; userId: string; newToken: string; familyId: string }
   /** Token roubado reapresentado — a família inteira foi revogada. */
   | { tipo: "reuso"; userId: string; familyId: string }
   /** Inexistente, expirado, ou revogado por logout/admin/senha. */
@@ -101,17 +115,64 @@ export async function rotateRefreshToken(
   meta?: { userAgent?: string; ip?: string },
 ): Promise<ResultadoRotacao> {
   const tokenHash = hashToken(raw);
-  const existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+  let existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
 
   if (!existing || existing.expiresAt < new Date()) return { tipo: "invalido" };
 
-  if (existing.revokedAt) {
-    // Revogado por logout, ação do admin ou troca de senha: é o fim normal de
-    // uma sessão, não um ataque.
-    if (existing.revokedReason !== "ROTATED") return { tipo: "invalido" };
+  if (!existing.revokedAt) {
+    const newRaw = randomBytes(48).toString("base64url");
+    const expiresAt = new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000);
+    // A rotação é REIVINDICADA por um update condicional: duas renovações
+    // simultâneas liam o token vivo, as duas rotacionavam e as duas saíam com
+    // "ok" — duas sessões novas sem passar pela janela de graça nem pelo teto
+    // dela. Só uma vence o `revokedAt: null`; a outra relê e cai no caminho de
+    // corrida abaixo, com o limite de usos valendo.
+    const criado = await prisma.$transaction(async (tx) => {
+      const { count } = await tx.refreshToken.updateMany({
+        where: { id: existing!.id, revokedAt: null },
+        data: { revokedAt: new Date(), revokedReason: "ROTATED" },
+      });
+      if (count === 0) return null;
+      const novo = await tx.refreshToken.create({
+        data: {
+          userId: existing!.userId,
+          tokenHash: hashToken(newRaw),
+          expiresAt,
+          familyId: existing!.familyId,
+          userAgent: meta?.userAgent,
+          ip: meta?.ip,
+        },
+      });
+      await tx.refreshToken.update({
+        where: { id: existing!.id },
+        data: { replacedById: novo.id },
+      });
+      return novo;
+    });
+    if (criado) {
+      return { tipo: "ok", userId: existing.userId, newToken: newRaw, familyId: existing.familyId };
+    }
 
-    const idade = Date.now() - existing.revokedAt.getTime();
-    if (idade <= GRACA_MS && existing.graceUses < GRACA_MAX_USOS) {
+    existing = await prisma.refreshToken.findUnique({ where: { tokenHash } });
+    if (!existing?.revokedAt) return { tipo: "invalido" };
+  }
+
+  // Revogado por logout, ação do admin ou troca de senha: é o fim normal de
+  // uma sessão, não um ataque.
+  if (existing.revokedReason !== "ROTATED") return { tipo: "invalido" };
+
+  const idade = Date.now() - existing.revokedAt.getTime();
+  if (idade <= GRACA_MS) {
+    // O uso da graça é reivindicado ANTES de emitir, pelo mesmo motivo: ler
+    // `graceUses` e incrementar depois deixava N chamadas simultâneas lerem o
+    // mesmo valor e furarem o teto. Quem não consegue reivindicar está além
+    // do teto — mesma resposta de antes para esse caso (reuso).
+    const { count } = await prisma.refreshToken.updateMany({
+      where: { id: existing.id, graceUses: { lt: GRACA_MAX_USOS } },
+      // `revokedAt` fica como está — de propósito. Ver o detalhe 1 acima.
+      data: { graceUses: { increment: 1 } },
+    });
+    if (count === 1) {
       // Família já derrubada (troca de senha, admin, empresa, reuso, logout):
       // a graça NÃO ressuscita a sessão. Sem isto, o token ROTATED de menos de
       // 30 s — que as revogações em massa não tocam, porque só revogam
@@ -128,42 +189,17 @@ export async function rotateRefreshToken(
         await revokeRefreshToken(novo, "REUSE");
         return { tipo: "invalido" };
       }
-
-      await prisma.refreshToken.update({
-        where: { id: existing.id },
-        // `revokedAt` fica como está — de propósito. Ver o detalhe 1 acima.
-        data: { graceUses: { increment: 1 } },
-      });
-      return { tipo: "corrida", userId: existing.userId, newToken: novo };
+      return {
+        tipo: "corrida",
+        userId: existing.userId,
+        newToken: novo,
+        familyId: existing.familyId,
+      };
     }
-
-    await revogarFamilia(existing.familyId);
-    return { tipo: "reuso", userId: existing.userId, familyId: existing.familyId };
   }
 
-  const newRaw = randomBytes(48).toString("base64url");
-  const expiresAt = new Date(Date.now() + refreshDays * 24 * 60 * 60 * 1000);
-  const [, criado] = await prisma.$transaction([
-    prisma.refreshToken.update({
-      where: { id: existing.id },
-      data: { revokedAt: new Date(), revokedReason: "ROTATED" },
-    }),
-    prisma.refreshToken.create({
-      data: {
-        userId: existing.userId,
-        tokenHash: hashToken(newRaw),
-        expiresAt,
-        familyId: existing.familyId,
-        userAgent: meta?.userAgent,
-        ip: meta?.ip,
-      },
-    }),
-  ]);
-  await prisma.refreshToken.update({
-    where: { id: existing.id },
-    data: { replacedById: criado.id },
-  });
-  return { tipo: "ok", userId: existing.userId, newToken: newRaw };
+  await revogarFamilia(existing.familyId);
+  return { tipo: "reuso", userId: existing.userId, familyId: existing.familyId };
 }
 
 /**

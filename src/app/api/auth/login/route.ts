@@ -3,13 +3,14 @@ import { verifyPassword, hashDeIsca } from "@/lib/auth/password";
 import { signAccess } from "@/lib/auth/jwt";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
-import { createRefreshToken } from "@/lib/auth/refresh";
+import { createRefreshSession } from "@/lib/auth/refresh";
 import { loginSchema } from "@/lib/validations/auth";
 import { rateLimitDb, resetRateLimit, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { chaveDeLoginPorEmail } from "@/lib/auth/limite-login";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 import { errorResponse } from "@/lib/http/error-response";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
@@ -20,6 +21,9 @@ export const runtime = "nodejs";
  * não diz nada sobre a conta — o genérico de credencial continua valendo.
  */
 export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, true);
+  if (recusa) return recusa;
   try {
     return await entrar(req);
   } catch (e) {
@@ -98,12 +102,12 @@ async function entrar(req: Request): Promise<Response> {
   // a mesma pessoa entrando de dois aparelhos trancaria a própria conta.
   await Promise.all([resetRateLimit(rateKeyIp), resetRateLimit(rateKeyEmail)]);
 
-  const accessToken = await signAccess(payload);
-  const refreshToken = await createRefreshToken(user.id, {
+  const sessao = await createRefreshSession(user.id, {
     ip,
     userAgent: (await userAgent()) ?? undefined,
   });
-  await setAuthCookies(accessToken, refreshToken);
+  const accessToken = await signAccess({ ...payload, fid: sessao.familyId });
+  await setAuthCookies(accessToken, sessao.raw);
   await prisma.user.update({
     where: { id: user.id },
     data: { lastLoginAt: new Date() },

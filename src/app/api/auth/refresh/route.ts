@@ -7,10 +7,14 @@ import {
 } from "@/lib/auth/cookies";
 import { auditarReusoDeSessao, rotateRefreshToken } from "@/lib/auth/refresh";
 import { clientIp, userAgent } from "@/lib/http/request";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
-export async function POST() {
+export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, false);
+  if (recusa) return recusa;
   const current = await readRefreshCookie();
   if (!current) {
     return Response.json(
@@ -45,7 +49,7 @@ export async function POST() {
     );
   }
 
-  const accessToken = await signAccess(payload);
+  const accessToken = await signAccess({ ...payload, fid: rotated.familyId });
   await setAuthCookies(accessToken, rotated.newToken);
   return Response.json({ ok: true, data: { role: payload.role } });
 }

@@ -110,6 +110,21 @@ describe("Ambiente próprio do super-admin", () => {
     expect(quantos).toBe(1);
   });
 
+  it("dois cliques simultâneos criam UM ambiente — sem órfão na lista de clientes", async () => {
+    const ctx = await superAdminCtx();
+    const [a, b] = await Promise.all([
+      AdminService.getOrCreateAdminWorkspace(ctx),
+      AdminService.getOrCreateAdminWorkspace(ctx),
+    ]);
+    criados.push(a.tenantId, b.tenantId);
+    expect(a.tenantId).toBe(b.tenantId);
+    expect([a.criado, b.criado].filter(Boolean)).toHaveLength(1);
+    const ambientes = await prisma.tenant.count({
+      where: { tradeName: "Ambiente de Super Admin", id: { in: [a.tenantId, b.tenantId] } },
+    });
+    expect(ambientes).toBe(1);
+  });
+
   it("o plano interno não é ofertado a cliente nenhum", async () => {
     const ctx = await superAdminCtx();
     const { tenantId } = await AdminService.getOrCreateAdminWorkspace(ctx);

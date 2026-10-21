@@ -13,6 +13,7 @@ import {
   provisionTenant,
   cnpjEmUso,
   emailEmUso,
+  ehColisaoDeIdentidadeDeEmail,
   emailDeExcluido,
   liberarEmailDeContaExcluida,
 } from "./tenant-provisioning";
@@ -334,6 +335,12 @@ export const AdminService = {
         tx,
       );
       return { tenantId: novoId, userId: donoId };
+    }).catch((e: unknown) => {
+      // Outro cadastro da mesma caixa gravou entre `emailEmUso` e aqui.
+      if (ehColisaoDeIdentidadeDeEmail(e)) {
+        throw new BusinessRuleError("Já existe um usuário com esse e-mail.");
+      }
+      throw e;
     });
 
     // FORA da transação: o aviso é acessório e não pode desfazer o cadastro.
@@ -389,29 +396,48 @@ export const AdminService = {
 
     // Plano interno INATIVO: `listAvailablePlans` só oferta planos ativos, então
     // ele nunca aparece para um cliente — mas a FK de assinatura exige um plano.
-    const plan =
-      (await prisma.plan.findUnique({ where: { slug: ADMIN_PLAN_SLUG } })) ??
-      (await prisma.plan.create({
-        data: {
-          name: "Ambiente do administrador",
-          slug: ADMIN_PLAN_SLUG,
-          priceMonthly: 0,
-          active: false,
-          // Explícito desde que `planModules` virou fail-closed: `features: {}`
-          // significava "todos liberados" e passou a significar "nenhum". O
-          // super-admin recebe a lista completa pelo PAPEL (`build-session`), não
-          // por este plano — mas deixá-lo dizendo o contrário do que se quer é o
-          // tipo de detalhe que reaparece como bug quando alguém usar este plano
-          // para outra coisa.
-          features: { modules: [...ALL_OPTIONAL_KEYS] },
-        },
-      }));
+    // `upsert`: dois cliques criavam o plano duas vezes e o segundo batia no
+    // índice único do slug.
+    const plan = await prisma.plan.upsert({
+      where: { slug: ADMIN_PLAN_SLUG },
+      update: {},
+      create: {
+        name: "Ambiente do administrador",
+        slug: ADMIN_PLAN_SLUG,
+        priceMonthly: 0,
+        active: false,
+        // Explícito desde que `planModules` virou fail-closed: `features: {}`
+        // significava "todos liberados" e passou a significar "nenhum". O
+        // super-admin recebe a lista completa pelo PAPEL (`build-session`), não
+        // por este plano — mas deixá-lo dizendo o contrário do que se quer é o
+        // tipo de detalhe que reaparece como bug quando alguém usar este plano
+        // para outra coisa.
+        features: { modules: [...ALL_OPTIONAL_KEYS] },
+      },
+    });
 
     // Bem longe: o ambiente não deve "vencer" no meio de um teste.
     const periodEnd = new Date();
     periodEnd.setFullYear(periodEnd.getFullYear() + 50);
 
-    const tenantId = await prisma.$transaction(async (tx) => {
+    return prisma.$transaction(async (tx) => {
+      // Dois cliques em "Usar o sistema" passavam os dois pela checagem acima
+      // e criavam dois ambientes; o que perdia ficava órfão e aparecia na
+      // lista de clientes. Com a linha do usuário travada, o segundo espera o
+      // primeiro e encontra o ambiente já ligado.
+      await tx.$queryRaw`SELECT id FROM users WHERE id = ${user.id} FOR UPDATE`;
+      const agora = await tx.user.findUniqueOrThrow({
+        where: { id: user.id },
+        select: { tenantId: true },
+      });
+      if (agora.tenantId && agora.tenantId !== user.tenantId) {
+        const criadoAgora = await tx.tenant.findFirst({
+          where: { id: agora.tenantId, deletedAt: null },
+          select: { id: true },
+        });
+        if (criadoAgora) return { tenantId: criadoAgora.id, criado: false };
+      }
+
       const tenant = await tx.tenant.create({
         data: {
           tradeName: `Ambiente de ${user.name}`,
@@ -453,10 +479,8 @@ export const AdminService = {
         },
         tx,
       );
-      return tenant.id;
+      return { tenantId: tenant.id, criado: true };
     });
-
-    return { tenantId, criado: true };
   },
 
   async setTenantStatus(input: TenantStatusInput, ctx: AdminCtx) {
@@ -1094,6 +1118,15 @@ export const AdminService = {
   async resetUserPassword(userId: string, ctx: AdminCtx) {
     const user = await prisma.user.findFirst({ where: { id: userId, deletedAt: null } });
     if (!user) throw new NotFoundError("Usuário não encontrado");
+    // Super-admin não redefine a senha de super-admin (nem a própria por aqui):
+    // a temporária aparece na tela de quem pediu, então um admin comprometido
+    // tomaria a conta dos outros. Super-admin troca a própria em /alterar-senha
+    // ou pela recuperação por e-mail.
+    if (user.role === "SUPER_ADMIN") {
+      throw new BusinessRuleError(
+        "A senha de um super-admin não é redefinida por aqui. Use a recuperação de senha por e-mail.",
+      );
+    }
 
     const tempPassword = randomBytes(6).toString("base64url");
     // O hash (Argon2, lento) sai ANTES da transação, para não segurá-la aberta.

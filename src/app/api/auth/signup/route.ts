@@ -7,6 +7,7 @@ import { hasConfiguredAppUrl } from "@/lib/app-url";
 import { SignupService } from "@/lib/services/signup.service";
 import { emailIdentity } from "@/lib/email-identity";
 import { errorResponse } from "@/lib/http/error-response";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
@@ -26,6 +27,9 @@ export const runtime = "nodejs";
  * do próprio usuário e não diz nada sobre a base.
  */
 export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, true);
+  if (recusa) return recusa;
   const ip = (await clientIp()) ?? "unknown";
   const body = await req.json().catch(() => ({}));
   const parsed = signupSchema.safeParse(body);

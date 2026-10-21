@@ -5,8 +5,19 @@ import { audit } from "@/lib/audit";
 import { toDecimal, money, add } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { passaDoEstoque } from "@/lib/estoque/nivel";
-import { ORIGEM_COMPRA, ORIGEM_COMPRA_CANCELADA } from "@/lib/estoque/origens";
-import { BusinessRuleError, NotFoundError } from "@/lib/http/app-error";
+import {
+  ORIGEM_AJUSTE,
+  ORIGEM_AJUSTE_DESFEITO,
+  ORIGEM_COMPRA,
+  ORIGEM_COMPRA_CANCELADA,
+} from "@/lib/estoque/origens";
+import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
+import {
+  HORAS_PARA_DESFAZER,
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 import type { AjusteEstoqueInput } from "@/lib/validations/estoque";
 import type { TenantCtx } from "@/lib/http/with-action";
 
@@ -115,6 +126,16 @@ function sqlCustoEstoque(filtrarProdutos: boolean): string {
           AND estorno."tenantId" = m."tenantId"
           AND estorno."sourceType" = '${ORIGEM_COMPRA_CANCELADA}'
           AND estorno."sourceId" = m."sourceId"
+      )
+      -- Ajuste manual desfeito: o ajuste e o estorno dele saem JUNTOS (o custo
+      -- digitado errado não fica na média; o par soma zero no saldo).
+      AND NOT EXISTS (
+        SELECT 1 FROM stock_movements estorno
+        WHERE m."sourceType" IN ('${ORIGEM_AJUSTE}', '${ORIGEM_AJUSTE_DESFEITO}')
+          AND estorno."tenantId" = m."tenantId"
+          AND estorno."sourceType" = '${ORIGEM_AJUSTE_DESFEITO}'
+          AND estorno."sourceId" =
+            CASE WHEN m."sourceType" = '${ORIGEM_AJUSTE}' THEN m.id ELSE m."sourceId" END
       )
     WINDOW w AS (PARTITION BY "productId" ORDER BY "createdAt", id)
   ),
@@ -387,6 +408,117 @@ export const EstoqueService = {
     );
   },
 
+  /**
+   * Ajustes manuais das últimas 24 h ainda não desfeitos — a lista da tela de
+   * ajuste, com o botão "Desfazer".
+   */
+  async ajustesRecentes(tenantId: string, agora = new Date()) {
+    const db = getTenantPrisma(tenantId);
+    const desde = new Date(agora.getTime() - HORAS_PARA_DESFAZER * 3600_000);
+    const ajustes = await db.stockMovement.findMany({
+      where: { sourceType: ORIGEM_AJUSTE, createdAt: { gte: desde } },
+      include: { product: { select: { name: true, saleUnit: true } } },
+      orderBy: { createdAt: "desc" },
+      take: 50,
+    });
+    if (ajustes.length === 0) return [];
+    const desfeitos = await db.stockMovement.findMany({
+      where: { sourceType: ORIGEM_AJUSTE_DESFEITO, sourceId: { in: ajustes.map((a) => a.id) } },
+      select: { sourceId: true },
+    });
+    const jaDesfeitos = new Set(desfeitos.map((d) => d.sourceId));
+    return ajustes.filter((a) => !jaDesfeitos.has(a.id));
+  },
+
+  /**
+   * Desfaz um ajuste manual lançado errado — a regra única de desfazer
+   * (`src/lib/desfazer/prazo.ts`): até 24 h, só o dono, e nunca apagando a
+   * linha. Entra um AJUSTE espelhado (`MANUAL_CANCELLED`) que devolve a
+   * quantidade, e o par sai do repasse do custo médio (`sqlCustoEstoque`): um
+   * custo digitado errado (R$ 5.000 em vez de R$ 50) deixa de contaminar a
+   * média.
+   *
+   * Recusa se o produto teve QUALQUER movimento depois do ajuste: esses
+   * movimentos já gravaram o custo médio daquela hora (a venda no
+   * `unitCostAtSale`), e tirar o ajuste do passado deixaria o CMV deles errado
+   * para sempre — a mesma regra do cancelamento de compra.
+   */
+  async desfazerAjuste(input: { id: string }, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode desfazer um ajuste.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const ajuste = await tx.stockMovement.findFirst({
+        where: { id: input.id, sourceType: ORIGEM_AJUSTE },
+      });
+      if (!ajuste) throw new NotFoundError("Ajuste não encontrado");
+      if (!dentroDoPrazoDeDesfazer(ajuste.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer este ajuste"));
+      }
+      // Mesma trava do ajuste e da venda: a ordem do livro-razão do produto.
+      await tx.$queryRaw`
+        SELECT id FROM products
+        WHERE "tenantId" = ${ctx.tenantId} AND id = ${ajuste.productId}
+        FOR UPDATE
+      `;
+      const jaDesfeito = await tx.stockMovement.findFirst({
+        where: { sourceType: ORIGEM_AJUSTE_DESFEITO, sourceId: ajuste.id },
+        select: { id: true },
+      });
+      if (jaDesfeito) throw new BusinessRuleError("Este ajuste já foi desfeito.");
+      const depois = await tx.stockMovement.count({
+        where: {
+          productId: ajuste.productId,
+          OR: [
+            { createdAt: { gt: ajuste.createdAt } },
+            { createdAt: ajuste.createdAt, id: { gt: ajuste.id } },
+          ],
+        },
+      });
+      if (depois > 0) {
+        throw new BusinessRuleError(
+          "Este produto já teve venda, compra ou outro ajuste depois deste. Lance um novo " +
+            "ajuste de acerto em vez de desfazer.",
+        );
+      }
+
+      // O efeito do ajuste no saldo, com o sinal invertido. QUEBRA/DOAÇÃO tiram
+      // (quantidade positiva que subtrai); AJUSTE soma a quantidade com sinal.
+      const efeito =
+        ajuste.type === "AJUSTE" ? toDecimal(ajuste.quantity) : toDecimal(ajuste.quantity).neg();
+      const estorno = await tx.stockMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          productId: ajuste.productId,
+          type: "AJUSTE",
+          quantity: efeito.neg(),
+          unitCost: ajuste.unitCost,
+          movedAt: ajuste.movedAt,
+          reason: "Ajuste desfeito",
+          sourceType: ORIGEM_AJUSTE_DESFEITO,
+          sourceId: ajuste.id,
+        },
+      });
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "StockMovement",
+          entityId: ajuste.id,
+          oldData: { type: ajuste.type, quantity: ajuste.quantity.toString() },
+          newData: { desfeito: true, estorno: estorno.id },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return { id: ajuste.id };
+    });
+  },
+
   /** Ajuste manual de estoque: quebra/perda, doação ou acerto. */
   async registrarAjuste(input: AjusteEstoqueInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
@@ -437,7 +569,7 @@ export const EstoqueService = {
           quantity: input.quantity,
           unitCost,
           reason: input.reason ?? null,
-          sourceType: "MANUAL",
+          sourceType: ORIGEM_AJUSTE,
         },
       });
 

@@ -96,7 +96,7 @@ export default async function DashboardPage({
       temCotacoes && ehGeral ? CotacoesAlertasService.getInteresses(tenantId) : null,
       // A última compra contra o boletim. Mesmo gate, mesma razão.
       temCotacoes && ehGeral ? CotacoesService.comprasAcimaDoBoletim(tenantId) : null,
-      ehGeral ? null : PainelFinanceiroService.get(tenantId),
+      ehGeral ? null : PainelFinanceiroService.get(tenantId, undefined, session.modules),
     ]);
   const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
@@ -441,7 +441,19 @@ function Financeiro({
                 ? [["Vendi em embalagens", Number(s.embalagensMes)] as [string, number]]
                 : []),
               ["Custo da mercadoria vendida", -Number(s.cmvMes)],
+              ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
+                ? [["Custo das embalagens vendidas", -Number(s.custoEmbalagensMes)] as [string, number]]
+                : []),
+              ...(Number(s.perdasEstoqueMes) !== 0
+                ? [["Perdas e acertos de estoque", -Number(s.perdasEstoqueMes)] as [string, number]]
+                : []),
               ["Contas do mês", -Number(s.despesasLucroMes)],
+              ...(Number(s.perdasFiadoMes) > 0
+                ? [["Perda com fiado", -Number(s.perdasFiadoMes)] as [string, number]]
+                : []),
+              ...(Number(s.recuperadoFiadoMes) > 0
+                ? [["Recebido de fiado baixado", Number(s.recuperadoFiadoMes)] as [string, number]]
+                : []),
               [prejuizo ? "Prejuízo" : "Sobrou", Number(s.lucroMes)],
             ],
           }}
@@ -466,12 +478,54 @@ function Financeiro({
                 cor: COR_SERIE.compras,
                 prefixo: "− ",
               },
+              ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
+                ? [
+                    {
+                      rotulo: "Custo das embalagens vendidas",
+                      valor: Number(s.custoEmbalagensMes),
+                      cor: COR_SERIE.compras,
+                      prefixo: "− ",
+                    },
+                  ]
+                : []),
+              // Quebra, doação e acerto: negativo quando o acerto para cima
+              // (mercadoria achada) passa da perda do mês.
+              ...(Number(s.perdasEstoqueMes) !== 0
+                ? [
+                    {
+                      rotulo: "Perdas e acertos de estoque",
+                      valor: Math.abs(Number(s.perdasEstoqueMes)),
+                      cor: COR_SERIE.compras,
+                      prefixo: Number(s.perdasEstoqueMes) > 0 ? "− " : "+ ",
+                    },
+                  ]
+                : []),
               {
                 rotulo: "Contas do mês",
                 valor: Number(s.despesasLucroMes),
                 cor: COR_SERIE.contas,
                 prefixo: "− ",
               },
+              ...(Number(s.perdasFiadoMes) > 0
+                ? [
+                    {
+                      rotulo: "Perda com fiado",
+                      valor: Number(s.perdasFiadoMes),
+                      cor: COR_SERIE.contas,
+                      prefixo: "− ",
+                    },
+                  ]
+                : []),
+              ...(Number(s.recuperadoFiadoMes) > 0
+                ? [
+                    {
+                      rotulo: "Recebido de fiado baixado",
+                      valor: Number(s.recuperadoFiadoMes),
+                      cor: COR_SERIE.vendas,
+                      prefixo: "+ ",
+                    },
+                  ]
+                : []),
               {
                 rotulo: prejuizo ? "Prejuízo" : "Sobrou",
                 valor: Number(s.lucroMes),
@@ -480,10 +534,17 @@ function Financeiro({
               },
             ]}
           />
+          {temEmbalagens && s.embalagensSemCusto > 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {s.embalagensSemCusto} venda(s) de embalagem sem custo neste mês: o lucro está
+              contando o valor inteiro delas. Ligue o controle de estoque do tipo em Caixas e
+              embalagens e registre as entradas com o custo.
+            </p>
+          )}
         </CartaoGrafico>
 
         <CartaoGrafico
-          titulo="Vendas dos últimos 30 dias"
+          titulo="Vendas de mercadoria dos últimos 30 dias"
           subtitulo="Toque numa barra para ver o dia"
           destaque={formatBRL(s.chart.reduce((a, d) => a + d.total, 0))}
           tabela={{
@@ -499,7 +560,7 @@ function Financeiro({
 
       <CartaoGrafico
         titulo="Últimos 6 meses"
-        subtitulo="Quanto vendeu, quanto comprou de mercadoria e quanto pagou de contas"
+        subtitulo="Quanto vendeu (mercadoria e embalagem), quanto comprou de mercadoria e as contas do mês"
         destaque={
           ultimoMes ? (
             <span className="text-sm font-medium text-muted-foreground">
@@ -523,7 +584,10 @@ function Financeiro({
             <BarrasHorizontais
               cor={COR_SERIE.vendas}
               itens={financeiro.formasDePagamento.map((f) => ({
-                rotulo: PAYMENT_METHOD_LABELS[f.chave] ?? f.chave,
+                rotulo:
+                  f.chave === "EMBALAGEM"
+                    ? "Venda de embalagem"
+                    : (PAYMENT_METHOD_LABELS[f.chave] ?? f.chave),
                 valor: f.total,
               }))}
             />
@@ -532,7 +596,7 @@ function Financeiro({
 
         <CartaoGrafico
           titulo="Para onde foram as contas"
-          subtitulo="Contas do mês por categoria (sem as compras de mercadoria)"
+          subtitulo="Contas do mês por categoria, com a higienização (sem as compras)"
         >
           {financeiro.contasPorCategoria.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma conta lançada no mês.</p>

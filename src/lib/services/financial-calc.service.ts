@@ -9,8 +9,9 @@ import { add, sub, mul, div, money, toDecimal, type Numeric } from "@/lib/money"
  *   valor_total_compra = quantidade * preco_unitario + frete
  *   valor_total_venda  = quantidade * valor_unitario
  *   faturamento        = vendas_de_mercadoria + vendas_de_embalagem
- *   lucro_bruto        = faturamento - custo_dos_produtos_vendidos
- *   lucro_liquido      = lucro_bruto - despesas
+ *   custo_do_vendido   = cmv_da_mercadoria + custo_das_embalagens_vendidas + perdas_de_estoque
+ *   lucro_bruto        = faturamento - custo_do_vendido
+ *   lucro_liquido      = lucro_bruto - despesas - perdas_com_fiado + recuperado_de_fiado_baixado
  *   margem_liquida     = (lucro_liquido / faturamento) * 100
  */
 export const FinancialCalc = {
@@ -129,9 +130,9 @@ export const FinancialCalc = {
   /**
    * Faturamento do período = venda de mercadoria + venda avulsa de embalagem.
    *
-   * A embalagem não passa pelo PDV e não tem CMV (a compra dela entra como
-   * conta), mas é dinheiro vendido: fora daqui, o caixa mostrava uma receita
-   * que o lucro e o "% do que você vendeu" não viam.
+   * A embalagem não passa pelo PDV, mas é dinheiro vendido: fora daqui, o caixa
+   * mostrava uma receita que o lucro e o "% do que você vendeu" não viam. O
+   * custo dela entra em `custoDoVendido`.
    */
   faturamento(vendasDeMercadoria: Numeric, vendasDeEmbalagem: Numeric = 0) {
     return money(add(vendasDeMercadoria, vendasDeEmbalagem));
@@ -142,9 +143,78 @@ export const FinancialCalc = {
     return money(sub(totalVendido, custoProdutosVendidos));
   },
 
-  /** Lucro líquido = lucro bruto - despesas. */
-  lucroLiquido(lucroBruto: Numeric, despesas: Numeric) {
-    return money(sub(lucroBruto, despesas));
+  /**
+   * Custo da mercadoria = CMV do que foi vendido + custo médio das embalagens
+   * vendidas (`PackagingSale.unitCostAtSale × quantidade`) + perdas e acertos
+   * de estoque do mês (quebra, doação, acerto para baixo — menos o acerto para
+   * cima), pelo custo gravado no movimento.
+   *
+   * Sem a perda, a mercadoria que estragou não descontava em lugar nenhum: a
+   * conta da compra fica fora do lucro "porque já está no CMV", e o CMV só via
+   * o que foi VENDIDO. Em hortifruti, perda é diária — o lucro saía sempre
+   * para cima.
+   */
+  custoDoVendido(cmvMercadoria: Numeric, custoEmbalagens: Numeric = 0, perdasDeEstoque: Numeric = 0) {
+    return money(add(cmvMercadoria, custoEmbalagens, perdasDeEstoque));
+  },
+
+  /**
+   * Custo médio ponderado MÓVEL de um item a partir do livro-razão dele, na
+   * ordem de gravação — a mesma regra do estoque de mercadoria
+   * (`sqlCustoEstoque`): a entrada com custo pondera com o que sobrou, a saída
+   * sai pela média sem alterá-la, e saldo ≤ 0 zera a média (a próxima entrada
+   * recomeça). Entrada SEM custo soma ao saldo e mantém a média.
+   *
+   * Devolve `null` quando nenhuma entrada com custo formou a média.
+   */
+  custoMedioMovel(
+    movimentos: { entrada: boolean; quantidade: Numeric; custoUnitario: Numeric | null }[],
+  ): Prisma.Decimal | null {
+    let saldo = toDecimal(0);
+    let media: Prisma.Decimal | null = null;
+    for (const m of movimentos) {
+      const q = toDecimal(m.quantidade);
+      if (m.entrada && q.greaterThan(0)) {
+        if (m.custoUnitario !== null) {
+          const c = toDecimal(m.custoUnitario);
+          media =
+            media !== null && saldo.greaterThan(0)
+              ? div(add(mul(saldo, media), mul(q, c)), add(saldo, q))
+              : c;
+        }
+        saldo = add(saldo, q);
+      } else {
+        saldo = sub(saldo, q.abs());
+        if (saldo.lessThanOrEqualTo(0)) {
+          saldo = toDecimal(0);
+          media = null;
+        }
+      }
+    }
+    return media === null ? null : media.toDecimalPlaces(4);
+  },
+
+  /** Custo de uma venda de embalagem: quantidade × custo médio na hora da venda. */
+  custoVendaEmbalagem(quantidade: Numeric, custoUnitario: Numeric) {
+    return money(mul(quantidade, custoUnitario));
+  },
+
+  /**
+   * Lucro líquido = lucro bruto - despesas - perdas com fiado.
+   *
+   * A perda com fiado (`CreditAccount.writtenOffAmount`) entra no mês da
+   * BAIXA: a venda já foi faturamento no mês dela, e o que não vai ser
+   * recebido sai do resultado de agora, sem reescrever o mês fechado. Pelo
+   * mesmo motivo, o que o cliente paga DEPOIS da baixa
+   * (`CreditPayment.aposBaixa`) volta ao resultado no mês em que entra.
+   */
+  lucroLiquido(
+    lucroBruto: Numeric,
+    despesas: Numeric,
+    perdasComFiado: Numeric = 0,
+    recuperadoDeFiado: Numeric = 0,
+  ) {
+    return money(add(sub(sub(lucroBruto, despesas), perdasComFiado), recuperadoDeFiado));
   },
 
   /** Margem líquida percentual. Retorna 0 quando não há vendas (evita divisão por zero). */

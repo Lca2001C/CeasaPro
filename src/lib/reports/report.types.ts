@@ -23,6 +23,7 @@ export const REPORT_TYPES = [
   "VENDAS",
   "COMPRAS",
   "FIADO",
+  "FIADO_PERDAS",
   "DESPESAS",
   "CONTAS_PAGAS",
   "ESTOQUE",
@@ -47,6 +48,7 @@ export const BASIC_REPORTS: ReportKind[] = [
   "VENDAS",
   "COMPRAS",
   "FIADO",
+  "FIADO_PERDAS",
   "DESPESAS",
   "CONTAS_PAGAS",
   "ESTOQUE",
@@ -110,6 +112,7 @@ export const REPORT_LABELS: Record<ReportKind, string> = {
   VENDAS: "Relatório de vendas",
   COMPRAS: "Relatório de compras",
   FIADO: "Relatório de fiado",
+  FIADO_PERDAS: "Fiado baixado como perda",
   DESPESAS: "Relatório de despesas",
   CONTAS_PAGAS: "Contas pagas no período",
   ESTOQUE: "Relatório de estoque",
@@ -140,7 +143,7 @@ export const REPORT_LABELS: Record<ReportKind, string> = {
 export const REPORT_GROUPS: { titulo: string; relatorios: ReportKind[] }[] = [
   {
     titulo: "Vendas e fiado",
-    relatorios: ["VENDAS", "FIADO", "MAIS_VENDIDOS", "INADIMPLENTES"],
+    relatorios: ["VENDAS", "FIADO", "FIADO_PERDAS", "MAIS_VENDIDOS", "INADIMPLENTES"],
   },
   {
     titulo: "Compras e estoque",

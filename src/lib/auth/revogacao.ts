@@ -45,6 +45,8 @@ export type EstadoDaSessaoNoBanco = {
   ativo: boolean;
   excluido: Date | null;
   te: number | null;
+  /** A linhagem do aparelho (`fid`) foi encerrada (logout, reuso…)? */
+  familiaEncerrada?: boolean;
 };
 
 /**
@@ -59,6 +61,8 @@ export function sessaoConfere(
   atual: EstadoDaSessaoNoBanco | undefined,
 ): boolean {
   if (!atual || !atual.ativo || atual.excluido) return false;
+  // Logout DESTE aparelho: o access dele morre junto, os outros seguem.
+  if (atual.familiaEncerrada) return false;
   // Token sem os claims (emitido antes desta mudança) é tratado como epoch 0 —
   // o mesmo valor que as colunas recebem por default. Continua válido até
   // vencer, e o primeiro incremento o invalida.
@@ -87,7 +91,13 @@ export async function sessaoAindaValida(session: Session): Promise<boolean> {
     SELECT u."sessionEpoch" AS ue,
            u.active         AS ativo,
            u."deletedAt"    AS excluido,
-           t."sessionEpoch" AS te
+           t."sessionEpoch" AS te,
+           EXISTS (
+             SELECT 1 FROM refresh_tokens r
+             WHERE r."familyId" = ${session.fid ?? null}
+               AND r."revokedAt" IS NOT NULL
+               AND (r."revokedReason" IS NULL OR r."revokedReason" <> 'ROTATED')
+           ) AS "familiaEncerrada"
     FROM users u
     LEFT JOIN tenants t ON t.id = u."tenantId"
     WHERE u.id = ${session.sub}

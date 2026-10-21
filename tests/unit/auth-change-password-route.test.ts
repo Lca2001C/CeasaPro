@@ -74,7 +74,12 @@ vi.mock("@/lib/auth/refresh", () => ({
     ordem.push("criar-refresh");
     return createRefreshToken(id, m);
   },
+  createRefreshSession: async (id: string, m: unknown) => {
+    ordem.push("criar-refresh");
+    return { raw: await createRefreshToken(id, m), familyId: "familia-1" };
+  },
 }));
+vi.mock("@/lib/auth/revogacao", () => ({ sessaoAindaValida: () => Promise.resolve(true) }));
 vi.mock("@/lib/security/rate-limit-db", async () => {
   const real = await vi.importActual<typeof import("@/lib/security/rate-limit-db")>(
     "@/lib/security/rate-limit-db",
@@ -108,6 +113,7 @@ const trocar = (corpo: unknown = { currentPassword: "senha-atual", newPassword: 
     new Request("http://localhost/api/auth/change-password", {
       method: "POST",
       body: JSON.stringify(corpo),
+      headers: { "Content-Type": "application/json" },
     }),
   );
 
@@ -283,6 +289,7 @@ describe("quem não passa", () => {
       new Request("http://localhost/api/auth/change-password", {
         method: "POST",
         body: "{ truncado",
+        headers: { "Content-Type": "application/json" },
       }),
     );
     expect(r.status).toBe(422);

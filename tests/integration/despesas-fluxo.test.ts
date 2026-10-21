@@ -250,6 +250,19 @@ describe("Replicar mês anterior", () => {
     expect(await prisma.expense.count({ where: { tenantId } })).toBe(4);
   });
 
+  it("dois toques ao mesmo tempo não duplicam o mês", async () => {
+    await criar({ description: "Luz", dueDate: "2026-08-10" });
+    const [a, b] = await Promise.all([
+      DespesasService.replicarMes("2026-08", ctx, HOJE),
+      DespesasService.replicarMes("2026-08", ctx, HOJE),
+    ]);
+    expect(a.criadas + b.criadas).toBe(1);
+    const copias = await prisma.expense.count({
+      where: { tenantId, description: "Luz", parentId: { not: null } },
+    });
+    expect(copias).toBe(1);
+  });
+
   it("recusa com mensagem clara quando o mês de origem está vazio", async () => {
     await expect(DespesasService.replicarMes("2026-01", ctx, HOJE)).rejects.toThrow(
       /não há despesas/i,

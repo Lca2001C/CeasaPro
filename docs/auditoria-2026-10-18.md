@@ -81,28 +81,68 @@ Nenhum era vazamento entre empresas. A tabela fica como registro do achado.
 | P12 | `competenciaACobrar`: período pago correndo (um APROVADO com `periodEnd` futuro) e fora da janela é "já pago", qualquer que seja o rótulo do mês. |
 | baixa | Dinheiro com no máximo 2 casas também em higienização e embalagens (`temAteDuasCasas`). |
 
+## 2b. Correções de 21/10
+
+| Item | O que mudou |
+|---|---|
+| PIX de outra competência | Gerar cobrança (PIX ou cartão) e aprovar pagamento baixam e cancelam no MP as pendentes de **todas** as competências. |
+| `replicarMes` sem trava | Transação com `pg_advisory_xact_lock(hashtext(tenantId), 5)`. |
+| "Usar o sistema" com duplo clique | Linha do usuário travada (`FOR UPDATE`) e plano interno por `upsert`. |
+| Super-admin redefinindo senha de super-admin | Recusado no serviço; botão desabilitado. |
+| Super-admin sem desfazer no próprio ambiente | `podeDesfazer` (OWNER ou SUPER_ADMIN — a sessão dele só tem o tenant do ambiente). |
+| Gráfico 6 meses × Resultado do mês | "Vendas" = faturamento (com embalagem) e "Contas" com higienização enviada, por módulo. |
+| Relatório "Contas pagas" × cartão "Pagas" | Inclui os pagamentos ao higienizador (com o módulo). |
+| Boletim colado "1.200" | Ponto seguido de exatamente 3 dígitos, sem vírgula, é milhar. |
+| Corrida em `emailIdentity` | Índice único parcial `users_email_identity_ativa`; colisão = "já tem conta". |
+| Corrida na rotação do refresh | Rotação e uso da graça reivindicados por update condicional. |
+| Route Handlers sem `Origin`/`Content-Type` | `assertMesmaOrigem` nos envelopes de rota (403/415). |
+| Upload de foto sem limite | 100/empresa/dia; órfãs com mais de 24 h apagadas pelo cron. |
+| Fiado incobrável (§4) | **Baixar como perda** — decisão do dono: perda no resultado do mês da baixa. |
+| Embalagem sem custo (§4) | **Custo médio** gravado na venda; entrada e saldo inicial exigem custo. |
+| Venda de embalagem apagada a qualquer tempo | Agora é **cancelada** (até 24 h, marcada, estoque volta por AJUSTE de estorno). |
+| Fiado baixado sem saída para o pagamento tardio | Recebimento depois da baixa (`aposBaixa`) entra no resultado do mês em que chega. |
+| Observabilidade | Sentry integrado (desligado sem DSN; source maps com `SENTRY_AUTH_TOKEN`); monitor externo e restauração de backup documentados em `09-deploy-vercel.md`. |
+
+## 2c. Quarta rodada (21/10) — revisão em quatro frentes e correções
+
+Cobrança, segurança, fluxo do balcão e consistência dos números, revisados em paralelo e conferidos no código antes de corrigir.
+
+| # | Problema | Correção |
+|---|---|---|
+| 1 | Quebra, doação e ajuste negativo nunca descontavam do lucro (o CMV só via o vendido). | `perdasEstoqueMes` em `FinancialCalc.custoDoVendido`, pela data e custo do movimento; linha "Perdas e acertos de estoque". |
+| 2 | Compra de embalagem contava duas vezes (conta manual + custo médio) ou sumia do caixa. | Entrada com custo gera conta `COMPRA_EMBALAGEM` (fora do lucro, dentro do caixa); desfazer em 24 h. |
+| 3 | Teste de cartão roubado pelo checkout (sem e-mail confirmado, limite só em memória). | Cartão exige e-mail confirmado; 5/h por empresa e 10/h por IP no Postgres. |
+| 4 | Recálculo de status gravava por cima de chargeback (VENCIDO + MANUAL = acesso eterno). | `gravarStatusCalculado` condicional em `updatedAt` (cron e login). |
+| 5 | Corridas no fiado baixado (estorno × baixa; desfazer baixa × recebimento). | `status`/`paidAmount` nas condições dos `updateMany`. |
+| 6 | Higienização editável/excluível a qualquer tempo, apagando movimentos de caixa. | 24 h + `ESTORNO_SAIDA_HIGIENIZACAO` (volta às sujas). |
+| 7 | Recorrente de dia 31 escorregava para 28 para sempre. | `diaAncoraDaCadeia` + `proximoVencimento(data, diaAncora)`. |
+| 8 | Chargeback ignorava o pagamento DUPLICADO do mesmo mês. | A reversão promove o duplicado a pagador do mês. |
+| 9 | Backup de produção em claro dentro do OneDrive. | Criptografado (AES-256 + HMAC, senha própria) em `C:\Backups\CeasaPro`; OneDrive recusado. |
+| 10 | Login/logout CSRF (rotas de auth fora do envelope). | `recusaDeOutraOrigem` em todas as rotas POST de `/api/auth`. |
+| 11 | Recebimento de fiado e fiado manual sem idempotência. | `idempotencyKey` (índice único) nos dois. |
+| 12 | Quantidade/preço sem limite de casas nem teto. | `src/lib/validations/quantidade.ts`. |
+| 13 | Ajuste manual sem desfazer (custo errado contaminava a média). | `desfazerAjuste` (24 h, par fora do repasse). |
+| 14 | Embalagem sem custo virava lucro sem aviso. | Aviso no "Resultado do mês". |
+| 15 | Três "vendas" diferentes na aba Financeiro; categorias sem higienização. | Fatias "Higienização" e "Venda de embalagem"; rótulos ajustados. |
+| 16 | Perda com fiado e custo de embalagem fora dos relatórios. | `FIADO_PERDAS`; custo/lucro em `EMBALAGENS`. |
+| 17 | "Contas pagas" × fluxo de caixa para quem saiu do módulo de higienização. | Pago ao higienizador conta sempre. |
+| 18 | Custo de embalagem fora do `FinancialCalc` (1 centavo). | `ROUND(..., 2)` por venda, como `custoVendaEmbalagem`. |
+| 19 | Estorno de caixas da venda cancelada com a data de hoje. | Data da venda. |
+| 20 | Aprovação pelo relógio do processamento. | `mp.paidAt` limitado a agora. |
+| 21 | Pagamento acima do devido creditado em silêncio. | Aviso `PAGAMENTO_ACIMA_DO_DEVIDO`. |
+| 22 | Token de redefinição de senha na URL podia ir ao Sentry. | `beforeSend`/`beforeBreadcrumb` trocam por `:token`; erro do Prisma vai sem a mensagem. |
+| 23 | Logout não derrubava o access (15 min). | Claim `fid` + linhagem encerrada em `sessaoAindaValida`. |
+| 24 | Venda e compra sem limite de itens. | Máximo 200. |
+
 ## 3. Pendentes — prioridade baixa
 
-- **Gráfico "Últimos 6 meses" × "Resultado do mês":** a série não soma higienização enviada nem embalagens (`painel-financeiro.service.ts:82-88`).
-- **Relatório "Contas pagas" × cartão "Pagas":** o relatório não soma o que foi pago ao higienizador (`report.service.ts:270-273`).
-- **`replicarMes` sem trava:** dois toques simultâneos duplicam o mês (`despesas.service.ts:1164-1205`).
 - **Período personalizado só com "até" anterior ao mês corrente:** gera relatório vazio, sem erro (`dates.ts:91-117`).
 - **Aviso de higienização conta lotes já quitados** (`avisos.service.ts:178`).
-- **Colar boletim manual:** "1.200" vira R$ 1,20, enquanto o raspador lê 1200 (`cotacoes/csv.ts:45-51`).
 - **Admin publica boletim manual em praça com raspador** (`admin-cotacoes.actions.ts:41-61`, `cotacoes-envio.service.ts:219-256`).
-- **"Usar o sistema" com duplo clique** cria dois ambientes; o órfão aparece como cliente (`admin.service.ts:373-459`).
-- **Upload de foto sem limite de volume:** objetos órfãos no R2 (`produtos.actions.ts:33`).
-- **Super-admin consegue redefinir a senha de outro super-admin** (`admin.service.ts:1076`).
-- **Super-admin não consegue desfazer no próprio ambiente:** as checagens usam `role !== "OWNER"` (compras, vendas, fiado).
 - **Sessão revogada ainda LÊ páginas até o access expirar (15 min):** `/assinatura`, `/onboarding` e páginas acessadas por navegação no cliente. Escrita já é barrada.
-- **Corrida em `emailIdentity`:** cadastros simultâneos com `+1`/`+2` podem render trials duplicados (falta índice único).
-- **Corrida na rotação do refresh:** chamadas simultâneas furam o teto da janela de graça (`auth/refresh.ts:104-166`).
-- **Route Handlers sem conferência de `Origin`/`Content-Type`:** hoje protegidos só pelo `SameSite=Lax` (`http/with-route.ts:117`).
 - **Lotes de higienização antigos marcados PAGO com caixas ainda fora,** de antes de `80130fa` (dado de produção).
 - **Caixas de compras feitas antes do deploy desta versão não são estornadas** se a compra for cancelada nas 24 h seguintes (não têm `purchaseId`).
-- **PIX de outra competência não é cancelado** ao gerar o do mês novo; pago em dobro, credita dois meses.
 
 ## 4. Decisões de produto em aberto
 
-- **Fiado errado ou incobrável depois de 24 h não tem saída.** Antes, o fiado sem pagamento era apagado a qualquer tempo. Agora não há como baixar a dívida, e o aviso de "fiado vencido" volta todo dia. Caminho sugerido: "Baixar como perda", que registra a perda no dia em que é lançada, sem reescrever o passado.
-- **Embalagem vendida entra no lucro sem custo.** A entrada de embalagem não gera conta, então o lucro só fica certo se o dono lançar a compra da embalagem em Despesas. Caminhos: gerar a conta na entrada de embalagem com custo, ou calcular o CMV da embalagem.
+- Nenhuma das duas desta rodada (resolvidas em 21/10, ver §2b).

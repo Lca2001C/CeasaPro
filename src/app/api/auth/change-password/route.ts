@@ -1,20 +1,25 @@
 import { prisma } from "@/lib/db/prisma";
 import { getSession } from "@/lib/auth/session";
+import { sessaoAindaValida } from "@/lib/auth/revogacao";
 import { verifyPassword, hashPassword } from "@/lib/auth/password";
 import { signAccess } from "@/lib/auth/jwt";
 import { buildAccessPayload } from "@/lib/auth/build-session";
 import { setAuthCookies } from "@/lib/auth/cookies";
-import { createRefreshToken, revokeAllForUser } from "@/lib/auth/refresh";
+import { createRefreshSession, revokeAllForUser } from "@/lib/auth/refresh";
 import { changePasswordSchema } from "@/lib/validations/auth";
 import { rateLimitDb, respostaDeLimite } from "@/lib/security/rate-limit-db";
 import { audit } from "@/lib/audit";
 import { clientIp, userAgent } from "@/lib/http/request";
 import { errorResponse } from "@/lib/http/error-response";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
 /** Falha inesperada sai no envelope padrão, não como 500 cru. */
 export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, true);
+  if (recusa) return recusa;
   try {
     return await trocarSenha(req);
   } catch (e) {
@@ -24,7 +29,9 @@ export async function POST(req: Request) {
 
 async function trocarSenha(req: Request): Promise<Response> {
   const session = await getSession();
-  if (!session) {
+  // Sessão revogada (logout, troca de senha em outro aparelho, bloqueio) não
+  // troca senha nem ganha refresh novo — a mesma regra das outras escritas.
+  if (!session || !(await sessaoAindaValida(session))) {
     return Response.json(
       { ok: false, error: { code: "UNAUTHORIZED", message: "Nao autenticado" } },
       { status: 401 },
@@ -103,7 +110,7 @@ async function trocarSenha(req: Request): Promise<Response> {
 
   // DEPOIS do commit: a revogação acima derrubaria também este token novo, e a
   // pessoa seria deslogada no instante em que trocou a senha.
-  const refreshToken = await createRefreshToken(user.id, {
+  const sessao = await createRefreshSession(user.id, {
     ip,
     userAgent: (await userAgent()) ?? undefined,
   });
@@ -114,8 +121,8 @@ async function trocarSenha(req: Request): Promise<Response> {
       { status: 401 },
     );
   }
-  const accessToken = await signAccess(payload);
-  await setAuthCookies(accessToken, refreshToken);
+  const accessToken = await signAccess({ ...payload, fid: sessao.familyId });
+  await setAuthCookies(accessToken, sessao.raw);
 
   const redirectTo = user.role === "SUPER_ADMIN" ? "/admin" : "/dashboard";
   return Response.json({ ok: true, data: { redirectTo } });

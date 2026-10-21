@@ -125,7 +125,11 @@ export function whereDeFiltro(f: DespesaFiltro, agora = new Date()): Prisma.Expe
  * mês — e DENTRO de tudo que é dinheiro devido ou pago: Contas a Pagar,
  * vencidas, avisos e fluxo de caixa.
  */
-export const ORIGENS_DE_COMPRA: readonly ExpenseOrigem[] = ["COMPRA", "FRETE_COMPRA"];
+export const ORIGENS_DE_COMPRA: readonly ExpenseOrigem[] = [
+  "COMPRA",
+  "FRETE_COMPRA",
+  "COMPRA_EMBALAGEM",
+];
 
 /** Filtro das despesas operacionais (as que entram no lucro). */
 export const SO_OPERACIONAIS = { origem: "MANUAL" } satisfies Prisma.ExpenseWhereInput;
@@ -171,14 +175,53 @@ export function periodoDaUrl(
   return { from: dia(sp.de), to: dia(sp.ate), proximos: false };
 }
 
-/** Mês seguinte ao vencimento, preservando o dia — 31/01 vira 28/02, não 03/03. */
-export function proximoVencimento(dueDate: Date): Date {
+/**
+ * Mês seguinte ao vencimento, preservando o dia — 31/01 vira 28/02, não 03/03.
+ *
+ * `diaAncora` é o dia ORIGINAL da conta (ver `diaAncoraDaCadeia`): sem ele, o
+ * aluguel de dia 31 virava 28/02 e depois 28/03, 28/04… para sempre, e a conta
+ * e o aviso de vencimento ficavam três dias adiantados todo mês.
+ */
+export function proximoVencimento(dueDate: Date, diaAncora?: number): Date {
   const c = civilParts(dueDate);
   const mes = c.month === 12 ? 1 : c.month + 1;
   const ano = c.month === 12 ? c.year + 1 : c.year;
   // Dia 0 do mês seguinte ao destino = último dia do destino.
   const ultimoDia = civilParts(zonedTimeToUtc(ano, mes + 1, 0)).day;
-  return zonedTimeToUtc(ano, mes, Math.min(c.day, ultimoDia), 0, 0, 0, 0);
+  return zonedTimeToUtc(ano, mes, Math.min(diaAncora ?? c.day, ultimoDia), 0, 0, 0, 0);
+}
+
+/**
+ * O dia de vencimento a manter na próxima parcela.
+ *
+ * Só há o que descobrir quando o vencimento atual caiu no ÚLTIMO dia do mês
+ * (pode ter sido encurtado: 31 → 28). Aí vale o dia da conta que começou a
+ * cadeia (`parentId` até a raiz), se for maior. Em qualquer outro dia, vale o
+ * dia atual — inclusive quando o dono mudou o vencimento de uma parcela à mão.
+ * Uma consulta só (CTE recursiva), e só no caso de fim de mês.
+ */
+async function diaAncoraDaCadeia(
+  db: { $queryRaw: Prisma.TransactionClient["$queryRaw"] },
+  tenantId: string,
+  conta: { id: string; dueDate: Date | null },
+): Promise<number | undefined> {
+  if (!conta.dueDate) return undefined;
+  const c = civilParts(conta.dueDate);
+  const ultimoDia = civilParts(zonedTimeToUtc(c.year, c.month + 1, 0)).day;
+  if (c.day !== ultimoDia) return c.day;
+  const raiz = await db.$queryRaw<{ dueDate: Date | null }[]>`
+    WITH RECURSIVE cadeia AS (
+      SELECT id, "parentId", "dueDate", 0 AS nivel
+      FROM expenses WHERE id = ${conta.id} AND "tenantId" = ${tenantId}
+      UNION ALL
+      SELECT e.id, e."parentId", e."dueDate", cadeia.nivel + 1
+      FROM expenses e JOIN cadeia ON e.id = cadeia."parentId"
+      WHERE e."tenantId" = ${tenantId} AND cadeia.nivel < 240
+    )
+    SELECT "dueDate" FROM cadeia ORDER BY nivel DESC LIMIT 1
+  `;
+  const diaRaiz = raiz[0]?.dueDate ? civilParts(raiz[0].dueDate).day : c.day;
+  return Math.max(c.day, diaRaiz);
 }
 
 /** Limites do mês de referência "YYYY-MM" (ou do mês corrente). */
@@ -757,13 +800,21 @@ export const DespesasService = {
         _sum: { totalAmount: true },
         where: { saleDate: noMes, cancelledAt: null },
       }),
-      isModuleEnabled(modules, "higienizacao")
-        ? resumoDaHigienizacao(tenantId, mes, hoje, anterior)
-        : Promise.resolve(HIGIENIZACAO_ZERADA),
+      // Sem o módulo, só o que foi PAGO ao higienizador continua contando
+      // (dinheiro que saiu é fato, e o fluxo de caixa já o soma): quem saiu do
+      // módulo via "Pagas" menor que as saídas do fluxo do mesmo período.
+      resumoDaHigienizacao(tenantId, mes, hoje, anterior).then((r) =>
+        isModuleEnabled(modules, "higienizacao")
+          ? r
+          : { ...HIGIENIZACAO_ZERADA, pagaNoPeriodo: r.pagaNoPeriodo, pagaCount: r.pagaCount },
+      ),
       // A venda avulsa de embalagem também é "o que você vendeu" — a mesma
       // receita que o lucro do Início soma (`FinancialCalc.faturamento`).
       isModuleEnabled(modules, "embalagens")
-        ? db.packagingSale.aggregate({ _sum: { totalAmount: true }, where: { saleDate: noMes } })
+        ? db.packagingSale.aggregate({
+            _sum: { totalAmount: true },
+            where: { saleDate: noMes, cancelledAt: null },
+          })
         : Promise.resolve({ _sum: { totalAmount: null } }),
     ]);
 
@@ -1102,7 +1153,10 @@ export const DespesasService = {
           categoryId: atual.categoryId,
           supplierId: atual.supplierId,
           paymentMethod: atual.paymentMethod,
-          dueDate: proximoVencimento(atual.dueDate),
+          dueDate: proximoVencimento(
+            atual.dueDate,
+            await diaAncoraDaCadeia(tx, ctx.tenantId, atual),
+          ),
           paidDate: null,
           recurring: true,
           parentId: atual.id,
@@ -1165,78 +1219,89 @@ export const DespesasService = {
     const referencia = origemRef ?? mesAnterior(refMes(agora));
     const mes = limitesDoMes(referencia, agora);
 
-    // A compra do mês é um fato daquele mês, não uma conta que se repete.
-    const origem = await db.expense.findMany({
-      where: { ...SO_OPERACIONAIS, dueDate: { gte: mes.inicio, lte: mes.fim } },
-      orderBy: { dueDate: "asc" },
-    });
-    if (origem.length === 0) {
-      throw new BusinessRuleError(
-        `Não há despesas com vencimento em ${referencia} para replicar.`,
-      );
-    }
+    // Tudo numa transação com trava por empresa: dois toques em "Replicar"
+    // passavam os dois pela checagem de "já copiada" antes de qualquer cópia
+    // existir, e o mês saía em dobro. O segundo agora espera o primeiro
+    // commitar e encontra as cópias. (`5` = domínio "despesas" da empresa.)
+    return db.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${ctx.tenantId}), 5)`;
 
-    const jaCopiadas = await db.expense.findMany({
-      where: { parentId: { in: origem.map((o) => o.id) } },
-      select: { parentId: true },
-    });
-    const copiados = new Set(jaCopiadas.map((c) => c.parentId));
-
-    // Conta marcada "Repetir todo mês" NÃO entra: ela gera a própria parcela
-    // seguinte ao ser quitada. Copiá-la fazia duas coisas ruins de uma vez —
-    // duas contas iguais no mês seguinte (a cópia e a parcela), e a morte
-    // silenciosa da recorrência: `gerarProximaParcela` usa a presença de um
-    // filho com `parentId` como marca de "já gerei", encontrava a CÓPIA,
-    // concluía que o trabalho estava feito e apagava o `recurring` da origem.
-    // O aluguel do box parava de aparecer para sempre, sem erro e sem aviso.
-    const pendentesDeCopia = origem.filter(
-      (o) => !copiados.has(o.id) && o.dueDate && !o.recurring,
-    );
-
-    // O que ficou de fora, e POR QUÊ — a tela precisa dizer. "Nada a copiar:
-    // as 3 conta(s) já foram replicadas" era falso quando as 3 eram
-    // recorrentes ainda pendentes: não existia cópia nenhuma, e o dono
-    // concluía que o mês seguinte já estava lançado.
-    const jaCopiadasCount = origem.filter((o) => copiados.has(o.id)).length;
-    const recorrentes = origem.filter((o) => !copiados.has(o.id) && o.recurring).length;
-
-    let criadas = 0;
-    for (const o of pendentesDeCopia) {
-      await db.expense.create({
-        data: {
-          tenantId: ctx.tenantId,
-          description: o.description,
-          amount: o.amount,
-          type: o.type,
-          status: "PENDENTE",
-          categoryId: o.categoryId,
-          supplierId: o.supplierId,
-          paymentMethod: o.paymentMethod,
-          dueDate: proximoVencimento(o.dueDate!),
-          recurring: false,
-          parentId: o.id,
-        },
+      // A compra do mês é um fato daquele mês, não uma conta que se repete.
+      const origem = await tx.expense.findMany({
+        where: { ...SO_OPERACIONAIS, dueDate: { gte: mes.inicio, lte: mes.fim } },
+        orderBy: { dueDate: "asc" },
       });
-      criadas++;
-    }
+      if (origem.length === 0) {
+        throw new BusinessRuleError(
+          `Não há despesas com vencimento em ${referencia} para replicar.`,
+        );
+      }
 
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "CREATE",
-      entity: "Expense",
-      entityId: null,
-      newData: { motivo: "replicar_mes", origem: referencia, criadas },
-      ip: ctx.ip,
+      const jaCopiadas = await tx.expense.findMany({
+        where: { parentId: { in: origem.map((o) => o.id) } },
+        select: { parentId: true },
+      });
+      const copiados = new Set(jaCopiadas.map((c) => c.parentId));
+
+      // Conta marcada "Repetir todo mês" NÃO entra: ela gera a própria parcela
+      // seguinte ao ser quitada. Copiá-la fazia duas coisas ruins de uma vez —
+      // duas contas iguais no mês seguinte (a cópia e a parcela), e a morte
+      // silenciosa da recorrência: `gerarProximaParcela` usa a presença de um
+      // filho com `parentId` como marca de "já gerei", encontrava a CÓPIA,
+      // concluía que o trabalho estava feito e apagava o `recurring` da origem.
+      // O aluguel do box parava de aparecer para sempre, sem erro e sem aviso.
+      const pendentesDeCopia = origem.filter(
+        (o) => !copiados.has(o.id) && o.dueDate && !o.recurring,
+      );
+
+      // O que ficou de fora, e POR QUÊ — a tela precisa dizer. "Nada a copiar:
+      // as 3 conta(s) já foram replicadas" era falso quando as 3 eram
+      // recorrentes ainda pendentes: não existia cópia nenhuma, e o dono
+      // concluía que o mês seguinte já estava lançado.
+      const jaCopiadasCount = origem.filter((o) => copiados.has(o.id)).length;
+      const recorrentes = origem.filter((o) => !copiados.has(o.id) && o.recurring).length;
+
+      let criadas = 0;
+      for (const o of pendentesDeCopia) {
+        await tx.expense.create({
+          data: {
+            tenantId: ctx.tenantId,
+            description: o.description,
+            amount: o.amount,
+            type: o.type,
+            status: "PENDENTE",
+            categoryId: o.categoryId,
+            supplierId: o.supplierId,
+            paymentMethod: o.paymentMethod,
+            dueDate: proximoVencimento(
+              o.dueDate!,
+              await diaAncoraDaCadeia(tx, ctx.tenantId, o),
+            ),
+            recurring: false,
+            parentId: o.id,
+          },
+        });
+        criadas++;
+      }
+
+      await audit({
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        actorEmail: ctx.session.email,
+        action: "CREATE",
+        entity: "Expense",
+        entityId: null,
+        newData: { motivo: "replicar_mes", origem: referencia, criadas },
+        ip: ctx.ip,
+      }, tx);
+      return {
+        origem: referencia,
+        encontradas: origem.length,
+        criadas,
+        jaCopiadas: jaCopiadasCount,
+        recorrentes,
+      };
     });
-    return {
-      origem: referencia,
-      encontradas: origem.length,
-      criadas,
-      jaCopiadas: jaCopiadasCount,
-      recorrentes,
-    };
   },
 
   /**
@@ -1269,7 +1334,9 @@ export const DespesasService = {
       categoryId: base.categoryId ?? null,
       paymentMethod: base.paymentMethod ?? null,
       supplierId: base.supplierId ?? null,
-      dueDate: base.dueDate ? isoDateTz(proximoVencimento(base.dueDate)) : null,
+      dueDate: base.dueDate
+        ? isoDateTz(proximoVencimento(base.dueDate, await diaAncoraDaCadeia(db, tenantId, base)))
+        : null,
       paidDate: null,
       recurring: false,
     };

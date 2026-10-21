@@ -6,8 +6,10 @@ import { Loader2, PackagePlus, Warehouse } from "lucide-react";
 import { toast } from "sonner";
 import {
   ativarEstoqueEmbalagem,
+  desfazerEntradaEmbalagem,
   registrarEntradaEmbalagem,
 } from "@/actions/embalagens.actions";
+import { chamarAction } from "@/lib/http/chamar-action";
 import { nivelEstoque } from "@/lib/estoque/nivel";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -47,15 +49,33 @@ export function EstoqueTipo({
   const [ligando, setLigando] = useState(false);
   const [entrando, setEntrando] = useState(false);
   const [quantidade, setQuantidade] = useState("");
+  const [custo, setCusto] = useState("");
   const [pending, start] = useTransition();
 
   const nivel = saldo === null ? null : nivelEstoque(saldo);
 
+  /** Custo de cada embalagem — forma o custo médio que a venda desconta do lucro. */
+  const custoInformado = () => {
+    const n = Number(custo.replace(",", "."));
+    return Number.isFinite(n) && n > 0 ? n : null;
+  };
+  const abrir = (setter: (v: boolean) => void) => {
+    setQuantidade("");
+    setCusto("");
+    setter(true);
+  };
+
   function ligar() {
     const qtd = parseInt(quantidade, 10);
     if (Number.isNaN(qtd) || qtd < 0) return toast.error("Informe quantas você tem hoje.");
+    const custoUnitario = custoInformado();
+    if (qtd > 0 && custoUnitario === null) return toast.error("Informe quanto custou cada uma.");
     start(async () => {
-      const res = await ativarEstoqueEmbalagem({ packagingTypeId: id, quantidadeAtual: qtd });
+      const res = await ativarEstoqueEmbalagem({
+        packagingTypeId: id,
+        quantidadeAtual: qtd,
+        ...(qtd > 0 && custoUnitario !== null ? { custoUnitario } : {}),
+      });
       if (!res.ok) {
         toast.error(res.error.message);
         return;
@@ -70,13 +90,28 @@ export function EstoqueTipo({
   function entrada() {
     const qtd = parseInt(quantidade, 10);
     if (!qtd || qtd <= 0) return toast.error("Informe a quantidade que entrou.");
+    const unitCost = custoInformado();
+    if (unitCost === null) return toast.error("Informe quanto custou cada uma.");
     start(async () => {
-      const res = await registrarEntradaEmbalagem({ packagingTypeId: id, quantity: qtd });
+      const res = await registrarEntradaEmbalagem({ packagingTypeId: id, quantity: qtd, unitCost });
       if (!res.ok) {
         toast.error(res.error.message);
         return;
       }
-      toast.success(`+${qtd} ${nome} no estoque.`);
+      const entradaId = res.data.id;
+      // Lançou errado? Desfazer fica à mão (a regra de 24 h vale no servidor);
+      // a conta da compra gerada junto é cancelada também.
+      toast.success(`+${qtd} ${nome} no estoque. A compra entrou nas contas pagas.`, {
+        action: {
+          label: "Desfazer",
+          onClick: async () => {
+            const r = await chamarAction(() => desfazerEntradaEmbalagem({ id: entradaId }));
+            if (r.ok) toast.success("Entrada desfeita.");
+            else toast.error(r.error.message);
+            router.refresh();
+          },
+        },
+      });
       setEntrando(false);
       setQuantidade("");
       router.refresh();
@@ -107,10 +142,7 @@ export function EstoqueTipo({
             size="sm"
             variant="outline"
             className="shrink-0"
-            onClick={() => {
-              setQuantidade("");
-              setEntrando(true);
-            }}
+            onClick={() => abrir(setEntrando)}
           >
             <PackagePlus className="size-4" />
             <span className="hidden sm:inline">Entrada</span>
@@ -120,10 +152,7 @@ export function EstoqueTipo({
             size="sm"
             variant="outline"
             className="shrink-0"
-            onClick={() => {
-              setQuantidade("");
-              setLigando(true);
-            }}
+            onClick={() => abrir(setLigando)}
           >
             <Warehouse className="size-4" />
             <span className="hidden sm:inline">Controlar</span>
@@ -153,6 +182,7 @@ export function EstoqueTipo({
               onChange={(e) => setQuantidade(e.target.value)}
             />
           </div>
+          <CampoCusto id={`custo-inicial-${id}`} valor={custo} onChange={setCusto} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setLigando(false)} disabled={pending}>
               Cancelar
@@ -185,6 +215,7 @@ export function EstoqueTipo({
               onChange={(e) => setQuantidade(e.target.value)}
             />
           </div>
+          <CampoCusto id={`custo-entrada-${id}`} valor={custo} onChange={setCusto} />
           <DialogFooter>
             <Button variant="outline" onClick={() => setEntrando(false)} disabled={pending}>
               Cancelar
@@ -197,5 +228,35 @@ export function EstoqueTipo({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+/** Custo de UMA embalagem. É dele que sai o custo médio que a venda desconta do lucro. */
+function CampoCusto({
+  id,
+  valor,
+  onChange,
+}: {
+  id: string;
+  valor: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Label htmlFor={id}>Quanto custou cada uma (R$)</Label>
+      <Input
+        id={id}
+        type="number"
+        inputMode="decimal"
+        min={0}
+        step="0.01"
+        placeholder="Ex.: 1,50"
+        value={valor}
+        onChange={(e) => onChange(e.target.value)}
+      />
+      <span className="text-xs text-muted-foreground">
+        Com o custo, o lucro do mês desconta o que a embalagem vendida custou.
+      </span>
+    </div>
   );
 }

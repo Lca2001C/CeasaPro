@@ -9,6 +9,7 @@ import { logger } from "@/lib/logger";
 import { absoluteUrl } from "@/lib/app-url";
 import { sendEmail, passwordChangedEmail } from "@/lib/email";
 import { consumeResetToken, findUserByResetToken } from "@/lib/auth/password-reset";
+import { recusaDeOutraOrigem } from "@/lib/http/mesma-origem";
 
 export const runtime = "nodejs";
 
@@ -38,6 +39,9 @@ function invalidToken() {
  * vez de um 500 cru que ele não sabe ler.
  */
 export async function POST(req: Request) {
+  // Escrita de outro site (login/logout CSRF) — ver `mesma-origem.ts`.
+  const recusa = recusaDeOutraOrigem(req, true);
+  if (recusa) return recusa;
   try {
     return await redefinir(req);
   } catch (e) {

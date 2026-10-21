@@ -12,6 +12,8 @@ export const pagamentoFiadoSchema = z.object({
     .positive("Informe o valor")
     .refine(temAteDuasCasas, MSG_DUAS_CASAS),
   method: z.enum(["PIX", "DINHEIRO", "CARTAO"]),
+  /** Uma por recebimento digitado (ver `FiadoService.registrarPagamento`). */
+  idempotencyKey: z.uuid().optional(),
 });
 export type PagamentoFiadoInput = z.infer<typeof pagamentoFiadoSchema>;
 
@@ -28,6 +30,17 @@ export const cancelarFiadoSchema = z.object({
   motivo: z.string().trim().max(200).nullable().optional(),
 });
 export type CancelarFiadoInput = z.infer<typeof cancelarFiadoSchema>;
+
+/** Baixar como perda o saldo que o cliente não vai pagar (`FiadoService.baixarComoPerda`). */
+export const baixaPerdaSchema = z.object({
+  id: z.string().min(1),
+  motivo: z.string().trim().min(3, "Diga por que o fiado não vai ser pago").max(200),
+});
+export type BaixaPerdaInput = z.infer<typeof baixaPerdaSchema>;
+
+/** Desfazer a baixa como perda lançada errada (até 24 h). */
+export const desfazerBaixaSchema = z.object({ id: z.string().min(1) });
+export type DesfazerBaixaInput = z.infer<typeof desfazerBaixaSchema>;
 
 /** Data obrigatória de formulário que EXISTE ("2026-02-31" não passa). */
 const dataObrigatoria = (mensagem: string) =>
@@ -59,6 +72,8 @@ export const fiadoManualSchema = z.object({
     .array(vendaItemSchema)
     .min(1, "Adicione ao menos um item")
     .refine((itens) => itens.every((i) => i.unitPrice > 0), "Informe o preço de todos os itens."),
+  /** Uma por lançamento digitado: o reenvio devolve a venda já gravada. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type FiadoManualInput = z.infer<typeof fiadoManualSchema>;
 
@@ -79,5 +94,5 @@ export const devolucaoCaixasSchema = z.object({
 });
 export type DevolucaoCaixasInput = z.infer<typeof devolucaoCaixasSchema>;
 
-export const fiadoStatusFiltroEnum = z.enum(["EM_ABERTO", "PAGO", "TODAS"]);
+export const fiadoStatusFiltroEnum = z.enum(["EM_ABERTO", "PAGO", "PERDA", "TODAS"]);
 export type FiadoStatusFiltro = z.infer<typeof fiadoStatusFiltroEnum>;

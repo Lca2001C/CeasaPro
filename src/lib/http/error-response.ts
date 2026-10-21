@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { AppError } from "./app-error";
 import { describeError, logger } from "@/lib/logger";
+import { capturarErro } from "@/lib/observabilidade/sentry";
 
 /**
  * Erro → resposta JSON no formato que o cliente já espera
@@ -35,6 +36,7 @@ export function errorResponse(e: unknown): Response {
   }
   const errorId = Math.random().toString(36).slice(2, 10);
   logger.error({ errorId, err: describeError(e) }, "Erro em route handler");
+  capturarErro(e, errorId);
   return Response.json(
     { ok: false, error: { code: "INTERNAL", message: `Erro inesperado (ref: ${errorId})` } },
     { status: 500 },

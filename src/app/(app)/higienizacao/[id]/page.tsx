@@ -12,6 +12,7 @@ import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { AcoesHigienizacao } from "./_components/acoes-higienizacao";
+import { dentroDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
 
 export const dynamic = "force-dynamic";
 
@@ -25,7 +26,10 @@ export default async function HigienizacaoDetailPage({
   const c = await HigienizacaoService.get(tenantId, id).catch(() => null);
   if (!c) notFound();
 
-  const editavel = c.returnedQty === 0 && Number(c.paidAmount) === 0;
+  // Regra única de desfazer: só nas 24 h seguintes ao lançamento (o envio entra
+  // no lucro pela data dele — editar depois reescreveria um mês fechado).
+  const editavel =
+    c.returnedQty === 0 && Number(c.paidAmount) === 0 && dentroDoPrazoDeDesfazer(c.createdAt);
 
   return (
     <div>

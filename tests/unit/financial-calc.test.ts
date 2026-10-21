@@ -104,3 +104,37 @@ describe("FinancialCalc", () => {
     expect(v.toString()).toBe("0.3");
   });
 });
+
+describe("FinancialCalc — embalagem e perda com fiado", () => {
+  const ent = (q: number, c: number | null) => ({ entrada: true, quantidade: q, custoUnitario: c });
+  const sai = (q: number) => ({ entrada: false, quantidade: q, custoUnitario: null });
+
+  it("custo médio móvel: pondera a entrada com o que sobrou, a saída não muda a média", () => {
+    expect(FinancialCalc.custoMedioMovel([ent(10, 2), ent(10, 4)])!.toNumber()).toBe(3);
+    expect(
+      FinancialCalc.custoMedioMovel([ent(10, 2), ent(10, 4), sai(5), ent(10, 6)])!.toNumber(),
+    ).toBe(4.2);
+  });
+
+  it("custo médio: saldo zerado recomeça a média; sem entrada com custo é nulo", () => {
+    expect(FinancialCalc.custoMedioMovel([ent(5, 10), sai(5), ent(5, 2)])!.toNumber()).toBe(2);
+    expect(FinancialCalc.custoMedioMovel([ent(5, null)])).toBeNull();
+    // Entrada sem custo soma ao saldo e mantém a média.
+    expect(FinancialCalc.custoMedioMovel([ent(5, 2), ent(5, null), ent(10, 5)])!.toNumber()).toBe(
+      3.5,
+    );
+  });
+
+  it("lucro líquido desconta a perda com fiado; custo do vendido soma a embalagem", () => {
+    expect(FinancialCalc.lucroLiquido(100, 30, 20).toNumber()).toBe(50);
+    expect(FinancialCalc.lucroLiquido(100, 30).toNumber()).toBe(70);
+    expect(FinancialCalc.custoDoVendido(40, 5).toNumber()).toBe(45);
+    expect(FinancialCalc.custoVendaEmbalagem(3, 3.3333).toNumber()).toBe(10);
+  });
+});
+
+describe("FinancialCalc — recuperação de fiado baixado", () => {
+  it("o recebido depois da baixa volta ao lucro", () => {
+    expect(FinancialCalc.lucroLiquido(100, 30, 20, 5).toNumber()).toBe(55);
+  });
+});

@@ -20,6 +20,7 @@ const ZERO: SaldoRow = {
   quebra_limpa: 0,
   quebra_suja: 0,
   estorno_saida: 0,
+  estorno_saida_hig: 0,
 };
 
 const row = (patch: Partial<SaldoRow>): SaldoRow => ({ ...ZERO, ...patch });

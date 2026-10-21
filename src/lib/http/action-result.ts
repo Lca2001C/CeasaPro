@@ -1,6 +1,7 @@
 import { ZodError } from "zod";
 import { AppError } from "./app-error";
 import { describeError, logger } from "@/lib/logger";
+import { capturarErro } from "@/lib/observabilidade/sentry";
 
 /** Resposta uniforme de Server Actions. O cliente checa sempre `res.ok`. */
 export type ActionResult<T> =
@@ -45,6 +46,7 @@ export function toActionResult(e: unknown): ActionResult<never> {
     { errorId, err: describeError(e) },
     "Erro inesperado",
   );
+  capturarErro(e, errorId);
   return fail(
     "INTERNAL",
     `Ocorreu um erro inesperado. Tente novamente. (ref: ${errorId})`,

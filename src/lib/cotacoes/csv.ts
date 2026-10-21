@@ -37,7 +37,10 @@ export interface ResultadoDoCsv {
  *
  * "1.234,56" e "1234.56" precisam funcionar os dois: quem copia da planilha traz
  * vírgula, quem exporta de sistema traz ponto. A regra é: se tem vírgula, ela é
- * o decimal e o ponto é milhar.
+ * o decimal e o ponto é milhar. Sem vírgula, ponto seguido de EXATAMENTE três
+ * dígitos (em todos os grupos) também é milhar: "1.200" é mil e duzentos, como
+ * o raspador lê — antes virava R$ 1,20, um preço errado com cara de certo.
+ * "1.20", "1.5" e "1234.56" continuam decimais.
  *
  * Devolve `"naoPositivo"` para zero e negativo, separado de `null` (célula
  * vazia ou ilegível), porque a linha precisa dizer POR QUE foi recusada.
@@ -47,7 +50,9 @@ function numero(bruto: string): number | null | "naoPositivo" {
   if (!limpo) return null;
   const normalizado = limpo.includes(",")
     ? limpo.replace(/\./g, "").replace(",", ".")
-    : limpo;
+    : /^\d{1,3}(\.\d{3})+$/.test(limpo)
+      ? limpo.replace(/\./g, "")
+      : limpo;
   const n = Number(normalizado);
   if (!Number.isFinite(n)) return null;
   /*

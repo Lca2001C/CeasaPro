@@ -18,6 +18,7 @@ const BADGE_VARIANT: Record<string, "success" | "warning" | "secondary" | "destr
   SAIDA_HIGIENIZACAO: "warning",
   RETORNO_HIGIENIZACAO: "success",
   ESTORNO_SAIDA: "secondary",
+  ESTORNO_SAIDA_HIGIENIZACAO: "secondary",
 };
 
 /**

@@ -44,7 +44,13 @@ const { POST } = await import("@/app/api/auth/reset/route");
 
 const TOKEN = "t".repeat(43);
 const redefinir = (corpo: unknown = { token: TOKEN, password: "senha-nova-forte-1", confirm: "senha-nova-forte-1" }) =>
-  POST(new Request("http://localhost/api/auth/reset", { method: "POST", body: JSON.stringify(corpo) }));
+  POST(
+    new Request("http://localhost/api/auth/reset", {
+      method: "POST",
+      body: JSON.stringify(corpo),
+      headers: { "Content-Type": "application/json" },
+    }),
+  );
 
 beforeEach(() => {
   rateLimitDb.mockResolvedValue({ ok: true });

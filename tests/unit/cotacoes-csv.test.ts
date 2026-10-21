@@ -37,6 +37,13 @@ describe("lerCsvDeCotacoes", () => {
     expect(linhas[2]!.referencia).toBe(12.5);
   });
 
+  it("ponto com três dígitos depois e sem vírgula é milhar, como no raspador", () => {
+    const { linhas } = lerCsvDeCotacoes(
+      ["A;CX;1.200;;", "B;CX;12.500.000;;", "C;UN;1.20;;", "D;UN;1.5;;"].join("\n"),
+    );
+    expect(linhas.map((l) => l.referencia)).toEqual([1200, 12500000, 1.2, 1.5]);
+  });
+
   it("pula o cabeçalho da planilha", () => {
     const { linhas } = lerCsvDeCotacoes(
       ["Produto;Unidade;Minimo;Comum;Maximo", "TOMATE;CX;1;2;3"].join("\n"),

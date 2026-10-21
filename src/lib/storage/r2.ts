@@ -1,5 +1,6 @@
 import "server-only";
 import { AwsClient } from "aws4fetch";
+import { XMLParser } from "fast-xml-parser";
 import { AppError } from "@/lib/http/app-error";
 
 /**
@@ -84,6 +85,40 @@ export async function deleteObject(key: string): Promise<void> {
   } catch {
     // ignora — ver doc acima
   }
+}
+
+export interface ObjetoListado {
+  key: string;
+  lastModified: Date;
+}
+
+/**
+ * Uma página de `ListObjectsV2` sob `prefixo`. Devolve `null` sem R2
+ * configurado. `continuacao` vem da página anterior (`proxima`).
+ */
+export async function listarObjetos(
+  prefixo: string,
+  continuacao?: string,
+): Promise<{ objetos: ObjetoListado[]; proxima: string | null } | null> {
+  const c = config();
+  if (!c) return null;
+  const url = new URL(`https://${c.accountId}.r2.cloudflarestorage.com/${c.bucket}`);
+  url.searchParams.set("list-type", "2");
+  url.searchParams.set("prefix", prefixo);
+  url.searchParams.set("max-keys", "1000");
+  if (continuacao) url.searchParams.set("continuation-token", continuacao);
+  const res = await cliente(c).fetch(url.toString(), { method: "GET" });
+  if (!res.ok) throw new Error(`R2 ListObjectsV2 respondeu ${res.status}`);
+  const xml = new XMLParser({ isArray: (nome) => nome === "Contents" }).parse(await res.text());
+  const r = xml?.ListBucketResult ?? {};
+  const objetos: ObjetoListado[] = (r.Contents ?? []).map(
+    (o: { Key: unknown; LastModified: unknown }) => ({
+      key: String(o.Key),
+      lastModified: new Date(String(o.LastModified)),
+    }),
+  );
+  const truncada = String(r.IsTruncated) === "true";
+  return { objetos, proxima: truncada && r.NextContinuationToken ? String(r.NextContinuationToken) : null };
 }
 
 /** URL pública de exibição. `null` sem chave ou sem R2 configurado. */

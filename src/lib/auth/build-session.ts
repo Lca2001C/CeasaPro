@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { computeStatus } from "@/lib/billing/status";
+import { gravarStatusCalculado } from "@/lib/billing/gravar-status";
 import { ALL_OPTIONAL_KEYS } from "@/lib/plan/modules";
 import { modulosVigentes } from "@/lib/plan/features-vigentes";
 import { PlanoService } from "@/lib/services/plano.service";
@@ -41,12 +42,8 @@ export async function buildAccessPayload(userId: string): Promise<AccessPayload 
     modules = [...ALL_OPTIONAL_KEYS];
   } else if (sub) {
     const effective = computeStatus(sub);
-    if (effective !== sub.status) {
-      await prisma.tenantSubscription.update({
-        where: { id: sub.id },
-        data: { status: effective },
-      });
-    }
+    // Condicional: ver `gravarStatusCalculado` (corrida com chargeback/aprovação).
+    if (effective !== sub.status) await gravarStatusCalculado(sub, effective);
     subStatus = effective;
     // Troca de plano agendada que já venceu vale a partir de agora — e é AQUI
     // que isso tem consequência, porque o claim `modules` deste token é o que

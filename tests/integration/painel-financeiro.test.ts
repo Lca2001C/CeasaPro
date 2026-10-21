@@ -71,6 +71,15 @@ beforeAll(async () => {
     { description: "Gás", amount: 30, type: "VARIAVEL", status: "PENDENTE", dueDate: hoje },
     ctx,
   );
+  // Embalagem vendida (faturamento) e higienização enviada (conta do lucro):
+  // entram no "Resultado do mês", então entram também na coluna do gráfico.
+  const papelao = await prisma.packagingType.create({ data: { tenantId, name: "Papelão teste" } });
+  await prisma.packagingSale.create({
+    data: { tenantId, packagingTypeId: papelao.id, quantity: 5, unitPrice: 5, totalAmount: 25, saleDate: agora },
+  });
+  await prisma.crateCleaning.create({
+    data: { tenantId, cleanerName: "Lavador", sentDate: agora, sentQty: 10, unitPrice: 1.5, totalAmount: 15 },
+  });
 });
 
 afterAll(async () => {
@@ -112,13 +121,24 @@ describe("PainelFinanceiroService", () => {
 
   it("fecha com os cartões do resumo do mês", async () => {
     const [p, s] = await Promise.all([
-      PainelFinanceiroService.get(tenantId, agora),
+      PainelFinanceiroService.get(tenantId, agora, ctx.session.modules),
       DashboardService.getSummary(tenantId, ctx.session.modules),
     ]);
-    expect(p.meses.at(-1)!.vendas).toBe(Number(s.mesVendi));
+    // "Vendas" do gráfico é o faturamento (mercadoria + embalagem) e "Contas"
+    // é o que entra no lucro (operacionais + higienização enviada).
+    expect(p.meses.at(-1)!.vendas).toBe(Number(s.mesVendi) + Number(s.embalagensMes));
     expect(p.meses.at(-1)!.compras).toBe(Number(s.totalCompradoMes));
-    // Resultado do mês: vendi − custo − contas = sobrou.
-    expect(Number(s.mesVendi) - Number(s.cmvMes) - Number(s.despesasLucroMes)).toBeCloseTo(
+    expect(p.meses.at(-1)!.contas).toBeCloseTo(Number(s.despesasLucroMes), 2);
+    // Resultado do mês: vendi + embalagem − custos − contas − perdas = sobrou.
+    expect(
+      Number(s.mesVendi) +
+        Number(s.embalagensMes) -
+        Number(s.cmvMes) -
+        Number(s.custoEmbalagensMes) -
+        Number(s.despesasLucroMes) -
+        Number(s.perdasFiadoMes) +
+        Number(s.recuperadoFiadoMes),
+    ).toBeCloseTo(
       Number(s.lucroMes),
       2,
     );

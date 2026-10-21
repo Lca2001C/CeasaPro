@@ -37,6 +37,7 @@ export const dynamic = "force-dynamic";
 const FILTROS: { value: FiadoStatusFiltro; label: string }[] = [
   { value: "EM_ABERTO", label: "Em aberto" },
   { value: "PAGO", label: "Pagas" },
+  { value: "PERDA", label: "Perdas" },
   { value: "TODAS", label: "Todas" },
 ];
 
@@ -80,7 +81,13 @@ export default async function FiadoPage({
 
   // Cor do saldo — só estado: verde quitada, vermelho vencida, amarelo em aberto.
   const corDoSaldo = (c: (typeof contas)[number]) =>
-    c.status === "PAGO" ? "text-success" : estaVencida(c) ? "text-destructive" : "text-warning";
+    c.status === "PAGO"
+      ? "text-success"
+      : c.status === "PERDA"
+        ? "text-muted-foreground"
+        : estaVencida(c)
+          ? "text-destructive"
+          : "text-warning";
 
   return (
     <div>
@@ -149,7 +156,13 @@ export default async function FiadoPage({
 
         {contas.length === 0 ? (
           <EmptyState
-            title={status === "PAGO" ? "Nenhuma conta quitada" : "Nenhuma conta em aberto"}
+            title={
+              status === "PAGO"
+                ? "Nenhuma conta quitada"
+                : status === "PERDA"
+                  ? "Nenhum fiado baixado como perda"
+                  : "Nenhuma conta em aberto"
+            }
             description="Vendas na forma Fiado aparecem aqui para você controlar o recebimento."
             icon={<HandCoins />}
             action={
@@ -196,6 +209,7 @@ export default async function FiadoPage({
                         <Link href={`/fiado/${c.id}`} className="flex items-center gap-2">
                           <span className="truncate font-semibold">{c.customerName}</span>
                           {c.status === "PAGO" && <Badge variant="success">Quitada</Badge>}
+                          {c.status === "PERDA" && <Badge variant="secondary">Perda</Badge>}
                         </Link>
                       </TableCell>
                       <TableCell className="max-w-[12rem]">
@@ -263,9 +277,10 @@ export default async function FiadoPage({
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
                         <span className="block truncate font-semibold">{c.customerName}</span>
-                        {(c.status === "PAGO" || estaVencida(c) || c.plasticCrateQty > 0) && (
+                        {(c.status !== "EM_ABERTO" || estaVencida(c) || c.plasticCrateQty > 0) && (
                           <div className="mt-1 flex flex-wrap gap-1.5">
                             {c.status === "PAGO" && <Badge variant="success">Quitada</Badge>}
+                            {c.status === "PERDA" && <Badge variant="secondary">Perda</Badge>}
                             {estaVencida(c) && (
                               <Badge variant="destructive" className="gap-1">
                                 <AlertTriangle className="size-3" /> Vencida

@@ -13,10 +13,16 @@ import type {
   FiadoStatusFiltro,
   EstornoRecebimentoInput,
   CancelarFiadoInput,
+  BaixaPerdaInput,
+  DesfazerBaixaInput,
 } from "@/lib/validations/fiado";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfDayTz } from "@/lib/tz";
-import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
+import {
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 
 const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
@@ -57,6 +63,15 @@ const SALE_RESUMO = {
  * não pode ficar escondida na página 2.
  */
 export const FIADO_POR_PAGINA = 50;
+
+/** O P2002 é o do índice `(tenantId, idempotencyKey)` de `credit_payments`? */
+function ehConflitoDeIdempotencia(e: unknown): boolean {
+  const err = e as { code?: unknown; meta?: { target?: unknown } } | null;
+  if (err?.code !== "P2002") return false;
+  const alvo = err.meta?.target;
+  if (typeof alvo === "string") return alvo === "credit_payments_tenantId_idempotencyKey_key";
+  return Array.isArray(alvo) && alvo.map(String).includes("idempotencyKey");
+}
 
 export const FiadoService = {
   /**
@@ -196,7 +211,12 @@ export const FiadoService = {
     return {
       ...conta,
       // O extrato mostra também o estornado (marcado); `podeEstornar` é o botão.
-      payments: conta.payments.map((p) => ({ ...p, podeEstornar: this.podeEstornar(p, agora) })),
+      // Depois da baixa, só o recebimento DE DEPOIS dela é estornável: o de antes
+      // entrou no saldo que foi baixado (ver `estornarPagamento`).
+      payments: conta.payments.map((p) => ({
+        ...p,
+        podeEstornar: this.podeEstornar(p, agora) && (!conta.writtenOffAt || p.aposBaixa),
+      })),
       /** Há recebimento que ainda conta? Com ele, a venda não pode ser cancelada. */
       temRecebimentoVivo,
       /**
@@ -206,7 +226,12 @@ export const FiadoService = {
        */
       vendaNoPrazo,
       /** O botão "Cancelar venda": as mesmas condições de `VendasService.podeCancelar`. */
-      podeCancelarVenda: !temRecebimentoVivo && vendaNoPrazo,
+      podeCancelarVenda: !temRecebimentoVivo && vendaNoPrazo && conta.status !== "PERDA",
+      /** A baixa como perda ainda pode ser desfeita (regra única de desfazer). */
+      podeDesfazerBaixa:
+        conta.status === "PERDA" &&
+        conta.writtenOffAt !== null &&
+        dentroDoPrazoDeDesfazer(conta.writtenOffAt, agora),
       totalDaVenda: conta.sale?.totalAmount ?? conta.totalAmount,
       descontoDaVenda: conta.sale?.discountAmount ?? null,
       pagoNoBalcao,
@@ -243,6 +268,9 @@ export const FiadoService = {
         dueDate: input.dueDate ?? null,
         plasticCrateQty: input.plasticCrateQty,
         items: input.items,
+        // O reenvio depois de um timeout devolve a venda já gravada — sem isto
+        // a venda, a baixa de estoque e a conta saíam em dobro.
+        idempotencyKey: input.idempotencyKey,
       },
       ctx,
       { observacaoDoFiado: input.notes ?? null },
@@ -337,7 +365,7 @@ export const FiadoService = {
     conta: { id: string; customerName: string; createdAt: Date },
     ctx: TenantCtx,
   ) {
-    if (ctx.session.role !== "OWNER") {
+    if (!podeDesfazer(ctx.session.role)) {
       throw new ForbiddenError("Só o responsável pela empresa pode excluir um fiado.");
     }
     if (!dentroDoPrazoDeDesfazer(conta.createdAt)) {
@@ -371,6 +399,133 @@ export const FiadoService = {
     return { id: conta.id, customerName: conta.customerName, caixasEstornadas: 0, caixasNaoEstornadas: 0 };
   },
 
+  /**
+   * Baixa como PERDA o saldo de um fiado que não vai ser pago (cliente sumiu,
+   * faliu, valor descoberto errado tarde demais para cancelar a venda).
+   *
+   * Sem isto, o fiado incobrável depois das 24 h não tinha saída: ficava na
+   * lista de cobrança e no "a receber" para sempre, e o aviso de fiado vencido
+   * voltava todo dia. Desfazer a VENDA não é a resposta — ela aconteceu, a
+   * mercadoria saiu.
+   *
+   * A conta fica na base com `status = PERDA`, o saldo do momento em
+   * `writtenOffAmount` e a data em `writtenOffAt`. A perda entra no resultado
+   * do mês da BAIXA ("Perda com fiado"), não no da venda: o fechamento daquele
+   * mês não é reescrito (regra única de desfazer).
+   */
+  async baixarComoPerda(input: BaixaPerdaInput, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode baixar um fiado como perda.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const conta = await tx.creditAccount.findFirst({ where: { id: input.id } });
+      if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+      if (conta.status === "PERDA") {
+        throw new BusinessRuleError("Este fiado já foi baixado como perda.");
+      }
+      const saldo = FinancialCalc.saldoFiado(conta.totalAmount, conta.paidAmount);
+      if (conta.status !== "EM_ABERTO" || !gt(saldo, 0)) {
+        throw new BusinessRuleError("Este fiado não tem saldo em aberto.");
+      }
+
+      // `paidAmount` e `status` na condição: um recebimento simultâneo mudaria
+      // o saldo que está sendo baixado (mesmo padrão de `registrarPagamento`).
+      const escrito = await tx.creditAccount.updateMany({
+        where: { id: conta.id, paidAmount: conta.paidAmount, status: "EM_ABERTO" },
+        data: {
+          status: "PERDA",
+          writtenOffAt: new Date(),
+          writtenOffAmount: saldo,
+          writtenOffReason: input.motivo,
+        },
+      });
+      if (escrito.count !== 1) {
+        throw new BusinessRuleError(
+          "Outro lançamento desta conta foi registrado agora mesmo. Confira o saldo e tente de novo.",
+        );
+      }
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "STATUS_CHANGE",
+          entity: "CreditAccount",
+          entityId: conta.id,
+          oldData: { status: conta.status, saldo: saldo.toString() },
+          newData: { status: "PERDA", perda: saldo.toString(), motivo: input.motivo },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return tx.creditAccount.findFirstOrThrow({ where: { id: conta.id } });
+    });
+  },
+
+  /** Desfaz a baixa como perda lançada errada — até 24 h, a regra única de desfazer. */
+  async desfazerBaixa(input: DesfazerBaixaInput, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode desfazer a baixa.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const conta = await tx.creditAccount.findFirst({ where: { id: input.id } });
+      if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+      if (conta.status !== "PERDA" || !conta.writtenOffAt) {
+        throw new BusinessRuleError("Este fiado não está baixado como perda.");
+      }
+      if (!dentroDoPrazoDeDesfazer(conta.writtenOffAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer esta baixa"));
+      }
+      const recebidoDepois = await tx.creditPayment.count({
+        where: { accountId: conta.id, aposBaixa: true, reversedAt: null },
+      });
+      if (recebidoDepois > 0) {
+        throw new BusinessRuleError(
+          "Já houve recebimento depois da baixa. Estorne-o antes de desfazer a baixa.",
+        );
+      }
+      // `paidAmount` na condição: um recebimento depois da baixa que commitou
+      // entre a contagem acima e aqui deixaria uma "recuperação" sem perda.
+      const { count } = await tx.creditAccount.updateMany({
+        where: { id: conta.id, status: "PERDA", paidAmount: conta.paidAmount },
+        data: {
+          status: "EM_ABERTO",
+          writtenOffAt: null,
+          writtenOffAmount: null,
+          writtenOffReason: null,
+        },
+      });
+      if (count !== 1) {
+        throw new BusinessRuleError(
+          "Outro lançamento desta conta foi registrado agora mesmo. Confira e tente de novo.",
+        );
+      }
+
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "STATUS_CHANGE",
+          entity: "CreditAccount",
+          entityId: conta.id,
+          oldData: {
+            status: "PERDA",
+            perda: conta.writtenOffAmount?.toString() ?? null,
+            motivo: conta.writtenOffReason,
+          },
+          newData: { status: "EM_ABERTO", motivo: "baixa-desfeita" },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return tx.creditAccount.findFirstOrThrow({ where: { id: conta.id } });
+    });
+  },
+
   /** O recebimento ainda pode ser estornado? (A tela usa para mostrar o botão.) */
   podeEstornar(pagamento: { createdAt: Date; reversedAt: Date | null }, agora = new Date()) {
     return !pagamento.reversedAt && dentroDoPrazoDeDesfazer(pagamento.createdAt, agora);
@@ -389,7 +544,7 @@ export const FiadoService = {
    * mandava "estornar o pagamento no fiado" por um caminho que não existia.
    */
   async estornarPagamento(input: EstornoRecebimentoInput, ctx: TenantCtx) {
-    if (ctx.session.role !== "OWNER") {
+    if (!podeDesfazer(ctx.session.role)) {
       throw new ForbiddenError("Só o responsável pela empresa pode estornar um recebimento.");
     }
     const db = getTenantPrisma(ctx.tenantId);
@@ -402,6 +557,17 @@ export const FiadoService = {
       }
       const conta = await tx.creditAccount.findFirst({ where: { id: pagamento.accountId } });
       if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+      // O estorno reabre a conta (`status: EM_ABERTO`) e desfaria a baixa em
+      // silêncio, com a perda ainda no resultado do mês.
+      // O recebimento de ANTES da baixa entrou no saldo que foi baixado; estorná-lo
+      // mudaria uma perda já lançada. O de DEPOIS (`aposBaixa`) é recuperação, e
+      // o estorno devolve a conta à situação de baixada.
+      if (conta.writtenOffAt && !pagamento.aposBaixa) {
+        throw new BusinessRuleError(
+          "Este fiado foi baixado como perda. Desfaça a baixa antes de estornar este recebimento.",
+        );
+      }
+      const statusDepois = conta.writtenOffAt ? "PERDA" : "EM_ABERTO";
 
       // Guarda contra o clique duplo: o perdedor espera o lock da linha e não
       // casa mais `reversedAt: null`.
@@ -415,8 +581,10 @@ export const FiadoService = {
       // condição, para um pagamento simultâneo não ser sobrescrito.
       const novoPago = sub(conta.paidAmount, pagamento.amount);
       const escrito = await tx.creditAccount.updateMany({
-        where: { id: conta.id, paidAmount: conta.paidAmount },
-        data: { paidAmount: novoPago, status: "EM_ABERTO" },
+        // `status` na condição: uma baixa como perda simultânea mudaria o status
+        // que este estorno vai gravar (EM_ABERTO por cima de PERDA).
+        where: { id: conta.id, paidAmount: conta.paidAmount, status: conta.status },
+        data: { paidAmount: novoPago, status: statusDepois },
       });
       if (escrito.count !== 1) {
         throw new BusinessRuleError(
@@ -468,9 +636,39 @@ export const FiadoService = {
 
   async registrarPagamento(input: PagamentoFiadoInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
+    // Reenvio do MESMO recebimento (timeout depois do commit, toque duplo): a
+    // guarda por `paidAmount` só pega o simultâneo; o repetido depois baixava
+    // a dívida duas vezes e lançava no caixa um dinheiro que não entrou.
+    const jaGravado = async () => {
+      if (!input.idempotencyKey) return null;
+      const p = await db.creditPayment.findFirst({
+        where: { idempotencyKey: input.idempotencyKey },
+        select: { accountId: true },
+      });
+      return p ? db.creditAccount.findFirstOrThrow({ where: { id: p.accountId } }) : null;
+    };
+    const anterior = await jaGravado();
+    if (anterior) return anterior;
+    try {
+      return await this.gravarPagamento(input, ctx);
+    } catch (e) {
+      if (ehConflitoDeIdempotencia(e)) {
+        const gravado = await jaGravado();
+        if (gravado) return gravado;
+      }
+      throw e;
+    }
+  },
+
+  async gravarPagamento(input: PagamentoFiadoInput, ctx: TenantCtx) {
+    const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction(async (tx) => {
       const conta = await tx.creditAccount.findFirst({ where: { id: input.accountId } });
       if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
+      // Conta baixada como perda RECEBE: o cliente que aparece meses depois para
+      // pagar. O dinheiro é recuperação (`aposBaixa`) e entra no resultado do
+      // mês do recebimento — a perda do mês da baixa fica como foi lançada.
+      const aposBaixa = conta.status === "PERDA";
 
       const saldo = FinancialCalc.saldoFiado(conta.totalAmount, conta.paidAmount);
       if (gt(input.amount, saldo)) {
@@ -485,12 +683,14 @@ export const FiadoService = {
           accountId: conta.id,
           amount: input.amount,
           method: input.method,
+          aposBaixa,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
 
       const novoPago = add(conta.paidAmount, input.amount);
       const quitado = !gt(conta.totalAmount, novoPago); // total <= pago
-      const status = quitado ? "PAGO" : "EM_ABERTO";
+      const status = quitado ? "PAGO" : aposBaixa ? "PERDA" : "EM_ABERTO";
 
       // O `paidAmount` lido acima entra na condição do UPDATE. Sem isso era
       // leitura-soma-escrita comum: em READ COMMITTED (o padrão do Postgres),
@@ -504,7 +704,9 @@ export const FiadoService = {
       // segundo não casa e é recusado — em dinheiro, recusar e avisar é melhor
       // que somar errado em silêncio. Mesmo padrão de `applyPaymentStatus`.
       const escrito = await tx.creditAccount.updateMany({
-        where: { id: conta.id, paidAmount: conta.paidAmount },
+        // `status` na condição: uma baixa como perda simultânea não pode ser
+        // desfeita por este recebimento.
+        where: { id: conta.id, paidAmount: conta.paidAmount, status: conta.status },
         data: { paidAmount: novoPago, status },
       });
       if (escrito.count !== 1) {
@@ -523,7 +725,7 @@ export const FiadoService = {
           entity: "CreditAccount",
           entityId: conta.id,
           oldData: { paidAmount: conta.paidAmount.toString() },
-          newData: { paidAmount: novoPago.toString(), status },
+          newData: { paidAmount: novoPago.toString(), status, aposBaixa },
           ip: ctx.ip,
         },
         tx,

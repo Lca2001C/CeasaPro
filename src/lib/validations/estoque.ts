@@ -1,4 +1,13 @@
 import { z } from "zod";
+import {
+  MSG_QUANTIDADE_MAX,
+  MSG_TRES_CASAS,
+  MSG_VALOR_MAX,
+  QUANTIDADE_MAX,
+  VALOR_MAX,
+  temAteQuatroCasas,
+  temAteTresCasas,
+} from "./quantidade";
 
 /**
  * Ajuste manual de estoque.
@@ -21,9 +30,19 @@ export const ajusteEstoqueSchema = z
   .object({
     productId: z.string().min(1, "Selecione o produto"),
     type: z.enum(["QUEBRA", "DOACAO", "AJUSTE"]),
-    quantity: z.number().refine((v) => v !== 0, "Quantidade inválida"),
+    quantity: z
+      .number()
+      .refine((v) => v !== 0, "Quantidade inválida")
+      .refine((v) => Math.abs(v) <= QUANTIDADE_MAX, MSG_QUANTIDADE_MAX)
+      .refine(temAteTresCasas, MSG_TRES_CASAS),
     reason: z.string().trim().max(200).nullable().optional(),
-    unitCost: z.number().nonnegative().nullable().optional(),
+    unitCost: z
+      .number()
+      .nonnegative()
+      .max(VALOR_MAX, MSG_VALOR_MAX)
+      .refine(temAteQuatroCasas, "Use no máximo 4 casas decimais")
+      .nullable()
+      .optional(),
   })
   .refine((v) => v.type === "AJUSTE" || v.quantity > 0, {
     message: "Quebra e doação são sempre uma quantidade positiva.",

@@ -201,6 +201,16 @@ describe("Reset de senha pelo super-admin", () => {
     ).toBe(0);
   });
 
+  it("recusa redefinir a senha de um super-admin — a temporária apareceria na tela de outro admin", async () => {
+    const outroAdmin = await criarUsuario({ role: "SUPER_ADMIN" });
+    await expect(AdminService.resetUserPassword(outroAdmin.id, ctx)).rejects.toThrow(/super-admin/i);
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: outroAdmin.id },
+      omit: { passwordHash: false },
+    });
+    expect(depois.passwordHash).toBe("hash-antigo");
+  });
+
   it("recusa usuário inexistente", async () => {
     await expect(AdminService.resetUserPassword("nao-existe", ctx)).rejects.toThrow(
       /não encontrado/i,

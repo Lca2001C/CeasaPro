@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { CheckCircle2, Container } from "lucide-react";
+import { CheckCircle2, Container, TrendingDown } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
 import { FiadoService } from "@/lib/services/fiado.service";
 import { formatBRL, formatDate, formatDateTime, formatQty } from "@/lib/format";
@@ -23,6 +23,7 @@ import { DevolucaoCaixasForm } from "./_components/devolucao-caixas-form";
 import { FiadoEditarForm } from "./_components/fiado-editar-form";
 import { CancelarVendaDoFiado } from "./_components/cancelar-venda-fiado";
 import { EstornarRecebimentoButton } from "./_components/estornar-recebimento-button";
+import { BaixarComoPerda, DesfazerBaixa } from "./_components/baixar-como-perda";
 import { Badge } from "@/components/ui/badge";
 import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
 
@@ -39,6 +40,7 @@ export default async function FiadoDetailPage({
   if (!conta) notFound();
 
   const pago = conta.status === "PAGO";
+  const perda = conta.status === "PERDA";
 
   return (
     <div>
@@ -68,7 +70,7 @@ export default async function FiadoDetailPage({
             <span
               className={cn(
                 "font-bold tabular-nums [overflow-wrap:anywhere] sm:text-lg",
-                pago ? "text-success" : "text-warning",
+                pago ? "text-success" : perda ? "text-muted-foreground line-through" : "text-warning",
               )}
             >
               {formatBRL(conta.saldo)}
@@ -206,13 +208,48 @@ export default async function FiadoDetailPage({
             </IconeRedondo>
             <span className="font-semibold">Conta quitada</span>
           </Card>
+        ) : perda ? (
+          <Card className="flex flex-col gap-3 p-4">
+            <div className="flex items-center gap-3">
+              <IconeRedondo tom="neutro" tamanho="sm">
+                <TrendingDown />
+              </IconeRedondo>
+              <div className="min-w-0">
+                <span className="block font-semibold">
+                  Baixado como perda: {formatBRL(conta.writtenOffAmount ?? 0)}
+                </span>
+                <span className="block text-sm text-muted-foreground">
+                  {conta.writtenOffAt ? `Em ${formatDateTime(conta.writtenOffAt)}` : ""}
+                  {conta.writtenOffReason ? ` — ${conta.writtenOffReason}` : ""}
+                </span>
+              </div>
+            </div>
+            {conta.podeDesfazerBaixa && <DesfazerBaixa accountId={conta.id} />}
+            {/* O cliente apareceu para pagar: o recebimento entra no resultado
+                do mês de hoje como "Recebido de fiado baixado". */}
+            {Number(conta.saldo) > 0 && (
+              <div className="flex flex-col gap-2 border-t pt-3">
+                <span className="text-sm font-semibold">Recebi depois da baixa</span>
+                <PagamentoForm accountId={conta.id} saldo={Number(conta.saldo)} />
+              </div>
+            )}
+          </Card>
         ) : (
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-base">Registrar pagamento</CardTitle>
             </CardHeader>
-            <CardContent>
+            <CardContent className="flex flex-col gap-4">
               <PagamentoForm accountId={conta.id} saldo={Number(conta.saldo)} />
+              {/* Saída para o fiado que não vai ser pago, depois do prazo de
+                  cancelar a venda — ver `FiadoService.baixarComoPerda`. */}
+              {!conta.podeCancelarVenda && Number(conta.saldo) > 0 && (
+                <BaixarComoPerda
+                  accountId={conta.id}
+                  customerName={conta.customerName}
+                  saldo={formatBRL(conta.saldo)}
+                />
+              )}
             </CardContent>
           </Card>
         )}
@@ -284,7 +321,7 @@ export default async function FiadoDetailPage({
             caixasDaVenda={conta.plasticCrateQty}
             pagoNoBalcao={Number(conta.pagoNoBalcao) > 0 ? formatBRL(conta.pagoNoBalcao) : null}
           />
-        ) : (
+        ) : perda ? null : (
           <p className="px-1 text-sm text-muted-foreground">
             {conta.vendaNoPrazo && conta.temRecebimentoVivo
               ? `Para cancelar esta venda, estorne antes os recebimentos (até ${HORAS_PARA_DESFAZER} h ` +

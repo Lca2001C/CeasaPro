@@ -106,7 +106,7 @@ export async function GET(req: Request): Promise<Response> {
     return paraLogin();
   }
 
-  const accessToken = await signAccess(payload);
+  const accessToken = await signAccess({ ...payload, fid: rotated.familyId });
   await setAuthCookies(accessToken, rotated.newToken);
 
   // Trava anti-laço: se o cookie novo não for aceito na próxima requisição, o

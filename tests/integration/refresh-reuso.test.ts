@@ -128,6 +128,27 @@ describe("ninguém legítimo é derrubado", () => {
     expect(resultados.some((r) => r.tipo === "reuso")).toBe(false);
   });
 
+  it("renovações simultâneas: só UMA é a rotação ('ok'); as outras passam pela graça", async () => {
+    const original = await createRefreshToken(userId);
+    const resultados = await Promise.all([
+      rotateRefreshToken(original),
+      rotateRefreshToken(original),
+    ]);
+    // Antes as duas liam o token vivo e saíam com "ok" — duas sessões novas
+    // fora da janela de graça e do teto dela.
+    expect(resultados.filter((r) => r.tipo === "ok")).toHaveLength(1);
+  });
+
+  it("o teto da graça vale também com chamadas simultâneas", async () => {
+    const original = await createRefreshToken(userId);
+    await rotateRefreshToken(original);
+    const resultados = await Promise.all(
+      Array.from({ length: 6 }, () => rotateRefreshToken(original)),
+    );
+    // Teto de 3 usos: ler e incrementar depois deixava as 6 passarem.
+    expect(resultados.filter((r) => r.tipo === "corrida").length).toBeLessThanOrEqual(3);
+  });
+
   // A regressão mais provável de todas: se o logout não fosse distinguido da
   // rotação, todo "sair" viraria "ataque detectado".
   it("logout NÃO é tratado como reuso", async () => {

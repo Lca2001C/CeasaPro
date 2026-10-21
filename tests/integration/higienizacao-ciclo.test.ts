@@ -228,15 +228,21 @@ describe("Exclusão de envio lançado por engano", () => {
     expect(depois.emHigienizacao).toBe(antes.emHigienizacao);
   });
 
-  it("não deixa movimento órfão do lote apagado", async () => {
+  it("o lote excluído fica com a saída e o ESTORNO dela — somam zero, nada apagado", async () => {
     await entrarSujas(6);
     const lote = await enviar(6);
     await HigienizacaoService.remove(lote.id, ctx);
 
-    const movs = await prisma.plasticCrateMovement.count({
+    const movs = await prisma.plasticCrateMovement.findMany({
       where: { crateCleaningId: lote.id },
+      select: { type: true, quantity: true },
     });
-    expect(movs).toBe(0);
+    // Regra §3.4: o livro-razão não perde linha. A saída fica, e o estorno a anula.
+    expect(movs.map((m) => m.type).sort()).toEqual([
+      "ESTORNO_SAIDA_HIGIENIZACAO",
+      "SAIDA_HIGIENIZACAO",
+    ]);
+    expect(movs.every((m) => m.quantity === 6)).toBe(true);
   });
 
   it("RECUSA excluir lote que já teve devolução", async () => {

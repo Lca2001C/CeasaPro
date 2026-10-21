@@ -10,7 +10,7 @@ import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
 import { addOneMonth, computeStatus, inicioDoPeriodoPago } from "@/lib/billing/status";
-import { gte, money, toNumber, type Decimal } from "@/lib/money";
+import { gt, gte, money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
   assertMercadoPagoConfig,
@@ -42,6 +42,7 @@ import {
 import { PlanoService } from "./plano.service";
 import { snapshotDeModulos } from "@/lib/plan/features-vigentes";
 import { travarAssinatura } from "@/lib/billing/travas";
+import { gravarStatusCalculado } from "@/lib/billing/gravar-status";
 import { AdminNotificationsService } from "./admin-notifications.service";
 import { sendEmail, paymentApprovedEmail, subscriptionDueSoonEmail } from "@/lib/email";
 import { describeError, logger } from "@/lib/logger";
@@ -774,6 +775,14 @@ export const BillingService = {
           idempotencySalt,
         }),
       );
+    // QR em aberto de OUTRA competência (o do mês passado que ninguém pagou, o
+    // da renovação gerado antes de um estorno mudar o alvo) sai de circulação
+    // antes do novo existir: pagos os dois, cada um creditava o seu mês.
+    const deOutrasCompetencias = await baixarPendentes(prisma, {
+      tenantId,
+      referenceMonth: { not: charge.refMonth },
+    });
+
     let pix = await gerarPix();
     // A chave de idempotência (referência + valor) devolveu uma cobrança MORTA:
     // é o QR deste mesmo valor que cancelamos no gateway quando o cliente trocou
@@ -793,6 +802,7 @@ export const BillingService = {
     if (substituida && substituida.mpPaymentId !== pix.mpPaymentId) {
       await cancelarNoGateway([substituida], { tenantId, motivo: "pix-substituido" }, now);
     }
+    await cancelarNoGateway(deOutrasCompetencias, { tenantId, motivo: "outra-competencia" }, now);
 
     // O Mercado Pago é idempotente pela chave `pix:<ref>:<valor>`: pedir de
     // novo dentro da validade da chave devolve a MESMA cobrança. Se ela já foi
@@ -875,9 +885,10 @@ export const BillingService = {
     // A própria linha do cartão fica de fora: a mesma tentativa repetida volta
     // com o mesmo `mpPaymentId` e é reaberta por `gravarCobranca` logo abaixo.
     if (!PIX_MORTO.has(paid.status)) {
+      // Todas as competências, não só a cobrada: um QR esquecido de outro mês,
+      // pago depois, compraria um segundo mês.
       const substituidas = await baixarPendentes(prisma, {
         tenantId,
-        referenceMonth: charge.refMonth,
         OR: [{ mpPaymentId: null }, { mpPaymentId: { not: paid.mpPaymentId } }],
       });
       await cancelarNoGateway(substituidas, { tenantId, motivo: "cartao-substituiu-pix" }, now);
@@ -991,6 +1002,15 @@ export const BillingService = {
     }
 
     const now = new Date();
+    /*
+      O momento do PAGAMENTO, não o do processamento. O webhook perdido e
+      reaplicado pela reconciliação no dia seguinte decidia pelo relógio de
+      agora: o PIX pago na última hora da tolerância "chegava" depois dela, e
+      `inicioDoPeriodoPago` recomeçava o mês no dia do processamento — os dias
+      de tolerância de graça, pelo caminho do atraso. Data futura (relógio do
+      gateway adiantado) não vale: limitado a agora.
+    */
+    const quandoPagou = mp.paidAt && mp.paidAt.getTime() < now.getTime() ? mp.paidAt : now;
     // Estorno, chargeback ou cancelamento de uma cobrança que já estava aprovada:
     // o mês pago deixa de valer e o acesso precisa ser cortado na hora.
     const isReversal = payment.status === "APROVADO";
@@ -1007,6 +1027,10 @@ export const BillingService = {
       outrasPendentes?: CobrancaBaixada[];
       /** Valor devido que o pagamento não cobriu — o mês não foi creditado. */
       valorMenor?: Decimal;
+      /** Pagamento DUPLICADO promovido a pagador do mês pela reversão desta cobrança. */
+      promovido?: string | null;
+      /** Pagou ACIMA do devido (QR antigo de valor maior): creditado, e o excedente avisado. */
+      excedente?: { pago: Decimal; devido: Decimal } | null;
     }
     const NADA: Resultado = { aplicado: false, bloqueou: false, duplicado: false };
 
@@ -1040,6 +1064,8 @@ export const BillingService = {
         confirmou: ela ainda credita, mas só se cobre o devido de agora.
       */
       let featuresComprados: Prisma.InputJsonObject | null = null;
+      let excedente: Resultado["excedente"] = null;
+      let promovido: string | null = null;
       if (newStatus === "APROVADO") {
         const cobrado = await tx.tenantSubscription.findUnique({
           where: { id: payment.subscriptionId },
@@ -1049,7 +1075,7 @@ export const BillingService = {
           },
         });
         if (cobrado) {
-          const devida = cobrancaDevida(cobrado, now);
+          const devida = cobrancaDevida(cobrado, quandoPagou);
           if (!gte(money(mp.amount), devida.valor)) {
             logger.error(
               {
@@ -1061,6 +1087,12 @@ export const BillingService = {
               "Pagamento aprovado com valor menor que a mensalidade — mês NÃO creditado",
             );
             return { ...NADA, valorMenor: devida.valor };
+          }
+          // Acima do devido (o QR de R$ 100 pago depois da descida para o plano
+          // de R$ 50, ou de um reajuste para baixo): o mês é creditado, mas a
+          // diferença entrou e alguém precisa devolver ou abater.
+          if (gt(money(mp.amount), devida.valor)) {
+            excedente = { pago: money(mp.amount), devido: devida.valor };
           }
           // Os módulos que este dinheiro compra: os do plano agendado (da hora
           // do agendamento) quando é ele que o valor cobriu, senão os do plano
@@ -1138,12 +1170,13 @@ export const BillingService = {
         const sub = await tx.tenantSubscription.findUnique({
           where: { id: payment.subscriptionId },
         });
-        // A competência está paga: qualquer outra cobrança aberta dela (o QR
-        // gerado de novo, o cartão parado no 3DS) só serviria para o cliente
-        // pagar duas vezes. Sai daqui e, depois do commit, do gateway.
+        // A competência está paga: qualquer outra cobrança aberta (o QR gerado
+        // de novo, o cartão parado no 3DS, o QR esquecido de OUTRO mês) só
+        // serviria para o cliente pagar duas vezes. Sai daqui e, depois do
+        // commit, do gateway. A próxima cobrança é gerada de novo, pelo alvo
+        // recalculado (`competenciaACobrar`).
         outrasPendentes = await baixarPendentes(tx, {
           tenantId: payment.tenantId,
-          referenceMonth: payment.referenceMonth,
           id: { not: payment.id },
         });
         if (sub) {
@@ -1176,7 +1209,15 @@ export const BillingService = {
           // Onde o mês comprado começa: no vencimento (adiantada, ou paga
           // dentro da tolerância) ou hoje (primeiro pagamento, ou depois de
           // ficar sem acesso) — ver `inicioDoPeriodoPago`.
-          const periodStart = inicioDoPeriodoPago(sub, now);
+          // Pago dentro da tolerância (pela data do PAGAMENTO): o mês começa no
+          // vencimento, mesmo que o processamento chegue depois dela. Fora
+          // disso ("recomeça hoje"), o hoje é o do processamento — o cliente
+          // que ficou sem acesso não perde dias por um webhook nosso atrasado.
+          const pelaDataDoPagamento = inicioDoPeriodoPago(sub, quandoPagou);
+          const periodStart =
+            pelaDataDoPagamento.getTime() === quandoPagou.getTime()
+              ? inicioDoPeriodoPago(sub, now)
+              : pelaDataDoPagamento;
           const periodEnd = addOneMonth(periodStart);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
@@ -1223,7 +1264,51 @@ export const BillingService = {
           Com outro pagamento aprovado de pé, a reversão vira só o que ela é: uma
           linha do extrato mudando de status. `currentPeriodEnd` fica, o acesso
           fica, e a auditoria registra o caso para conferência.
+
+          O "outro pagamento" quase nunca está APROVADO: `approvedKey` só deixa
+          um por competência, e o segundo vira DUPLICADO (aprovado no gateway e
+          NÃO creditado). Com este revertido, é ele que paga o mês — promovido
+          aqui, na mesma transação, com o período e os módulos do revertido.
+          Sem isso, o chargeback do cartão bloqueava quem tinha pago o PIX do
+          mesmo mês, até a reconciliação do dia seguinte (se pegasse).
         */
+        const duplicado = await tx.subscriptionPayment.findFirst({
+          where: {
+            tenantId: payment.tenantId,
+            referenceMonth: payment.referenceMonth,
+            uncreditedReason: "DUPLICADO",
+            id: { not: payment.id },
+          },
+          orderBy: { createdAt: "asc" },
+          select: { id: true, mpPaymentId: true },
+        });
+        if (duplicado) {
+          await tx.subscriptionPayment.update({
+            where: { id: duplicado.id },
+            data: {
+              status: "APROVADO",
+              approvedKey: chaveDeAprovacao("APROVADO", payment.tenantId, payment.referenceMonth),
+              uncreditedAt: null,
+              uncreditedReason: null,
+              periodStart: payment.periodStart,
+              periodEnd: payment.periodEnd,
+              features: payment.features ?? Prisma.JsonNull,
+            },
+          });
+          promovido = duplicado.mpPaymentId;
+          await audit(
+            {
+              tenantId: payment.tenantId,
+              action: "PAYMENT",
+              entity: "SubscriptionPayment",
+              entityId: duplicado.id,
+              oldData: { uncreditedReason: "DUPLICADO" },
+              newData: { status: "APROVADO", motivo: "promovido-pela-reversao", revertido: mp.id },
+            },
+            tx,
+          );
+        }
+
         const outraAprovada = await tx.subscriptionPayment.findFirst({
           where: {
             tenantId: payment.tenantId,
@@ -1365,7 +1450,15 @@ export const BillingService = {
         },
         tx,
       );
-      return { aplicado: true, bloqueou, duplicado: false, bloqueioDesfeito, outrasPendentes };
+      return {
+        aplicado: true,
+        bloqueou,
+        duplicado: false,
+        bloqueioDesfeito,
+        outrasPendentes,
+        excedente,
+        promovido,
+      };
     })
       .catch((e: unknown): Resultado => {
         // Entre o `findFirst` lá em cima e este `updateMany` ainda cabe outro
@@ -1414,6 +1507,46 @@ export const BillingService = {
       await cancelarNoGateway(resultado.outrasPendentes, {
         tenantId: payment.tenantId,
         motivo: "competencia-paga",
+      });
+    }
+
+    // O pagamento promovido foi lido do NOSSO banco; o gateway é a fonte. Se
+    // ele também foi estornado nesse meio-tempo, esta releitura reverte.
+    if (resultado.promovido) {
+      await this.handleWebhook(resultado.promovido).catch((e) =>
+        logger.error(
+          { err: describeError(e), mpPaymentId: resultado.promovido },
+          "Falha ao reconferir o pagamento promovido no Mercado Pago — a reconciliação acompanha",
+        ),
+      );
+    }
+
+    if (resultado.excedente) {
+      const { pago, devido } = resultado.excedente;
+      const tenant = await prisma.tenant
+        .findUnique({ where: { id: payment.tenantId }, select: { tradeName: true } })
+        .catch(() => null);
+      await audit({
+        tenantId: payment.tenantId,
+        action: "PAYMENT_OVERPAID",
+        entity: "SubscriptionPayment",
+        entityId: payment.id,
+        newData: {
+          mpPaymentId: mp.id,
+          pago: pago.toString(),
+          devido: devido.toString(),
+          referenceMonth: payment.referenceMonth,
+        },
+      });
+      await AdminNotificationsService.criar({
+        kind: "PAGAMENTO_ACIMA_DO_DEVIDO",
+        title: "Pagamento acima da mensalidade",
+        body:
+          `${tenant?.tradeName ?? payment.tenantId} pagou R$ ${pago.toFixed(2)} (pagamento ${mp.id}, ` +
+          `competência ${payment.referenceMonth}), mas a mensalidade devida era R$ ${devido.toFixed(2)}. ` +
+          "O mês foi creditado; devolva a diferença ou abata da próxima.",
+        href: `/admin/clientes/${payment.tenantId}`,
+        tenantId: payment.tenantId,
       });
     }
 
@@ -1857,11 +1990,7 @@ export const BillingService = {
       if (await PlanoService.aplicarTrocaProgramada(sub, now)) planosTrocados++;
 
       const effective = computeStatus(sub, now);
-      if (effective !== sub.status) {
-        await prisma.tenantSubscription.update({
-          where: { id: sub.id },
-          data: { status: effective },
-        });
+      if (effective !== sub.status && (await gravarStatusCalculado(sub, effective))) {
         updated++;
       }
     }

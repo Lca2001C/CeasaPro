@@ -22,10 +22,21 @@ export const criarVendaEmbalagem = withTenantAction({
   handler: (input, ctx) => EmbalagensService.createSale(input, ctx),
 });
 
-export const excluirVendaEmbalagem = withTenantAction({
-  schema: z.string().min(1),
+/** Desfaz a entrada lançada errada (até 24 h). Ver `EmbalagensService.desfazerEntrada`. */
+export const desfazerEntradaEmbalagem = withTenantAction({
+  schema: z.object({ id: z.string().min(1) }),
   module: "embalagens",
-  handler: (id, ctx) => EmbalagensService.removeSale(id, ctx),
+  handler: (input, ctx) => EmbalagensService.desfazerEntrada(input, ctx),
+});
+
+/** Cancela a venda lançada errada (até 24 h). Ver `EmbalagensService.cancelarVenda`. */
+export const cancelarVendaEmbalagem = withTenantAction({
+  schema: z.object({
+    id: z.string().min(1),
+    motivo: z.string().trim().max(200).nullable().optional(),
+  }),
+  module: "embalagens",
+  handler: (input, ctx) => EmbalagensService.cancelarVenda(input, ctx),
 });
 
 /** Liga o controle de saldo de um tipo, gravando o que existe hoje. */

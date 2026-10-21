@@ -322,13 +322,16 @@ describe("Estorno de recebimento do fiado", () => {
     expect((await FiadoService.get(tenantId, conta.id)).payments[0]!.podeEstornar).toBe(false);
   });
 
-  it("só o dono estorna", async () => {
+  it("só o dono estorna — e o super-admin, no ambiente próprio dele", async () => {
     const { conta } = await vendaFiada({ qtd: 4, preco: 2 });
     const pagamento = await receber(conta.id, 4);
-    const operador = { ...ctx, session: { ...ctx.session, role: "SUPER_ADMIN" as const } };
+    const operador = { ...ctx, session: { ...ctx.session, role: "STAFF" as never } };
     await expect(FiadoService.estornarPagamento({ paymentId: pagamento.id }, operador)).rejects.toThrow(
       /responsável/i,
     );
+    const admin = { ...ctx, session: { ...ctx.session, role: "SUPER_ADMIN" as const } };
+    const r = await FiadoService.estornarPagamento({ paymentId: pagamento.id }, admin);
+    expect(r.status).toBe("EM_ABERTO");
   });
 });
 

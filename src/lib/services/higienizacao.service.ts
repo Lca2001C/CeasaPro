@@ -14,6 +14,7 @@ import type {
 import type { TenantCtx } from "@/lib/http/with-action";
 import type { CrateCleaningStatus } from "@prisma/client";
 import { parseFormDateTz } from "@/lib/tz";
+import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
 
 /**
  * Situação do lote a partir das DUAS pontas do ciclo: caixas e dinheiro.
@@ -260,6 +261,12 @@ export const HigienizacaoService = {
       await CaixasService.travarInTx(tx, ctx.tenantId);
       const before = await tx.crateCleaning.findFirst({ where: { id: input.id } });
       if (!before) throw new NotFoundError("Registro não encontrado");
+      // Regra única de desfazer: o envio entra no lucro e em "Variáveis" pela
+      // data de ENVIO, então editá-lo depois de 24 h reescrevia um mês já
+      // fechado (data, preço, quantidade).
+      if (!dentroDoPrazoDeDesfazer(before.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("alterar este envio"));
+      }
       if (before.returnedQty > 0 || !toDecimal(before.paidAmount).isZero()) {
         throw new BusinessRuleError(
           "Este envio já teve devolução ou pagamento — não pode mais ser alterado.",
@@ -305,62 +312,24 @@ export const HigienizacaoService = {
 
         );
       } else if (delta < 0) {
-        // Diminuir a quantidade enviada DESFAZ parte da saída — não é retorno.
-        //
-        // Compensar com `RETORNO_HIGIENIZACAO` era o que estava aqui, e
-        // `resolveDirty` mapeia esse tipo para `dirty: false`: enviar 50 sujas,
-        // perceber que eram 40 e corrigir fazia 10 caixas migrarem de
-        // "em higienização" para LIMPAS sem terem sido lavadas.
-        //
-        // O próprio `remove` documenta que compensar seria errado por esse
-        // exato motivo e por isso APAGA os movimentos. Aqui a correção é a
-        // mesma, restrita ao excedente: as caixas voltam para o pote de onde
-        // saíram (sujas), porque de fato nunca saíram.
-        //
-        // Só é alcançável quando não houve devolução, pagamento nem perda — a
-        // guarda no topo do método garante isso.
-        //
-        // Mas a guarda olha só o LOTE, e o pote "em higienização" é da empresa.
-        // Se as caixas já saíram dele por outro caminho (um movimento de
-        // higienizador lançado solto, de antes de `registrarInTx` exigir o
-        // vínculo), apagar a saída levava o pote a negativo e criava sujas
-        // fantasma, que o painel manda higienizar.
-        const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
-        if (saldo.emHigienizacao < -delta) {
-          throw new BusinessRuleError(
-            `Há ${saldo.emHigienizacao} caixa(s) no higienizador — não dá para tirar ` +
-              `${-delta} deste envio. Confira as caixas que já voltaram.`,
-          );
-        }
-        let restante = -delta;
-        const saidas = await tx.plasticCrateMovement.findMany({
-          where: {
-            tenantId: ctx.tenantId,
+        // Diminuir a quantidade enviada DESFAZ parte da saída — não é retorno
+        // (`RETORNO_HIGIENIZACAO` poria em LIMPAS caixas que nunca foram
+        // lavadas). Antes a saída era APAGADA ou encolhida; agora entra um
+        // ESTORNO_SAIDA_HIGIENIZACAO, que devolve às sujas sem reescrever o
+        // livro-razão (regra §3.4). `assertCrateMovement` recusa tirar do
+        // higienizador mais do que há lá.
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "ESTORNO_SAIDA_HIGIENIZACAO",
+            quantity: -delta,
+            cleanerName: before.cleanerName,
+            movementDate: input.sentDate,
             crateCleaningId: before.id,
-            type: "SAIDA_HIGIENIZACAO",
+            notes: "Ajuste do envio para higienização (menos caixas)",
           },
-          orderBy: { createdAt: "desc" },
-          select: { id: true, quantity: true },
-        });
-        for (const mov of saidas) {
-          if (restante <= 0) break;
-          if (mov.quantity <= restante) {
-            await tx.plasticCrateMovement.delete({ where: { id: mov.id } });
-            restante -= mov.quantity;
-          } else {
-            await tx.plasticCrateMovement.update({
-              where: { id: mov.id },
-              data: { quantity: mov.quantity - restante },
-            });
-            restante = 0;
-          }
-        }
-        if (restante > 0) {
-          throw new BusinessRuleError(
-            "Não foi possível reduzir o envio: o livro-razão não tem saída suficiente " +
-              "para este lote. Exclua o envio e lance de novo.",
-          );
-        }
+          ctx,
+        );
       }
 
       // Compare-and-set no estado que liberou a edição (nada devolvido, nada
@@ -662,6 +631,9 @@ export const HigienizacaoService = {
       await CaixasService.travarInTx(tx, ctx.tenantId);
       const before = await tx.crateCleaning.findFirst({ where: { id } });
       if (!before) throw new NotFoundError("Registro não encontrado");
+      if (!dentroDoPrazoDeDesfazer(before.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("excluir este envio"));
+      }
       if (!toDecimal(before.paidAmount).isZero()) {
         throw new BusinessRuleError("Não é possível excluir um registro com pagamentos.");
       }
@@ -681,15 +653,18 @@ export const HigienizacaoService = {
       // Apagar a saída devolve as caixas às sujas — só se elas ainda estão no
       // pote "em higienização". Se já saíram dele por outro caminho, apagar
       // deixava o pote negativo e somava sujas que não existem.
-      const saidas = await tx.plasticCrateMovement.findMany({
+      const movimentos = await tx.plasticCrateMovement.findMany({
         where: {
           tenantId: ctx.tenantId,
           crateCleaningId: before.id,
-          type: "SAIDA_HIGIENIZACAO",
+          type: { in: ["SAIDA_HIGIENIZACAO", "ESTORNO_SAIDA_HIGIENIZACAO"] },
         },
-        select: { quantity: true },
+        select: { type: true, quantity: true },
       });
-      const noHigienizador = saidas.reduce((a, m) => a + m.quantity, 0);
+      const noHigienizador = movimentos.reduce(
+        (a, m) => a + (m.type === "SAIDA_HIGIENIZACAO" ? m.quantity : -m.quantity),
+        0,
+      );
       const saldo = await CaixasService.getSaldoInTx(tx, ctx.tenantId);
       if (saldo.emHigienizacao < noHigienizador) {
         throw new BusinessRuleError(
@@ -698,9 +673,23 @@ export const HigienizacaoService = {
         );
       }
 
-      await tx.plasticCrateMovement.deleteMany({
-        where: { tenantId: ctx.tenantId, crateCleaningId: before.id },
-      });
+      // Estorno, não `deleteMany`: as caixas voltam às sujas e o histórico do
+      // livro-razão fica (regra §3.4) — o envio excluído aparece com a saída e
+      // o estorno, somando zero.
+      if (noHigienizador > 0) {
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "ESTORNO_SAIDA_HIGIENIZACAO",
+            quantity: noHigienizador,
+            cleanerName: before.cleanerName,
+            movementDate: before.sentDate.toISOString(),
+            crateCleaningId: before.id,
+            notes: "Envio para higienização excluído",
+          },
+          ctx,
+        );
+      }
 
       await tx.crateCleaning.update({ where: { id }, data: { deletedAt: new Date() } });
       await audit(

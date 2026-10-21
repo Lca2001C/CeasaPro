@@ -11,3 +11,10 @@ export const ORIGEM_COMPRA_CANCELADA = "PURCHASE_CANCELLED";
 export const ORIGEM_VENDA = "SALE";
 /** Devolução da venda cancelada ao estoque, pelo custo com que a mercadoria saiu. */
 export const ORIGEM_VENDA_CANCELADA = "SALE_CANCELLED";
+/** Ajuste manual (quebra, doação, acerto) lançado na tela de estoque. */
+export const ORIGEM_AJUSTE = "MANUAL";
+/**
+ * Estorno do ajuste manual desfeito (até 24 h). `sourceId` = id do ajuste. O
+ * par sai junto do repasse do custo médio, como o da compra cancelada.
+ */
+export const ORIGEM_AJUSTE_DESFEITO = "MANUAL_CANCELLED";

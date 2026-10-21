@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db/prisma";
 import { money, toDecimal } from "@/lib/money";
 import { endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, addDaysTz, refMonthTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
+import { isModuleEnabled } from "@/lib/plan/modules";
 
 /**
  * Números da aba "Financeiro" do Início que o resumo do mês
@@ -15,6 +16,11 @@ import { APP_TIME_ZONE, addDaysTz, refMonthTz, startOfMonthTz, startOfNextMonthT
  * - conta pelo `COALESCE("dueDate","createdAt")` até o FIM do mês, e só a
  *   operacional (`origem = 'MANUAL'`) — a conta de uma compra já está no custo
  *   da mercadoria, e aqui ela seria mercadoria contada duas vezes.
+ *
+ * - "Vendas" é o FATURAMENTO (mercadoria + embalagem vendida, com o módulo) e
+ *   "Contas" inclui a higienização pela data de ENVIO (com o módulo) — os
+ *   mesmos componentes do "Resultado do mês", para a coluna do mês atual
+ *   fechar com ele.
  *
  * Os meses são agrupados no fuso do app: as colunas são `timestamp` sem fuso
  * guardando UTC, e truncar direto jogaria a venda das 22h do último dia do mês
@@ -54,7 +60,13 @@ const numero = (v: Prisma.Decimal | string | number | null | undefined) =>
   Number(money(toDecimal((v ?? 0) as Prisma.Decimal.Value)));
 
 export const PainelFinanceiroService = {
-  async get(tenantId: string, agora = new Date()): Promise<PainelFinanceiro> {
+  async get(
+    tenantId: string,
+    agora = new Date(),
+    modules?: string[],
+  ): Promise<PainelFinanceiro> {
+    const comHigienizacao = isModuleEnabled(modules, "higienizacao");
+    const comEmbalagens = isModuleEnabled(modules, "embalagens");
     const inicioDoMes = startOfMonthTz(agora);
     let inicioDaSerie = inicioDoMes;
     for (let i = 1; i < MESES_NO_GRAFICO; i++) {
@@ -66,7 +78,8 @@ export const PainelFinanceiroService = {
     type Linha = { mes: string; total: Prisma.Decimal | string };
     type Grupo = { chave: string | null; total: Prisma.Decimal | string };
 
-    const [vendas, compras, contas, formas, categorias] = await Promise.all([
+    const nada = Promise.resolve([] as Linha[]);
+    const [vendas, compras, contas, formas, categorias, embalagens, higienizacao] = await Promise.all([
       prisma.$queryRaw<Linha[]>`
         SELECT ${mesDe('"saleDate"')} AS mes, SUM("totalAmount") AS total
         FROM sales
@@ -113,20 +126,38 @@ export const PainelFinanceiroService = {
           AND COALESCE(e."dueDate", e."createdAt") >= ${inicioDoMes}
           AND COALESCE(e."dueDate", e."createdAt") <= ${fimDoMes}
         GROUP BY c.name`,
+      comEmbalagens
+        ? prisma.$queryRaw<Linha[]>`
+            SELECT ${mesDe('"saleDate"')} AS mes, SUM("totalAmount") AS total
+            FROM packaging_sales
+            WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL AND "cancelledAt" IS NULL
+              AND "saleDate" >= ${inicioDaSerie} AND "saleDate" <= ${ateAgora}
+            GROUP BY 1`
+        : nada,
+      comHigienizacao
+        ? prisma.$queryRaw<Linha[]>`
+            SELECT ${mesDe('"sentDate"')} AS mes, SUM("totalAmount") AS total
+            FROM crate_cleanings
+            WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
+              AND "sentDate" >= ${inicioDaSerie} AND "sentDate" <= ${fimDoMes}
+            GROUP BY 1`
+        : nada,
     ]);
 
     const porMes = (linhas: Linha[]) => new Map(linhas.map((l) => [l.mes, numero(l.total)]));
     const v = porMes(vendas);
     const c = porMes(compras);
     const d = porMes(contas);
+    const e = porMes(embalagens);
+    const h = porMes(higienizacao);
     const meses: MesFinanceiro[] = [];
     for (let i = 0, ref = inicioDaSerie; i < MESES_NO_GRAFICO; i++) {
       const mes = refMonthTz(ref);
       meses.push({
         mes,
-        vendas: v.get(mes) ?? 0,
+        vendas: Number(money(toDecimal(v.get(mes) ?? 0).plus(e.get(mes) ?? 0))),
         compras: c.get(mes) ?? 0,
-        contas: d.get(mes) ?? 0,
+        contas: Number(money(toDecimal(d.get(mes) ?? 0).plus(h.get(mes) ?? 0))),
       });
       ref = startOfNextMonthTz(ref);
     }
@@ -137,7 +168,16 @@ export const PainelFinanceiroService = {
         .filter((x) => x.total > 0)
         .sort((a, b) => b.total - a.total);
 
-    const todasCategorias = ordenar(categorias);
+    // As mesmas partes do "Resultado do mês": a higienização enviada é conta do
+    // mês (a barra "Contas" já a soma) e a embalagem vendida é dinheiro que
+    // entrou. Fora daqui, as fatias somavam menos que a coluna ao lado.
+    const mesAtual = refMonthTz(agora);
+    const higMes = h.get(mesAtual) ?? 0;
+    const embMes = e.get(mesAtual) ?? 0;
+    const todasCategorias = ordenar([
+      ...categorias,
+      ...(higMes > 0 ? [{ chave: "Higienização", total: String(higMes) }] : []),
+    ]);
     const contasPorCategoria = todasCategorias.slice(0, CATEGORIAS_NO_GRAFICO);
     const resto = todasCategorias.slice(CATEGORIAS_NO_GRAFICO);
     if (resto.length > 0) {
@@ -147,6 +187,13 @@ export const PainelFinanceiroService = {
       });
     }
 
-    return { meses, formasDePagamento: ordenar(formas), contasPorCategoria };
+    return {
+      meses,
+      formasDePagamento: ordenar([
+        ...formas,
+        ...(embMes > 0 ? [{ chave: "EMBALAGEM", total: String(embMes) }] : []),
+      ]),
+      contasPorCategoria,
+    };
   },
 };

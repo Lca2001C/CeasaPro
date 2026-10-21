@@ -1,4 +1,4 @@
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { emailIdentity } from "@/lib/email-identity";
 import { normalizarCnpj } from "@/lib/cnpj";
@@ -63,6 +63,20 @@ export async function emailEmUso(email: string): Promise<boolean> {
     select: { id: true },
   });
   return existing !== null;
+}
+
+/**
+ * O erro é a colisão do índice `users_email_identity_ativa` (migration
+ * `20261021120000`)? É a barreira de banco de `emailEmUso`: dois cadastros
+ * simultâneos com apelidos do mesmo endereço passam os dois pela checagem, e o
+ * segundo só é parado aqui.
+ */
+export function ehColisaoDeIdentidadeDeEmail(e: unknown): boolean {
+  if (!(e instanceof Prisma.PrismaClientKnownRequestError) || e.code !== "P2002") return false;
+  const alvo = (e.meta as { target?: unknown } | undefined)?.target;
+  if (typeof alvo === "string") return alvo.includes("email_identity");
+  if (Array.isArray(alvo)) return alvo.includes("emailIdentity");
+  return false;
 }
 
 /**

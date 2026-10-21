@@ -69,8 +69,9 @@ function comSessao(tenantId: string, over: Record<string, unknown> = {}) {
   requireTenant.mockResolvedValue({ session: sessaoOk(tenantId, over), tenantId });
 }
 
+const JSON_HEADERS = { "Content-Type": "application/json" };
 const post = (corpo: unknown, url = "http://localhost/api/x") =>
-  new Request(url, { method: "POST", body: JSON.stringify(corpo) });
+  new Request(url, { method: "POST", body: JSON.stringify(corpo), headers: JSON_HEADERS });
 
 beforeEach(() => {
   assertSessaoValida.mockResolvedValue(undefined);
@@ -234,7 +235,11 @@ describe("withTenantRoute — entrada e saída", () => {
     // ("erro inesperado") em vez de 422 ("dados inválidos") — e o cliente não
     // saberia que o problema era dele.
     comSessao(novoTenant());
-    const req = new Request("http://localhost/api/x", { method: "POST", body: "{ isto não é json" });
+    const req = new Request("http://localhost/api/x", {
+      method: "POST",
+      body: "{ isto não é json",
+      headers: JSON_HEADERS,
+    });
 
     const r = await withTenantRoute({
       schema: z.object({ nome: z.string() }),
@@ -242,6 +247,48 @@ describe("withTenantRoute — entrada e saída", () => {
     })(req);
 
     expect(r.status).toBe(422);
+  });
+
+  it("escrita vinda de OUTRO site é recusada antes de tocar na sessão (CSRF)", async () => {
+    comSessao(novoTenant());
+    const handler = vi.fn();
+    const rota = withTenantRoute({ schema: z.object({ nome: z.string() }), handler });
+
+    const deOutraOrigem = new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ nome: "x" }),
+      headers: { ...JSON_HEADERS, Origin: "https://site-malicioso.example" },
+    });
+    expect((await rota(deOutraOrigem)).status).toBe(403);
+
+    const crossSite = new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ nome: "x" }),
+      headers: { ...JSON_HEADERS, "Sec-Fetch-Site": "cross-site" },
+    });
+    expect((await rota(crossSite)).status).toBe(403);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("mesma origem passa; corpo sem Content-Type JSON é recusado (formulário de outro site)", async () => {
+    comSessao(novoTenant());
+    const handler = vi.fn().mockResolvedValue({ ok: 1 });
+    const rota = withTenantRoute({ schema: z.object({ nome: z.string() }), handler });
+
+    const mesmaOrigem = new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ nome: "x" }),
+      headers: { ...JSON_HEADERS, Origin: "http://localhost" },
+    });
+    expect((await rota(mesmaOrigem)).status).toBe(200);
+
+    const textoPuro = new Request("http://localhost/api/x", {
+      method: "POST",
+      body: JSON.stringify({ nome: "x" }),
+      headers: { "Content-Type": "text/plain" },
+    });
+    expect((await rota(textoPuro)).status).toBe(415);
+    expect(handler).toHaveBeenCalledTimes(1);
   });
 
   it("`source: query` lê a querystring em vez do corpo", async () => {

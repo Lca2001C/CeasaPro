@@ -2,21 +2,42 @@ import { z } from "zod";
 import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
 import { recipientTypeEnum } from "./produto";
 import { expensePaymentMethodEnum } from "./despesa";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import {
+  ITENS_MAX,
+  MSG_ITENS_MAX,
+  MSG_QUANTIDADE_MAX,
+  MSG_TRES_CASAS,
+  MSG_VALOR_MAX,
+  QUANTIDADE_MAX,
+  VALOR_MAX,
+  temAteTresCasas,
+} from "./quantidade";
+
+const dinheiro = (msg: string) =>
+  z.number().nonnegative(msg).max(VALOR_MAX, MSG_VALOR_MAX).refine(temAteDuasCasas, MSG_DUAS_CASAS);
 
 export const compraItemSchema = z.object({
   productId: z.string().min(1, "Selecione o produto"),
-  quantity: z.number().positive("Quantidade inválida"),
-  unitPrice: z.number().nonnegative("Preço inválido"),
+  quantity: z
+    .number()
+    .positive("Quantidade inválida")
+    .max(QUANTIDADE_MAX, MSG_QUANTIDADE_MAX)
+    .refine(temAteTresCasas, MSG_TRES_CASAS),
+  unitPrice: dinheiro("Preço inválido"),
   recipientType: recipientTypeEnum.nullable().optional(),
-  suggestedSalePrice: z.number().nonnegative().nullable().optional(),
+  suggestedSalePrice: dinheiro("Preço inválido").nullable().optional(),
 });
 
 export const compraSchema = z.object({
   supplierId: z.string().nullable().optional(),
   purchaseDate: z.string().min(1, "Informe a data"),
-  freight: z.number().nonnegative(),
+  freight: dinheiro("Frete inválido"),
   notes: z.string().max(500).nullable().optional(),
-  items: z.array(compraItemSchema).min(1, "Adicione ao menos um item"),
+  items: z
+    .array(compraItemSchema)
+    .min(1, "Adicione ao menos um item")
+    .max(ITENS_MAX, MSG_ITENS_MAX),
   /**
    * Caixas plásticas que chegaram junto com a mercadoria.
    *

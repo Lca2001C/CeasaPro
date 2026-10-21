@@ -1,4 +1,5 @@
 import type { NextConfig } from "next";
+import { withSentryConfig } from "@sentry/nextjs/config";
 
 const isProd = process.env.NODE_ENV === "production";
 
@@ -71,4 +72,29 @@ const nextConfig: NextConfig = {
   },
 };
 
-export default nextConfig;
+/**
+ * Source maps no Sentry — só com `SENTRY_AUTH_TOKEN` (+ `SENTRY_ORG` e
+ * `SENTRY_PROJECT`) no ambiente do BUILD. Sem eles o config sai exatamente como
+ * antes: o Sentry de runtime (`src/instrumentation*.ts`) funciona igual, só que a
+ * pilha do navegador chega minificada.
+ *
+ * Com eles, o build envia os mapas e os APAGA da saída (`deleteSourcemapsAfterUpload`):
+ * o código-fonte não fica público em `/_next/static`. Nada de instrumentação
+ * automática nem túnel — o SDK aqui só serve para ler os erros.
+ */
+const comSourceMaps =
+  !!process.env.SENTRY_AUTH_TOKEN && !!process.env.SENTRY_ORG && !!process.env.SENTRY_PROJECT;
+
+export default comSourceMaps
+  ? withSentryConfig(nextConfig, {
+      org: process.env.SENTRY_ORG,
+      project: process.env.SENTRY_PROJECT,
+      authToken: process.env.SENTRY_AUTH_TOKEN,
+      silent: true,
+      telemetry: false,
+      widenClientFileUpload: false,
+      buildTimeInstrumentation: false,
+      suppressOnRouterTransitionStartWarning: true,
+      sourcemaps: { deleteSourcemapsAfterUpload: true },
+    })
+  : nextConfig;

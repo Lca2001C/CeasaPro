@@ -10,6 +10,17 @@ import {
   totalDaVendaCents,
 } from "@/lib/venda/total";
 import { parseFormDateTz } from "@/lib/tz";
+import { MSG_DUAS_CASAS, temAteDuasCasas } from "./dinheiro";
+import {
+  ITENS_MAX,
+  MSG_ITENS_MAX,
+  MSG_QUANTIDADE_MAX,
+  MSG_TRES_CASAS,
+  MSG_VALOR_MAX,
+  QUANTIDADE_MAX,
+  VALOR_MAX,
+  temAteTresCasas,
+} from "./quantidade";
 
 export const paymentMethodEnum = z.enum(["PIX", "DINHEIRO", "CARTAO", "FIADO"]);
 
@@ -17,18 +28,35 @@ export const recipientTypeEnum = z.enum(["PLASTICA", "PAPELAO", "MADEIRA"]);
 
 export const vendaItemSchema = z.object({
   productId: z.string().min(1),
-  quantity: z.number().positive("Quantidade inválida"),
-  unitPrice: z.number().nonnegative("Preço inválido"),
+  quantity: z
+    .number()
+    .positive("Quantidade inválida")
+    .max(QUANTIDADE_MAX, MSG_QUANTIDADE_MAX)
+    .refine(temAteTresCasas, MSG_TRES_CASAS),
+  unitPrice: z
+    .number()
+    .nonnegative("Preço inválido")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS),
   recipientType: recipientTypeEnum.nullable().optional(),
   crateQty: z.number().int().nonnegative("Quantidade de caixas inválida").max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /** Desconto desta linha, em reais. Nunca maior que o valor da linha. */
-  discountAmount: z.number().nonnegative("Desconto inválido").optional(),
+  discountAmount: z
+    .number()
+    .nonnegative("Desconto inválido")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS)
+    .optional(),
 });
 
 /** Uma forma de pagamento e o quanto foi pago nela (pagamento misto). */
 export const vendaPagamentoSchema = z.object({
   method: paymentMethodEnum,
-  amount: z.number().positive("Informe o valor desta forma de pagamento"),
+  amount: z
+    .number()
+    .positive("Informe o valor desta forma de pagamento")
+    .max(VALOR_MAX, MSG_VALOR_MAX)
+    .refine(temAteDuasCasas, MSG_DUAS_CASAS),
 });
 export type VendaPagamentoInput = z.infer<typeof vendaPagamentoSchema>;
 
@@ -111,7 +139,10 @@ const vendaBase = z.object({
    * funcionando depois do deploy, e o fiado manual não tem carrinho.
    */
   idempotencyKey: z.uuid().optional(),
-  items: z.array(vendaItemSchema).min(1, "Adicione ao menos um item"),
+  items: z
+    .array(vendaItemSchema)
+    .min(1, "Adicione ao menos um item")
+    .max(ITENS_MAX, MSG_ITENS_MAX),
 });
 
 export type VendaInput = z.infer<typeof vendaBase>;

@@ -3,12 +3,52 @@ import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { money, toDecimal } from "@/lib/money";
-import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
+import { NotFoundError, BusinessRuleError, ForbiddenError } from "@/lib/http/app-error";
+import {
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
 import type { Prisma } from "@prisma/client";
 import type { TipoEmbalagemInput, VendaEmbalagemInput } from "@/lib/validations/embalagem";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
+
+/** `sourceType` da baixa de estoque gerada pela venda e do estorno dela. */
+const ORIGEM_VENDA_EMBALAGEM = "PACKAGING_SALE";
+const ORIGEM_VENDA_EMBALAGEM_CANCELADA = "PACKAGING_SALE_CANCELLED";
+/** Estorno da ENTRADA desfeita (até 24 h). `sourceId` = id da entrada. */
+const ORIGEM_ENTRADA_DESFEITA = "PACKAGING_ENTRY_CANCELLED";
+
+/**
+ * Custo médio a partir do livro-razão do tipo, sem as entradas desfeitas: a
+ * entrada e o estorno dela saem JUNTOS (o custo digitado errado não fica na
+ * média; o par soma zero no saldo) — a mesma regra da compra cancelada.
+ */
+function custoMedioDoTipo(
+  movimentos: {
+    id: string;
+    type: string;
+    quantity: number;
+    unitCost: Prisma.Decimal | null;
+    sourceType: string | null;
+    sourceId: string | null;
+  }[],
+) {
+  const desfeitas = new Set(
+    movimentos.filter((m) => m.sourceType === ORIGEM_ENTRADA_DESFEITA).map((m) => m.sourceId),
+  );
+  return FinancialCalc.custoMedioMovel(
+    movimentos
+      .filter((m) => m.sourceType !== ORIGEM_ENTRADA_DESFEITA && !desfeitas.has(m.id))
+      .map((m) => ({
+        entrada: (m.type === "ENTRADA" || m.type === "AJUSTE") && m.quantity > 0,
+        quantidade: m.quantity,
+        custoUnitario: m.unitCost,
+      })),
+  );
+}
 
 type DbClient = { packagingType: Pick<Prisma.PackagingTypeDelegate, "createMany"> };
 
@@ -69,7 +109,7 @@ export const EmbalagensService = {
    * embalagem), o dono informa a quantidade atual e ela vira o AJUSTE inicial.
    */
   async ativarControleEstoque(
-    input: { packagingTypeId: string; quantidadeAtual: number },
+    input: { packagingTypeId: string; quantidadeAtual: number; custoUnitario?: number },
     ctx: TenantCtx,
   ) {
     const db = getTenantPrisma(ctx.tenantId);
@@ -98,6 +138,8 @@ export const EmbalagensService = {
             packagingTypeId: tipo.id,
             type: "AJUSTE",
             quantity: input.quantidadeAtual,
+            // O custo do saldo inicial forma a média que a venda desconta.
+            unitCost: input.custoUnitario ?? null,
             reason: "Saldo inicial ao ligar o controle de estoque",
           },
         });
@@ -122,7 +164,7 @@ export const EmbalagensService = {
 
   /** Entrada de embalagens: compra ou reposição. */
   async registrarEntrada(
-    input: { packagingTypeId: string; quantity: number; unitCost?: number; notes?: string | null },
+    input: { packagingTypeId: string; quantity: number; unitCost: number; notes?: string | null },
     ctx: TenantCtx,
   ) {
     const db = getTenantPrisma(ctx.tenantId);
@@ -134,27 +176,133 @@ export const EmbalagensService = {
       );
     }
 
-    const mov = await db.packagingMovement.create({
-      data: {
-        tenantId: ctx.tenantId,
-        packagingTypeId: tipo.id,
-        type: "ENTRADA",
-        quantity: input.quantity,
-        unitCost: input.unitCost ?? null,
-        reason: input.notes ?? null,
-      },
+    // Entrada e conta na MESMA transação (regra 5). A conta é o dinheiro que
+    // saiu: sem ela, comprar embalagem não aparecia no caixa nem em "Pagas"; o
+    // custo em si entra no lucro pela venda (custo médio), então a conta fica
+    // fora do lucro, como a da compra de mercadoria (`ORIGENS_DE_COMPRA`).
+    return db.$transaction(async (tx) => {
+      const mov = await tx.packagingMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          packagingTypeId: tipo.id,
+          type: "ENTRADA",
+          quantity: input.quantity,
+          unitCost: input.unitCost,
+          reason: input.notes ?? null,
+        },
+      });
+      const hoje = new Date();
+      const conta = await tx.expense.create({
+        data: {
+          tenantId: ctx.tenantId,
+          origem: "COMPRA_EMBALAGEM",
+          packagingMovementId: mov.id,
+          description: `Compra de embalagem — ${input.quantity} ${tipo.name}`,
+          amount: FinancialCalc.valorTotalCompra(input.quantity, input.unitCost),
+          type: "VARIAVEL",
+          recurring: false,
+          status: "PAGO",
+          dueDate: hoje,
+          paidDate: hoje,
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "CREATE",
+          entity: "PackagingMovement",
+          entityId: mov.id,
+          newData: {
+            tipo: tipo.name,
+            quantity: input.quantity,
+            unitCost: input.unitCost,
+            conta: conta.id,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return mov;
     });
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "CREATE",
-      entity: "PackagingMovement",
-      entityId: mov.id,
-      newData: { tipo: tipo.name, quantity: input.quantity },
-      ip: ctx.ip,
+  },
+
+  /**
+   * Desfaz a entrada de embalagem lançada errada — até 24 h, só o dono (regra
+   * única de desfazer). Entra um AJUSTE espelhado; a entrada e o estorno saem
+   * do custo médio (`custoMedioDoTipo`), e a conta da compra é cancelada.
+   * Recusa se o tipo teve movimento depois (a venda já gravou o custo dela).
+   */
+  async desfazerEntrada(input: { id: string }, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode desfazer uma entrada.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const entrada = await tx.packagingMovement.findFirst({
+        where: { id: input.id, type: "ENTRADA", sourceType: null },
+      });
+      if (!entrada) throw new NotFoundError("Entrada não encontrada");
+      if (!dentroDoPrazoDeDesfazer(entrada.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer esta entrada"));
+      }
+      await tx.$queryRaw`
+        SELECT id FROM packaging_types
+        WHERE id = ${entrada.packagingTypeId} AND "tenantId" = ${ctx.tenantId}
+        FOR UPDATE
+      `;
+      const jaDesfeita = await tx.packagingMovement.findFirst({
+        where: { sourceType: ORIGEM_ENTRADA_DESFEITA, sourceId: entrada.id },
+        select: { id: true },
+      });
+      if (jaDesfeita) throw new BusinessRuleError("Esta entrada já foi desfeita.");
+      const depois = await tx.packagingMovement.count({
+        where: {
+          packagingTypeId: entrada.packagingTypeId,
+          OR: [
+            { createdAt: { gt: entrada.createdAt } },
+            { createdAt: entrada.createdAt, id: { gt: entrada.id } },
+          ],
+        },
+      });
+      if (depois > 0) {
+        throw new BusinessRuleError(
+          "Já houve venda ou outra entrada deste tipo depois desta. Não dá para desfazer.",
+        );
+      }
+      await tx.packagingMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          packagingTypeId: entrada.packagingTypeId,
+          type: "AJUSTE",
+          quantity: -entrada.quantity,
+          unitCost: entrada.unitCost,
+          reason: "Entrada desfeita",
+          sourceType: ORIGEM_ENTRADA_DESFEITA,
+          sourceId: entrada.id,
+        },
+      });
+      await tx.expense.updateMany({
+        where: { packagingMovementId: entrada.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "PackagingMovement",
+          entityId: entrada.id,
+          oldData: { quantity: entrada.quantity },
+          newData: { desfeita: true },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return { id: entrada.id };
     });
-    return mov;
   },
 
   /**
@@ -204,12 +352,20 @@ export const EmbalagensService = {
       }),
       db.packagingSale.aggregate({
         _sum: { totalAmount: true, quantity: true },
-        where: { saleDate: { gte: startOfMonthTz(agora), lt: startOfNextMonthTz(agora) } },
+        // Cancelada fica na lista (riscada) e fora dos totais.
+        where: {
+          saleDate: { gte: startOfMonthTz(agora), lt: startOfNextMonthTz(agora) },
+          cancelledAt: null,
+        },
       }),
     ]);
     const total = money(toDecimal(doMes._sum.totalAmount ?? 0));
     const totalQtd = doMes._sum.quantity ?? 0;
-    return { vendas, total, totalQtd };
+    return {
+      vendas: vendas.map((v) => ({ ...v, podeCancelar: this.podeCancelar(v, agora) })),
+      total,
+      totalQtd,
+    };
   },
 
   async createSale(input: VendaEmbalagemInput, ctx: TenantCtx) {
@@ -239,6 +395,7 @@ export const EmbalagensService = {
 
       // Só valida saldo de quem controla estoque. Tipo sem controle segue como
       // antes: registra a venda e pronto — não inventa saldo negativo.
+      let custoMedio: Prisma.Decimal | null = null;
       if (controla) {
         const [linha] = await tx.$queryRaw<{ saldo: bigint }[]>`
           SELECT COALESCE(SUM(
@@ -254,6 +411,23 @@ export const EmbalagensService = {
               "Registre a entrada antes ou ajuste a quantidade.",
           );
         }
+        // Custo médio ANTES desta saída, lido sob a mesma trava do saldo — a
+        // venda leva o custo do que estava na prateleira (como `unitCostAtSale`
+        // da mercadoria). Fica gravado: a compra seguinte não reescreve o
+        // lucro desta venda.
+        const movimentos = await tx.packagingMovement.findMany({
+          where: { packagingTypeId: tipo.id },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+          select: {
+            id: true,
+            type: true,
+            quantity: true,
+            unitCost: true,
+            sourceType: true,
+            sourceId: true,
+          },
+        });
+        custoMedio = custoMedioDoTipo(movimentos);
       }
 
       const criada = await tx.packagingSale.create({
@@ -265,6 +439,7 @@ export const EmbalagensService = {
           quantity: input.quantity,
           unitPrice: input.unitPrice,
           totalAmount,
+          unitCostAtSale: custoMedio,
         },
       });
 
@@ -276,7 +451,7 @@ export const EmbalagensService = {
             type: "SAIDA",
             quantity: input.quantity,
             movedAt: parseFormDateTz(input.saleDate),
-            sourceType: "PACKAGING_SALE",
+            sourceType: ORIGEM_VENDA_EMBALAGEM,
             sourceId: criada.id,
           },
         });
@@ -295,6 +470,7 @@ export const EmbalagensService = {
             quantity: input.quantity,
             totalAmount: totalAmount.toString(),
             baixouEstoque: controla,
+            custoMedio: custoMedio?.toString() ?? null,
           },
           ip: ctx.ip,
         },
@@ -305,34 +481,87 @@ export const EmbalagensService = {
     return venda;
   },
 
-  async removeSale(id: string, ctx: TenantCtx) {
+  /** A venda ainda pode ser cancelada? (A tela usa para mostrar o botão.) */
+  podeCancelar(venda: { createdAt: Date; cancelledAt: Date | null }, agora = new Date()) {
+    return !venda.cancelledAt && dentroDoPrazoDeDesfazer(venda.createdAt, agora);
+  },
+
+  /**
+   * Cancela uma venda de embalagem lançada errada — a regra única de desfazer
+   * (`src/lib/desfazer/prazo.ts`): até 24 h do registro, só o dono.
+   *
+   * Antes a venda era APAGADA a qualquer tempo e a baixa de estoque dela
+   * também (`deleteMany` no livro-razão): um lançamento de meses atrás sumia e
+   * reescrevia o lucro de um mês fechado — agora que a venda carrega custo,
+   * reescrevia o custo também. Agora a venda fica marcada (`cancelledAt`), sai
+   * dos totais, e a quantidade volta por um AJUSTE de estorno com o custo com
+   * que saiu (`unitCostAtSale`) — a média se recompõe, como na venda de
+   * mercadoria cancelada.
+   */
+  async cancelarVenda(input: { id: string; motivo?: string | null }, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode cancelar uma venda.");
+    }
     const db = getTenantPrisma(ctx.tenantId);
-    const before = await db.packagingSale.findFirst({ where: { id } });
-    if (!before) throw new NotFoundError("Venda não encontrada");
+    const venda = await db.packagingSale.findFirst({ where: { id: input.id } });
+    if (!venda) throw new NotFoundError("Venda não encontrada");
+    if (venda.cancelledAt) throw new BusinessRuleError("Esta venda já foi cancelada.");
+    if (!dentroDoPrazoDeDesfazer(venda.createdAt)) {
+      throw new BusinessRuleError(foraDoPrazoDeDesfazer("cancelar esta venda"));
+    }
 
     await db.$transaction(async (tx) => {
-      await tx.packagingSale.update({ where: { id }, data: { deletedAt: new Date() } });
-
-      // A baixa é APAGADA, não compensada: a venda está sendo desfeita, não
-      // devolvida. Uma ENTRADA de estorno apareceria no histórico como se
-      // embalagem tivesse chegado. Mesmo critério da exclusão de fiado.
-      await tx.packagingMovement.deleteMany({
-        where: { tenantId: ctx.tenantId, sourceType: "PACKAGING_SALE", sourceId: id },
+      // Mesma trava da venda: o estorno entra no saldo do tipo sob a mesma ordem.
+      await tx.$queryRaw`
+        SELECT id FROM packaging_types
+        WHERE id = ${venda.packagingTypeId} AND "tenantId" = ${ctx.tenantId}
+        FOR UPDATE
+      `;
+      const { count } = await tx.packagingSale.updateMany({
+        where: { id: venda.id, cancelledAt: null },
+        data: { cancelledAt: new Date(), cancelReason: input.motivo || null },
       });
+      if (count !== 1) throw new BusinessRuleError("Esta venda já foi cancelada.");
+
+      // Só volta ao estoque o que SAIU dele (tipo sem controle não gerou baixa).
+      const baixa = await tx.packagingMovement.findFirst({
+        where: { sourceType: ORIGEM_VENDA_EMBALAGEM, sourceId: venda.id, type: "SAIDA" },
+      });
+      if (baixa) {
+        await tx.packagingMovement.create({
+          data: {
+            tenantId: ctx.tenantId,
+            packagingTypeId: venda.packagingTypeId,
+            type: "AJUSTE",
+            quantity: baixa.quantity,
+            unitCost: venda.unitCostAtSale,
+            reason: "Estorno de venda cancelada",
+            sourceType: ORIGEM_VENDA_EMBALAGEM_CANCELADA,
+            sourceId: venda.id,
+          },
+        });
+      }
 
       await audit(
         {
           tenantId: ctx.tenantId,
           userId: ctx.userId,
           actorEmail: ctx.session.email,
-          action: "DELETE",
+          action: "UPDATE",
           entity: "PackagingSale",
-          entityId: id,
-          oldData: before,
+          entityId: venda.id,
+          oldData: { cancelledAt: null },
+          newData: {
+            cancelada: true,
+            motivo: input.motivo ?? null,
+            totalAmount: venda.totalAmount.toString(),
+            estoqueDevolvido: baixa?.quantity ?? 0,
+          },
           ip: ctx.ip,
         },
         tx,
       );
     });
+    return { id: venda.id };
   },
 };

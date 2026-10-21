@@ -25,18 +25,39 @@ export const vendaEmbalagemSchema = z.object({
 });
 export type VendaEmbalagemInput = z.infer<typeof vendaEmbalagemSchema>;
 
-/** Liga o controle de estoque de um tipo, informando o que existe hoje. */
-export const ativarEstoqueEmbalagemSchema = z.object({
-  packagingTypeId: z.string().min(1),
-  quantidadeAtual: z.number().int().nonnegative("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
-});
+/**
+ * Custo de UMA embalagem. Até 4 casas: papelão comprado a R$ 10,00 o pacote
+ * de 3 custa R$ 3,3333 cada, e arredondar para 2 casas erraria o custo médio.
+ */
+const custoUnitarioSchema = z
+  .number({ message: "Informe quanto custou cada uma" })
+  .positive("Informe quanto custou cada uma")
+  .max(100_000, "Valor muito alto — confira o número");
+
+/**
+ * Liga o controle de estoque de um tipo, informando o que existe hoje.
+ *
+ * Com saldo inicial, o custo de cada uma é obrigatório (como o estoque inicial
+ * de produto): é ele que forma o custo médio que a venda desconta do lucro.
+ */
+export const ativarEstoqueEmbalagemSchema = z
+  .object({
+    packagingTypeId: z.string().min(1),
+    quantidadeAtual: z.number().int().nonnegative("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
+    custoUnitario: custoUnitarioSchema.optional(),
+  })
+  .refine((v) => v.quantidadeAtual === 0 || v.custoUnitario !== undefined, {
+    message: "Informe quanto custou cada uma",
+    path: ["custoUnitario"],
+  });
 export type AtivarEstoqueEmbalagemInput = z.infer<typeof ativarEstoqueEmbalagemSchema>;
 
 /** Entrada de embalagens (compra ou reposição). */
 export const entradaEmbalagemSchema = z.object({
   packagingTypeId: z.string().min(1, "Selecione o tipo"),
   quantity: z.number().int().positive("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
-  unitCost: z.number().nonnegative("Valor inválido").optional(),
+  // Obrigatório: sem ele a venda não teria custo e o lucro sairia inflado.
+  unitCost: custoUnitarioSchema,
   notes: z.string().trim().max(300).nullable().optional(),
 });
 export type EntradaEmbalagemInput = z.infer<typeof entradaEmbalagemSchema>;

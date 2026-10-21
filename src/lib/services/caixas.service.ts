@@ -79,6 +79,8 @@ interface SaldoRow {
   quebra_limpa: number;
   quebra_suja: number;
   estorno_saida: number;
+  /** Envio para higienização desfeito: volta às sujas, sai do higienizador. */
+  estorno_saida_hig: number;
 }
 
 const ZERO_ROW: SaldoRow = {
@@ -95,6 +97,7 @@ const ZERO_ROW: SaldoRow = {
   quebra_limpa: 0,
   quebra_suja: 0,
   estorno_saida: 0,
+  estorno_saida_hig: 0,
 };
 
 /**
@@ -107,6 +110,7 @@ function resolveDirty(input: MovimentoCaixaInterno): boolean {
   switch (input.type) {
     case "RETORNO": // cliente devolve — volta suja
     case "SAIDA_HIGIENIZACAO": // sai do pote das sujas
+    case "ESTORNO_SAIDA_HIGIENIZACAO": // envio desfeito — volta para as sujas
       return true;
     case "ESTORNO_SAIDA": // cancelamento de venda: a caixa nunca saiu, volta limpa
     case "SAIDA": // sai do pote das limpas
@@ -172,6 +176,7 @@ export function assertCrateMovement(
       }
       return;
     case "RETORNO_HIGIENIZACAO":
+    case "ESTORNO_SAIDA_HIGIENIZACAO":
       if (input.quantity > saldo.emHigienizacao) {
         throw new BusinessRuleError(
           `Há ${saldo.emHigienizacao} caixa(s) no higienizador.`,
@@ -267,7 +272,8 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
       COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NOT NULL THEN quantity ELSE 0 END), 0)::bigint AS quebra_higienizador,
       COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_limpa,
       COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_suja,
-      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida
+      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida,
+      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida_hig
     FROM plastic_crate_movements
     WHERE "tenantId" = ${tenantId}
   `;
@@ -290,7 +296,13 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
  * higienizador") — o lote ficava ENVIADO para sempre.
  */
 function mexeNoHigienizador(input: MovimentoCaixaInterno): boolean {
-  if (input.type === "SAIDA_HIGIENIZACAO" || input.type === "RETORNO_HIGIENIZACAO") return true;
+  if (
+    input.type === "SAIDA_HIGIENIZACAO" ||
+    input.type === "RETORNO_HIGIENIZACAO" ||
+    input.type === "ESTORNO_SAIDA_HIGIENIZACAO"
+  ) {
+    return true;
+  }
   return input.type === "QUEBRA" && !input.customerName && Boolean(input.cleanerName);
 }
 
@@ -603,14 +615,21 @@ export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
     r.estorno_saida -
     r.saida -
     r.quebra_limpa;
+  // O estorno do envio para higienização desfaz uma SAIDA_HIGIENIZACAO: as
+  // caixas voltam às SUJAS (nunca foram lavadas) e saem do higienizador.
   const sujas =
-    r.entrada_suja - r.entrada_quebrada_suja + r.retorno - r.saida_hig - r.quebra_suja;
+    r.entrada_suja -
+    r.entrada_quebrada_suja +
+    r.retorno -
+    r.saida_hig +
+    r.estorno_saida_hig -
+    r.quebra_suja;
   const quebraTotal =
     r.quebra_cliente + r.quebra_higienizador + r.quebra_limpa + r.quebra_suja;
   return {
     limpas,
     sujas,
-    emHigienizacao: r.saida_hig - r.retorno_hig - r.quebra_higienizador,
+    emHigienizacao: r.saida_hig - r.estorno_saida_hig - r.retorno_hig - r.quebra_higienizador,
     comClientes: r.saida - r.retorno - r.quebra_cliente - r.estorno_saida,
     perdidas: quebraTotal + r.entrada_quebrada,
     vazias: limpas + sujas,

@@ -31,6 +31,35 @@ describe("Teto de quantidade de embalagem", () => {
   });
 
   it("aceita o teto", () => {
-    expect(entradaEmbalagemSchema.safeParse({ ...base, quantity: QTD_MAX }).success).toBe(true);
+    expect(
+      entradaEmbalagemSchema.safeParse({ ...base, quantity: QTD_MAX, unitCost: 1 }).success,
+    ).toBe(true);
+  });
+});
+
+describe("Custo da embalagem", () => {
+  const base = { packagingTypeId: "t1" };
+
+  it("entrada exige o custo de cada uma — sem ele o lucro sairia inflado", () => {
+    expect(entradaEmbalagemSchema.safeParse({ ...base, quantity: 10 }).success).toBe(false);
+    expect(entradaEmbalagemSchema.safeParse({ ...base, quantity: 10, unitCost: 0 }).success).toBe(
+      false,
+    );
+    expect(
+      entradaEmbalagemSchema.safeParse({ ...base, quantity: 10, unitCost: 3.3333 }).success,
+    ).toBe(true);
+  });
+
+  it("saldo inicial exige custo; ligar com zero não", () => {
+    expect(
+      ativarEstoqueEmbalagemSchema.safeParse({ ...base, quantidadeAtual: 5 }).success,
+    ).toBe(false);
+    expect(
+      ativarEstoqueEmbalagemSchema.safeParse({ ...base, quantidadeAtual: 5, custoUnitario: 1.2 })
+        .success,
+    ).toBe(true);
+    expect(
+      ativarEstoqueEmbalagemSchema.safeParse({ ...base, quantidadeAtual: 0 }).success,
+    ).toBe(true);
   });
 });

@@ -43,7 +43,7 @@ Violar qualquer uma destas é regressão grave:
 10. **Não há recorrência Mercado Pago.** Todo mês o cliente paga de novo em `/assinatura`.
 11. **Trial de 7 dias só começa na confirmação de e-mail.** `graceDays` **não** se aplica a quem nunca pagou. Trial vencido → `SUSPENSO`, nunca `VENCIDO`.
 12. **Cancelar assinatura** (Termos §5): para de renovar; o período **já pago** continua até `currentPeriodEnd`. Sem graça depois. Trial/já vencido encerra na hora.
-13. **Desfazer lançamento tem UMA regra** (`src/lib/desfazer/prazo.ts`): venda (à vista, fiada ou mista), compra e recebimento de fiado são desfeitos só até **24 h do registro** (`createdAt`, nunca a data digitada), só pelo OWNER. O lançamento **fica na base marcado** (`cancelledAt` / `reversedAt`), sai dos totais, e estoque/caixas voltam por **movimento de estorno** — nunca se apaga linha de livro-razão. Depois de 24 h ninguém desfaz: o fechamento do dia não é reescrito.
+13. **Desfazer lançamento tem UMA regra** (`src/lib/desfazer/prazo.ts`): venda (à vista, fiada ou mista), venda de embalagem, compra, entrada de embalagem, ajuste manual de estoque, envio para higienização, recebimento de fiado e baixa de fiado como perda são desfeitos só até **24 h do registro** (`createdAt`, nunca a data digitada), só pelo OWNER (ou pelo super-admin no ambiente próprio dele — `podeDesfazer`). O lançamento **fica na base marcado** (`cancelledAt` / `reversedAt`), sai dos totais, e estoque/caixas voltam por **movimento de estorno** — nunca se apaga linha de livro-razão. Depois de 24 h ninguém desfaz: o fechamento do dia não é reescrito.
 
 ---
 
@@ -58,6 +58,7 @@ Violar qualquer uma destas é regressão grave:
 | Pagamento | Mercado Pago: PIX próprio + Payment Brick (crédito/débito). |
 | E-mail | nodemailer / SMTP Gmail |
 | Relatórios | exceljs + impressão do navegador |
+| Erros | Sentry (`@sentry/nextjs`), **desligado sem `SENTRY_DSN`**. Só erros, sem tracing e sem dado de cliente (`src/lib/observabilidade/sentry.ts`). Source maps sobem no build só com `SENTRY_AUTH_TOKEN` + `SENTRY_ORG` + `SENTRY_PROJECT` (`next.config.ts`) e são apagados da saída |
 | Testes | Vitest (unit + integration) + Playwright (e2e) |
 
 **Next.js 16:** o porteiro **não** é mais `middleware.ts`. É **`src/proxy.ts`** (Edge). Antes de criar APIs/metadados novos, leia `node_modules/next/dist/docs/` — esta versão quebra convenções antigas.
@@ -79,7 +80,7 @@ Prisma                       → getTenantPrisma nos módulos de negócio.
 - **Server Actions** (`src/actions/`): CRUD simples (produtos, fornecedores, despesas, config, onboarding, admin, plano).
 - **Route Handlers** (`src/app/api/`): transacional — vendas, compras, estoque, fiado, relatórios, billing, webhooks, cron, auth.
 
-Envelopes: `withTenantAction` / `withAdminAction` e `withTenantRoute` / `withAdminRoute`. Resposta: `ActionResult<T>` = `{ ok: true, data }` ou `{ ok: false, error: { code, message, fields? } }`. Erros: `AppError` e subclasses.
+Envelopes: `withTenantAction` / `withAdminAction` e `withTenantRoute` / `withAdminRoute`. Os de rota recusam escrita de outra origem (`Origin`/`Sec-Fetch-Site`, 403) e corpo JSON sem `Content-Type: application/json` (415) — o `SameSite=Lax` não é mais a única barreira de CSRF. Erro inesperado (500 / "ref: …") vai ao Sentry com a tag `errorId`. Resposta: `ActionResult<T>` = `{ ok: true, data }` ou `{ ok: false, error: { code, message, fields? } }`. Erros: `AppError` e subclasses.
 
 Validação: **o mesmo schema Zod** em `src/lib/validations/` no cliente (RHF) e no servidor. O servidor sempre revalida.
 
@@ -108,10 +109,12 @@ Arquivos: `src/lib/auth/` (`jwt.ts`, `password.ts`, `refresh.ts`, `cookies.ts`, 
 - Login e-mail/senha; mensagem **genérica** (não revela se o e-mail existe).
 - **Google:** `/api/auth/google` + callback. PKCE no servidor (não GIS JS — CSP bloqueia). Precisa de `GOOGLE_CLIENT_ID` + `GOOGLE_CLIENT_SECRET` (os dois ou nenhum). Redirect: `$APP_URL/api/auth/google/callback`. Liga conta por `User.googleSub`.
 - Access JWT ~15 min, cookie `httpOnly` / `Secure` / `SameSite=Lax`. Claims: `role`, `tenantId`, `tenantStatus`, `subStatus`, `modules`, `tev` (epoch da empresa), `sev` (epoch do usuário).
-- Refresh opaco, hash SHA-256 em `refresh_tokens`, **rotação**, linhagem (`familyId`), janela de graça para abas concorrentes. Reuso de token revogado derruba a família.
-- Logout / troca de senha / exclusão / bloqueio incrementam `sessionEpoch` (user e/ou tenant) e revogam refresh — o access antigo para de valer **na escrita** mesmo antes de expirar.
+- Refresh opaco, hash SHA-256 em `refresh_tokens`, **rotação**, linhagem (`familyId`), janela de graça para abas concorrentes. Reuso de token revogado derruba a família. A rotação e cada uso da graça são **reivindicados por update condicional** (`revokedAt: null` / `graceUses < teto`): chamadas simultâneas não saem todas com "ok" nem furam o teto.
+- Troca de senha / exclusão / bloqueio incrementam `sessionEpoch` (user e/ou tenant) e revogam refresh — o access antigo para de valer **na escrita** mesmo antes de expirar.
+- **Logout é por aparelho:** o access carrega `fid` (a `familyId` do refresh daquele aparelho). O logout revoga o refresh com motivo `LOGOUT`, e `sessaoAindaValida` recusa o access cuja linhagem foi encerrada (mesma consulta dos epochs). Os outros aparelhos seguem logados. Emissão: `createRefreshSession` devolve `{ raw, familyId }`.
+- **As rotas de `/api/auth/*` também recusam outra origem** (`recusaDeOutraOrigem`, `src/lib/http/mesma-origem.ts`): sem isso, um `<form enctype="text/plain">` de outro site logava o dono na conta do atacante. Login, cadastro, recuperação, redefinição e troca de senha exigem JSON; refresh e logout (chamados sem corpo) só conferem a origem. A troca de senha confere `sessaoAindaValida`.
 - Rate limit de auth no **Postgres** (`rate_limits`), compartilhado entre instâncias serverless. O contador **por e-mail** (login e recuperação) só recebe a tentativa que passou nos limites de IP — senão UM IP trancava a conta de qualquer um — e redefinir a senha zera o do login (`chaveDeLoginPorEmail`).
-- Cadastro público `/cadastro` → e-mail de confirmação → `emailVerifiedAt` → **aí** começa o trial. Sem confirmar, a empresa fica `SUSPENSA`. O "já tem conta?" é decidido pela **identidade** do e-mail (`src/lib/email-identity.ts` → `User.emailIdentity`), não pelo texto: `dono+1@gmail.com` e `d.o.n.o@gmail.com` caem na mesma caixa e não rendem um segundo trial. Só provedores de comportamento conhecido são normalizados — juntar demais recusaria cliente legítimo com uma resposta genérica que não explica nada.
+- Cadastro público `/cadastro` → e-mail de confirmação → `emailVerifiedAt` → **aí** começa o trial. Sem confirmar, a empresa fica `SUSPENSA`. O "já tem conta?" é decidido pela **identidade** do e-mail (`src/lib/email-identity.ts` → `User.emailIdentity`), não pelo texto: `dono+1@gmail.com` e `d.o.n.o@gmail.com` caem na mesma caixa e não rendem um segundo trial. O banco garante isso também na corrida: índice único parcial `users_email_identity_ativa` (conta ativa); a colisão (`ehColisaoDeIdentidadeDeEmail`) responde como "já tem conta". Só provedores de comportamento conhecido são normalizados — juntar demais recusaria cliente legítimo com uma resposta genérica que não explica nada.
 - Recuperar senha: token 1h; ao redefinir, revoga todas as sessões.
 - `mustChangePassword` força `/alterar-senha` (OWNER criado pelo admin).
 
@@ -140,13 +143,17 @@ Fonte do status: `src/lib/billing/status.ts` (`computeStatus`, `accessDecision`,
 
 - Tela `/assinatura` acessível **mesmo bloqueado** (`BILLING_SAFE_PREFIXES`).
 - **PIX fora do Payment Brick** (o Brick pede e-mail para “enviar o código”; aqui o QR aparece na tela). Rota `POST /api/billing/checkout`.
-- Cartão: Brick (`creditCard`/`debitCard` — normalizar camelCase **e** snake_case). `POST /api/billing/checkout/card`. Tokenização no browser. 3DS `optional`. Débito exige CPF.
+- Cartão: Brick (`creditCard`/`debitCard` — normalizar camelCase **e** snake_case). `POST /api/billing/checkout/card`. Tokenização no browser. 3DS `optional`. Débito exige CPF. **Exige e-mail confirmado** e tem teto no Postgres (5 tentativas/h por empresa, 10/h por IP): sem isso, contas descartáveis testavam cartão roubado e as recusas/chargebacks caíam na conta MP da plataforma. O PIX continua liberado.
+- **A aprovação decide pelo momento do PAGAMENTO** (`mp.paidAt`, limitado a agora), não pelo do processamento: o webhook perdido e reaplicado no dia seguinte não dá mais os dias de tolerância de graça.
+- **Pagamento acima do devido** é creditado e avisado ao super-admin (`PAGAMENTO_ACIMA_DO_DEVIDO`, auditoria `PAYMENT_OVERPAID`).
+- **Reversão com pagamento DUPLICADO da mesma competência** promove o duplicado (`uncreditedReason = DUPLICADO`) a pagador do mês, na mesma transação, com o período e os módulos do revertido — e o acesso fica. Depois do commit o promovido é relido no MP.
+- **O status recalculado só é gravado se a assinatura não mudou desde a leitura** (`gravarStatusCalculado`, condição em `updatedAt`) — no cron e no `buildAccessPayload`. Sem isso, o recálculo gravava `VENCIDO` por cima de um chargeback `BLOQUEADO`/`MANUAL` e o cliente seguia usando para sempre.
 - Confirmação **só** pelo webhook HMAC (`/api/webhooks/mercadopago`), idempotente por `mpPaymentId`. Não confiar no body: buscar o pagamento na API. **Sem `MERCADOPAGO_WEBHOOK_SECRET` o webhook recusa tudo, em qualquer ambiente** — não há mais bypass por `NODE_ENV` (preview e staging são "development" com banco de verdade).
 - **Uma cobrança APROVADA por competência**, garantida pelo banco: `SubscriptionPayment.approvedKey` (`<tenantId>:<referenceMonth>`, `@unique`, nula fora de APROVADO). Sem ela, o segundo pagamento do mês creditava o mês de novo.
 - Estorno → `SUSPENSO`; chargeback → `BLOQUEADO`; revoga sessões da empresa — **só se não sobrar outro pagamento APROVADO da mesma competência**. Sobrando, o acesso fica e a reversão é só uma linha do extrato mudando de status. **Estorno** (não chargeback) com outro período pago correndo — vencimento ainda futuro depois de tirar o estornado e outro APROVADO com `periodEnd` futuro — também não bloqueia: só o vencimento recua. Chargeback bloqueia sempre.
 - **Onde começa o mês pago:** `inicioDoPeriodoPago` (`billing/status.ts`). Adiantado ou pago **dentro da tolerância** → no vencimento (recomeçar no dia do pagamento dava os dias de tolerância de graça todo mês); primeiro pagamento ou depois de ficar sem acesso → hoje.
 - **Reajuste do admin** (`updateMonthlyAmount`) baixa e cancela no MP o QR do valor antigo, como a troca de plano.
-- **Uma cobrança viva por mês.** Troca de plano cancela QR antigo se o valor mudou.
+- **Uma cobrança viva por empresa** — de qualquer competência. Gerar PIX/cartão e aprovar pagamento baixam (e cancelam no MP) as pendentes de **todas** as competências: o QR esquecido do mês passado, pago depois, comprava um segundo mês. Troca de plano cancela QR antigo se o valor mudou.
 - Valor cobrado **sempre do plano no banco**, nunca do que o cliente enviou.
 - Cron `GET /api/cron/billing` (`CRON_SECRET`): reconcilia MP + recalcula status + lembrete 3 dias antes do vencimento (só quem já pagou, um e-mail por período).
 - Não existe `preapproval`. Evolução em aberto.
@@ -200,7 +207,7 @@ Uma tela só: `/estoque` (abas Produtos | Compras), `/estoque/compra` e `/estoqu
 
 **Produto** (Server Actions, soft delete, sem histórico não apaga de fato; **só exclui com estoque zerado** — com saldo o valor sumiria do painel sem baixa): cadastro/edição no modal `src/components/produtos/produto-modal.tsx`, aberto por `?novo=1` / `?editar=<id>`. Campos novos: `salePrice` (no PDV vence o sugerido pela compra, perde para o da última venda), `minStock` (alerta por produto em `nivelEstoque`; nulo = `ESTOQUE_BAIXO`), `imageKey`. **Estoque inicial** = `ENTRADA` com `sourceType: "ESTOQUE_INICIAL"` na transação do produto, com custo **obrigatório** (vira o custo médio → CMV).
 
-**Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`; **só foto em domínio público ou CC0** — nada que exija crédito; a origem de cada uma fica em `src/lib/imagem/creditos-banco.ts`, que alimenta a página pública `/creditos-fotos`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados.
+**Foto** (Cloudflare R2, `src/lib/storage/r2.ts` com `aws4fetch`): Câmera (`<input capture>`, não depende de `getUserMedia` nem do `Permissions-Policy`), Galeria ou **Banco** (`catalogo_imagens`, global, mantido em `/admin/imagens`; **só foto em domínio público ou CC0** — nada que exija crédito; a origem de cada uma fica em `src/lib/imagem/creditos-banco.ts`, que alimenta a página pública `/creditos-fotos`). Comprimida no aparelho (`src/lib/imagem/comprimir.ts`) e enviada **pelo servidor** (Server Action) — por isso a CSP não libera o host do R2 em `connect-src`. O tipo é decidido pelos magic bytes. `ProdutoImagemService.validarChave` só aceita chave da própria empresa ou foto ativa do Banco. Sem as cinco `R2_*`, os botões ficam desabilitados. Envio limitado a 100 fotos/empresa/dia (`rate_limits`); foto de empresa que nenhum produto usa há mais de 24 h (formulário abandonado) é apagada do bucket pelo cron de billing (`limparOrfas`, por último, com prazo).
 
 **Compra** (`POST /api/compras`): transação com itens + frete. Frete **rateado** no `unitCost`. Cada item → movimento `ENTRADA`. E **uma despesa `origem = COMPRA`** no valor total, com o fornecedor, `PAGO` (`paidDate = purchaseDate`) ou `PENDENTE` até o vencimento — ver Despesas. Trava fornecedor e produtos com `FOR SHARE` (a exclusão deles trava `FOR UPDATE`).
 
@@ -218,14 +225,21 @@ CRUD Server Actions. Soft delete — **recusado com conta a pagar pendente** (a 
 
 ### Fiado
 
-Lista no formato da planilha do balcão (uma linha por entrega). Pagamento parcial `POST /api/fiado/pagamento`. `saldo = total − pago` (nunca negativo). `/fiado/novo` usa o mesmo caminho interno do PDV.
+Lista no formato da planilha do balcão (uma linha por entrega). Pagamento parcial `POST /api/fiado/pagamento`. `saldo = total − pago` (nunca negativo). `/fiado/novo` usa o mesmo caminho interno do PDV. O recebimento e o fiado manual têm `idempotencyKey` (`credit_payments (tenantId, idempotencyKey)` único; o fiado manual repassa a chave à venda): o reenvio depois de um timeout devolve o já gravado.
 
 - **Cancelar venda** pela conta (`FiadoService.cancelarVendaDoFiado`) = `VendasService.cancelarVenda` (mesmo prazo, a venda fica no histórico). Antes o fiado era APAGADO a qualquer tempo — não volte a apagar.
 - **Estornar recebimento** lançado errado (`FiadoService.estornarPagamento`, regra §3.13): `CreditPayment.reversedAt`, `paidAmount` volta, conta reabre. Recebimento estornado fica no extrato e sai do fluxo de caixa (`"reversedAt" IS NULL`) e da checagem de "tem recebimento".
+- **Baixar como perda** o fiado que não vai ser pago (`FiadoService.baixarComoPerda`, OWNER, motivo obrigatório): `status = PERDA`, saldo em `writtenOffAmount`, data em `writtenOffAt`. Sai do "a receber" e dos avisos; a perda entra no lucro do mês da **baixa** ("Perda com fiado", `FinancialCalc.lucroLiquido`), nunca no da venda — a soma é pela marca `writtenOffAt`, não pelo status. Se o cliente pagar depois, o recebimento é `CreditPayment.aposBaixa` e entra no lucro do mês em que chega ("Recebido de fiado baixado"); quitada, a conta vira PAGO e a perda daquele mês continua lá. Depois da baixa só o recebimento `aposBaixa` é estornável (volta a PERDA); a venda não é cancelada. `desfazerBaixa` só até 24 h e sem recebimento depois da baixa.
 
 ### Estoque
 
-Posição derivada: `ENTRADA/AJUSTE − SAÍDA/QUEBRA/DOAÇÃO`. Ajuste manual `POST /api/estoque/ajuste`.
+Posição derivada: `ENTRADA/AJUSTE − SAÍDA/QUEBRA/DOAÇÃO`. Ajuste manual `POST /api/estoque/ajuste` (`sourceType = MANUAL`).
+
+**Perdas e acertos de estoque entram no lucro do mês** (`perdasEstoqueMes`, pela data do movimento e pelo custo gravado nele): quebra, doação e acerto para baixo somam; acerto para cima abate. Vão em `FinancialCalc.custoDoVendido` junto com o CMV — sem isso, a mercadoria que estragava não descontava em lugar nenhum e o lucro saía sempre para cima.
+
+**Desfazer ajuste** (`EstoqueService.desfazerAjuste`, tela `/estoque/ajuste`, regra §3.13): AJUSTE espelhado `MANUAL_CANCELLED` com `sourceId` = ajuste; o par sai do repasse do custo médio (`sqlCustoEstoque`) e da perda do mês. Recusa se o produto teve qualquer movimento depois do ajuste.
+
+Quantidade com no máximo 3 casas, preço/frete/custo com 2 (custo de ajuste: 4), tetos de valor e no máximo 200 itens por venda/compra (`src/lib/validations/quantidade.ts`).
 
 Custo = **média ponderada móvel do estoque atual** (`sqlCustoEstoque`), repassada em ordem de **gravação** (`createdAt`), não de `movedAt`: a entrada pondera com o que sobrou, a saída sai pela média sem alterá-la, saldo ≤ 0 reinicia a média e vale zero. O `unitCost` gravado nas saídas é ignorado no cálculo. A ENTRADA de compra cancelada e o estorno dela saem **juntos** do repasse (o preço errado não fica na média; o par soma zero no saldo). Só a quantidade: `EstoqueService.getQuantidades` (sem a conta de custo). `sourceType` em `src/lib/estoque/origens.ts`.
 
@@ -239,6 +253,8 @@ Fixa/variável, categorias (seed no provisionamento do tenant), pendente/pago, f
 - **Higienização** entra no lucro e em Variáveis pela data de **envio** (como a conta operacional, pelo vencimento) — uma data só no painel. O pagamento dela conta em "Pagas" e no fluxo de caixa.
 - **Faturamento** = venda de mercadoria + venda de embalagem (`FinancialCalc.faturamento`): é a base do lucro bruto, da margem e do "% do que você vendeu". "Vendi" continua só mercadoria; o "Resultado do mês" mostra a embalagem numa linha própria.
 - `COMPRA` (gerada pela compra; índice único parcial `expenses_compra_unica`) e `FRETE_COMPRA` (frete lançado à parte antes desta versão): o custo **já está no CMV**, então ficam **fora** de lucro, Fixas/Variáveis, `totais`, `replicarMes` e "nova igual à última", e **dentro** de Contas a Pagar, vencidas, avisos/push, `CONTAS_PAGAS` e **fluxo de caixa** (que não lê mais `purchases.totalAmount` — a compra sai do caixa pela `paidDate` da conta). Filtro: `SO_OPERACIONAIS` / `ORIGENS_DE_COMPRA` em `despesas.service.ts`.
+- `COMPRA_EMBALAGEM`: gerada pela entrada de embalagem com custo (`Expense.packagingMovementId`), PAGA no dia. Está em `ORIGENS_DE_COMPRA` — fora do lucro (o custo entra pela venda), dentro do caixa e das pagas. Desfazer a entrada (24 h) cancela a conta.
+- **Recorrente de dia 29/30/31:** `proximoVencimento(data, diaAncora)` com `diaAncoraDaCadeia` (o dia da raiz da cadeia por `parentId`, só quando o vencimento atual caiu no último dia do mês). Fevereiro encolhe para 28 e março volta ao 31.
 - Conta de compra: valor/descrição/fornecedor travados, não exclui, não duplica. Compras antigas ganharam a conta no backfill da migration `20261016120000_estoque_unificado_compra_despesa` (PAGA na data da compra; sem o frete se ele já tinha despesa própria).
 
 ### Caixas e embalagens (`/caixas-plasticas`, módulos `caixas` e `embalagens`)
@@ -247,11 +263,13 @@ Uma tela com duas abas (Radix Tabs, aba na URL: `?aba=embalagens`). Quem tem só
 
 **Caixas plásticas** — movimentos: ENTRADA, SAÍDA, RETORNO, QUEBRA. Saldos derivados (vazias, com clientes, perdidas). Não deixar saída > vazias nem retorno > com clientes.
 
-**Embalagens** — tipos + vendas avulsas (papelão, sacaria etc.), estoque por tipo opcional. Componentes em `caixas-plasticas/_components/embalagens/`. A venda é receita: entra no faturamento e no lucro do Início (sem CMV — a embalagem comprada entra como conta).
+**Embalagens** — tipos + vendas avulsas (papelão, sacaria etc.), estoque por tipo opcional. Componentes em `caixas-plasticas/_components/embalagens/`. A venda é receita: entra no faturamento e no lucro do Início. **Custo:** tipo com controle de estoque grava o custo médio móvel na venda (`PackagingSale.unitCostAtSale`, `FinancialCalc.custoMedioMovel`, mesma regra do estoque de mercadoria) e o lucro desconta "Custo das embalagens vendidas". Entrada e saldo inicial exigem o custo de cada uma. Tipo sem controle vende com custo nulo (receita sem custo) — o "Resultado do mês" avisa quantas vendas estão assim (`embalagensSemCusto`). A entrada com custo gera a conta `COMPRA_EMBALAGEM` e pode ser desfeita em 24 h (toast "Desfazer"; o par sai do custo médio por `custoMedioDoTipo`). **Cancelar venda** (`EmbalagensService.cancelarVenda`, regra §3.13): `PackagingSale.cancelledAt`, sai dos totais (toda soma de `packaging_sales` filtra `cancelledAt IS NULL`), e a baixa volta por AJUSTE `PACKAGING_SALE_CANCELLED` com o custo com que saiu. Nunca apagar movimento — era o que o "Excluir" antigo fazia.
 
 ### Higienização (módulo `higienizacao`)
 
 Envio → devolução parcial → pagamento parcial. Status ENVIADO → DEVOLVIDO → PAGO.
+
+Editar e excluir o envio seguem a regra §3.13 (24 h do `createdAt`; o envio entra no lucro pela data de envio). Diminuir a quantidade ou excluir **não apaga** o movimento: entra `ESTORNO_SAIDA_HIGIENIZACAO`, que devolve às **sujas** e tira do higienizador (`computeCrateSaldo`).
 
 ### Cotações do CEASA (módulo `cotacoes`)
 
@@ -292,7 +310,7 @@ Notícias que mexem no mercado de hortifruti (CEASAs, preços, clima, frete, saf
 
 ### Relatórios (`/relatorios`, `GET /api/reports/[type]/export`)
 
-Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`; os de módulo opcional (caixas, higienização, embalagens, papelão) pedem **também** o módulo dono (`modulosDoRelatorio`, conferido na página e na exportação). Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos.
+Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`; os de módulo opcional (caixas, higienização, embalagens, papelão) pedem **também** o módulo dono (`modulosDoRelatorio`, conferido na página e na exportação). Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos. `FIADO_PERDAS` (básico) lista baixas e recuperações por data; `EMBALAGENS` tem custo e lucro por venda. "Contas pagas" soma o pago ao higienizador **sem gate de módulo**, como o fluxo de caixa (dinheiro pago é fato).
 
 ### Atividades (removida)
 
