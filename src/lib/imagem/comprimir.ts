@@ -19,29 +19,59 @@ export async function comprimirFoto(arquivo: File): Promise<{ base64: string; pr
   }
 
   const fonte = await abrirFoto(arquivo);
-  const escala = Math.min(1, IMAGEM_LADO_MAX / Math.max(fonte.largura, fonte.altura));
-  const largura = Math.max(1, Math.round(fonte.largura * escala));
-  const altura = Math.max(1, Math.round(fonte.altura * escala));
-
-  const canvas = document.createElement("canvas");
-  canvas.width = largura;
-  canvas.height = altura;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) {
+  let blob: Blob | null = null;
+  try {
+    // Vai diminuindo lado e qualidade até caber. Foto de câmera de 50 MP, PNG
+    // de captura de tela… tudo termina abaixo do alvo em vez de dar erro.
+    for (const [lado, qualidade] of TENTATIVAS) {
+      const candidato = await desenhar(fonte, lado, qualidade);
+      blob = candidato;
+      if (candidato.size <= ALVO_BYTES) break;
+    }
+  } finally {
     fonte.liberar();
-    throw new Error("Não foi possível preparar a foto.");
   }
-  ctx.drawImage(fonte.imagem, 0, 0, largura, altura);
-  fonte.liberar();
-
-  let blob = await gerarBlob(canvas, 0.8);
-  if (blob.size > IMAGEM_MAX_BYTES) blob = await gerarBlob(canvas, 0.6);
-  if (blob.size > IMAGEM_MAX_BYTES) {
-    throw new Error("Foto grande demais. Tente outra.");
+  if (!blob || blob.size > IMAGEM_MAX_BYTES) {
+    throw new Error("Não foi possível reduzir esta foto. Tente outra.");
   }
 
   const dataUrl = await lerComoDataUrl(blob);
   return { base64: dataUrl.slice(dataUrl.indexOf(",") + 1), previa: dataUrl };
+}
+
+/** Alvo folgado: bem abaixo do teto do servidor, mesmo somando o base64. */
+const ALVO_BYTES = Math.min(400 * 1024, IMAGEM_MAX_BYTES);
+
+/** [lado maior em px, qualidade], da melhor para a menor. */
+const TENTATIVAS: [number, number][] = [
+  [IMAGEM_LADO_MAX, 0.8],
+  [IMAGEM_LADO_MAX, 0.65],
+  [800, 0.6],
+  [640, 0.55],
+  [480, 0.5],
+  [360, 0.45],
+];
+
+async function desenhar(fonte: FotoAberta, ladoMax: number, qualidade: number): Promise<Blob> {
+  const escala = Math.min(1, ladoMax / Math.max(fonte.largura, fonte.altura));
+  const largura = Math.max(1, Math.round(fonte.largura * escala));
+  const altura = Math.max(1, Math.round(fonte.altura * escala));
+  const canvas = document.createElement("canvas");
+  canvas.width = largura;
+  canvas.height = altura;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Não foi possível preparar a foto.");
+  // Fundo branco: PNG com transparência viraria preto no JPEG.
+  ctx.fillStyle = "#fff";
+  ctx.fillRect(0, 0, largura, altura);
+  ctx.drawImage(fonte.imagem, 0, 0, largura, altura);
+  try {
+    return await gerarBlob(canvas, qualidade);
+  } finally {
+    // Libera a memória do canvas na hora — o Safari do iPhone tem teto baixo.
+    canvas.width = 0;
+    canvas.height = 0;
+  }
 }
 
 interface FotoAberta {
@@ -61,6 +91,27 @@ async function abrirFoto(arquivo: File): Promise<FotoAberta> {
   if (typeof createImageBitmap === "function") {
     try {
       const bitmap = await createImageBitmap(arquivo, { imageOrientation: "from-image" });
+      // Foto gigante: reduz já na decodificação para não estourar a memória do
+      // canvas no celular (iPhone recusa canvas acima de ~16 MP).
+      if (Math.max(bitmap.width, bitmap.height) > IMAGEM_LADO_MAX * 2) {
+        const escala = (IMAGEM_LADO_MAX * 2) / Math.max(bitmap.width, bitmap.height);
+        try {
+          const menor = await createImageBitmap(bitmap, {
+            resizeWidth: Math.round(bitmap.width * escala),
+            resizeHeight: Math.round(bitmap.height * escala),
+            resizeQuality: "high",
+          });
+          bitmap.close();
+          return {
+            imagem: menor,
+            largura: menor.width,
+            altura: menor.height,
+            liberar: () => menor.close(),
+          };
+        } catch {
+          // sem suporte a resize: usa o bitmap inteiro
+        }
+      }
       return {
         imagem: bitmap,
         largura: bitmap.width,
