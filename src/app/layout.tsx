@@ -130,7 +130,10 @@ export default async function RootLayout({
         ))}
         <Providers>{children}</Providers>
         <PwaRegister />
-        <Analytics />
+        {/* `/_vercel/insights/script.js` só existe hospedado na Vercel. Fora
+            dela (CI, local, outro host) a URL responde texto e o navegador
+            recusa o script com erro no console. */}
+        {process.env.VERCEL && <Analytics />}
       </body>
     </html>
   );

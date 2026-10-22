@@ -55,9 +55,11 @@ export function AdminShell({
     <div className="min-h-screen">
       <PularParaConteudo />
       <header className="sticky top-0 z-30 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-4xl items-center justify-between px-4 py-3">
-          <span className="font-bold text-primary">CeasaPro · Painel SaaS</span>
-          <div className="flex items-center gap-2">
+        {/* Quebra de linha permitida: em 320px o título e os três botões não
+            cabem lado a lado, e a página inteira rolava de lado. */}
+        <div className="mx-auto flex max-w-4xl flex-wrap items-center justify-between gap-2 px-4 py-3">
+          <span className="min-w-0 font-bold text-primary">CeasaPro · Painel SaaS</span>
+          <div className="flex flex-wrap items-center justify-end gap-2">
             {/*
               Campainha em vez de item de menu: é um estado que muda sozinho
               (alguém se cadastrou agora), e o valor está em ser visto sem que o
