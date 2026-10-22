@@ -54,7 +54,7 @@ test
 # scripts de uma vez só). Ficavam na raiz sem regra e entrariam no commit —
 # e os logs de `npm run dev` chegam a conter o link de redefinição de senha em
 # claro, porque em desenvolvimento ele é impresso de propósito.
-tmp-*
+exittmp-*
 
 # Capturas de tela geradas na verificação visual (fases do redesenho)
 /capturas/

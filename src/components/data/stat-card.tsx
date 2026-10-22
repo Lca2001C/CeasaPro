@@ -1,7 +1,10 @@
 import * as React from "react";
 import { cn } from "@/lib/cn";
 import { valorExibivel } from "@/lib/format";
+import { Info } from "lucide-react";
 import { Card } from "@/components/ui/card";
+import { CardComExplicacao } from "@/components/financeiro/explicacao";
+import type { Explicacao } from "@/lib/financeiro/explicacoes";
 
 interface Props {
   label: string;
@@ -9,6 +12,8 @@ interface Props {
   hint?: string;
   icon?: React.ReactNode;
   tone?: "default" | "success" | "warning" | "destructive";
+  /** Tocar no cartão abre "como é calculado" (ver `lib/financeiro/explicacoes`). */
+  explicacao?: Explicacao;
 }
 
 const toneClasses: Record<NonNullable<Props["tone"]>, string> = {
@@ -74,11 +79,11 @@ function tamanhoDoValor(texto: string): string {
  * pequeno; num painel financeiro, "R$ 11.000,00" aparado na metade pode ser lido
  * como "R$ 11,00".
  */
-export function StatCard({ label, value, hint, icon, tone = "default" }: Props) {
+export function StatCard({ label, value, hint, icon, tone = "default", explicacao }: Props) {
   const exibivel = valorExibivel(value);
 
-  return (
-    <Card className="@container p-4">
+  const cartao = (
+    <Card className="@container h-full p-4">
       <div className="flex items-start justify-between gap-2">
         {/*
           `min-w-0` no rótulo e `shrink-0` no ícone: sem os dois, um rótulo
@@ -92,6 +97,9 @@ export function StatCard({ label, value, hint, icon, tone = "default" }: Props) 
         */}
         <span className="min-w-0 text-sm font-medium text-muted-foreground [overflow-wrap:anywhere]">
           {label}
+          {explicacao && (
+            <Info aria-hidden className="ml-1 inline size-3.5 align-[-2px] text-muted-foreground/70" />
+          )}
         </span>
         {icon && (
           <span
@@ -122,5 +130,13 @@ export function StatCard({ label, value, hint, icon, tone = "default" }: Props) 
         <p className="mt-1 text-xs text-muted-foreground [overflow-wrap:anywhere]">{hint}</p>
       )}
     </Card>
+  );
+
+  return explicacao ? (
+    <CardComExplicacao explicacao={explicacao} className="block h-full rounded-lg">
+      {cartao}
+    </CardComExplicacao>
+  ) : (
+    cartao
   );
 }

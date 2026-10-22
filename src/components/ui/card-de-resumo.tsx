@@ -1,9 +1,11 @@
 import * as React from "react";
 import Link from "next/link";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Info } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { valorExibivel } from "@/lib/format";
 import { IconeRedondo, type TomDeIcone } from "./icone-redondo";
+import { CardComExplicacao } from "@/components/financeiro/explicacao";
+import type { Explicacao } from "@/lib/financeiro/explicacoes";
 
 /**
  * Cartão de resumo: um rótulo, UM número grande e, se quiser, uma dica.
@@ -16,6 +18,8 @@ import { IconeRedondo, type TomDeIcone } from "./icone-redondo";
  * - `destaque`: o cartão "principal do dia", em verde cheio com texto branco
  *   (o par branco/primary já medido em AA no teste de contraste).
  * - `href`: o cartão inteiro vira link, com seta.
+ * - `explicacao`: o cartão inteiro abre "como é calculado" (vence o `href`;
+ *   o link da tela vai dentro da janela).
  */
 export function CardDeResumo({
   rotulo,
@@ -26,6 +30,7 @@ export function CardDeResumo({
   tomDoValor,
   destaque = false,
   href,
+  explicacao,
   className,
 }: {
   rotulo: string;
@@ -37,8 +42,12 @@ export function CardDeResumo({
   tomDoValor?: "success" | "warning" | "destructive";
   destaque?: boolean;
   href?: string;
+  explicacao?: Explicacao;
   className?: string;
 }) {
+  // Com explicação, o toque abre a janela; o ícone troca a seta por "i".
+  const tocavel = Boolean(href || explicacao);
+  const IconeDoToque = explicacao ? Info : ChevronRight;
   const corDoValor = destaque
     ? "text-primary-foreground"
     : tomDoValor === "success"
@@ -84,8 +93,8 @@ export function CardDeResumo({
         >
           {valorExibivel(valor)}
         </span>
-        {href && (
-          <ChevronRight
+        {tocavel && (
+          <IconeDoToque
             aria-hidden
             className={cn(
               "mb-1 size-5 shrink-0",
@@ -116,6 +125,14 @@ export function CardDeResumo({
       "outline-none motion-safe:transition-shadow hover:shadow-elevada focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background",
     className,
   );
+
+  if (explicacao) {
+    return (
+      <CardComExplicacao explicacao={explicacao} className={classe}>
+        {corpo}
+      </CardComExplicacao>
+    );
+  }
 
   return href ? (
     <Link href={href} className={classe} data-slot="card">

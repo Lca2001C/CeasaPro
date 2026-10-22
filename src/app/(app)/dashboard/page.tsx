@@ -36,6 +36,7 @@ import { formatBRL, formatDate, formatQty, valorExibivel } from "@/lib/format";
 import { PAYMENT_METHOD_LABELS } from "@/lib/labels";
 import { cn } from "@/lib/cn";
 import { StatCard } from "@/components/data/stat-card";
+import * as Explica from "@/lib/financeiro/explicacoes";
 import {
   BarrasHorizontais,
   CartaoGrafico,
@@ -98,7 +99,8 @@ export default async function DashboardPage({
       temCotacoes && ehGeral ? CotacoesService.comprasAcimaDoBoletim(tenantId) : null,
       ehGeral ? null : PainelFinanceiroService.get(tenantId, undefined, session.modules),
     ]);
-  const hoje = startOfDayTz(new Date());
+  const agora = new Date();
+  const hoje = startOfDayTz(agora);
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
   // Sem faturamento a margem vale 0 (`margemLiquida`), mas o prejuízo continua
   // prejuízo: 0% em verde com o "Sobrou" negativo ao lado.
@@ -206,7 +208,7 @@ export default async function DashboardPage({
               valor={formatBRL(s.hojeVendi)}
               dica={`No mês: ${valorExibivel(formatBRL(s.mesVendi))}`}
               icone={<ShoppingCart />}
-              href="/vendas"
+              explicacao={Explica.explicarHojeVendi(s)}
             />
             <CardDeResumo
               rotulo="Clientes me devem"
@@ -215,14 +217,14 @@ export default async function DashboardPage({
               icone={<HandCoins />}
               tom="warning"
               tomDoValor={s.aReceber.greaterThan(0) ? "warning" : undefined}
-              href="/fiado"
+              explicacao={Explica.explicarAReceber(s)}
             />
             <CardDeResumo
               rotulo="Tenho em estoque"
               valor={formatBRL(s.estoqueValor)}
               dica="Valor da mercadoria"
               icone={<Package />}
-              href="/estoque"
+              explicacao={Explica.explicarEstoque(s)}
             />
             <CardDeResumo
               rotulo="Sobrou no mês"
@@ -231,7 +233,10 @@ export default async function DashboardPage({
               icone={<TrendingUp />}
               tom={lucroTone}
               tomDoValor={lucroTone}
-              href="/dashboard?aba=financeiro"
+              explicacao={{
+                ...Explica.explicarLucro(s, agora),
+                link: { href: "/dashboard?aba=financeiro", rotulo: "Ver o Financeiro" },
+              }}
             />
           </div>
 
@@ -310,7 +315,13 @@ export default async function DashboardPage({
           </div>
         </>
       ) : (
-        <Financeiro s={s} financeiro={financeiro!} lucroTone={lucroTone} margemTone={margemTone} />
+        <Financeiro
+          s={s}
+          financeiro={financeiro!}
+          lucroTone={lucroTone}
+          margemTone={margemTone}
+          agora={agora}
+        />
       )}
     </div>
   );
@@ -356,11 +367,13 @@ function Financeiro({
   financeiro,
   lucroTone,
   margemTone,
+  agora,
 }: {
   s: Resumo;
   financeiro: DadosFinanceiros;
   lucroTone: "success" | "destructive";
   margemTone: "success" | "destructive";
+  agora: Date;
 }) {
   const prejuizo = s.lucroMes.isNegative();
   const ultimoMes = financeiro.meses.at(-1);
@@ -374,18 +387,21 @@ function Financeiro({
     <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard
+          explicacao={Explica.explicarMesVendi(s, agora)}
           label="Vendi no mês"
           value={formatBRL(s.mesVendi)}
           icon={<WalletCards className="size-4" />}
           tone="success"
         />
         <StatCard
+          explicacao={Explica.explicarSemanaVendi(s)}
           label="Vendi na semana"
           value={formatBRL(s.semanaVendi)}
           icon={<TrendingUp className="size-4" />}
           tone="success"
         />
         <StatCard
+          explicacao={Explica.explicarLucro(s, agora)}
           label="Sobrou no mês"
           value={formatBRL(s.lucroMes)}
           hint="Lucro líquido"
@@ -393,6 +409,7 @@ function Financeiro({
           tone={lucroTone}
         />
         <StatCard
+          explicacao={Explica.explicarMargem(s, agora)}
           label="Sobrou em %"
           value={`${formatQty(s.margemLiquidaMes)}%`}
           hint="Margem líquida"
@@ -400,11 +417,13 @@ function Financeiro({
           tone={margemTone}
         />
         <StatCard
+          explicacao={Explica.explicarComprei(s, agora)}
           label="Comprei no mês"
           value={formatBRL(s.totalCompradoMes)}
           icon={<ReceiptText className="size-4" />}
         />
         <StatCard
+          explicacao={Explica.explicarGanhei(s, agora)}
           label="Ganhei nas vendas"
           value={formatBRL(s.lucroBrutoMes)}
           hint={
@@ -416,12 +435,14 @@ function Financeiro({
           tone={s.lucroBrutoMes.isNegative() ? "destructive" : "success"}
         />
         <StatCard
+          explicacao={Explica.explicarFixas(s, agora)}
           label="Contas fixas"
           value={formatBRL(s.despesasFixasMes)}
           hint="Aluguel, luz, salário…"
           icon={<ReceiptText className="size-4" />}
         />
         <StatCard
+          explicacao={Explica.explicarVariaveis(s, agora)}
           label="Contas variáveis"
           value={formatBRL(s.despesasVariaveisMes)}
           hint="Mudam todo mês"
@@ -432,6 +453,7 @@ function Financeiro({
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Do que entrou ao que sobrou, nos mesmos números dos cartões. */}
         <CartaoGrafico
+          explicacao={Explica.explicarResultado(s, agora)}
           titulo="Resultado do mês"
           subtitulo="Do que você vendeu ao que sobrou"
           destaque={
@@ -550,6 +572,7 @@ function Financeiro({
         </CartaoGrafico>
 
         <CartaoGrafico
+          explicacao={Explica.explicarVendas30Dias(s)}
           titulo="Vendas de mercadoria dos últimos 30 dias"
           subtitulo="Toque numa barra para ver o dia"
           destaque={formatBRL(s.chart.reduce((a, d) => a + d.total, 0))}
@@ -565,6 +588,7 @@ function Financeiro({
       </div>
 
       <CartaoGrafico
+        explicacao={Explica.explicarUltimosMeses()}
         titulo="Últimos 6 meses"
         subtitulo="Quanto vendeu (mercadoria e embalagem), quanto comprou de mercadoria e as contas do mês"
         destaque={
@@ -583,7 +607,11 @@ function Financeiro({
       </CartaoGrafico>
 
       <div className="grid gap-3 lg:grid-cols-2">
-        <CartaoGrafico titulo="Como recebi no mês" subtitulo="Vendas por forma de pagamento">
+        <CartaoGrafico
+          titulo="Como recebi no mês"
+          subtitulo="Vendas por forma de pagamento"
+          explicacao={Explica.explicarComoRecebi(financeiro, agora)}
+        >
           {financeiro.formasDePagamento.length === 0 ? (
             <p className="text-sm text-muted-foreground">Nenhuma venda no mês ainda.</p>
           ) : (
@@ -601,6 +629,7 @@ function Financeiro({
         </CartaoGrafico>
 
         <CartaoGrafico
+          explicacao={Explica.explicarParaOndeContas(s, financeiro, agora)}
           titulo="Para onde foram as contas"
           subtitulo="Contas do mês por categoria, com a higienização (sem as compras)"
         >

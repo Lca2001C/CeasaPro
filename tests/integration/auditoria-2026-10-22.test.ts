@@ -13,6 +13,7 @@ import { DespesasService } from "@/lib/services/despesas.service";
 import { AvisosService } from "@/lib/services/avisos.service";
 import { BillingService } from "@/lib/services/billing.service";
 import { buildReport } from "@/lib/reports/report.service";
+import * as Explica from "@/lib/financeiro/explicacoes";
 import { resolvePeriod } from "@/lib/dates";
 import { COMPRA_EXPENSE_CATEGORY } from "@/lib/constants";
 import { addDaysTz, isoDateTz } from "@/lib/tz";
@@ -391,5 +392,23 @@ describe("fiado antigo SEM venda baixado como perda", () => {
     const antes = await financeiro();
     await FiadoService.baixarComoPerda({ id: conta.id, motivo: "sumiu" }, ctx);
     expect(Number((await financeiro()).perdasFiadoMes) - Number(antes.perdasFiadoMes)).toBe(50);
+  });
+});
+
+describe("'Como é calculado' do Início fecha com os números reais", () => {
+  it("lucro, lucro bruto e contas variáveis, com o resumo do banco", async () => {
+    // Roda por último: o tenant já tem vendas, embalagens, baixas, higienização
+    // e fiado baixado lançados pelos testes acima.
+    const s = await financeiro();
+    const agora = new Date();
+    for (const e of [
+      Explica.explicarLucro(s, agora),
+      Explica.explicarGanhei(s, agora),
+      Explica.explicarVariaveis(s, agora),
+    ]) {
+      if (e.parcelas.length === 0) continue;
+      expect(Explica.somaDasParcelas(e), e.titulo).toBe(e.total!.centavos);
+    }
+    expect(Explica.explicarLucro(s, agora).parcelas.length).toBeGreaterThan(3);
   });
 });

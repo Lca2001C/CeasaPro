@@ -89,7 +89,7 @@ export const CAPITULOS: CapituloTour[] = [
         texto:
           "Quanto você vendeu hoje, quanto os clientes te devem, quanto vale sua " +
           "mercadoria e quanto sobrou no mês. Ninguém soma isso à mão: sai das compras " +
-          "e vendas que você lança.",
+          "e vendas que você lança. Toque em qualquer número para ver a conta.",
       },
       {
         alvo: '[data-tour="dashboard-a-pagar"]',

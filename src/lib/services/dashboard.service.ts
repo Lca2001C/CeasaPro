@@ -83,6 +83,11 @@ export interface DashboardSummary {
   margemLiquidaMes: Prisma.Decimal;
   despesasFixasMes: Prisma.Decimal;
   despesasVariaveisMes: Prisma.Decimal;
+  /**
+   * Higienização ENVIADA no mês — a parte de "Contas variáveis" (e de
+   * `despesasLucroMes`) que não é despesa lançada. Só para explicar a conta.
+   */
+  higienizacaoMes: Prisma.Decimal;
   topVendidos: DashboardProductRow[];
   topLucrativos: DashboardProductRow[];
   produtosComPrejuizo: DashboardProductRow[];
@@ -462,6 +467,7 @@ export const DashboardService = {
       margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, faturamentoMes),
       despesasFixasMes,
       despesasVariaveisMes,
+      higienizacaoMes: money(higEnviadaMes),
       topVendidos: [...porProduto]
         .sort((a, b) => b.quantity.comparedTo(a.quantity) || b.total.comparedTo(a.total))
         .slice(0, 5),

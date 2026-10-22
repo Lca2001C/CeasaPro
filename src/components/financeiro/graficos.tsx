@@ -2,6 +2,8 @@ import type { ReactNode } from "react";
 import { formatBRL } from "@/lib/format";
 import { cn } from "@/lib/cn";
 import { Card, CardContent } from "@/components/ui/card";
+import { BotaoComoECalculado } from "./explicacao";
+import type { Explicacao } from "@/lib/financeiro/explicacoes";
 
 /**
  * Gráficos do Financeiro do Início.
@@ -34,11 +36,14 @@ export function CartaoGrafico({
   destaque,
   children,
   tabela,
+  explicacao,
 }: {
   titulo: string;
   subtitulo?: string;
   destaque?: ReactNode;
   children: ReactNode;
+  /** "Como é calculado", num botão discreto no cabeçalho. */
+  explicacao?: Explicacao;
   /** Linhas da visão em tabela: [rótulo, ...valores]. */
   tabela?: { colunas: string[]; linhas: (string | number)[][] };
 }) {
@@ -52,8 +57,13 @@ export function CartaoGrafico({
             <h3 className="text-base font-semibold">{titulo}</h3>
             {subtitulo && <p className="text-xs text-muted-foreground">{subtitulo}</p>}
           </div>
-          {destaque && (
-            <div className="whitespace-nowrap text-lg font-bold tabular-nums">{destaque}</div>
+          {(destaque || explicacao) && (
+            <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-1">
+              {destaque && (
+                <div className="whitespace-nowrap text-lg font-bold tabular-nums">{destaque}</div>
+              )}
+              {explicacao && <BotaoComoECalculado explicacao={explicacao} />}
+            </div>
           )}
         </div>
         {children}
