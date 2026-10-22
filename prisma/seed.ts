@@ -4,6 +4,7 @@ import { hashPassword } from "../src/lib/auth/password";
 import {
   DEFAULT_EXPENSE_CATEGORIES,
   DEFAULT_PACKAGING_TYPES,
+  TIPO_CAIXA_PLASTICA,
 } from "../src/lib/constants";
 import { TERMS_VERSION } from "../src/lib/legal";
 import { OPTIONAL_MODULE_KEYS } from "../src/lib/plan/modules";
@@ -124,7 +125,10 @@ async function main() {
             })),
           },
           packagingTypes: {
-            create: DEFAULT_PACKAGING_TYPES.map((name) => ({ name })),
+            create: DEFAULT_PACKAGING_TYPES.map((name) => ({
+              name,
+              caixaPlastica: name === TIPO_CAIXA_PLASTICA,
+            })),
           },
         },
       });
@@ -141,7 +145,11 @@ async function main() {
       });
       if (demoTenant) {
         await prisma.packagingType.createMany({
-          data: DEFAULT_PACKAGING_TYPES.map((name) => ({ tenantId: demoTenant.id, name })),
+          data: DEFAULT_PACKAGING_TYPES.map((name) => ({
+            tenantId: demoTenant.id,
+            name,
+            caixaPlastica: name === TIPO_CAIXA_PLASTICA,
+          })),
           skipDuplicates: true,
         });
         // Mantém a demo utilizável em dev/E2E mesmo depois do fim do trial:

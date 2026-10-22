@@ -1088,6 +1088,9 @@ model Expense {
   purchaseId          String?
   /// Conta gerada pela entrada de embalagem (`origem = COMPRA_EMBALAGEM`).
   packagingMovementId String?               @unique
+  /// Conta gerada pela entrada manual de caixas plásticas com custo
+  /// (`origem = COMPRA_EMBALAGEM`). Desfazer a entrada cancela a conta.
+  plasticCrateMovementId String?            @unique
   /// Fornecedor a quem a conta é devida. Preenchido pela compra; opcional na
   /// despesa lançada à mão.
   supplierId          String?
@@ -1178,20 +1181,37 @@ model PlasticCrateMovement {
   crateCleaningId String?
   /// Compra que trouxe as caixas — é o que o cancelamento da compra desfaz.
   purchaseId      String?
+  /// Custo de cada caixa: informado na ENTRADA, e o custo médio com que a
+  /// caixa saiu na VENDA. É dele que sai o custo da caixa vendida como
+  /// embalagem (`PackagingSale.unitCostAtSale`).
+  unitCost        Decimal?                 @db.Decimal(14, 4)
+  /// Venda de embalagem do tipo vinculado às caixas (`PackagingType.caixaPlastica`)
+  /// que gerou esta VENDA — e o estorno dela, no cancelamento.
+  packagingSaleId String?
+  /// Movimento que este estorna (entrada manual desfeita). O par sai junto do
+  /// custo médio das caixas.
+  estornaId       String?
   movementDate    DateTime                 @default(now())
   notes           String?
   createdAt       DateTime                 @default(now())
   crateCleaning   CrateCleaning?           @relation(fields: [crateCleaningId], references: [id])
   sale            Sale?                    @relation(fields: [saleId], references: [id])
   purchase        Purchase?                @relation(fields: [purchaseId], references: [id])
+  packagingSale   PackagingSale?           @relation(fields: [packagingSaleId], references: [id])
   tenant          Tenant                   @relation(fields: [tenantId], references: [id], onDelete: Cascade)
 
+  /// Uma por entrada digitada: o reenvio devolve a já gravada.
+  idempotencyKey String?
+
+  @@unique([tenantId, idempotencyKey])
   @@index([tenantId, movementDate])
   @@index([tenantId, type])
   @@index([tenantId, customerName])
   @@index([saleId])
   @@index([crateCleaningId])
   @@index([purchaseId])
+  @@index([packagingSaleId])
+  @@index([estornaId])
   @@map("plastic_crate_movements")
 }
 
@@ -1261,6 +1281,11 @@ model PackagingType {
   /// de uma vez mostraria saldo negativo em tudo — o que é falso, é ausência
   /// de histórico. O dono liga por tipo, informando o que tem hoje.
   tracksStock Boolean             @default(false)
+  /// O tipo É a caixa plástica do módulo de caixas: não tem estoque próprio. O
+  /// saldo é o das caixas LIMPAS (`plastic_crate_movements`), a venda grava uma
+  /// VENDA lá e a entrada é uma ENTRADA de caixas. No máximo um por empresa
+  /// (índice único parcial `packaging_types_caixa_plastica_unica`).
+  caixaPlastica Boolean           @default(false)
   createdAt   DateTime            @default(now())
   updatedAt   DateTime            @updatedAt
   deletedAt   DateTime?
@@ -1324,6 +1349,8 @@ model PackagingSale {
   deletedAt       DateTime?
   type            PackagingType @relation(fields: [packagingTypeId], references: [id])
   tenant          Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  /// Movimentos de caixa plástica desta venda (tipo vinculado às caixas).
+  crateMovements  PlasticCrateMovement[]
 
   /// Uma por lançamento digitado: o reenvio (timeout depois do commit, toque
   /// duplo) devolve o já gravado em vez de lançar de novo.
@@ -1582,6 +1609,7 @@ enum PlasticCrateMovementType {
   RETORNO_HIGIENIZACAO
   ESTORNO_SAIDA // cancelamento de venda: as caixas nunca saíram de fato
   ESTORNO_SAIDA_HIGIENIZACAO // envio corrigido/excluído: as caixas voltam SUJAS, nunca foram lavadas
+  VENDA // vendida como embalagem: sai das limpas e não volta (negativa = venda cancelada)
 }
 
 enum CrateCleaningStatus {

@@ -291,6 +291,39 @@ describe("withTenantRoute — entrada e saída", () => {
     expect(handler).toHaveBeenCalledTimes(1);
   });
 
+  it("origens de borda: `null`, subdomínio irmão e text/plain disfarçado são recusados", async () => {
+    comSessao(novoTenant());
+    const handler = vi.fn();
+    const rota = withTenantRoute({ schema: z.object({ nome: z.string() }), handler });
+    const pedir = (headers: Record<string, string>) =>
+      rota(
+        new Request("http://localhost/api/x", {
+          method: "POST",
+          body: JSON.stringify({ nome: "x" }),
+          headers,
+        }),
+      );
+
+    // iframe com sandbox e redirect entre origens mandam `Origin: null`.
+    expect((await pedir({ ...JSON_HEADERS, Origin: "null" })).status).toBe(403);
+    // `SameSite=Lax` não separa subdomínio irmão; a origem tem de separar.
+    expect(
+      (
+        await pedir({
+          ...JSON_HEADERS,
+          Origin: "http://irmao.localhost",
+          "Sec-Fetch-Site": "same-site",
+        })
+      ).status,
+    ).toBe(403);
+    // Um `<form>` só manda tipos "simples"; "application/json" no meio não vale.
+    expect(
+      (await pedir({ Origin: "http://localhost", "Content-Type": "text/plain; x=application/json" }))
+        .status,
+    ).toBe(415);
+    expect(handler).not.toHaveBeenCalled();
+  });
+
   it("`source: query` lê a querystring em vez do corpo", async () => {
     comSessao(novoTenant());
     const handler = vi.fn().mockResolvedValue(null);

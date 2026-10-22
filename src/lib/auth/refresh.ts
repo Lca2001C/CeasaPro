@@ -150,6 +150,12 @@ export async function rotateRefreshToken(
       return novo;
     });
     if (criado) {
+      // Um logout que commitou durante a rotação revogou a família sem enxergar
+      // o token novo — mesma conferência pós-create do caminho de graça abaixo.
+      if (await familiaDerrubada(existing.familyId)) {
+        await revokeRefreshToken(newRaw, "REUSE");
+        return { tipo: "invalido" };
+      }
       return { tipo: "ok", userId: existing.userId, newToken: newRaw, familyId: existing.familyId };
     }
 
@@ -311,12 +317,25 @@ export async function auditarReusoDeSessao(
   }
 }
 
+/**
+ * Encerra a sessão DESTE aparelho: a linhagem inteira do token, não só ele.
+ *
+ * Revogar só o token apresentado deixava vivo o irmão que a janela de graça
+ * emitiu para outra aba do mesmo aparelho — e ele seguia rotacionando pelo
+ * caminho "ok" depois do logout. Os outros aparelhos têm outra `familyId` e
+ * continuam logados.
+ */
 export async function revokeRefreshToken(
   raw: string,
   motivo: MotivoRevogacao = "LOGOUT",
 ): Promise<void> {
+  const token = await prisma.refreshToken.findUnique({
+    where: { tokenHash: hashToken(raw) },
+    select: { familyId: true },
+  });
+  if (!token) return;
   await prisma.refreshToken.updateMany({
-    where: { tokenHash: hashToken(raw), revokedAt: null },
+    where: { familyId: token.familyId, revokedAt: null },
     data: { revokedAt: new Date(), revokedReason: motivo },
   });
 }
@@ -332,6 +351,12 @@ export async function revokeRefreshToken(
  *
  * `LOGOUT` NÃO passa por aqui de propósito: sair de um aparelho não é sair de
  * todos, e o logout já apaga os cookies — um cookie apagado não é enviado.
+ *
+ * Apaga também as inscrições de push do usuário. Sem isso, o celular perdido
+ * cuja senha o dono trocou em outro aparelho continuava recebendo o aviso
+ * diário com os números da empresa. O aparelho que ainda tem sessão se
+ * reinscreve sozinho no próximo carregamento (`push-opt-in.tsx` reafirma a
+ * inscrição do navegador); o que perdeu a sessão não consegue.
  */
 export async function revokeAllForUser(
   userId: string,
@@ -351,6 +376,7 @@ export async function revokeAllForUser(
       where: { id: userId },
       data: { sessionEpoch: { increment: 1 } },
     });
+    await db.pushSubscription.deleteMany({ where: { userId } });
   };
   if (tx) await executar(tx);
   else await prisma.$transaction(executar);

@@ -2,7 +2,7 @@ import Link from "next/link";
 import { PackagePlus, PackageX, Plus, Sparkles, Undo2 } from "lucide-react";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { formatDate } from "@/lib/format";
-import { CRATE_MOVEMENT_LABELS } from "@/lib/labels";
+import { rotuloMovimentoCaixa } from "@/lib/labels";
 import { EmptyState } from "@/components/data/empty-state";
 import { StatCard } from "@/components/data/stat-card";
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ const BADGE_VARIANT: Record<string, "success" | "warning" | "secondary" | "destr
   RETORNO_HIGIENIZACAO: "success",
   ESTORNO_SAIDA: "secondary",
   ESTORNO_SAIDA_HIGIENIZACAO: "secondary",
+  VENDA: "warning",
 };
 
 /**
@@ -178,14 +179,13 @@ export async function ConteudoCaixas({ tenantId }: { tenantId: string }) {
               <Card key={m.id} className="flex items-center justify-between gap-3 p-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
-                    {/* ENTRADA negativa = estorno de compra cancelada. */}
-                    {m.type === "ENTRADA" && m.quantity < 0 ? (
-                      <Badge variant="destructive">Estorno de entrada</Badge>
-                    ) : (
-                      <Badge variant={BADGE_VARIANT[m.type] ?? "secondary"}>
-                        {CRATE_MOVEMENT_LABELS[m.type]}
-                      </Badge>
-                    )}
+                    {/* Quantidade negativa = estorno (entrada desfeita, compra ou
+                        venda de embalagem cancelada). */}
+                    <Badge
+                      variant={m.quantity < 0 ? "destructive" : (BADGE_VARIANT[m.type] ?? "secondary")}
+                    >
+                      {rotuloMovimentoCaixa(m)}
+                    </Badge>
                     <span className="truncate text-sm">
                       {m.customerName ?? m.supplierName ?? ""}
                     </span>

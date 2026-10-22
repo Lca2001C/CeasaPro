@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { CheckCircle2, Container, TrendingDown } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { FiadoService } from "@/lib/services/fiado.service";
 import { formatBRL, formatDate, formatDateTime, formatQty } from "@/lib/format";
 import { PAYMENT_METHOD_LABELS, RECIPIENT_TYPE_LABELS, SALE_UNIT_LABELS } from "@/lib/labels";
@@ -35,8 +36,11 @@ export default async function FiadoDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const { tenantId } = await requireTenant();
-  const conta = await FiadoService.get(tenantId, id).catch(() => null);
+  const { tenantId, session } = await requireTenant();
+  // A devolução de caixas é uma action do módulo `caixas`: sem ele o cartão
+  // mostraria um formulário que o servidor recusa.
+  const comCaixas = isModuleEnabled(session.modules, "caixas");
+  const conta = await FiadoService.get(tenantId, id, { caixas: comCaixas }).catch(() => null);
   if (!conta) notFound();
 
   const pago = conta.status === "PAGO";
@@ -169,6 +173,7 @@ export default async function FiadoDetailPage({
         </Card>
 
         {/* Caixas plásticas */}
+        {comCaixas && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="flex items-center gap-3 text-base">
@@ -200,6 +205,7 @@ export default async function FiadoDetailPage({
             )}
           </CardContent>
         </Card>
+        )}
 
         {pago ? (
           <Card className="flex items-center gap-3 border-success/40 bg-success/5 p-4">

@@ -157,12 +157,11 @@ Rotas `/despesas`, `/despesas/nova`, `/despesas/[id]`.
 
 Rotas `/caixas-plasticas`, `/caixas-plasticas/novo`. **Módulo opcional** (depende do plano). Livro-razão de movimentos:
 
-- Tipos de movimento: **ENTRADA** (recebidas, com origem/fornecedor e caixas quebradas na chegada), **SAÍDA** (enviadas ao cliente), **RETORNO** (devolvidas pelo cliente) e **QUEBRA** (perdida/sumida — com cliente ou no estoque).
-- **Saldos derivados** (nunca campo mutável):
-  - *Vazias no estoque* = ENTRADA − SAÍDA + RETORNO − QUEBRA(sem cliente) − quebradas na chegada;
-  - *Com clientes* = SAÍDA − RETORNO − QUEBRA(com cliente);
-  - *Perdidas/quebradas* = todas as QUEBRA + quebradas na chegada.
-- Consistência: não deixa a saída superar as vazias, nem o retorno superar as que estão com clientes.
+- Tipos de movimento: **ENTRADA** (recebidas, com origem/fornecedor, **custo de cada caixa** e caixas quebradas na chegada), **SAÍDA** (emprestadas ao cliente), **RETORNO** (devolvidas pelo cliente, voltam sujas), **QUEBRA** (perdida/sumida — com cliente ou no estoque), **VENDA** (vendida pela aba Embalagens; não volta) e os movimentos da higienização.
+- **Saldos derivados** (nunca campo mutável): *limpas* (disponíveis para emprestar ou vender), *sujas*, *em higienização*, *com clientes* e *perdidas*. A fórmula está em `computeCrateSaldo` (`caixas.service.ts`).
+- Consistência: não deixa a saída nem a venda superarem as limpas, nem o retorno superar as que estão com clientes.
+- **Entrada com custo:** a entrada manual gera a conta paga "Compra de embalagem" e pode ser desfeita em até 24 h (toast "Desfazer"). A entrada que vem com a compra também pede o custo, sem conta nova.
+- **Mesmo estoque da aba Embalagens:** o tipo "Caixa plástica" de Embalagens mostra as caixas limpas daqui; vender lá tira daqui.
 
 ## Higienização
 
@@ -179,6 +178,7 @@ Rotas `/higienizacao`, `/higienizacao/nova`, `/higienizacao/[id]`. **Módulo opc
 Aba **Embalagens** de `/caixas-plasticas` (`?aba=embalagens`); `/embalagens` e `/embalagens/nova` redirecionam para ela. **Módulo opcional**, separado do de caixas no plano.
 
 - **Tipos** cadastráveis (caixa plástica, papelão, madeira, sacaria… — os padrões vêm no cadastro da empresa).
+- **Caixa plástica** é o mesmo estoque da aba Caixas: o saldo são as caixas limpas, a venda sai delas (custo médio das caixas) e a entrada vira entrada de caixas, com custo. Não tem "Controlar" nem "Baixa" — perda de caixa se registra em Caixas → Registrar perda.
 - Venda: tipo, cliente (opcional), data, quantidade, valor unitário (→ total).
 - Totais: embalagens vendidas e total vendido. Abas *Vendas* | *Tipos*.
 - A venda de embalagem é **receita**: entra no lucro do Início ("Vendi em embalagens" no Resultado do mês) e no "% do que você vendeu" de Despesas. Não entra em "Vendi" (que é a venda de mercadoria do PDV). Com o controle de estoque ligado, a venda grava o custo médio e o lucro desconta "Custo das embalagens vendidas"; a entrada com custo gera a conta da compra (origem "Compra de embalagem"), fora do lucro e dentro do caixa. **Não lance mais a compra de embalagem como despesa manual** — ela contaria duas vezes.

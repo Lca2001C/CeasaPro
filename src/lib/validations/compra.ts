@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { CAIXAS_MAX, CAIXAS_MAX_MSG } from "./caixa";
+import { CAIXAS_MAX, CAIXAS_MAX_MSG, custoDaCaixaSchema } from "./caixa";
 import { recipientTypeEnum } from "./produto";
 import { expensePaymentMethodEnum } from "./despesa";
 import { MSG_DATA_ANTIGA, dataNaoAntesDoMesPassado } from "./venda";
@@ -55,6 +55,12 @@ export const compraSchema = z.object({
   /** Quantas já vieram quebradas — entram como perda, não como estoque. */
   caixasQuebradas: z.number().int().nonnegative().max(CAIXAS_MAX, CAIXAS_MAX_MSG).optional(),
   /**
+   * Custo de cada caixa que chegou. Obrigatório com caixas (refine abaixo): a
+   * caixa também se vende como embalagem, e a venda sai pelo custo médio. Não
+   * gera conta nova — o que se pagou ao fornecedor já é a conta da compra.
+   */
+  caixasCustoUnitario: custoDaCaixaSchema.optional(),
+  /**
    * Como a compra foi paga. Toda compra vira UMA despesa (`origem = COMPRA`)
    * no valor total — itens + frete —, ligada ao fornecedor:
    *
@@ -76,6 +82,9 @@ export const compraSchema = z.object({
     .optional(),
   /** Uma por compra digitada: o reenvio devolve a compra já gravada. */
   idempotencyKey: z.uuid().optional(),
+}).refine((c) => !c.caixasRecebidas || c.caixasCustoUnitario !== undefined, {
+  path: ["caixasCustoUnitario"],
+  message: "Informe quanto custou cada caixa",
 });
 export type CompraInput = z.infer<typeof compraSchema>;
 

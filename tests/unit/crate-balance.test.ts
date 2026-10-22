@@ -1,8 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { computeCrateSaldo, assertCrateMovement } from "@/lib/services/caixas.service";
+import { Prisma } from "@prisma/client";
+import {
+  computeCrateSaldo,
+  assertCrateMovement,
+  custoMedioDasCaixas,
+} from "@/lib/services/caixas.service";
 import type {
   CrateSaldo,
   MovimentoCaixaInterno,
+  MovimentoDeCustoDeCaixa,
   SaldoRow,
 } from "@/lib/services/caixas.service";
 
@@ -21,6 +27,7 @@ const ZERO: SaldoRow = {
   quebra_suja: 0,
   estorno_saida: 0,
   estorno_saida_hig: 0,
+  venda: 0,
 };
 
 const row = (patch: Partial<SaldoRow>): SaldoRow => ({ ...ZERO, ...patch });
@@ -213,5 +220,101 @@ describe("assertCrateMovement — consistência do ledger", () => {
     expect(() =>
       assertCrateMovement(saldo({ limpas: 1 }), mov({ type: "QUEBRA", quantity: 5 })),
     ).toThrow(/limpa/i);
+  });
+});
+
+/**
+ * Caixa vendida como embalagem (tipo `caixaPlastica` da aba Embalagens): um
+ * estoque só. A VENDA sai das limpas, não fica com cliente nem vira perda.
+ */
+describe("VENDA — caixa plástica vendida como embalagem", () => {
+  it("sai das limpas e de nenhum outro pote", () => {
+    const s = computeCrateSaldo(row({ entrada_limpa: 10, entrada_suja: 4, venda: 3 }));
+    expect(s).toEqual({
+      limpas: 7,
+      sujas: 4,
+      emHigienizacao: 0,
+      comClientes: 0,
+      perdidas: 0,
+      vazias: 11,
+    });
+  });
+
+  it("a venda cancelada (VENDA negativa) já vem descontada no líquido", () => {
+    // 3 vendidas e 3 estornadas somam 0 no SQL.
+    expect(computeCrateSaldo(row({ entrada_limpa: 10, venda: 0 })).limpas).toBe(10);
+  });
+
+  it("só vende caixa limpa — a suja precisa passar pela higienização", () => {
+    expect(() =>
+      assertCrateMovement(saldo({ limpas: 2, sujas: 8 }), mov({ type: "VENDA", quantity: 3 })),
+    ).toThrow(/2 caixa\(s\) plástica\(s\) limpa\(s\).*higieniza/);
+    expect(() =>
+      assertCrateMovement(saldo({ limpas: 3 }), mov({ type: "VENDA", quantity: 3 })),
+    ).not.toThrow();
+  });
+});
+
+describe("custoMedioDasCaixas — custo da caixa que a empresa possui", () => {
+  const m = (patch: Partial<MovimentoDeCustoDeCaixa>): MovimentoDeCustoDeCaixa => ({
+    id: Math.random().toString(36).slice(2),
+    type: "ENTRADA",
+    quantity: 0,
+    brokenQty: 0,
+    unitCost: null,
+    purchaseId: null,
+    packagingSaleId: null,
+    estornaId: null,
+    ...patch,
+  });
+  const custo = (movs: MovimentoDeCustoDeCaixa[]) => custoMedioDasCaixas(movs)?.toString() ?? null;
+
+  it("média ponderada das entradas; a venda sai pela média sem mudá-la", () => {
+    expect(
+      custo([
+        m({ quantity: 10, unitCost: new Prisma.Decimal(5) }),
+        m({ type: "VENDA", quantity: 4 }),
+        m({ quantity: 6, unitCost: new Prisma.Decimal(8) }),
+      ]),
+    ).toBe("6.5"); // (6×5 + 6×8) / 12
+  });
+
+  it("empréstimo ao cliente não muda a posse nem o custo", () => {
+    expect(
+      custo([
+        m({ quantity: 10, unitCost: new Prisma.Decimal(5) }),
+        m({ type: "SAIDA", quantity: 10 }),
+        m({ quantity: 10, unitCost: new Prisma.Decimal(7) }),
+      ]),
+    ).toBe("6");
+  });
+
+  it("as quebradas na chegada não entram no custo médio", () => {
+    expect(
+      custo([
+        m({ quantity: 10, brokenQty: 5, unitCost: new Prisma.Decimal(4) }),
+        m({ quantity: 5, unitCost: new Prisma.Decimal(10) }),
+      ]),
+    ).toBe("7");
+  });
+
+  it("entrada desfeita, compra cancelada e venda cancelada saem em par", () => {
+    const errada = m({ quantity: 10, unitCost: new Prisma.Decimal(100) });
+    expect(
+      custo([
+        m({ quantity: 10, unitCost: new Prisma.Decimal(5) }),
+        errada,
+        m({ quantity: -10, unitCost: new Prisma.Decimal(100), estornaId: errada.id }),
+        m({ quantity: 10, unitCost: new Prisma.Decimal(90), purchaseId: "c1" }),
+        m({ quantity: -10, purchaseId: "c1" }),
+        m({ type: "VENDA", quantity: 10, packagingSaleId: "v1" }),
+        m({ type: "VENDA", quantity: -10, packagingSaleId: "v1" }),
+        m({ quantity: 10, unitCost: new Prisma.Decimal(7) }),
+      ]),
+    ).toBe("6");
+  });
+
+  it("sem nenhuma entrada com custo, não há custo", () => {
+    expect(custo([m({ quantity: 10 })])).toBeNull();
   });
 });

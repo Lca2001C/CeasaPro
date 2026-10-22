@@ -24,6 +24,15 @@ export const CAIXAS_MAX_MSG = "Quantidade de caixas muito alta — confira o nú
  */
 export const caixaMovimentoTipoEnum = z.enum(["ENTRADA", "SAIDA", "RETORNO", "QUEBRA"]);
 
+/**
+ * Custo de UMA caixa plástica. Até 4 casas, como o da embalagem: é dele que
+ * sai o custo médio com que a caixa vendida como embalagem desconta do lucro.
+ */
+export const custoDaCaixaSchema = z
+  .number({ message: "Informe quanto custou cada caixa" })
+  .positive("Informe quanto custou cada caixa")
+  .max(100_000, "Valor muito alto — confira o número");
+
 export const caixaMovimentoSchema = z
   .object({
     type: caixaMovimentoTipoEnum,
@@ -37,6 +46,10 @@ export const caixaMovimentoSchema = z
     cleanerName: z.string().trim().max(120).nullable().optional(),
     movementDate: z.string().min(1, "Informe a data"),
     notes: z.string().trim().max(300).nullable().optional(),
+    /** Só na ENTRADA, e obrigatório nela (refine abaixo). */
+    unitCost: custoDaCaixaSchema.optional(),
+    /** Uma por lançamento digitado: o reenvio devolve o já gravado. */
+    idempotencyKey: z.uuid().optional(),
   })
   .refine(
     (v) =>
@@ -54,5 +67,15 @@ export const caixaMovimentoSchema = z
     // A quantidade é o TOTAL recebido; as quebradas são parte dele.
     message: "As quebradas não podem passar do total de caixas recebidas.",
     path: ["brokenQty"],
+  })
+  .refine((v) => v.type !== "ENTRADA" || v.unitCost !== undefined, {
+    // A caixa também se vende como embalagem: sem o custo da entrada, a venda
+    // sairia sem custo e o lucro do mês, inflado.
+    message: "Informe quanto custou cada caixa",
+    path: ["unitCost"],
+  })
+  .refine((v) => v.type === "ENTRADA" || v.unitCost === undefined, {
+    message: "Custo só se informa na entrada de caixas.",
+    path: ["unitCost"],
   });
 export type CaixaMovimentoInput = z.infer<typeof caixaMovimentoSchema>;

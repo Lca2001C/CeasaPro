@@ -9,7 +9,8 @@ import {
   foraDoPrazoDeDesfazer,
   podeDesfazer,
 } from "@/lib/desfazer/prazo";
-import { DEFAULT_PACKAGING_TYPES } from "@/lib/constants";
+import { DEFAULT_PACKAGING_TYPES, TIPO_CAIXA_PLASTICA } from "@/lib/constants";
+import { CaixasService } from "./caixas.service";
 import type { Prisma } from "@prisma/client";
 import type {
   BaixaEmbalagemInput,
@@ -19,10 +20,18 @@ import type {
 import {
   ORIGEM_BAIXA_EMBALAGEM,
   ORIGEM_BAIXA_EMBALAGEM_DESFEITA,
+  ORIGEM_TRANSFERIDO_PARA_CAIXAS,
 } from "@/lib/estoque/origens";
 import { comIdempotencia } from "@/lib/http/idempotencia";
 import type { TenantCtx } from "@/lib/http/with-action";
-import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
+import { isoDateTz, parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
+
+/**
+ * O tipo de embalagem que É a caixa plástica não tem estoque próprio: lê e
+ * grava no livro-razão de caixas (`PackagingType.caixaPlastica`).
+ */
+const MSG_USE_CAIXAS =
+  "A caixa plástica usa o mesmo estoque das caixas. Registre a perda em Caixas → Registrar perda.";
 
 /** `sourceType` da baixa de estoque gerada pela venda e do estorno dela. */
 const ORIGEM_VENDA_EMBALAGEM = "PACKAGING_SALE";
@@ -70,8 +79,10 @@ async function travarTipo(
   packagingTypeId: string,
   tenantId: string,
 ) {
-  const travado = await tx.$queryRaw<{ id: string; name: string; tracksStock: boolean }[]>`
-    SELECT id, name, "tracksStock" FROM packaging_types
+  const travado = await tx.$queryRaw<
+    { id: string; name: string; tracksStock: boolean; caixaPlastica: boolean }[]
+  >`
+    SELECT id, name, "tracksStock", "caixaPlastica" FROM packaging_types
     WHERE id = ${packagingTypeId} AND "tenantId" = ${tenantId}
       AND "deletedAt" IS NULL
     FOR UPDATE
@@ -88,8 +99,9 @@ export async function createDefaultPackagingTypes(
   tenantId: string,
   db: DbClient = prisma,
 ) {
+  // A "Caixa plástica" padrão nasce vinculada ao estoque de caixas.
   const data: Prisma.PackagingTypeCreateManyInput[] = DEFAULT_PACKAGING_TYPES.map(
-    (name) => ({ tenantId, name }),
+    (name) => ({ tenantId, name, caixaPlastica: name === TIPO_CAIXA_PLASTICA }),
   );
   await db.packagingType.createMany({ data, skipDuplicates: true });
 }
@@ -120,16 +132,107 @@ export const EmbalagensService = {
     // gordo) faziam o cast levantar "integer out of range", e daí em diante
     // `saldos()` falhava sempre: /embalagens em 500 e toda venda de tipo
     // controlado em "erro inesperado", até alguém mexer no banco.
-    const rows = await prisma.$queryRaw<{ packagingTypeId: string; saldo: bigint }[]>`
-      SELECT "packagingTypeId",
-             COALESCE(SUM(
-               CASE WHEN type::text IN ('ENTRADA', 'AJUSTE') THEN quantity ELSE -quantity END
-             ), 0)::bigint AS saldo
-      FROM packaging_movements
-      WHERE "tenantId" = ${tenantId}
-      GROUP BY "packagingTypeId"
-    `;
-    return new Map(rows.map((r) => [r.packagingTypeId, Number(r.saldo)]));
+    const [rows, vinculado] = await Promise.all([
+      prisma.$queryRaw<{ packagingTypeId: string; saldo: bigint }[]>`
+        SELECT "packagingTypeId",
+               COALESCE(SUM(
+                 CASE WHEN type::text IN ('ENTRADA', 'AJUSTE') THEN quantity ELSE -quantity END
+               ), 0)::bigint AS saldo
+        FROM packaging_movements
+        WHERE "tenantId" = ${tenantId}
+        GROUP BY "packagingTypeId"
+      `,
+      this.tipoCaixaPlastica(tenantId),
+    ]);
+    const mapa = new Map(rows.map((r) => [r.packagingTypeId, Number(r.saldo)]));
+    // A caixa plástica não tem estoque próprio: o saldo dela é o das caixas
+    // LIMPAS — as que podem sair, emprestadas ou vendidas.
+    if (vinculado) mapa.set(vinculado.id, (await CaixasService.getSaldo(tenantId)).limpas);
+    return mapa;
+  },
+
+  /**
+   * Passa para as caixas o estoque que o tipo vinculado tinha em
+   * `packaging_movements`, de antes do vínculo (empresa que tinha ligado o
+   * controle de estoque da "Caixa plástica").
+   *
+   * Nenhum livro-razão é apagado: entra uma ENTRADA limpa nas caixas, pelo
+   * custo médio do tipo, e um AJUSTE negativo zera o tipo, ligado a ela
+   * (`sourceType = PACKAGING_TO_CRATES`). Sem conta: a compra dessas
+   * embalagens já foi paga e lançada quando entraram. Idempotente — o AJUSTE
+   * é a marca de que já foi feito. Rodado por `scripts/vincular-caixas-embalagens.ts`.
+   *
+   * @returns quantas caixas foram transferidas.
+   */
+  async transferirSaldoParaCaixas(tenantId: string): Promise<number> {
+    return prisma.$transaction(async (tx) => {
+      const [tipo] = await tx.$queryRaw<{ id: string; name: string }[]>`
+        SELECT id, name FROM packaging_types
+        WHERE "tenantId" = ${tenantId} AND "caixaPlastica" AND "deletedAt" IS NULL
+        FOR UPDATE
+      `;
+      if (!tipo) return 0;
+      const jaFeita = await tx.packagingMovement.findFirst({
+        where: { tenantId, packagingTypeId: tipo.id, sourceType: ORIGEM_TRANSFERIDO_PARA_CAIXAS },
+        select: { id: true },
+      });
+      if (jaFeita) return 0;
+      const movimentos = await tx.packagingMovement.findMany({
+        where: { tenantId, packagingTypeId: tipo.id },
+        orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+        select: { id: true, type: true, quantity: true, unitCost: true, sourceType: true, sourceId: true },
+      });
+      const saldo = movimentos.reduce(
+        (a, m) => a + (m.type === "ENTRADA" || m.type === "AJUSTE" ? m.quantity : -m.quantity),
+        0,
+      );
+      if (saldo <= 0) return 0;
+      const custoMedio = custoMedioDoTipo(movimentos);
+
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${tenantId}), 1)`;
+      const entrada = await tx.plasticCrateMovement.create({
+        data: {
+          tenantId,
+          type: "ENTRADA",
+          quantity: saldo,
+          dirty: false,
+          unitCost: custoMedio,
+          notes: "Saldo transferido de Embalagens",
+        },
+      });
+      await tx.packagingMovement.create({
+        data: {
+          tenantId,
+          packagingTypeId: tipo.id,
+          type: "AJUSTE",
+          quantity: -saldo,
+          unitCost: custoMedio,
+          reason: "Transferido para o estoque de caixas plásticas",
+          sourceType: ORIGEM_TRANSFERIDO_PARA_CAIXAS,
+          sourceId: entrada.id,
+        },
+      });
+      await audit(
+        {
+          tenantId,
+          actorEmail: "script:vincular-caixas-embalagens",
+          action: "CREATE",
+          entity: "PlasticCrateMovement",
+          entityId: entrada.id,
+          newData: { transferidoDe: tipo.name, quantity: saldo, custoMedio: custoMedio?.toString() ?? null },
+        },
+        tx,
+      );
+      return saldo;
+    });
+  },
+
+  /** O tipo de embalagem vinculado às caixas plásticas, se a empresa tem um. */
+  async tipoCaixaPlastica(tenantId: string) {
+    return getTenantPrisma(tenantId).packagingType.findFirst({
+      where: { caixaPlastica: true },
+      select: { id: true, name: true },
+    });
   },
 
   /**
@@ -146,6 +249,11 @@ export const EmbalagensService = {
     const db = getTenantPrisma(ctx.tenantId);
     const tipo = await db.packagingType.findFirst({ where: { id: input.packagingTypeId } });
     if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
+    if (tipo.caixaPlastica) {
+      throw new BusinessRuleError(
+        "A caixa plástica já usa o estoque das caixas. Registre a entrada de caixas.",
+      );
+    }
     if (tipo.tracksStock) {
       throw new BusinessRuleError("O controle de estoque deste tipo já está ligado.");
     }
@@ -203,7 +311,28 @@ export const EmbalagensService = {
       idempotencyKey?: string;
     },
     ctx: TenantCtx,
-  ) {
+  ): Promise<{ id: string; quantity: number }> {
+    const tipo = await getTenantPrisma(ctx.tenantId).packagingType.findFirst({
+      where: { id: input.packagingTypeId },
+      select: { caixaPlastica: true },
+    });
+    if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
+    // Caixa plástica entra no estoque das caixas: limpa, com o custo e a conta
+    // da compra (`CaixasService.registrar`). A chave de idempotência vale lá.
+    if (tipo.caixaPlastica) {
+      return CaixasService.registrar(
+        {
+          type: "ENTRADA",
+          quantity: input.quantity,
+          unitCost: input.unitCost,
+          dirty: false,
+          movementDate: isoDateTz(),
+          notes: input.notes ?? "Entrada pela aba Embalagens",
+          idempotencyKey: input.idempotencyKey,
+        },
+        ctx,
+      );
+    }
     return comIdempotencia(
       input.idempotencyKey,
       (k) => getTenantPrisma(ctx.tenantId).packagingMovement.findFirst({ where: { idempotencyKey: k } }),
@@ -232,6 +361,10 @@ export const EmbalagensService = {
       // ainda não confirmada ficava com `createdAt` ANTES da venda que corria
       // ao lado, e o repasse do custo médio a contava antes da saída.
       const tipo = await travarTipo(tx, input.packagingTypeId, ctx.tenantId);
+      if (tipo.caixaPlastica) {
+        // `registrarEntrada` desvia antes; aqui é a barreira de quem chamar direto.
+        throw new BusinessRuleError("A entrada de caixa plástica vai para o estoque das caixas.");
+      }
       if (!tipo.tracksStock) {
         throw new BusinessRuleError(
           `O controle de estoque de "${tipo.name}" está desligado. Ligue antes de registrar entrada.`,
@@ -307,6 +440,9 @@ export const EmbalagensService = {
     const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction(async (tx) => {
       const tipo = await travarTipo(tx, input.packagingTypeId, ctx.tenantId);
+      // A perda de caixa plástica precisa dizer de qual pote saiu (limpa,
+      // suja, com cliente) — quem sabe isso é o "Registrar perda" das caixas.
+      if (tipo.caixaPlastica) throw new BusinessRuleError(MSG_USE_CAIXAS);
       if (!tipo.tracksStock) {
         throw new BusinessRuleError(
           `O controle de estoque de "${tipo.name}" está desligado — não há saldo para baixar.`,
@@ -444,11 +580,11 @@ export const EmbalagensService = {
       throw new ForbiddenError("Só o responsável pela empresa pode desfazer uma entrada.");
     }
     const db = getTenantPrisma(ctx.tenantId);
-    return db.$transaction(async (tx) => {
+    const desfeita = await db.$transaction(async (tx) => {
       const entrada = await tx.packagingMovement.findFirst({
         where: { id: input.id, type: "ENTRADA", sourceType: null },
       });
-      if (!entrada) throw new NotFoundError("Entrada não encontrada");
+      if (!entrada) return null;
       if (!dentroDoPrazoDeDesfazer(entrada.createdAt)) {
         throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer esta entrada"));
       }
@@ -508,6 +644,9 @@ export const EmbalagensService = {
       );
       return { id: entrada.id };
     });
+    // Não é entrada de embalagem: a da caixa plástica foi gravada no estoque
+    // das caixas (`registrarEntrada`), e é lá que se desfaz.
+    return desfeita ?? CaixasService.desfazerEntrada(input, ctx);
   },
 
   /**
@@ -599,16 +738,18 @@ export const EmbalagensService = {
       // segundo vendedor espera o commit do primeiro e lê o saldo já baixado.
       // `tracksStock` é relido aqui pelo mesmo motivo: ligar o controle ao
       // mesmo tempo que uma venda não pode deixar a venda sem baixa.
-      const travado = await tx.$queryRaw<{ tracksStock: boolean }[]>`
-        SELECT "tracksStock" FROM packaging_types
-        WHERE id = ${tipo.id} AND "tenantId" = ${ctx.tenantId}
-        FOR UPDATE
-      `;
-      const controla = travado[0]?.tracksStock ?? false;
+      const travado = await travarTipo(tx, tipo.id, ctx.tenantId);
+      // Caixa plástica: o estoque é o das caixas limpas. Trava as caixas da
+      // empresa e lê o custo médio delas antes da saída; a VENDA, gravada
+      // depois da venda, confere as limpas (`assertCrateMovement`) e desfaz
+      // tudo se não houver caixa.
+      const caixa = travado.caixaPlastica;
+      const controla = !caixa && travado.tracksStock;
 
       // Só valida saldo de quem controla estoque. Tipo sem controle segue como
       // antes: registra a venda e pronto — não inventa saldo negativo.
       let custoMedio: Prisma.Decimal | null = null;
+      if (caixa) custoMedio = await CaixasService.custoMedioInTx(tx, ctx.tenantId);
       if (controla) {
         const [linha] = await tx.$queryRaw<{ saldo: bigint }[]>`
           SELECT COALESCE(SUM(
@@ -670,6 +811,21 @@ export const EmbalagensService = {
           },
         });
       }
+      if (caixa) {
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "VENDA",
+            quantity: input.quantity,
+            customerName: input.customerName || null,
+            movementDate: input.saleDate,
+            unitCost: custoMedio,
+            notes: "Vendida como embalagem",
+            packagingSaleId: criada.id,
+          },
+          ctx,
+        );
+      }
 
       await audit(
         {
@@ -683,7 +839,8 @@ export const EmbalagensService = {
             tipo: tipo.name,
             quantity: input.quantity,
             totalAmount: totalAmount.toString(),
-            baixouEstoque: controla,
+            baixouEstoque: controla || caixa,
+            estoqueDeCaixas: caixa,
             custoMedio: custoMedio?.toString() ?? null,
           },
           ip: ctx.ip,
@@ -755,6 +912,8 @@ export const EmbalagensService = {
           },
         });
       }
+      // Caixa plástica vendida: volta às limpas pela VENDA espelhada.
+      const caixasDevolvidas = await CaixasService.estornarVendaInTx(tx, venda.id, ctx);
 
       await audit(
         {
@@ -769,7 +928,7 @@ export const EmbalagensService = {
             cancelada: true,
             motivo: input.motivo ?? null,
             totalAmount: venda.totalAmount.toString(),
-            estoqueDevolvido: baixa?.quantity ?? 0,
+            estoqueDevolvido: (baixa?.quantity ?? 0) + caixasDevolvidas,
           },
           ip: ctx.ip,
         },

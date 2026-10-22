@@ -1,7 +1,7 @@
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
-import { CaixasService } from "./caixas.service";
+import { CaixasService, SaldoDeCaixasPorCliente } from "./caixas.service";
 import { VendasService } from "./vendas.service";
 import { add, gt, sub } from "@/lib/money";
 import { NotFoundError, BusinessRuleError, ForbiddenError } from "@/lib/http/app-error";
@@ -24,6 +24,9 @@ import {
   foraDoPrazoDeDesfazer,
   podeDesfazer,
 } from "@/lib/desfazer/prazo";
+
+/** Saldo vazio de quem não tem o módulo `caixas`: toda consulta devolve zero. */
+const SEM_CAIXAS = new SaldoDeCaixasPorCliente();
 
 const SALE_INCLUDE = {
   items: { include: { product: true }, orderBy: { createdAt: "asc" } },
@@ -85,12 +88,15 @@ export const FiadoService = {
    * `totalGeral`, `totalCaixas` e `vencidas` são SEMPRE sobre todas as contas
    * em aberto (respeitando só a busca), nunca sobre a página: são os cartões
    * "Total a receber" e "Caixas com clientes", que falam da dívida na rua.
+   *
+   * `caixas: false` (empresa sem o módulo `caixas`) não lê o saldo de caixas
+   * e devolve zero: quem saiu do módulo não vê o dado nem paga a consulta.
    */
   async listOpen(
     tenantId: string,
     status: FiadoStatusFiltro = "EM_ABERTO",
     search?: string,
-    opts: { pagina?: number; agora?: Date } = {},
+    opts: { pagina?: number; agora?: Date; caixas?: boolean } = {},
   ) {
     const db = getTenantPrisma(tenantId);
     const paginada = status !== "EM_ABERTO";
@@ -109,7 +115,7 @@ export const FiadoService = {
         ...(paginada ? { take: FIADO_POR_PAGINA, skip: (pagina - 1) * FIADO_POR_PAGINA } : {}),
       }),
       paginada ? db.creditAccount.count({ where }) : Promise.resolve(null),
-      CaixasService.saldoPorCliente(tenantId),
+      opts.caixas === false ? SEM_CAIXAS : CaixasService.saldoPorCliente(tenantId),
     ]);
     const withSaldo = contas.map((c) => ({
       ...c,
@@ -179,7 +185,8 @@ export const FiadoService = {
     };
   },
 
-  async get(tenantId: string, id: string) {
+  /** `caixas: false` — ver `listOpen`. */
+  async get(tenantId: string, id: string, opts: { caixas?: boolean } = {}) {
     const db = getTenantPrisma(tenantId);
     const conta = await db.creditAccount.findFirst({
       where: { id },
@@ -190,7 +197,8 @@ export const FiadoService = {
     });
     if (!conta) throw new NotFoundError("Conta de fiado não encontrada");
 
-    const caixasPorCliente = await CaixasService.saldoPorCliente(tenantId);
+    const caixasPorCliente =
+      opts.caixas === false ? SEM_CAIXAS : await CaixasService.saldoPorCliente(tenantId);
     const itens = (conta.sale?.items ?? []).map((it) => ({
       id: it.id,
       productName: it.product.name,

@@ -458,6 +458,17 @@ describe("caixas na listagem do fiado", () => {
     const saldos = await CaixasService.saldoPorCliente(tenantId);
     expect(saldos.get(cliente)).toBe(12);
     expect(totalCaixas - antes).toBe(12);
+
+    // Sem o módulo `caixas` (tela de fiado, ficha e snapshot do PWA passam
+    // `caixas: false`): o saldo não aparece, e a conta segue igual.
+    const semModulo = await FiadoService.listOpen(tenantId, "EM_ABERTO", undefined, {
+      caixas: false,
+    });
+    expect(semModulo.totalCaixas).toBe(0);
+    expect(semModulo.contas.every((c) => c.caixasComCliente === 0)).toBe(true);
+    expect(semModulo.contas.filter((c) => c.customerName === cliente)).toHaveLength(2);
+    const ficha = await FiadoService.get(tenantId, doCliente[0]!.id, { caixas: false });
+    expect(ficha.caixasComCliente).toBe(0);
   });
 });
 

@@ -56,6 +56,7 @@ test.describe("Higienização de caixas", () => {
     await page.goto("/caixas-plasticas/novo");
     await page.getByLabel("Tipo de movimentação").selectOption("ENTRADA");
     await page.getByLabel("Quantidade de caixas").fill(String(ENVIADAS));
+    await page.getByLabel("Quanto custou cada caixa (R$)").fill("10");
     await page.getByLabel(/chegaram sujas/i).check();
     await page.getByLabel("Observações").fill(MARCA);
     await page.getByRole("button", { name: "Registrar" }).click();

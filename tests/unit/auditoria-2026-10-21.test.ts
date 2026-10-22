@@ -132,6 +132,7 @@ describe("estorno de envio para higienização volta às SUJAS", () => {
     quebra_suja: 0,
     estorno_saida: 0,
     estorno_saida_hig: 0,
+    venda: 0,
   };
   it("50 sujas, 50 enviadas, 10 estornadas: 10 sujas e 40 no higienizador", () => {
     const s = computeCrateSaldo({ ...zero, entrada_suja: 50, saida_hig: 50, estorno_saida_hig: 10 });

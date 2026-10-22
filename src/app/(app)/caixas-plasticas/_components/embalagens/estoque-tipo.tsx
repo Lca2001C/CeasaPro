@@ -2,6 +2,7 @@
 
 import { useRef, useState, useTransition } from "react";
 import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2, PackageMinus, PackagePlus, Warehouse } from "lucide-react";
 import { toast } from "sonner";
@@ -42,11 +43,20 @@ export function EstoqueTipo({
   id,
   nome,
   controlaEstoque,
+  caixaPlastica = false,
+  temCaixas = false,
   saldo,
 }: {
   id: string;
   nome: string;
   controlaEstoque: boolean;
+  /**
+   * O tipo é a caixa plástica do módulo de caixas: o saldo são as caixas
+   * LIMPAS, a entrada vai para lá e a perda se registra lá (sem "Baixa").
+   */
+  caixaPlastica?: boolean;
+  /** Com o módulo de caixas, o texto aponta para a aba ao lado. */
+  temCaixas?: boolean;
   saldo: number | null;
 }) {
   const router = useRouter();
@@ -179,24 +189,45 @@ export function EstoqueTipo({
             {nivel === "zerado" && <Badge variant="secondary">Sem estoque</Badge>}
           </span>
           <span className="block text-xs text-muted-foreground">
-            {controlaEstoque ? `${saldo ?? 0} em estoque` : "Sem controle de estoque"}
+            {caixaPlastica ? (
+              <>
+                {saldo ?? 0} limpa(s) · mesmo estoque das caixas plásticas
+                {temCaixas && (
+                  <>
+                    {" "}
+                    ·{" "}
+                    <Link href="/caixas-plasticas" className="underline">
+                      ver caixas
+                    </Link>
+                  </>
+                )}
+              </>
+            ) : controlaEstoque ? (
+              `${saldo ?? 0} em estoque`
+            ) : (
+              "Sem controle de estoque"
+            )}
           </span>
         </span>
 
         {controlaEstoque ? (
           <div className="flex shrink-0 gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              aria-label={`Baixa de ${nome}`}
-              onClick={() => {
-                setMotivo("");
-                abrir(setBaixando);
-              }}
-            >
-              <PackageMinus className="size-4" />
-              <span className="hidden sm:inline">Baixa</span>
-            </Button>
+            {/* Perda de caixa plástica precisa dizer de qual pote saiu (limpa,
+                suja, com cliente): quem sabe é o "Registrar perda" das caixas. */}
+            {!caixaPlastica && (
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={`Baixa de ${nome}`}
+                onClick={() => {
+                  setMotivo("");
+                  abrir(setBaixando);
+                }}
+              >
+                <PackageMinus className="size-4" />
+                <span className="hidden sm:inline">Baixa</span>
+              </Button>
+            )}
             <Button size="sm" variant="outline" onClick={() => abrir(setEntrando)}>
               <PackagePlus className="size-4" />
               <span className="hidden sm:inline">Entrada</span>
@@ -297,7 +328,16 @@ export function EstoqueTipo({
           <DialogHeader>
             <DialogTitle>Entrada de {nome}</DialogTitle>
             <DialogDescription>
-              Quantas embalagens chegaram? O saldo atual é <b>{saldo ?? 0}</b>.
+              {caixaPlastica ? (
+                <>
+                  Quantas caixas chegaram? Entram <b>limpas</b> no estoque das caixas, que
+                  hoje tem <b>{saldo ?? 0}</b>.
+                </>
+              ) : (
+                <>
+                  Quantas embalagens chegaram? O saldo atual é <b>{saldo ?? 0}</b>.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-1.5">

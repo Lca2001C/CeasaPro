@@ -44,23 +44,25 @@ export async function ConteudoEmbalagens({
     <div className="flex flex-col gap-5">
       <NovaVendaEmbalagem tipos={ativos} abrirAoCarregar={abrirNovaVenda} />
 
-      {/* Os dois "negócios de caixa" do box: confundi-los é o erro mais caro
-          aqui — lançar uma caixa retornável como venda avulsa some com ela do
-          controle de devolução. */}
+      {/* Os dois "negócios de caixa" do box. A caixa plástica vendida aqui sai
+          do MESMO estoque das caixas (as limpas) e não fica com o cliente; a
+          emprestada, que volta, sai pela venda da mercadoria. */}
       <Card className="flex items-start gap-3 p-4 text-sm">
         <Info aria-hidden className="mt-0.5 size-5 shrink-0 text-info" />
         <span className="text-muted-foreground">
           Aqui é a <b className="text-foreground">venda avulsa</b> de papelão, sacaria e
           afins — o cliente leva e não devolve.{" "}
+          A <b className="text-foreground">caixa plástica</b> vendida aqui sai do mesmo
+          estoque das caixas limpas.{" "}
           {temCaixas ? (
             <>
-              As caixas plásticas que saem <b className="text-foreground">emprestadas</b> com
-              a mercadoria ficam na aba ao lado.
+              As que saem <b className="text-foreground">emprestadas</b> com a mercadoria
+              ficam na aba ao lado.
             </>
           ) : (
             <>
-              Caixa plástica <b className="text-foreground">emprestada</b>, que volta, não se
-              lança aqui.
+              Caixa <b className="text-foreground">emprestada</b>, que volta, não se lança
+              aqui.
             </>
           )}
         </span>
@@ -129,6 +131,7 @@ export async function ConteudoEmbalagens({
           <h2 className="text-sm font-semibold text-muted-foreground">Tipos e estoque</h2>
           <p className="text-sm text-muted-foreground">
             Os tipos que você revende. Ligue o estoque de um tipo para a venda dar baixa nele.
+            A caixa plástica já usa o estoque das caixas.
           </p>
         </div>
         <TipoEmbalagemForm />
@@ -139,8 +142,10 @@ export async function ConteudoEmbalagens({
                 key={t.id}
                 id={t.id}
                 nome={t.name}
-                controlaEstoque={t.tracksStock}
-                saldo={t.tracksStock ? (saldos.get(t.id) ?? 0) : null}
+                controlaEstoque={t.tracksStock || t.caixaPlastica}
+                caixaPlastica={t.caixaPlastica}
+                temCaixas={temCaixas}
+                saldo={t.tracksStock || t.caixaPlastica ? (saldos.get(t.id) ?? 0) : null}
               />
             ))}
           </div>

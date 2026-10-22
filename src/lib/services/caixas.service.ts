@@ -2,10 +2,18 @@ import type { Prisma, PlasticCrateMovement, PlasticCrateMovementType } from "@pr
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
 import { audit } from "@/lib/audit";
-import { BusinessRuleError } from "@/lib/http/app-error";
+import { BusinessRuleError, ForbiddenError, NotFoundError } from "@/lib/http/app-error";
 import type { CaixaMovimentoInput } from "@/lib/validations/caixa";
 import type { TenantCtx } from "@/lib/http/with-action";
+import { comIdempotencia } from "@/lib/http/idempotencia";
+import {
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 import { parseFormDateTz } from "@/lib/tz";
+import { ORIGEM_TRANSFERIDO_PARA_CAIXAS } from "@/lib/estoque/origens";
+import { FinancialCalc } from "./financial-calc.service";
 
 export interface CrateSaldo {
   limpas: number; // no estoque, prontas para vender
@@ -23,8 +31,10 @@ export interface CrateSaldo {
  * criado pelo cancelamento de venda e de propósito não aparece no dropdown de
  * "Movimentar caixas" — ninguém lança estorno à mão.
  */
-export type MovimentoCaixaInterno = Omit<CaixaMovimentoInput, "type"> & {
+export type MovimentoCaixaInterno = Omit<CaixaMovimentoInput, "type" | "unitCost"> & {
   type: PlasticCrateMovementType;
+  /** Custo de cada caixa: digitado na ENTRADA, o custo médio na VENDA. */
+  unitCost?: Prisma.Decimal | number | null;
 };
 
 /** Dados internos do movimento — nunca vêm do cliente, só de outros serviços. */
@@ -32,6 +42,8 @@ export interface CrateMovementLink {
   saleId?: string | null;
   crateCleaningId?: string | null;
   purchaseId?: string | null;
+  /** Venda de embalagem do tipo vinculado às caixas (movimento VENDA). */
+  packagingSaleId?: string | null;
 }
 
 /** A ENTRADA de caixas de uma compra, como o cancelamento dela a lê. */
@@ -81,6 +93,8 @@ interface SaldoRow {
   estorno_saida: number;
   /** Envio para higienização desfeito: volta às sujas, sai do higienizador. */
   estorno_saida_hig: number;
+  /** Vendidas como embalagem (líquido: a venda cancelada entra negativa). */
+  venda: number;
 }
 
 const ZERO_ROW: SaldoRow = {
@@ -98,6 +112,7 @@ const ZERO_ROW: SaldoRow = {
   quebra_suja: 0,
   estorno_saida: 0,
   estorno_saida_hig: 0,
+  venda: 0,
 };
 
 /**
@@ -114,6 +129,7 @@ function resolveDirty(input: MovimentoCaixaInterno): boolean {
       return true;
     case "ESTORNO_SAIDA": // cancelamento de venda: a caixa nunca saiu, volta limpa
     case "SAIDA": // sai do pote das limpas
+    case "VENDA": // vendida como embalagem: sai das limpas
     case "RETORNO_HIGIENIZACAO": // volta limpa do higienizador
       return false;
     default: // ENTRADA | QUEBRA
@@ -157,6 +173,18 @@ export function assertCrateMovement(
           saldo.sujas > 0
             ? `Você tem ${saldo.limpas} caixa(s) limpa(s) e ${saldo.sujas} suja(s). Envie as sujas para higienização ou registre uma ENTRADA.`
             : `Você tem ${saldo.limpas} caixa(s) limpa(s) em estoque. Registre uma ENTRADA antes.`,
+        );
+      }
+      return;
+    case "VENDA":
+      // Mesmo pote da saída emprestada: a caixa vendida é uma das limpas.
+      if (input.quantity > saldo.limpas) {
+        throw new BusinessRuleError(
+          `Você tem ${saldo.limpas} caixa(s) plástica(s) limpa(s) e está vendendo ` +
+            `${input.quantity}.` +
+            (saldo.sujas > 0
+              ? ` As ${saldo.sujas} suja(s) precisam passar pela higienização antes.`
+              : " Registre a entrada antes ou ajuste a quantidade."),
         );
       }
       return;
@@ -215,7 +243,7 @@ export function assertCrateMovement(
 
 /**
  * Caixas plásticas — livro-razão (append-only). Saldos são DERIVADOS:
- *   limpas         = ENTRADA(limpa) − quebradas na chegada(limpa) + RETORNO_HIGIENIZACAO − SAIDA − QUEBRA(limpa, no estoque)
+ *   limpas         = ENTRADA(limpa) − quebradas na chegada(limpa) + RETORNO_HIGIENIZACAO − SAIDA − QUEBRA(limpa, no estoque) − VENDA
  *   sujas          = ENTRADA(suja)  − quebradas na chegada(suja)  + RETORNO − SAIDA_HIGIENIZACAO − QUEBRA(suja, no estoque)
  *   emHigienizacao = SAIDA_HIGIENIZACAO − RETORNO_HIGIENIZACAO − QUEBRA(no higienizador)
  *   comClientes    = SAIDA − RETORNO − QUEBRA(com cliente)
@@ -273,7 +301,8 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
       COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND NOT dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_limpa,
       COALESCE(SUM(CASE WHEN type::text = 'QUEBRA' AND "customerName" IS NULL AND "cleanerName" IS NULL AND dirty THEN quantity ELSE 0 END), 0)::bigint AS quebra_suja,
       COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida,
-      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida_hig
+      COALESCE(SUM(CASE WHEN type::text = 'ESTORNO_SAIDA_HIGIENIZACAO' THEN quantity ELSE 0 END), 0)::bigint AS estorno_saida_hig,
+      COALESCE(SUM(CASE WHEN type::text = 'VENDA' THEN quantity ELSE 0 END), 0)::bigint AS venda
     FROM plastic_crate_movements
     WHERE "tenantId" = ${tenantId}
   `;
@@ -283,6 +312,86 @@ async function lerSaldoCom(tx: CrateTxClient, tenantId: string): Promise<CrateSa
     Object.entries(linha).map(([k, v]) => [k, Number(v)]),
   ) as unknown as SaldoRow;
   return computeCrateSaldo(r);
+}
+
+/** Movimento do livro-razão como o custo médio das caixas o lê. */
+export interface MovimentoDeCustoDeCaixa {
+  id: string;
+  type: string;
+  quantity: number;
+  brokenQty: number;
+  unitCost: Prisma.Decimal | null;
+  purchaseId: string | null;
+  packagingSaleId: string | null;
+  estornaId: string | null;
+}
+
+/**
+ * Custo médio das caixas que a empresa POSSUI, na ordem de gravação.
+ *
+ * Muda a posse: ENTRADA (as boas, pelo custo digitado), VENDA e QUEBRA (saem
+ * pelo custo médio). Emprestar ao cliente (SAIDA/RETORNO) e mandar higienizar
+ * não mudam de quem é a caixa, então ficam fora — a caixa na rua continua
+ * valendo o mesmo.
+ *
+ * Os estornos saem em PAR com o original, como em `custoMedioDoTipo` das
+ * embalagens: a entrada desfeita (`estornaId`), a compra cancelada (ENTRADA
+ * negativa com o mesmo `purchaseId`) e a venda cancelada (VENDA negativa com o
+ * mesmo `packagingSaleId`). Assim o custo digitado errado não fica na média.
+ *
+ * Caixa antiga, que entrou antes de a entrada pedir custo, entra sem custo:
+ * `custoMedioMovel` soma a quantidade e deixa a média para a primeira entrada
+ * que informou o preço.
+ */
+export function custoMedioDasCaixas(movimentos: MovimentoDeCustoDeCaixa[]): Prisma.Decimal | null {
+  const estornadas = new Set(movimentos.map((m) => m.estornaId).filter((id) => id !== null));
+  const comprasCanceladas = new Set(
+    movimentos
+      .filter((m) => m.type === "ENTRADA" && m.quantity < 0 && m.purchaseId)
+      .map((m) => m.purchaseId),
+  );
+  const vendasCanceladas = new Set(
+    movimentos
+      .filter((m) => m.type === "VENDA" && m.quantity < 0 && m.packagingSaleId)
+      .map((m) => m.packagingSaleId),
+  );
+  const saiEmPar = (m: MovimentoDeCustoDeCaixa) =>
+    m.estornaId !== null ||
+    estornadas.has(m.id) ||
+    (m.type === "ENTRADA" && m.purchaseId !== null && comprasCanceladas.has(m.purchaseId)) ||
+    (m.type === "VENDA" && m.packagingSaleId !== null && vendasCanceladas.has(m.packagingSaleId));
+
+  return FinancialCalc.custoMedioMovel(
+    movimentos
+      .filter((m) => !saiEmPar(m))
+      .flatMap((m) => {
+        if (m.type === "ENTRADA") {
+          const boas = m.quantity - m.brokenQty;
+          if (boas === 0) return [];
+          return [{ entrada: boas > 0, quantidade: boas, custoUnitario: m.unitCost }];
+        }
+        if ((m.type === "VENDA" || m.type === "QUEBRA") && m.quantity > 0) {
+          return [{ entrada: false, quantidade: m.quantity, custoUnitario: null }];
+        }
+        return [];
+      }),
+  );
+}
+
+/** Lê o livro-razão que muda a posse e devolve o custo médio de agora. */
+async function lerCustoMedioCom(
+  tx: Pick<CrateTxClient, "$queryRaw">,
+  tenantId: string,
+): Promise<Prisma.Decimal | null> {
+  const movimentos = await tx.$queryRaw<MovimentoDeCustoDeCaixa[]>`
+    SELECT id, type::text AS type, quantity, "brokenQty", "unitCost",
+           "purchaseId", "packagingSaleId", "estornaId"
+    FROM plastic_crate_movements
+    WHERE "tenantId" = ${tenantId}
+      AND type::text IN ('ENTRADA', 'VENDA', 'QUEBRA')
+    ORDER BY "createdAt", id
+  `;
+  return custoMedioDasCaixas(movimentos);
 }
 
 /**
@@ -472,6 +581,11 @@ export const CaixasService = {
         saleId: input.saleId ?? null,
         crateCleaningId: input.crateCleaningId ?? null,
         purchaseId: input.purchaseId ?? null,
+        packagingSaleId: input.packagingSaleId ?? null,
+        // Custo só onde ele forma ou leva a média: o que entrou e o que foi vendido.
+        unitCost:
+          input.type === "ENTRADA" || input.type === "VENDA" ? (input.unitCost ?? null) : null,
+        idempotencyKey: input.idempotencyKey ?? null,
         movementDate: parseFormDateTz(input.movementDate),
         notes: input.notes ?? null,
       },
@@ -571,9 +685,209 @@ export const CaixasService = {
     return estornadas;
   },
 
+  /**
+   * Custo médio das caixas (`custoMedioDasCaixas`) lido dentro da transação,
+   * depois do lock: a VENDA leva o custo do que estava no box naquela hora.
+   */
+  async custoMedioInTx(
+    tx: Pick<CrateTxClient, "$queryRaw" | "$executeRaw">,
+    tenantId: string,
+  ): Promise<Prisma.Decimal | null> {
+    await travarCaixasDaEmpresa(tx, tenantId);
+    return lerCustoMedioCom(tx, tenantId);
+  },
+
+  /**
+   * Devolve às limpas as caixas de uma venda de embalagem cancelada.
+   *
+   * O estorno é a VENDA espelhada — quantidade negativa, mesmo `packagingSaleId`,
+   * mesma data, pelo custo com que saiu. `computeCrateSaldo` soma as duas e o
+   * par sai junto do custo médio. Sem VENDA (venda de antes do vínculo) não há
+   * o que devolver aqui.
+   *
+   * @returns quantas caixas voltaram.
+   */
+  async estornarVendaInTx(
+    tx: CrateTxClient,
+    packagingSaleId: string,
+    ctx: TenantCtx,
+  ): Promise<number> {
+    await travarCaixasDaEmpresa(tx, ctx.tenantId);
+    const movimentos = await tx.$queryRaw<
+      { quantity: number; unitCost: Prisma.Decimal | null; movementDate: Date; customerName: string | null }[]
+    >`
+      SELECT quantity, "unitCost", "movementDate", "customerName"
+      FROM plastic_crate_movements
+      WHERE "tenantId" = ${ctx.tenantId} AND "packagingSaleId" = ${packagingSaleId}
+        AND type::text = 'VENDA'
+    `;
+    const vendidas = movimentos.reduce((total, m) => total + m.quantity, 0);
+    const original = movimentos.find((m) => m.quantity > 0);
+    if (!original || vendidas <= 0) return 0;
+
+    const movement = await tx.plasticCrateMovement.create({
+      data: {
+        tenantId: ctx.tenantId,
+        type: "VENDA",
+        quantity: -vendidas,
+        dirty: false,
+        customerName: original.customerName,
+        packagingSaleId,
+        unitCost: original.unitCost,
+        // Na data da venda: o par se anula no mesmo dia do relatório.
+        movementDate: original.movementDate,
+        notes: "Venda de embalagem cancelada",
+      },
+    });
+    await audit(
+      {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        actorEmail: ctx.session.email,
+        action: "CREATE",
+        entity: "PlasticCrateMovement",
+        entityId: movement.id,
+        newData: { type: "VENDA", quantity: -vendidas, packagingSaleId },
+        ip: ctx.ip,
+      },
+      tx,
+    );
+    return vendidas;
+  },
+
+  /**
+   * Lançamento manual (formulário de caixas, entrada do tipo vinculado em
+   * Embalagens, devolução no fiado).
+   *
+   * A ENTRADA com custo é compra de caixa: gera a conta `COMPRA_EMBALAGEM`,
+   * PAGA no dia, na mesma transação — como a entrada de embalagem
+   * (`EmbalagensService.gravarEntrada`). A conta fica fora do lucro: o custo
+   * entra pela venda da caixa (custo médio). A ENTRADA da compra de mercadoria
+   * não passa por aqui (`registrarInTx`), porque o que se pagou ao fornecedor
+   * já é a conta da compra.
+   */
   async registrar(input: MovimentoCaixaInterno & CrateMovementLink, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
-    return db.$transaction((tx) => this.registrarInTx(tx, input, ctx));
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => db.plasticCrateMovement.findFirst({ where: { idempotencyKey: k } }),
+      () =>
+        db.$transaction(async (tx) => {
+          const movement = await this.registrarInTx(tx, input, ctx);
+          if (input.type === "ENTRADA" && input.unitCost !== undefined && input.unitCost !== null) {
+            const hoje = new Date();
+            await tx.expense.create({
+              data: {
+                tenantId: ctx.tenantId,
+                origem: "COMPRA_EMBALAGEM",
+                plasticCrateMovementId: movement.id,
+                description: `Compra de caixas plásticas — ${input.quantity} caixa(s)`,
+                amount: FinancialCalc.valorTotalCompra(input.quantity, input.unitCost),
+                type: "VARIAVEL",
+                recurring: false,
+                status: "PAGO",
+                dueDate: hoje,
+                paidDate: hoje,
+              },
+            });
+          }
+          return movement;
+        }),
+    );
+  },
+
+  /**
+   * Desfaz a ENTRADA manual lançada errada — até 24 h, só o dono (regra única,
+   * `src/lib/desfazer/prazo.ts`). Entra a ENTRADA espelhada ligada por
+   * `estornaId` (o par sai do custo médio) e a conta da compra é cancelada.
+   *
+   * Recusa se as caixas boas dessa entrada já não estão no pote em que
+   * entraram, e se houve VENDA ou QUEBRA depois dela: essas já saíram pelo
+   * custo médio que a entrada formou.
+   */
+  async desfazerEntrada(input: { id: string }, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode desfazer uma entrada.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      await travarCaixasDaEmpresa(tx, ctx.tenantId);
+      const entrada = await tx.plasticCrateMovement.findFirst({
+        where: { id: input.id, type: "ENTRADA", purchaseId: null, estornaId: null },
+      });
+      if (!entrada || entrada.quantity <= 0) throw new NotFoundError("Entrada não encontrada");
+      // A ENTRADA que trouxe o saldo antigo da aba Embalagens não é lançamento
+      // de ninguém: desfazê-la sumiria com as caixas, e o tipo já foi zerado.
+      const transferida = await tx.packagingMovement.findFirst({
+        where: { sourceType: ORIGEM_TRANSFERIDO_PARA_CAIXAS, sourceId: entrada.id },
+        select: { id: true },
+      });
+      if (transferida) throw new NotFoundError("Entrada não encontrada");
+      if (!dentroDoPrazoDeDesfazer(entrada.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer esta entrada"));
+      }
+      const jaDesfeita = await tx.plasticCrateMovement.findFirst({
+        where: { estornaId: entrada.id },
+        select: { id: true },
+      });
+      if (jaDesfeita) throw new BusinessRuleError("Esta entrada já foi desfeita.");
+      const consumiuCusto = await tx.plasticCrateMovement.count({
+        where: {
+          type: { in: ["VENDA", "QUEBRA"] },
+          OR: [
+            { createdAt: { gt: entrada.createdAt } },
+            { createdAt: entrada.createdAt, id: { gt: entrada.id } },
+          ],
+        },
+      });
+      if (consumiuCusto > 0) {
+        throw new BusinessRuleError(
+          "Já houve venda ou perda de caixas depois desta entrada. Não dá para desfazer.",
+        );
+      }
+      const saldo = await lerSaldoCom(tx, ctx.tenantId);
+      const boas = entrada.quantity - entrada.brokenQty;
+      const pote = entrada.dirty ? saldo.sujas : saldo.limpas;
+      if (boas > pote) {
+        throw new BusinessRuleError(
+          `As caixas desta entrada já saíram do box (há ${pote} ` +
+            `${entrada.dirty ? "suja(s)" : "limpa(s)"} em estoque). Não dá para desfazer.`,
+        );
+      }
+      await tx.plasticCrateMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          type: "ENTRADA",
+          quantity: -entrada.quantity,
+          brokenQty: -entrada.brokenQty,
+          dirty: entrada.dirty,
+          supplierName: entrada.supplierName,
+          unitCost: entrada.unitCost,
+          estornaId: entrada.id,
+          movementDate: entrada.movementDate,
+          notes: "Entrada desfeita",
+        },
+      });
+      await tx.expense.updateMany({
+        where: { plasticCrateMovementId: entrada.id, deletedAt: null },
+        data: { deletedAt: new Date() },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "PlasticCrateMovement",
+          entityId: entrada.id,
+          oldData: { quantity: entrada.quantity },
+          newData: { desfeita: true },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return { id: entrada.id };
+    });
   },
 };
 
@@ -646,13 +960,17 @@ export function computeCrateSaldo(r: SaldoRow): CrateSaldo {
   // 30 limpas E 4 perdidas — 34 caixas de 30 — e a SAIDA de 30 passava com só
   // 26 boas no box.
   const quebradaNaChegadaLimpa = r.entrada_quebrada - r.entrada_quebrada_suja;
+  // A VENDA (caixa vendida como embalagem) sai das limpas e não fica com
+  // ninguém: não entra em `comClientes` nem em `perdidas`. A cancelada é uma
+  // VENDA negativa, então `venda` já vem líquido.
   const limpas =
     r.entrada_limpa -
     quebradaNaChegadaLimpa +
     r.retorno_hig +
     r.estorno_saida -
     r.saida -
-    r.quebra_limpa;
+    r.quebra_limpa -
+    r.venda;
   // O estorno do envio para higienização desfaz uma SAIDA_HIGIENIZACAO: as
   // caixas voltam às SUJAS (nunca foram lavadas) e saem do higienizador.
   const sujas =

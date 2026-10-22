@@ -94,7 +94,19 @@ export const CRATE_MOVEMENT_LABELS: Record<string, string> = {
   RETORNO_HIGIENIZACAO: "Voltou da higienização",
   ESTORNO_SAIDA: "Estorno de venda cancelada",
   ESTORNO_SAIDA_HIGIENIZACAO: "Estorno de envio p/ higienização",
+  VENDA: "Vendida como embalagem",
 };
+
+/**
+ * Rótulo do movimento de caixa na lista e no relatório. Os estornos são o
+ * próprio tipo com quantidade negativa: ENTRADA negativa (compra cancelada ou
+ * entrada desfeita) e VENDA negativa (venda de embalagem cancelada).
+ */
+export function rotuloMovimentoCaixa(m: { type: string; quantity: number }): string {
+  if (m.type === "ENTRADA" && m.quantity < 0) return "Estorno de entrada";
+  if (m.type === "VENDA" && m.quantity < 0) return "Venda cancelada";
+  return CRATE_MOVEMENT_LABELS[m.type] ?? m.type;
+}
 
 export const CRATE_CLEANING_STATUS_LABELS: Record<string, string> = {
   ENVIADO: "Enviado",

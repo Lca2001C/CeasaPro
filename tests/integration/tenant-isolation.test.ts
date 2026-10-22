@@ -89,6 +89,28 @@ describe("Isolamento por tenant", () => {
     expect(depois!.tenantId).toBe(tenantA);
   });
 
+  it("o `tx` de getTenantPrisma(A).$transaction continua escopado a A", async () => {
+    // Os serviços abrem a transação pelo cliente escopado e leem por id vindo da
+    // entrada (`FiadoService.estornarPagamento`, `gravarPagamento`…). Se o `tx`
+    // perdesse a extensão, um id de B passaria em todos eles.
+    const r = await getTenantPrisma(tenantA).$transaction(async (tx) => {
+      const lido = await tx.product.findFirst({ where: { id: productBId } });
+      const alterados = await tx.product.updateMany({
+        where: { id: productBId },
+        data: { name: "HACKEADO EM TX" },
+      });
+      const criado = await tx.product.create({
+        data: { tenantId: tenantB, name: "Forjado em tx", saleUnit: "KG" },
+      });
+      return { lido, alterados: alterados.count, criadoTenant: criado.tenantId };
+    });
+    expect(r.lido).toBeNull();
+    expect(r.alterados).toBe(0);
+    expect(r.criadoTenant).toBe(tenantA);
+    const aindaB = await prisma.product.findUnique({ where: { id: productBId } });
+    expect(aindaB!.name).toBe("Produto B");
+  });
+
   it("bloqueio de uma empresa por chargeback não afeta os dados da vizinha", async () => {
     // O bloqueio por reversão de pagamento acontece na assinatura, não nos
     // dados: o corte de acesso é do tenant bloqueado e nada vaza para o outro.

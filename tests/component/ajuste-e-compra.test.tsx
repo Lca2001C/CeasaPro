@@ -175,7 +175,22 @@ describe("compra: bloco de caixas plásticas segue o módulo", () => {
     render(<CompraForm produtos={produtos} fornecedores={[]} caixasHabilitado />);
     await user.click(screen.getByLabelText("Chegou em caixa plástica"));
     await user.type(screen.getByLabelText("Quantas caixas"), "12");
+    await user.type(screen.getByLabelText("Quanto custou cada caixa (R$)"), "9.5");
     await user.click(screen.getByRole("button", { name: "Salvar compra" }));
-    expect(apiPost.mock.calls[0]![1]).toMatchObject({ caixasRecebidas: 12 });
+    expect(apiPost.mock.calls[0]![1]).toMatchObject({
+      caixasRecebidas: 12,
+      caixasCustoUnitario: 9.5,
+    });
+  });
+
+  // A caixa também se vende como embalagem e sai pelo custo médio: sem o custo
+  // da entrada, a venda não teria o que descontar do lucro.
+  it("com caixas, exige o custo de cada uma antes de enviar", async () => {
+    const user = userEvent.setup();
+    render(<CompraForm produtos={produtos} fornecedores={[]} caixasHabilitado />);
+    await user.click(screen.getByLabelText("Chegou em caixa plástica"));
+    await user.type(screen.getByLabelText("Quantas caixas"), "12");
+    await user.click(screen.getByRole("button", { name: "Salvar compra" }));
+    expect(apiPost).not.toHaveBeenCalled();
   });
 });

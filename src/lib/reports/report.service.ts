@@ -18,7 +18,7 @@ import {
   EXPENSE_PAYMENT_METHOD_LABELS,
   EXPENSE_ORIGEM_LABELS,
   CREDIT_STATUS_LABELS,
-  CRATE_MOVEMENT_LABELS,
+  rotuloMovimentoCaixa,
   CRATE_CLEANING_STATUS_LABELS,
 } from "@/lib/labels";
 import type { ReportKind, ReportResult } from "./report.types";
@@ -959,11 +959,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       ]);
       const rows = movimentos.map((m) => ({
         movementDate: m.movementDate,
-        // ENTRADA negativa é o estorno da compra cancelada.
-        type:
-          m.type === "ENTRADA" && m.quantity < 0
-            ? "Estorno de entrada"
-            : CRATE_MOVEMENT_LABELS[m.type],
+        type: rotuloMovimentoCaixa(m),
         quantity: m.quantity,
         brokenQty: m.brokenQty,
         who: m.customerName ?? m.cleanerName ?? m.supplierName ?? "—",

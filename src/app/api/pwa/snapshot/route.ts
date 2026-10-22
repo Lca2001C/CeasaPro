@@ -4,6 +4,7 @@ import { AvisosService } from "@/lib/services/avisos.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
 import { FiadoService } from "@/lib/services/fiado.service";
 import { ContasPagarService } from "@/lib/services/contas-pagar.service";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { PWA_SNAPSHOT_SCHEMA_VERSION, type PwaSnapshot } from "@/lib/pwa/snapshot";
 
 export const runtime = "nodejs";
@@ -46,7 +47,10 @@ export const GET = withTenantRoute({
       DashboardService.getSummary(ctx.tenantId, ctx.session.modules, "resumo"),
       AvisosService.get(ctx.tenantId, ctx.session.modules),
       EstoqueService.getPositions(ctx.tenantId),
-      FiadoService.listOpen(ctx.tenantId, "EM_ABERTO"),
+      // Sem o módulo `caixas`, o saldo de caixas sai zerado — como na tela.
+      FiadoService.listOpen(ctx.tenantId, "EM_ABERTO", undefined, {
+        caixas: isModuleEnabled(ctx.session.modules, "caixas"),
+      }),
       // O MESMO "Tudo a pagar" do Início — atrasadas de outros meses, as que
       // vencem depois e a higienização em aberto. O resumo do mês somava só
       // o que vence no mês, e a consulta offline mostrava menos que o Início.

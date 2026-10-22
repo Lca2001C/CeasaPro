@@ -26,7 +26,7 @@ Banco **PostgreSQL** modelado com **Prisma**. O schema-fonte é [`prisma/schema.
 | `SubscriptionStatus` | ATIVO, VENCIDO, SUSPENSO, BLOQUEADO, CANCELADO |
 | `StatusSource` | AUTO, MANUAL |
 | `PaymentStatus` | PENDENTE, APROVADO, RECUSADO, ESTORNADO, CANCELADO |
-| `PlasticCrateMovementType` | ENTRADA, SAIDA, RETORNO, QUEBRA |
+| `PlasticCrateMovementType` | ENTRADA, SAIDA, RETORNO, QUEBRA, SAIDA_HIGIENIZACAO, RETORNO_HIGIENIZACAO, ESTORNO_SAIDA, ESTORNO_SAIDA_HIGIENIZACAO, VENDA |
 | `CrateCleaningStatus` | ENVIADO, DEVOLVIDO, PAGO |
 | `ReportType` | VENDAS, COMPRAS, ESTOQUE, FIADO, INADIMPLENTES, FORNECEDORES, DESPESAS, FLUXO_CAIXA, LUCRO_PRODUTO, MAIS_VENDIDOS, CAIXAS_PLASTICAS, HIGIENIZACAO, EMBALAGENS |
 | `ReportFormat` | PDF, EXCEL |
@@ -92,13 +92,13 @@ Histórico de exportações: `userId?`, `type`, `format`, `status`, `periodStart
 ## Fase 2
 
 ### `plastic_crate_movements` (ledger de caixas plásticas — append-only)
-`type` (`PlasticCrateMovementType`), `quantity` (Int), `brokenQty` (quebradas na chegada), `customerName?`, `supplierName?`, `movementDate`, `notes?`. Saldos derivados (ver [Funcionalidades](03-funcionalidades.md#caixas-plásticas)).
+`type` (`PlasticCrateMovementType`), `quantity` (Int; negativa = estorno de ENTRADA ou de VENDA), `brokenQty` (quebradas na chegada), `dirty` (pote limpo/sujo), `customerName?`, `supplierName?`, `cleanerName?`, `saleId?`, `purchaseId?`, `crateCleaningId?`, `packagingSaleId?` (venda de embalagem da caixa vendida), `unitCost?` (custo na ENTRADA, custo médio na VENDA), `estornaId?` (entrada desfeita), `idempotencyKey?`, `movementDate`, `notes?`. Saldos derivados (ver [Funcionalidades](03-funcionalidades.md#caixas-plásticas)).
 
 ### `crate_cleanings` (higienização)
 `cleanerName`, `sentDate`, `sentQty`, `unitPrice`, `totalAmount`, `returnedQty`, `returnedDate?`, `paidAmount`, `paidDate?`, `status` (`CrateCleaningStatus`), `notes?`.
 
 ### `packaging_types` + `packaging_sales`
-Tipo: `name`, `active` (único por `(tenantId, name)`). Venda: `packagingTypeId`, `customerName?`, `saleDate`, `quantity` (Int), `unitPrice`, `totalAmount`.
+Tipo: `name`, `active`, `tracksStock`, `caixaPlastica` (único por `(tenantId, name)`; no máximo um `caixaPlastica` por empresa — esse tipo usa o estoque de `plastic_crate_movements`, não `packaging_movements`). Venda: `packagingTypeId`, `customerName?`, `saleDate`, `quantity` (Int), `unitPrice`, `totalAmount`.
 
 ## Cotações do CEASA (módulo `cotacoes`)
 

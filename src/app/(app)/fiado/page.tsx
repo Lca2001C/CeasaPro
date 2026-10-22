@@ -3,6 +3,7 @@ import { CartaoDeAcao } from "@/components/ui/cartao-de-acao";
 import { redirect } from "next/navigation";
 import { AlertTriangle, ChevronRight, Plus, Container, HandCoins } from "lucide-react";
 import { requireTenant } from "@/lib/auth/session";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { FiadoService } from "@/lib/services/fiado.service";
 import { fiadoStatusFiltroEnum, type FiadoStatusFiltro } from "@/lib/validations/fiado";
 import { formatBRL, formatDate, formatQty } from "@/lib/format";
@@ -51,13 +52,19 @@ export default async function FiadoPage({
   const busca = q?.trim() || undefined;
   const paginaPedida = paginaDaUrl(rawPagina);
 
-  const { tenantId } = await requireTenant();
+  const { tenantId, session } = await requireTenant();
+  // Fiado é núcleo; o saldo de caixas é do módulo `caixas` (gate no servidor).
+  const comCaixas = isModuleEnabled(session.modules, "caixas");
   const agora = new Date();
   // "Pagas" e "Todas" são paginadas (crescem para sempre); "Em aberto" não —
   // ver `FIADO_POR_PAGINA`. Os cartões e o aviso de vencidas somam todas as
   // contas em aberto, nunca só a página.
   const { contas, totalGeral, totalCaixas, vencidas, total, pagina, ultimaPagina } =
-    await FiadoService.listOpen(tenantId, status, busca, { pagina: paginaPedida, agora });
+    await FiadoService.listOpen(tenantId, status, busca, {
+      pagina: paginaPedida,
+      agora,
+      caixas: comCaixas,
+    });
 
   const linkPara = (patch: { status?: string; pagina?: number }) => {
     const sp = new URLSearchParams();
@@ -102,19 +109,21 @@ export default async function FiadoPage({
       />
 
       <div className="flex flex-col gap-5">
-        <div className="grid grid-cols-2 gap-3">
+        <div className={cn("grid gap-3", comCaixas && "grid-cols-2")}>
           <StatCard
             label="Total a receber"
             value={formatBRL(totalGeral)}
             tone="warning"
             icon={<HandCoins className="size-4" />}
           />
-          <StatCard
-            label="Caixas com clientes"
-            value={String(totalCaixas)}
-            hint="Contas em aberto"
-            icon={<Container className="size-4" />}
-          />
+          {comCaixas && (
+            <StatCard
+              label="Caixas com clientes"
+              value={String(totalCaixas)}
+              hint="Contas em aberto"
+              icon={<Container className="size-4" />}
+            />
+          )}
         </div>
 
         {vencidas > 0 && (
@@ -185,7 +194,7 @@ export default async function FiadoPage({
                     <TableHead className="text-right">Qtd</TableHead>
                     <TableHead className="text-right">Preço</TableHead>
                     <TableHead className="text-right">Total</TableHead>
-                    <TableHead className="text-right">Caixas</TableHead>
+                    {comCaixas && <TableHead className="text-right">Caixas</TableHead>}
                     <TableHead className="text-right">Saldo</TableHead>
                     <TableHead className="text-right">Ação</TableHead>
                   </TableRow>
@@ -223,14 +232,16 @@ export default async function FiadoPage({
                       <TableCell className="text-right font-medium tabular-nums">
                         {formatBRL(c.totalAmount)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">
-                        {c.plasticCrateQty > 0 ? c.plasticCrateQty : "—"}
-                        {c.caixasComCliente > 0 && (
-                          <span className="block text-xs text-warning">
-                            {c.caixasComCliente} a devolver
-                          </span>
-                        )}
-                      </TableCell>
+                      {comCaixas && (
+                        <TableCell className="text-right tabular-nums">
+                          {c.plasticCrateQty > 0 ? c.plasticCrateQty : "—"}
+                          {c.caixasComCliente > 0 && (
+                            <span className="block text-xs text-warning">
+                              {c.caixasComCliente} a devolver
+                            </span>
+                          )}
+                        </TableCell>
+                      )}
                       <TableCell
                         className={cn("text-right font-bold tabular-nums", corDoSaldo(c))}
                       >

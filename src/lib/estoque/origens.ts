@@ -32,3 +32,10 @@ export const ORIGEM_BAIXA_EMBALAGEM = "PACKAGING_LOSS";
  * O par sai junto do custo médio do tipo e do custo das embalagens do mês.
  */
 export const ORIGEM_BAIXA_EMBALAGEM_DESFEITA = "PACKAGING_LOSS_CANCELLED";
+/**
+ * Saldo antigo do tipo "Caixa plástica" passado para o estoque de caixas
+ * (`EmbalagensService.transferirSaldoParaCaixas`). AJUSTE negativo no tipo;
+ * `sourceId` = a ENTRADA de caixas criada, que por isso não se desfaz como
+ * entrada manual.
+ */
+export const ORIGEM_TRANSFERIDO_PARA_CAIXAS = "PACKAGING_TO_CRATES";

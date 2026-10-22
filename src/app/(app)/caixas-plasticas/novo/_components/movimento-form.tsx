@@ -1,12 +1,13 @@
 "use client";
 
 import { isoDateTz } from "@/lib/tz";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { registrarMovimentoCaixa } from "@/actions/caixas.actions";
+import { desfazerEntradaCaixa, registrarMovimentoCaixa } from "@/actions/caixas.actions";
+import { chavePorConteudo, type RefDeChave } from "@/lib/idempotencia-cliente";
 import { caixaMovimentoTipoEnum, type CaixaMovimentoInput } from "@/lib/validations/caixa";
 import type { CrateSaldo } from "@/lib/services/caixas.service";
 import { CRATE_MOVEMENT_LABELS } from "@/lib/labels";
@@ -71,7 +72,12 @@ export function MovimentoCaixaForm({
   const [supplierName, setSupplierName] = useState("");
   const [movementDate, setMovementDate] = useState(isoDateTz());
   const [notes, setNotes] = useState("");
+  // Custo de cada caixa que entrou: forma o custo médio da caixa vendida como
+  // embalagem, e a entrada vira a conta paga da compra das caixas.
+  const [unitCost, setUnitCost] = useState("");
   const [saving, setSaving] = useState(false);
+  // Chave por conteúdo: o reenvio do MESMO lançamento devolve o já gravado.
+  const chave: RefDeChave = useRef(null);
 
   const needsCustomer = type === "SAIDA" || type === "RETORNO";
   const isEntrada = type === "ENTRADA";
@@ -86,9 +92,13 @@ export function MovimentoCaixaForm({
     if (quebradas !== undefined && quebradas > qty) {
       return toast.error("As quebradas não podem passar do total de caixas recebidas.");
     }
+    const custo = Number(unitCost.replace(",", "."));
+    if (isEntrada && !(Number.isFinite(custo) && custo > 0)) {
+      return toast.error("Informe quanto custou cada caixa.");
+    }
 
     setSaving(true);
-    const res = await chamarAction(() => registrarMovimentoCaixa({
+    const corpo = {
       type,
       quantity: qty,
       brokenQty: quebradas,
@@ -97,14 +107,35 @@ export function MovimentoCaixaForm({
       supplierName: supplierName.trim() || null,
       movementDate,
       notes: notes.trim() || null,
-    }));
+      ...(isEntrada ? { unitCost: custo } : {}),
+    };
+    const res = await chamarAction(() =>
+      registrarMovimentoCaixa({ ...corpo, idempotencyKey: chavePorConteudo(chave, corpo) }),
+    );
     setSaving(false);
-    if (res.ok) {
-      toast.success("Movimentação registrada.");
-      router.push("/caixas-plasticas");
-    } else {
+    if (!res.ok) {
       toast.error(res.error.message);
+      return;
     }
+    if (isEntrada) {
+      const entradaId = res.data.id;
+      // Lançou errado? Desfazer fica à mão (a regra de 24 h vale no servidor);
+      // a conta da compra das caixas é cancelada junto.
+      toast.success(`+${qty} caixa(s) no estoque. A compra entrou nas contas pagas.`, {
+        action: {
+          label: "Desfazer",
+          onClick: async () => {
+            const r = await chamarAction(() => desfazerEntradaCaixa({ id: entradaId }));
+            if (r.ok) toast.success("Entrada desfeita.");
+            else toast.error(r.error.message);
+            router.refresh();
+          },
+        },
+      });
+    } else {
+      toast.success("Movimentação registrada.");
+    }
+    router.push("/caixas-plasticas");
   }
 
   return (
@@ -146,6 +177,23 @@ export function MovimentoCaixaForm({
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="supplierName">Origem / fornecedor (opcional)</Label>
             <Input id="supplierName" value={supplierName} onChange={(e) => setSupplierName(e.target.value)} />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="unitCost">Quanto custou cada caixa (R$)</Label>
+            <Input
+              id="unitCost"
+              type="number"
+              inputMode="decimal"
+              min={0}
+              step="0.01"
+              placeholder="Ex.: 12,00"
+              value={unitCost}
+              onChange={(e) => setUnitCost(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              A compra entra nas contas pagas, e é este custo que sai do lucro quando
+              você vende a caixa como embalagem.
+            </span>
           </div>
           <div className="flex flex-col gap-1.5">
             <Label htmlFor="brokenQty">Dessas, quantas chegaram quebradas (opcional)</Label>

@@ -84,6 +84,8 @@ export function CompraForm({
   const [caixasRecebidas, setCaixasRecebidas] = useState("");
   const [caixasQuebradas, setCaixasQuebradas] = useState("");
   const [caixasSujas, setCaixasSujas] = useState(false);
+  // Custo de cada caixa: forma o custo médio da caixa vendida como embalagem.
+  const [caixasCusto, setCaixasCusto] = useState("");
   // Toda compra vira uma conta em Despesas, no valor total e com o fornecedor:
   // paga agora (sai do caixa hoje) ou a prazo (vai para Contas a Pagar).
   const [pagoAgora, setPagoAgora] = useState(true);
@@ -115,6 +117,9 @@ export function CompraForm({
       return toast.error("Informe quantas caixas plásticas chegaram.");
     if (quebradas > caixas)
       return toast.error("As caixas quebradas não podem passar do total recebido.");
+    const custoCaixa = Number(caixasCusto.replace(",", "."));
+    if (caixas > 0 && !(Number.isFinite(custoCaixa) && custoCaixa > 0))
+      return toast.error("Informe quanto custou cada caixa plástica.");
     if (!pagoAgora && !vencimento) return toast.error("Informe até quando vai pagar a compra.");
     if (!pagoAgora && vencimento < purchaseDate)
       return toast.error("O vencimento não pode ser antes da data da compra.");
@@ -128,6 +133,7 @@ export function CompraForm({
       caixasRecebidas: caixas,
       caixasQuebradas: quebradas,
       caixasSujas: veioEmCaixa && caixasSujas,
+      ...(caixas > 0 ? { caixasCustoUnitario: custoCaixa } : {}),
       pagamento: pagoAgora
         ? { status: "PAGO", paymentMethod: formaPagamento || null }
         : { status: "PENDENTE", paymentMethod: formaPagamento || null, dueDate: vencimento },
@@ -326,6 +332,22 @@ export function CompraForm({
                 />
                 Chegaram sujas (vão para a fila de higienização)
               </label>
+              <div className="flex flex-col gap-1.5">
+                <Label htmlFor="caixas-custo">Quanto custou cada caixa (R$)</Label>
+                <Input
+                  id="caixas-custo"
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  step="0.01"
+                  placeholder="Ex.: 12,00"
+                  value={caixasCusto}
+                  onChange={(e) => setCaixasCusto(e.target.value)}
+                />
+                <span className="text-xs text-muted-foreground">
+                  É o custo que sai do lucro quando você vende a caixa como embalagem.
+                </span>
+              </div>
             </div>
           )}
         </div>

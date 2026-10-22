@@ -24,9 +24,15 @@ export const DEFAULT_EXPENSE_CATEGORIES = [
   "Outros",
 ];
 
+/**
+ * O tipo de embalagem padrão que é a caixa plástica do módulo de caixas — nasce
+ * com `caixaPlastica = true` (estoque único das duas abas).
+ */
+export const TIPO_CAIXA_PLASTICA = "Caixa plástica";
+
 /** Tipos de embalagem sugeridos (Fase 2 — venda de embalagens). */
 export const DEFAULT_PACKAGING_TYPES = [
-  "Caixa plástica",
+  TIPO_CAIXA_PLASTICA,
   "Caixa de papelão",
   "Caixa de madeira",
   "Sacaria",

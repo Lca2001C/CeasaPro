@@ -57,6 +57,8 @@ async function movimentar(
   await page.goto("/caixas-plasticas/novo");
   await page.getByLabel("Tipo de movimentação").selectOption(opts.tipo);
   await page.getByLabel("Quantidade de caixas").fill(String(opts.quantidade));
+  // A entrada pede o custo de cada caixa (a caixa também se vende como embalagem).
+  if (opts.tipo === "ENTRADA") await page.getByLabel("Quanto custou cada caixa (R$)").fill("10");
   if (opts.cliente) await page.getByLabel("Cliente", { exact: true }).fill(opts.cliente);
   await page.getByLabel("Observações").fill(MARCA);
   await page.getByRole("button", { name: "Registrar" }).click();

@@ -270,6 +270,9 @@ export const ComprasService = {
               quantity: caixasRecebidas,
               brokenQty: caixasQuebradas,
               dirty: input.caixasSujas ?? false,
+              // Só forma o custo médio das caixas (a venda delas como
+              // embalagem). Conta nova não: o fornecedor já é a da compra.
+              unitCost: input.caixasCustoUnitario ?? null,
               supplierName: fornecedorNome,
               movementDate: purchase.purchaseDate.toISOString(),
               notes: "Entrada automática pela compra",

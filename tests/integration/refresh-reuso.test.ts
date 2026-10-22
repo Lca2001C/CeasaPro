@@ -239,9 +239,67 @@ describe("graça depois de a família cair", () => {
     expect((await rotateRefreshToken(b)).tipo).toBe("invalido");
   });
 
+  // O logout revogava só o token apresentado: o irmão que a graça emitiu para a
+  // outra aba do MESMO aparelho seguia rotacionando pelo caminho "ok".
+  it("logout no aparelho: o irmão emitido pela graça também cai", async () => {
+    const t1 = await createRefreshToken(userId);
+    const r = await rotateRefreshToken(t1);
+    const t2 = r.tipo === "ok" ? r.newToken : "";
+    const irmao = await rotateRefreshToken(t1);
+    expect(irmao.tipo).toBe("corrida");
+    const t3 = irmao.tipo === "corrida" ? irmao.newToken : "";
+
+    await revokeRefreshToken(t2, "LOGOUT");
+
+    expect((await rotateRefreshToken(t3)).tipo).toBe("invalido");
+  });
+
+  it("logout num aparelho não derruba o outro", async () => {
+    const celular = await createRefreshToken(userId);
+    const computador = await createRefreshToken(userId);
+
+    await revokeRefreshToken(celular, "LOGOUT");
+
+    expect((await rotateRefreshToken(computador)).tipo).toBe("ok");
+  });
+
   it("sem revogação, a corrida legítima continua funcionando", async () => {
     const t1 = await createRefreshToken(userId);
     expect((await rotateRefreshToken(t1)).tipo).toBe("ok");
     expect((await rotateRefreshToken(t1)).tipo).toBe("corrida");
+  });
+});
+
+/**
+ * O celular perdido não pode seguir recebendo os números da empresa.
+ *
+ * O dono troca a senha em outro aparelho: as sessões caem, mas a inscrição de
+ * push do celular perdido ficava, e o aviso diário ("3 cliente(s) com fiado
+ * vencido") continuava chegando nele.
+ */
+describe("revogar todas as sessões apaga as inscrições de push", () => {
+  it("troca de senha remove o push do usuário e preserva o de outro", async () => {
+    const { tenantId } = await prisma.user.findUniqueOrThrow({ where: { id: userId } });
+    const outro = await prisma.user.create({
+      data: {
+        tenantId,
+        name: "Outro Usuário",
+        email: `reuso-outro-${Date.now()}-${Math.random().toString(36).slice(2)}@teste.com`,
+        passwordHash: "x",
+        role: "OWNER",
+      },
+    });
+    const sufixo = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await prisma.pushSubscription.createMany({
+      data: [
+        { userId, tenantId: tenantId!, endpoint: `https://fcm.googleapis.com/fcm/send/perdido-${sufixo}`, p256dh: "p", auth: "a" },
+        { userId: outro.id, tenantId: tenantId!, endpoint: `https://fcm.googleapis.com/fcm/send/outro-${sufixo}`, p256dh: "p", auth: "a" },
+      ],
+    });
+
+    await revokeAllForUser(userId, "PASSWORD");
+
+    expect(await prisma.pushSubscription.count({ where: { userId } })).toBe(0);
+    expect(await prisma.pushSubscription.count({ where: { userId: outro.id } })).toBe(1);
   });
 });
