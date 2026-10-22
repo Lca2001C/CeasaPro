@@ -4,6 +4,7 @@ import { FinancialCalc } from "./financial-calc.service";
 import { money } from "@/lib/money";
 import { addDaysTz, endOfDayTz, startOfDayTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { whereFiadoAtrasado } from "@/lib/fiado/atraso";
 import { frase } from "@/lib/cotacoes/alerta";
 import { formatBRL } from "@/lib/format";
 
@@ -72,7 +73,9 @@ export const AvisosService = {
     // quatro leituras acima terminarem, sem depender de nenhuma delas.
     const [fiadoVenc, despVenc, despAVencer, higPend, retiradas, cotacoes] = await Promise.all([
       db.creditAccount.findMany({
-        where: { status: "EM_ABERTO", dueDate: { lt: hoje } },
+        // Inclui o fiado sem vencimento parado há mais de 30 dias — a mesma
+        // régua do relatório de cobrança (`lib/fiado/atraso.ts`).
+        where: { status: "EM_ABERTO", ...whereFiadoAtrasado(agora) },
         select: { customerName: true, totalAmount: true, paidAmount: true },
       }),
       // findMany em vez de aggregate: o id é o que permite linkar direto na
@@ -129,7 +132,7 @@ export const AvisosService = {
         count: clientes,
         total,
         href: "/fiado",
-        label: `${clientes} cliente(s) com fiado vencido`,
+        label: `${clientes} cliente(s) com fiado atrasado`,
       });
     }
 

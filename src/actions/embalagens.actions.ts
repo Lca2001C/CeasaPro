@@ -30,6 +30,13 @@ export const desfazerEntradaEmbalagem = withTenantAction({
   handler: (input, ctx) => EmbalagensService.desfazerEntrada(input, ctx),
 });
 
+/** Desfaz a baixa lançada errada (até 24 h). Ver `EmbalagensService.desfazerBaixa`. */
+export const desfazerBaixaEmbalagem = withTenantAction({
+  schema: z.object({ id: z.string().min(1) }),
+  module: "embalagens",
+  handler: (input, ctx) => EmbalagensService.desfazerBaixa(input, ctx),
+});
+
 /** Cancela a venda lançada errada (até 24 h). Ver `EmbalagensService.cancelarVenda`. */
 export const cancelarVendaEmbalagem = withTenantAction({
   schema: z.object({

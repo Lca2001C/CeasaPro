@@ -27,3 +27,8 @@ export const ORIGEM_AJUSTE_DESFEITO = "MANUAL_CANCELLED";
 export const ORIGEM_PRODUTO_EXCLUIDO = "PRODUCT_DELETED";
 /** Embalagem baixada sem ser vendida (quebra, uso) — `EmbalagensService.registrarBaixa`. */
 export const ORIGEM_BAIXA_EMBALAGEM = "PACKAGING_LOSS";
+/**
+ * Estorno da baixa de embalagem desfeita (até 24 h). `sourceId` = id da baixa.
+ * O par sai junto do custo médio do tipo e do custo das embalagens do mês.
+ */
+export const ORIGEM_BAIXA_EMBALAGEM_DESFEITA = "PACKAGING_LOSS_CANCELLED";

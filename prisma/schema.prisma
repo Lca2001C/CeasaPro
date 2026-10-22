@@ -617,6 +617,13 @@ model TenantSubscription {
   /// Quem lê: `featuresVigentes` (src/lib/plan/features-vigentes.ts).
   heldFeatures        Json?
   heldFeaturesUntil   DateTime?
+  /// Dia do mês (1–31) em que a assinatura vence. Cada renovação vai ao mesmo
+  /// dia do mês seguinte, limitado ao último dia dele (31 → 28/02 → 31/03), sem
+  /// partir do vencimento já ajustado. Muda quando o período recomeça no dia do
+  /// pagamento (primeiro pagamento, ou depois de ficar sem acesso). Null =
+  /// assinatura anterior à coluna: a próxima aprovação o decide pelo histórico
+  /// de pagamentos (`diaAncoraDoHistorico`) e o grava.
+  diaAncora           Int?
   cancelledAt         DateTime?
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @updatedAt

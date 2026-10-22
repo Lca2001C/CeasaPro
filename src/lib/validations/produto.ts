@@ -1,4 +1,13 @@
 import { z } from "zod";
+import {
+  MSG_QUANTIDADE_MAX,
+  MSG_TRES_CASAS,
+  MSG_VALOR_MAX,
+  QUANTIDADE_MAX,
+  VALOR_MAX,
+  temAteQuatroCasas,
+  temAteTresCasas,
+} from "./quantidade";
 
 export const saleUnitEnum = z.enum(["CAIXA", "KG", "SACO", "BANDEJA", "UNIDADE"]);
 export const recipientTypeEnum = z.enum(["PLASTICA", "PAPELAO", "MADEIRA"]);
@@ -25,13 +34,27 @@ export const produtoSchema = z
      * Quanto já tem no box no dia do cadastro. Vira um movimento de ENTRADA
      * (`sourceType: "ESTOQUE_INICIAL"`) na mesma transação do produto.
      */
-    estoqueInicial: z.number().nonnegative("Valor inválido").max(9_999_999).nullable().optional(),
+    // Os mesmos limites da compra e do ajuste (`quantidade.ts`): 3 casas e o
+    // teto de quantidade. Mais casas o banco arredondava sem aviso.
+    estoqueInicial: z
+      .number()
+      .nonnegative("Valor inválido")
+      .max(QUANTIDADE_MAX, MSG_QUANTIDADE_MAX)
+      .refine(temAteTresCasas, MSG_TRES_CASAS)
+      .nullable()
+      .optional(),
     /**
      * Custo por unidade do estoque inicial. Obrigatório quando há estoque:
      * sem ele, a entrada valeria R$ 0 e o lucro das primeiras vendas sairia
      * inflado — o custo médio do estoque é o CMV da venda.
      */
-    custoInicial: z.number().nonnegative("Valor inválido").max(9_999_999).nullable().optional(),
+    custoInicial: z
+      .number()
+      .nonnegative("Valor inválido")
+      .max(VALOR_MAX, MSG_VALOR_MAX)
+      .refine(temAteQuatroCasas, "Use no máximo 4 casas decimais")
+      .nullable()
+      .optional(),
   })
   .refine((v) => !(v.estoqueInicial && v.estoqueInicial > 0) || v.custoInicial != null, {
     path: ["custoInicial"],

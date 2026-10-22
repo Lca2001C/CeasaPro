@@ -65,6 +65,7 @@ export default async function RelatorioViewPage({
     toVencimento: period.toVencimento,
     dateField: campo,
     agruparPorCategoria: sp.agrupar === "categoria",
+    modules: session.modules,
   });
 
   return (

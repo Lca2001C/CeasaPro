@@ -42,17 +42,69 @@ export function trialDaysLeft(trialEndsAt: Date, now: Date = new Date()): number
  * aqui — e o cliente perdia um dia do mês pago. O resultado continua sem
  * depender do fuso do servidor: o fuso usado é o do app, sempre.
  */
-export function addOneMonth(from: Date): Date {
+export function addOneMonth(from: Date, diaAncora?: number | null): Date {
+  return moverUmMes(from, 1, diaAncora);
+}
+
+/**
+ * Recua um mês na mesma regra de {@link addOneMonth}. É o inverso do período
+ * mensal: tirar um mês pago (estorno) devolve o vencimento ao do mês anterior,
+ * na âncora — 31/03 recua para 28/02, não para 03/03 (31 dias antes).
+ */
+export function subOneMonth(from: Date, diaAncora?: number | null): Date {
+  return moverUmMes(from, -1, diaAncora);
+}
+
+/** Dia do mês (1–31) do instante, no calendário de Brasília. */
+export function diaCivil(d: Date): number {
+  return civilParts(d).day;
+}
+
+/**
+ * O vencimento cai na âncora? (o dia dela, ou o último dia do mês quando o mês
+ * é mais curto). Todo vencimento gerado pelos fluxos cai; um que não cai foi
+ * mexido à mão (suporte corrigindo o banco), e aí é o vencimento que manda —
+ * seguir a âncora velha mudaria o dia que alguém escolheu de propósito.
+ */
+export function ancoraCoerente(vencimento: Date, diaAncora: number): boolean {
+  const c = civilParts(vencimento);
+  const ultimoDia = new Date(Date.UTC(c.year, c.month, 0)).getUTCDate();
+  return c.day === Math.min(diaAncora, ultimoDia);
+}
+
+/** A âncora que vale para o vencimento: a gravada, se coerente; senão, o dia dele. */
+export function ancoraDoVencimento(vencimento: Date, diaAncora: number | null): number {
+  return diaAncora != null && ancoraCoerente(vencimento, diaAncora) ? diaAncora : diaCivil(vencimento);
+}
+
+/**
+ * Um mês para frente ou para trás no calendário de Brasília, mantendo a hora.
+ *
+ * O dia de destino é o DIA ÂNCORA da assinatura, limitado ao último dia do mês
+ * de destino — não o dia da data de partida. Partir do dia já ajustado fazia o
+ * vencimento deslizar para sempre: 31/01 → 28/02 → 28/03 → 28/04. Com a âncora
+ * 31: 31/01 → 28/02 → 31/03 → 30/04 → 31/05. Sem âncora, vale o dia da partida
+ * (o comportamento de antes, para quem chama sem assinatura).
+ */
+function moverUmMes(from: Date, passo: 1 | -1, diaAncora?: number | null): Date {
   const c = civilParts(from);
-  const ano = c.month === 12 ? c.year + 1 : c.year;
-  const mes = c.month === 12 ? 1 : c.month + 1;
+  let ano = c.year;
+  let mes = c.month + passo;
+  if (mes === 13) {
+    mes = 1;
+    ano += 1;
+  } else if (mes === 0) {
+    mes = 12;
+    ano -= 1;
+  }
   // Dia 0 do mês seguinte ao de destino = último dia do destino (`mes` é 1-12,
   // e o `Date.UTC` o lê como índice 0-11, isto é, o mês DEPOIS dele).
   const ultimoDia = new Date(Date.UTC(ano, mes, 0)).getUTCDate();
+  const dia = diaAncora != null && diaAncora >= 1 && diaAncora <= 31 ? diaAncora : c.day;
   return zonedTimeToUtc(
     ano,
     mes,
-    Math.min(c.day, ultimoDia),
+    Math.min(dia, ultimoDia),
     c.hour,
     c.minute,
     c.second,

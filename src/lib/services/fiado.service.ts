@@ -17,7 +17,8 @@ import type {
   DesfazerBaixaInput,
 } from "@/lib/validations/fiado";
 import type { TenantCtx } from "@/lib/http/with-action";
-import { parseFormDateTz, startOfDayTz } from "@/lib/tz";
+import { parseFormDateTz } from "@/lib/tz";
+import { fiadoAtrasado } from "@/lib/fiado/atraso";
 import {
   dentroDoPrazoDeDesfazer,
   foraDoPrazoDeDesfazer,
@@ -139,18 +140,20 @@ export const FiadoService = {
               status: "EM_ABERTO",
               ...(search ? { customerName: { contains: search, mode: "insensitive" } } : {}),
             },
-            select: { customerName: true, totalAmount: true, paidAmount: true, dueDate: true },
+            select: { customerName: true, totalAmount: true, paidAmount: true, dueDate: true, createdAt: true },
           })
         ).map((c) => ({
           customerName: c.customerName,
           dueDate: c.dueDate,
+          createdAt: c.createdAt,
           saldo: FinancialCalc.saldoFiado(c.totalAmount, c.paidAmount),
         }))
       : withSaldo.filter((c) => c.status === "EM_ABERTO");
     const totalGeral = add(...emAberto.map((c) => c.saldo));
-    // Vencida = vencimento antes de HOJE no fuso do app, ainda devendo.
-    const hoje = startOfDayTz(opts.agora ?? new Date());
-    const vencidas = emAberto.filter((c) => c.dueDate !== null && c.dueDate < hoje).length;
+    // Atrasada: vencimento antes de HOJE no fuso do app, ou sem vencimento e
+    // aberta há mais de 30 dias — a régua do aviso e do relatório.
+    const agora = opts.agora ?? new Date();
+    const vencidas = emAberto.filter((c) => fiadoAtrasado(c, agora)).length;
     // O saldo de caixas é por CLIENTE, não por conta. Cada venda fiada abre uma
     // conta nova (vendas.service.ts:607), então um cliente que compra a prazo
     // duas vezes tem duas contas em aberto — e somar linha a linha contava o
@@ -291,35 +294,41 @@ export const FiadoService = {
     const before = await db.creditAccount.findFirst({ where: { id: input.id } });
     if (!before) throw new NotFoundError("Conta de fiado não encontrada");
 
-    const updated = await db.creditAccount.update({
-      where: { id: before.id },
-      data: {
-        customerPhone: input.customerPhone ?? null,
-        dueDate: input.dueDate ? parseFormDateTz(input.dueDate) : null,
-        notes: input.notes ?? null,
-      },
-    });
+    // A mudança e o registro dela commitam juntos (regra 5).
+    return db.$transaction(async (tx) => {
+      const updated = await tx.creditAccount.update({
+        where: { id: before.id },
+        data: {
+          customerPhone: input.customerPhone ?? null,
+          dueDate: input.dueDate ? parseFormDateTz(input.dueDate) : null,
+          notes: input.notes ?? null,
+        },
+      });
 
-    await audit({
-      tenantId: ctx.tenantId,
-      userId: ctx.userId,
-      actorEmail: ctx.session.email,
-      action: "UPDATE",
-      entity: "CreditAccount",
-      entityId: before.id,
-      oldData: {
-        dueDate: before.dueDate,
-        customerPhone: before.customerPhone,
-        notes: before.notes,
-      },
-      newData: {
-        dueDate: updated.dueDate,
-        customerPhone: updated.customerPhone,
-        notes: updated.notes,
-      },
-      ip: ctx.ip,
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "CreditAccount",
+          entityId: before.id,
+          oldData: {
+            dueDate: before.dueDate,
+            customerPhone: before.customerPhone,
+            notes: before.notes,
+          },
+          newData: {
+            dueDate: updated.dueDate,
+            customerPhone: updated.customerPhone,
+            notes: updated.notes,
+          },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return updated;
     });
-    return updated;
   },
 
   /**

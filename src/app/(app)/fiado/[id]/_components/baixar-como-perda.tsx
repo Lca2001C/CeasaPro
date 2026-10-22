@@ -31,11 +31,18 @@ export function BaixarComoPerda({
   accountId,
   customerName,
   saldo,
+  semVenda = false,
 }: {
   accountId: string;
   customerName: string;
   /** Saldo já formatado ("R$ 120,00"). */
   saldo: string;
+  /**
+   * Conta antiga, de antes de o fiado manual gerar venda: o valor nunca entrou
+   * no faturamento, então nem a perda nem o recebimento depois dela mexem no
+   * resultado do mês.
+   */
+  semVenda?: boolean;
 }) {
   const router = useRouter();
   const [aberto, setAberto] = useState(false);
@@ -75,13 +82,22 @@ export function BaixarComoPerda({
           <li>
             os <b>{saldo}</b> que faltam saem do &quot;a receber&quot; e dos avisos de fiado vencido;
           </li>
-          <li>
-            esse valor entra como <b>Perda com fiado</b> no resultado deste mês (o mês da venda não
-            muda);
-          </li>
-          <li>
-            se o cliente pagar depois, o valor entra no resultado do mês em que você receber;
-          </li>
+          {semVenda ? (
+            <li>
+              este fiado é antigo e não tem venda registrada: o valor nunca entrou no que você
+              vendeu, então a baixa (e um pagamento depois dela) não muda o resultado do mês;
+            </li>
+          ) : (
+            <>
+              <li>
+                esse valor entra como <b>Perda com fiado</b> no resultado deste mês (o mês da venda
+                não muda);
+              </li>
+              <li>
+                se o cliente pagar depois, o valor entra no resultado do mês em que você receber;
+              </li>
+            </>
+          )}
           <li>dá para desfazer só nas próximas 24 h.</li>
         </ul>
 

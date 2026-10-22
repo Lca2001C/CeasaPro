@@ -670,7 +670,7 @@ describe("Aviso de fiado vencido conta CLIENTES", () => {
 
     const avisos = await AvisosService.get(tenantId, undefined, HOJE);
     const aviso = avisos.find((a) => a.tipo === "fiado_vencido");
-    expect(aviso?.label).toBe("2 cliente(s) com fiado vencido");
+    expect(aviso?.label).toBe("2 cliente(s) com fiado atrasado");
     expect(aviso?.count).toBe(2);
     // O dinheiro continua sendo a soma de todas as entregas.
     expect(aviso?.total?.toString()).toBe("185");

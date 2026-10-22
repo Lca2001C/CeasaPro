@@ -380,3 +380,69 @@ describe("Reversão quando a competência segue paga por outra cobrança", () =>
     expect((await rotateRefreshToken(ctx.refreshToken)).tipo).toBe("invalido");
   });
 });
+
+describe("Chargeback com o pagamento duplicado JÁ devolvido (auditoria 22/10)", () => {
+  /**
+   * O duplicado só paga o mês se o dinheiro dele ainda está na conta. O
+   * super-admin segue o aviso PAGAMENTO_NAO_CREDITADO e reembolsa o PIX; o
+   * webhook leva a linha a ESTORNADO e a marca DUPLICADO fica. Quando o cartão
+   * leva chargeback, a reversão promovia esse PIX devolvido a pagador do mês e
+   * mantinha o acesso de quem não pagou nada.
+   */
+  it("bloqueia a empresa em vez de promover o duplicado devolvido", async () => {
+    const ctx = await empresaComSessao();
+    const cartao = await cobrancaPendente(ctx);
+    const pix = await cobrancaPendente(ctx);
+
+    gw.status.set(cartao, "approved");
+    await BillingService.handleWebhook(cartao);
+    gw.status.set(pix, "approved");
+    await BillingService.handleWebhook(pix);
+    expect(
+      (await prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId: pix } }))
+        .uncreditedReason,
+    ).toBe("DUPLICADO");
+
+    // O admin devolve o PIX.
+    gw.status.set(pix, "refunded");
+    await BillingService.handleWebhook(pix);
+    expect(
+      (await prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId: pix } })).status,
+    ).toBe("ESTORNADO");
+
+    gw.status.set(cartao, "charged_back");
+    expect(await BillingService.handleWebhook(cartao)).toBe("aplicado");
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { id: ctx.subscriptionId },
+    });
+    expect(sub.status).toBe("BLOQUEADO");
+    expect(sub.statusSource).toBe("MANUAL");
+    const linhaPix = await prisma.subscriptionPayment.findUniqueOrThrow({
+      where: { mpPaymentId: pix },
+    });
+    expect(linhaPix.status).toBe("ESTORNADO");
+    expect(linhaPix.approvedKey).toBeNull();
+  });
+
+  it("o duplicado que continua pago ainda é promovido (o caminho legítimo)", async () => {
+    const ctx = await empresaComSessao();
+    const cartao = await cobrancaPendente(ctx);
+    const pix = await cobrancaPendente(ctx);
+    gw.status.set(cartao, "approved");
+    await BillingService.handleWebhook(cartao);
+    gw.status.set(pix, "approved");
+    await BillingService.handleWebhook(pix);
+
+    gw.status.set(cartao, "charged_back");
+    await BillingService.handleWebhook(cartao);
+
+    const sub = await prisma.tenantSubscription.findUniqueOrThrow({
+      where: { id: ctx.subscriptionId },
+    });
+    expect(sub.status).toBe("ATIVO");
+    expect(
+      (await prisma.subscriptionPayment.findUniqueOrThrow({ where: { mpPaymentId: pix } })).status,
+    ).toBe("APROVADO");
+  });
+});

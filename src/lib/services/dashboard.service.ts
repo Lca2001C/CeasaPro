@@ -7,7 +7,7 @@ import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
-import { ORIGEM_BAIXA_EMBALAGEM } from "@/lib/estoque/origens";
+import { ORIGEM_BAIXA_EMBALAGEM, ORIGEM_BAIXA_EMBALAGEM_DESFEITA } from "@/lib/estoque/origens";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/linhas-vendidas";
 import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
 import {
@@ -307,10 +307,16 @@ export const DashboardService = {
       !(lucro && comEmbalagens)
         ? pula([] as { total: Prisma.Decimal | string }[])
         : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
-            SELECT COALESCE(SUM(ROUND(quantity * COALESCE("unitCost", 0), 2)), 0) AS total
-            FROM packaging_movements
-            WHERE "tenantId" = ${tenantId} AND "sourceType" = ${ORIGEM_BAIXA_EMBALAGEM}
-              AND "movedAt" >= ${monthStart} AND "movedAt" <= ${ateAgora}
+            SELECT COALESCE(SUM(ROUND(b.quantity * COALESCE(b."unitCost", 0), 2)), 0) AS total
+            FROM packaging_movements b
+            WHERE b."tenantId" = ${tenantId} AND b."sourceType" = ${ORIGEM_BAIXA_EMBALAGEM}
+              AND b."movedAt" >= ${monthStart} AND b."movedAt" <= ${ateAgora}
+              -- Baixa desfeita (até 24 h) não é custo.
+              AND NOT EXISTS (
+                SELECT 1 FROM packaging_movements d
+                WHERE d."tenantId" = ${tenantId} AND d."sourceType" = ${ORIGEM_BAIXA_EMBALAGEM_DESFEITA}
+                  AND d."sourceId" = b.id
+              )
           `,
       // Fiado baixado como perda NESTE mês (data da baixa, não da venda). Pela
       // marca da baixa e não pelo status: a conta recuperada por inteiro depois
@@ -322,6 +328,10 @@ export const DashboardService = {
             FROM credit_accounts
             WHERE "tenantId" = ${tenantId} AND "deletedAt" IS NULL
               AND "writtenOffAt" IS NOT NULL
+              -- Conta antiga SEM venda (de antes de o fiado manual gerar venda):
+              -- o valor nunca entrou no faturamento, então a perda também não
+              -- sai do lucro. A baixa continua tirando do "a receber".
+              AND "saleId" IS NOT NULL
               AND "writtenOffAt" >= ${monthStart} AND "writtenOffAt" <= ${ateAgora}
           `,
       // Perdas e acertos de estoque do mês (ver `perdasEstoqueMes`).
@@ -348,10 +358,14 @@ export const DashboardService = {
       !lucro
         ? pula([] as { total: Prisma.Decimal | string }[])
         : prisma.$queryRaw<{ total: Prisma.Decimal | string }[]>`
-            SELECT COALESCE(SUM(amount), 0) AS total
-            FROM credit_payments
-            WHERE "tenantId" = ${tenantId} AND "aposBaixa" AND "reversedAt" IS NULL
-              AND "paidAt" >= ${monthStart} AND "paidAt" <= ${ateAgora}
+            SELECT COALESCE(SUM(pg.amount), 0) AS total
+            FROM credit_payments pg
+            JOIN credit_accounts a ON a.id = pg."accountId"
+            WHERE pg."tenantId" = ${tenantId} AND a."tenantId" = ${tenantId}
+              AND pg."aposBaixa" AND pg."reversedAt" IS NULL
+              -- Pela mesma razão da perda: conta sem venda fica fora do lucro.
+              AND a."saleId" IS NOT NULL
+              AND pg."paidAt" >= ${monthStart} AND pg."paidAt" <= ${ateAgora}
           `,
     ]);
 

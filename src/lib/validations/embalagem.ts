@@ -83,5 +83,7 @@ export const baixaEmbalagemSchema = z.object({
   packagingTypeId: z.string().min(1, "Selecione o tipo"),
   quantity: z.number().int().positive("Quantidade inválida").max(QTD_MAX, QTD_MAX_MSG),
   motivo: z.string().trim().min(3, "Diga o motivo da baixa").max(200),
+  /** Uma por baixa digitada: o reenvio depois de um timeout devolve a já gravada. */
+  idempotencyKey: z.uuid().optional(),
 });
 export type BaixaEmbalagemInput = z.infer<typeof baixaEmbalagemSchema>;

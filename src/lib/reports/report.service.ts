@@ -5,10 +5,12 @@ import { EstoqueService } from "@/lib/services/estoque.service";
 import { CaixasService } from "@/lib/services/caixas.service";
 import { perdasPorLote } from "@/lib/services/higienizacao.service";
 import { FinancialCalc } from "@/lib/services/financial-calc.service";
-import { add, sub, toDecimal, money } from "@/lib/money";
+import { add, gte, sub, toDecimal, money } from "@/lib/money";
+import { isModuleEnabled } from "@/lib/plan/modules";
 import { formatBRL, formatDate, formatQty } from "@/lib/format";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "./linhas-vendidas";
-import { addDaysTz, APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
+import { APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
+import { whereFiadoAtrasado } from "@/lib/fiado/atraso";
 import {
   PAYMENT_METHOD_LABELS,
   EXPENSE_TYPE_LABELS,
@@ -21,12 +23,6 @@ import {
 } from "@/lib/labels";
 import type { ReportKind, ReportResult } from "./report.types";
 import { REPORT_LABELS } from "./report.types";
-
-/**
- * Quantos dias sem pagamento tornam "cobrável" uma conta SEM data de
- * vencimento. Sem uma régua, "antigo" não é verificável.
- */
-const DIAS_PARA_COBRAR_SEM_VENCIMENTO = 30;
 
 interface Params {
   tenantId: string;
@@ -49,6 +45,11 @@ interface Params {
   toVencimento?: Date;
   /** Agrupa as linhas por categoria, com subtotal em cada grupo. */
   agruparPorCategoria?: boolean;
+  /**
+   * Módulos da sessão. O relatório de despesas por vencimento soma a
+   * higienização enviada — só com o módulo, como "Contas do mês" do Início.
+   */
+  modules?: string[];
 }
 
 /** Como o período aparece no título e na coluna de data do relatório. */
@@ -88,6 +89,9 @@ function agruparPorCategoria<T extends LinhaAgrupavel>(linhas: T[]): Record<stri
     saida.push({
       description: `Subtotal — ${nome}`,
       amount: add(...doGrupo.map((l) => l.amount)),
+      ...("noLucro" in doGrupo[0]!
+        ? { noLucro: add(...doGrupo.map((l) => (l.noLucro as Prisma.Decimal | null) ?? 0)) }
+        : {}),
     });
   }
   return saida;
@@ -236,7 +240,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           orderBy: [{ [campo]: "asc" }, { createdAt: "asc" }],
         })
       ).sort((a, b) => (dataDe(a)?.getTime() ?? 0) - (dataDe(b)?.getTime() ?? 0));
-      const linhas = despesas.map((d) => ({
+      const linhasDespesa = despesas.map((d) => ({
         categoria: d.category?.name ?? "Sem categoria",
         data: dataDe(d),
         description: d.description,
@@ -249,7 +253,36 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           ? EXPENSE_PAYMENT_METHOD_LABELS[d.paymentMethod]
           : "-",
         amount: d.amount,
+        // A conta de compra (mercadoria, frete, embalagem) já está no custo do
+        // que foi vendido: aparece no relatório, mas não no lucro do Início.
+        noLucro: d.origem === "MANUAL" ? d.amount : null,
       }));
+      // Por vencimento, a higienização ENVIADA no período entra como no Início
+      // ("Contas variáveis" e o lucro, pela data de envio). Sem ela, o total
+      // "Entra no lucro" não fechava com "Contas do mês".
+      const lotes =
+        campo === "dueDate" && isModuleEnabled(p.modules, "higienizacao")
+          ? await db.crateCleaning.findMany({
+              where: { sentDate: janela },
+              orderBy: [{ sentDate: "asc" }, { createdAt: "asc" }],
+            })
+          : [];
+      const linhasHigienizacao = lotes.map((h) => ({
+        categoria: "Higienização",
+        data: h.sentDate,
+        description: `Higienização — ${h.sentQty} caixa(s)`,
+        origem: "Higienização",
+        supplier: h.cleanerName,
+        category: "Higienização",
+        type: EXPENSE_TYPE_LABELS.VARIAVEL,
+        status: EXPENSE_STATUS_LABELS[gte(h.paidAmount, h.totalAmount) ? "PAGO" : "PENDENTE"],
+        paymentMethod: "-",
+        amount: h.totalAmount,
+        noLucro: h.totalAmount,
+      }));
+      const linhas = [...linhasDespesa, ...linhasHigienizacao].sort(
+        (a, b) => (a.data?.getTime() ?? 0) - (b.data?.getTime() ?? 0),
+      );
       return {
         ...base,
         // O cabeçalho (tela, PDF e Excel) diz a janela que foi de fato somada.
@@ -267,9 +300,15 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "status", label: "Situacao" },
           { key: "paymentMethod", label: "Forma" },
           { key: "amount", label: "Valor", align: "right", format: "money" },
+          // Total desta coluna = "Contas do mês" do Início (por vencimento).
+          { key: "noLucro", label: "Entra no lucro", align: "right", format: "money" },
         ],
         rows: p.agruparPorCategoria ? agruparPorCategoria(linhas) : linhas,
-        totals: { description: "TOTAL", amount: add(...despesas.map((d) => d.amount)) },
+        totals: {
+          description: "TOTAL",
+          amount: add(...linhas.map((l) => l.amount)),
+          noLucro: add(...linhas.map((l) => l.noLucro ?? 0)),
+        },
       };
     }
 
@@ -372,7 +411,14 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       // Receita, custo (snapshot na venda) e lucro por produto no periodo.
       // Receita com o desconto da VENDA rateado (ver `linhasVendidas`): somando
       // `lineTotal` cru, este relatório nunca fechava com o de vendas.
-      const mapped = resumirPor(await linhasVendidas(p.tenantId, p.from, p.to), porNome)
+      const vendidas = await linhasVendidas(p.tenantId, p.from, p.to);
+      // O TOTAL sai das linhas sem arredondar, arredondado uma vez — como o CMV
+      // do Início. Somar as parcelas já arredondadas por produto deixava o
+      // total alguns centavos longe do painel (3 × R$ 0,3333 = R$ 0,99 contra
+      // R$ 1,00), e a diferença crescia com o número de produtos.
+      const receitaTotal = money(add(...vendidas.map((l) => l.receita)));
+      const custoTotal = money(add(...vendidas.map((l) => l.custo)));
+      const mapped = resumirPor(vendidas, porNome)
         .sort((a, b) => b.lucro.comparedTo(a.lucro) || porNomeAsc(a, b))
         .map((r) => ({
           name: r.name,
@@ -393,9 +439,9 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         rows: mapped,
         totals: {
           name: "TOTAL",
-          receita: add(...mapped.map((m) => m.receita)),
-          custo: add(...mapped.map((m) => m.custo)),
-          lucro: add(...mapped.map((m) => m.lucro)),
+          receita: receitaTotal,
+          custo: custoTotal,
+          lucro: FinancialCalc.lucroBruto(receitaTotal, custoTotal),
         },
       };
     }
@@ -712,7 +758,8 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
        *    que vence HOJE aparecer como atrasada durante todo o dia. A tela do
        *    fiado usa `startOfDayTz` — as duas discordavam.
        *
-       * "Sem vencimento e antigo" ganhou régua explícita: mais de 30 dias desde
+       * "Sem vencimento e antigo" ganhou régua explícita (`lib/fiado/atraso.ts`,
+       * a mesma do sino e do push): mais de 30 dias desde
        * a abertura. Sem uma régua, "antigo" não é verificável.
        *
        * Inadimplência é POSIÇÃO numa data de corte, não fluxo do período.
@@ -727,15 +774,11 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
        */
       const agora = new Date();
       const corte = startOfDayTz(p.to < agora ? p.to : agora);
-      const limiteSemVencimento = addDaysTz(corte, -DIAS_PARA_COBRAR_SEM_VENCIMENTO);
       const contas = await db.creditAccount.findMany({
         where: {
           status: "EM_ABERTO",
           createdAt: { lte: p.to },
-          OR: [
-            { dueDate: { lt: corte } },
-            { dueDate: null, createdAt: { lt: limiteSemVencimento } },
-          ],
+          ...whereFiadoAtrasado(corte),
         },
         orderBy: [{ dueDate: { sort: "asc", nulls: "last" } }, { createdAt: "asc" }],
       });
@@ -1069,30 +1112,38 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
         }),
         db.creditPayment.findMany({
           where: { aposBaixa: true, reversedAt: null, paidAt: { gte: p.from, lte: p.to } },
-          include: { account: { select: { customerName: true } } },
+          include: { account: { select: { customerName: true, saleId: true } } },
           orderBy: { paidAt: "asc" },
         }),
       ]);
+      // Conta antiga SEM venda: o valor nunca entrou no faturamento, então nem
+      // a perda nem o recebido depois dela entram no lucro do Início. Aparecem
+      // aqui numa coluna à parte, para os totais de Perda e Recuperado
+      // continuarem fechando com o resultado do mês.
+      const SEM_VENDA = " (sem venda — fora do lucro)";
       const rows = [
         ...baixas.map((c) => ({
           data: c.writtenOffAt,
           customerName: c.customerName,
-          tipo: "Baixa como perda",
+          tipo: `Baixa como perda${c.saleId ? "" : SEM_VENDA}`,
           detalhe: c.writtenOffReason ?? "-",
-          perda: c.writtenOffAmount ?? new Prisma.Decimal(0),
+          perda: c.saleId ? (c.writtenOffAmount ?? new Prisma.Decimal(0)) : null,
           recuperado: null as Prisma.Decimal | null,
+          foraDoLucro: c.saleId ? null : (c.writtenOffAmount ?? new Prisma.Decimal(0)),
         })),
         ...recuperados.map((r) => ({
           data: r.paidAt,
           customerName: r.account.customerName,
-          tipo: "Recebido depois da baixa",
+          tipo: `Recebido depois da baixa${r.account.saleId ? "" : SEM_VENDA}`,
           detalhe: PAYMENT_METHOD_LABELS[r.method] ?? r.method,
           perda: null as Prisma.Decimal | null,
-          recuperado: r.amount,
+          recuperado: r.account.saleId ? r.amount : null,
+          foraDoLucro: r.account.saleId ? null : r.amount.negated(),
         })),
       ].sort((a, b) => (a.data?.getTime() ?? 0) - (b.data?.getTime() ?? 0));
       const totalPerda = add(...rows.flatMap((r) => (r.perda ? [r.perda] : [])));
       const totalRecuperado = add(...rows.flatMap((r) => (r.recuperado ? [r.recuperado] : [])));
+      const temSemVenda = rows.some((r) => r.foraDoLucro !== null);
       return {
         ...base,
         columns: [
@@ -1102,6 +1153,10 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           { key: "detalhe", label: "Motivo / forma" },
           { key: "perda", label: "Perda", align: "right", format: "money" },
           { key: "recuperado", label: "Recuperado", align: "right", format: "money" },
+          // Só quando há conta sem venda no período: as outras linhas não a usam.
+          ...(temSemVenda
+            ? [{ key: "foraDoLucro", label: "Sem venda (fora do lucro)", align: "right" as const, format: "money" as const }]
+            : []),
         ],
         rows,
         totals: {
@@ -1109,6 +1164,9 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           detalhe: `Liquido: ${formatBRL(sub(totalPerda, totalRecuperado))}`,
           perda: totalPerda,
           recuperado: totalRecuperado,
+          ...(temSemVenda
+            ? { foraDoLucro: add(...rows.flatMap((r) => (r.foraDoLucro ? [r.foraDoLucro] : []))) }
+            : {}),
         },
       };
     }

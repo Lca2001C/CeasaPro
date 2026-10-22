@@ -16,7 +16,10 @@ import type {
   TipoEmbalagemInput,
   VendaEmbalagemInput,
 } from "@/lib/validations/embalagem";
-import { ORIGEM_BAIXA_EMBALAGEM } from "@/lib/estoque/origens";
+import {
+  ORIGEM_BAIXA_EMBALAGEM,
+  ORIGEM_BAIXA_EMBALAGEM_DESFEITA,
+} from "@/lib/estoque/origens";
 import { comIdempotencia } from "@/lib/http/idempotencia";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { parseFormDateTz, startOfMonthTz, startOfNextMonthTz } from "@/lib/tz";
@@ -42,18 +45,40 @@ function custoMedioDoTipo(
     sourceId: string | null;
   }[],
 ) {
-  const desfeitas = new Set(
-    movimentos.filter((m) => m.sourceType === ORIGEM_ENTRADA_DESFEITA).map((m) => m.sourceId),
-  );
+  // A baixa desfeita também sai em par: o estorno é um AJUSTE positivo, que o
+  // repasse leria como entrada pelo custo da baixa.
+  const ehEstorno = (m: { sourceType: string | null }) =>
+    m.sourceType === ORIGEM_ENTRADA_DESFEITA || m.sourceType === ORIGEM_BAIXA_EMBALAGEM_DESFEITA;
+  const desfeitas = new Set(movimentos.filter(ehEstorno).map((m) => m.sourceId));
   return FinancialCalc.custoMedioMovel(
     movimentos
-      .filter((m) => m.sourceType !== ORIGEM_ENTRADA_DESFEITA && !desfeitas.has(m.id))
+      .filter((m) => !ehEstorno(m) && !desfeitas.has(m.id))
       .map((m) => ({
         entrada: (m.type === "ENTRADA" || m.type === "AJUSTE") && m.quantity > 0,
         quantidade: m.quantity,
         custoUnitario: m.unitCost,
       })),
   );
+}
+
+/**
+ * `SELECT … FOR UPDATE` no tipo: serializa entrada, venda, baixa e desfazer do
+ * mesmo tipo, para o livro-razão ser gravado na ordem em que foi lido.
+ */
+async function travarTipo(
+  tx: { $queryRaw: Prisma.TransactionClient["$queryRaw"] },
+  packagingTypeId: string,
+  tenantId: string,
+) {
+  const travado = await tx.$queryRaw<{ id: string; name: string; tracksStock: boolean }[]>`
+    SELECT id, name, "tracksStock" FROM packaging_types
+    WHERE id = ${packagingTypeId} AND "tenantId" = ${tenantId}
+      AND "deletedAt" IS NULL
+    FOR UPDATE
+  `;
+  const tipo = travado[0];
+  if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
+  return tipo;
 }
 
 type DbClient = { packagingType: Pick<Prisma.PackagingTypeDelegate, "createMany"> };
@@ -197,19 +222,21 @@ export const EmbalagensService = {
     ctx: TenantCtx,
   ) {
     const db = getTenantPrisma(ctx.tenantId);
-    const tipo = await db.packagingType.findFirst({ where: { id: input.packagingTypeId } });
-    if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
-    if (!tipo.tracksStock) {
-      throw new BusinessRuleError(
-        `O controle de estoque de "${tipo.name}" está desligado. Ligue antes de registrar entrada.`,
-      );
-    }
 
     // Entrada e conta na MESMA transação (regra 5). A conta é o dinheiro que
     // saiu: sem ela, comprar embalagem não aparecia no caixa nem em "Pagas"; o
     // custo em si entra no lucro pela venda (custo médio), então a conta fica
     // fora do lucro, como a da compra de mercadoria (`ORIGENS_DE_COMPRA`).
     return db.$transaction(async (tx) => {
+      // Trava o tipo como a venda e a baixa: sem isso, a entrada inserida e
+      // ainda não confirmada ficava com `createdAt` ANTES da venda que corria
+      // ao lado, e o repasse do custo médio a contava antes da saída.
+      const tipo = await travarTipo(tx, input.packagingTypeId, ctx.tenantId);
+      if (!tipo.tracksStock) {
+        throw new BusinessRuleError(
+          `O controle de estoque de "${tipo.name}" está desligado. Ligue antes de registrar entrada.`,
+        );
+      }
       const mov = await tx.packagingMovement.create({
         data: {
           tenantId: ctx.tenantId,
@@ -267,16 +294,19 @@ export const EmbalagensService = {
    * embalagens" do mês (`dashboard.service.ts`).
    */
   async registrarBaixa(input: BaixaEmbalagemInput, ctx: TenantCtx) {
+    // Timeout depois do commit e o dono toca de novo: sem a chave, a baixa
+    // entrava duas vezes (saldo e custo do mês em dobro).
+    return comIdempotencia(
+      input.idempotencyKey,
+      (k) => getTenantPrisma(ctx.tenantId).packagingMovement.findFirst({ where: { idempotencyKey: k } }),
+      () => this.gravarBaixa(input, ctx),
+    );
+  },
+
+  async gravarBaixa(input: BaixaEmbalagemInput, ctx: TenantCtx) {
     const db = getTenantPrisma(ctx.tenantId);
     return db.$transaction(async (tx) => {
-      const travado = await tx.$queryRaw<{ name: string; tracksStock: boolean }[]>`
-        SELECT name, "tracksStock" FROM packaging_types
-        WHERE id = ${input.packagingTypeId} AND "tenantId" = ${ctx.tenantId}
-          AND "deletedAt" IS NULL
-        FOR UPDATE
-      `;
-      const tipo = travado[0];
-      if (!tipo) throw new NotFoundError("Tipo de embalagem não encontrado");
+      const tipo = await travarTipo(tx, input.packagingTypeId, ctx.tenantId);
       if (!tipo.tracksStock) {
         throw new BusinessRuleError(
           `O controle de estoque de "${tipo.name}" está desligado — não há saldo para baixar.`,
@@ -306,6 +336,7 @@ export const EmbalagensService = {
           unitCost: custoMedio,
           reason: input.motivo,
           sourceType: ORIGEM_BAIXA_EMBALAGEM,
+          idempotencyKey: input.idempotencyKey ?? null,
         },
       });
       await audit(
@@ -328,6 +359,77 @@ export const EmbalagensService = {
         tx,
       );
       return mov;
+    });
+  },
+
+  /**
+   * Desfaz a baixa lançada errada — até 24 h, só o dono (regra única de
+   * desfazer, §3.13). Entra um AJUSTE espelhado; a baixa e o estorno saem do
+   * custo médio e do custo das embalagens do mês. Recusa se o tipo teve
+   * movimento depois: a venda seguinte já gravou o custo com aquele saldo.
+   */
+  async desfazerBaixa(input: { id: string }, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode desfazer uma baixa.");
+    }
+    const db = getTenantPrisma(ctx.tenantId);
+    return db.$transaction(async (tx) => {
+      const baixa = await tx.packagingMovement.findFirst({
+        where: { id: input.id, type: "QUEBRA", sourceType: ORIGEM_BAIXA_EMBALAGEM },
+      });
+      if (!baixa) throw new NotFoundError("Baixa não encontrada");
+      if (!dentroDoPrazoDeDesfazer(baixa.createdAt)) {
+        throw new BusinessRuleError(foraDoPrazoDeDesfazer("desfazer esta baixa"));
+      }
+      await travarTipo(tx, baixa.packagingTypeId, ctx.tenantId);
+      const jaDesfeita = await tx.packagingMovement.findFirst({
+        where: { sourceType: ORIGEM_BAIXA_EMBALAGEM_DESFEITA, sourceId: baixa.id },
+        select: { id: true },
+      });
+      if (jaDesfeita) throw new BusinessRuleError("Esta baixa já foi desfeita.");
+      const depois = await tx.packagingMovement.count({
+        where: {
+          packagingTypeId: baixa.packagingTypeId,
+          OR: [
+            { createdAt: { gt: baixa.createdAt } },
+            { createdAt: baixa.createdAt, id: { gt: baixa.id } },
+          ],
+        },
+      });
+      if (depois > 0) {
+        throw new BusinessRuleError(
+          "Já houve venda, entrada ou outra baixa deste tipo depois desta. Não dá para desfazer.",
+        );
+      }
+      await tx.packagingMovement.create({
+        data: {
+          tenantId: ctx.tenantId,
+          packagingTypeId: baixa.packagingTypeId,
+          type: "AJUSTE",
+          quantity: baixa.quantity,
+          unitCost: baixa.unitCost,
+          // Na data da baixa: o par se anula no mesmo mês.
+          movedAt: baixa.movedAt,
+          reason: "Baixa desfeita",
+          sourceType: ORIGEM_BAIXA_EMBALAGEM_DESFEITA,
+          sourceId: baixa.id,
+        },
+      });
+      await audit(
+        {
+          tenantId: ctx.tenantId,
+          userId: ctx.userId,
+          actorEmail: ctx.session.email,
+          action: "UPDATE",
+          entity: "PackagingMovement",
+          entityId: baixa.id,
+          oldData: { quantity: baixa.quantity, motivo: baixa.reason },
+          newData: { desfeita: true },
+          ip: ctx.ip,
+        },
+        tx,
+      );
+      return { id: baixa.id };
     });
   },
 

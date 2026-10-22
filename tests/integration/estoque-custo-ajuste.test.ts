@@ -387,14 +387,31 @@ describe("o SQL do custo médio confere com o repasse linha a linha", () => {
     unitCost: Prisma.Decimal;
   };
 
-  it.each([1, 7, 42, 2026])("sequência aleatória (semente %i), passando por zero", async (semente) => {
+  it.each([
+    [1, false],
+    [7, false],
+    [42, false],
+    [2026, false],
+    // Histórico legado com venda acima do saldo: o ciclo recomeça num negativo.
+    [3, true],
+    [77, true],
+    [1024, true],
+  ])("sequência aleatória (semente %i, saldo negativo: %s), passando por zero", async (semente, negativo) => {
     const rnd = aleatorio(semente);
     const inicio = Date.now() - 10_000_000;
     const movs: Mov[] = [];
     let saldo = new Prisma.Decimal(0);
     for (let i = 0; i < 150; i++) {
       const r = rnd();
-      if (saldo.isZero() || r < 0.3) {
+      // Depois do estouro, o ciclo atual é o que recomeçou no negativo: não zera
+      // de novo, para a média final depender dele.
+      const depoisDoEstouro = negativo && i > 110;
+      if (negativo && (i === 110 || (saldo.greaterThan(0) && r > 0.93 && i < 110))) {
+        // Vende além do saldo, como o dado antigo de antes da trava.
+        const q = saldo.plus(new Prisma.Decimal(Math.floor(rnd() * 5_000) + 1).dividedBy(1000));
+        movs.push({ type: "SAIDA", quantity: q, unitCost: new Prisma.Decimal(1) });
+        saldo = saldo.minus(q);
+      } else if (saldo.lessThanOrEqualTo(0) || r < 0.3) {
         const q = new Prisma.Decimal(Math.floor(rnd() * 40_000) + 1).dividedBy(1000);
         const c = new Prisma.Decimal(Math.floor(rnd() * 1_500_000) + 100).dividedBy(10_000);
         movs.push({ type: rnd() < 0.85 ? "ENTRADA" : "AJUSTE", quantity: q, unitCost: c });
@@ -402,10 +419,12 @@ describe("o SQL do custo médio confere com o repasse linha a linha", () => {
       } else {
         // Às vezes zera o produto de propósito, para exercitar o recomeço.
         const q =
-          r > 0.9
+          r > 0.9 && !depoisDoEstouro
             ? saldo
             : Prisma.Decimal.min(
-                saldo,
+                depoisDoEstouro
+                  ? Prisma.Decimal.max(saldo.dividedBy(2).toDecimalPlaces(3, Prisma.Decimal.ROUND_DOWN), "0.001")
+                  : saldo,
                 new Prisma.Decimal(Math.floor(rnd() * 15_000) + 1).dividedBy(1000),
               );
         const tipo = r > 0.85 ? "QUEBRA" : r > 0.8 ? "AJUSTE" : "SAIDA";

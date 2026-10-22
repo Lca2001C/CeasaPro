@@ -4,7 +4,7 @@ import { audit } from "@/lib/audit";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
 import { add, gt, sub, money, toDecimal } from "@/lib/money";
-import { NotFoundError, BusinessRuleError } from "@/lib/http/app-error";
+import { NotFoundError, BusinessRuleError, ForbiddenError } from "@/lib/http/app-error";
 import type {
   HigienizacaoInput,
   HigienizacaoUpdateInput,
@@ -13,8 +13,12 @@ import type {
 } from "@/lib/validations/higienizacao";
 import type { TenantCtx } from "@/lib/http/with-action";
 import type { CrateCleaningStatus } from "@prisma/client";
-import { parseFormDateTz } from "@/lib/tz";
-import { dentroDoPrazoDeDesfazer, foraDoPrazoDeDesfazer } from "@/lib/desfazer/prazo";
+import { isoDateTz, parseFormDateTz } from "@/lib/tz";
+import {
+  dentroDoPrazoDeDesfazer,
+  foraDoPrazoDeDesfazer,
+  podeDesfazer,
+} from "@/lib/desfazer/prazo";
 import { comIdempotencia } from "@/lib/http/idempotencia";
 
 /**
@@ -262,6 +266,10 @@ export const HigienizacaoService = {
 
   /** Ajusta o lote antes de qualquer devolução/pagamento. */
   async update(input: HigienizacaoUpdateInput, ctx: TenantCtx) {
+    // Regra única de desfazer (§3.13): só quem pode desfazer altera o envio.
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode alterar um envio.");
+    }
     const db = getTenantPrisma(ctx.tenantId);
 
     return db.$transaction(async (tx) => {
@@ -306,8 +314,39 @@ export const HigienizacaoService = {
       const totalAmount = FinancialCalc.valorTotalVenda(input.sentQty, input.unitPrice);
       const delta = input.sentQty - before.sentQty;
 
-      // Ajusta o livro-razão: mais caixas → nova saída; menos caixas → retorno parcial.
-      if (delta > 0) {
+      // Mudou a data ou o higienizador: a saída gravada ficaria com os dados
+      // antigos (o histórico de caixas mostrava o envio no dia errado, ou com
+      // outro higienizador). O livro-razão não se reescreve (§3.4): estorna a
+      // saída inteira como foi gravada e lança a nova, inteira, com os dados novos.
+      const mudouData = isoDateTz(before.sentDate) !== input.sentDate;
+      const mudouHigienizador = before.cleanerName !== input.cleanerName;
+      if (mudouData || mudouHigienizador) {
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "ESTORNO_SAIDA_HIGIENIZACAO",
+            quantity: before.sentQty,
+            cleanerName: before.cleanerName,
+            movementDate: isoDateTz(before.sentDate),
+            crateCleaningId: before.id,
+            notes: "Envio corrigido (data ou higienizador)",
+          },
+          ctx,
+        );
+        await CaixasService.registrarInTx(
+          tx,
+          {
+            type: "SAIDA_HIGIENIZACAO",
+            quantity: input.sentQty,
+            cleanerName: input.cleanerName,
+            movementDate: input.sentDate,
+            crateCleaningId: before.id,
+            notes: "Envio corrigido (data ou higienizador)",
+          },
+          ctx,
+        );
+      } else if (delta > 0) {
+        // Ajusta o livro-razão: mais caixas → nova saída; menos caixas → estorno parcial.
         await CaixasService.registrarInTx(
           tx,
           {
@@ -635,6 +674,9 @@ export const HigienizacaoService = {
    * Apagar o movimento devolve o saldo exatamente ao estado anterior: sujas.
    */
   async remove(id: string, ctx: TenantCtx) {
+    if (!podeDesfazer(ctx.session.role)) {
+      throw new ForbiddenError("Só o responsável pela empresa pode excluir um envio.");
+    }
     const db = getTenantPrisma(ctx.tenantId);
 
     await db.$transaction(async (tx) => {

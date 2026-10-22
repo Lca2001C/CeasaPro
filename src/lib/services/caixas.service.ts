@@ -381,10 +381,19 @@ export const CaixasService = {
       WHERE "tenantId" = ${tenantId} AND "customerName" IS NOT NULL
       GROUP BY lower(btrim("customerName"))
     `;
-    const map = new SaldoDeCaixasPorCliente();
+    // Soma por identidade ANTES de filtrar o positivo: se o `lower()` do banco
+    // separar dois nomes que o JS junta (collation, espaço que não é ASCII),
+    // o segundo grupo sobrescrevia o primeiro em vez de somar.
+    const porChave = new Map<string, { nome: string; saldo: number }>();
     for (const r of rows) {
-      const saldo = Number(r.saldo);
-      if (saldo > 0) map.definir(r.customer, saldo);
+      const k = chaveDeCliente(r.customer);
+      const atual = porChave.get(k);
+      if (atual) atual.saldo += Number(r.saldo);
+      else porChave.set(k, { nome: r.customer, saldo: Number(r.saldo) });
+    }
+    const map = new SaldoDeCaixasPorCliente();
+    for (const { nome, saldo } of porChave.values()) {
+      if (saldo > 0) map.definir(nome, saldo);
     }
     return map;
   },
@@ -589,20 +598,21 @@ async function saldoDoClienteInTx(
   tenantId: string,
   customerName: string,
 ): Promise<number> {
-  const movs = await tx.plasticCrateMovement.findMany({
-    // Sem diferenciar maiúscula/minúscula: a identidade do cliente (ver
-    // `saldoPorCliente`). Os nomes chegam aparados pelos schemas.
-    where: { tenantId, customerName: { equals: customerName.trim(), mode: "insensitive" } },
-    select: { type: true, quantity: true },
-  });
-  let saldo = 0;
-  for (const m of movs) {
-    if (m.type === "SAIDA") saldo += m.quantity;
-    else if (m.type === "RETORNO" || m.type === "QUEBRA" || m.type === "ESTORNO_SAIDA") {
-      saldo -= m.quantity;
-    }
-  }
-  return saldo;
+  // A identidade do cliente é a MESMA de `saldoPorCliente`: `lower(btrim())`
+  // no banco. O `equals` com `mode: "insensitive"` do Prisma era outra regra
+  // (sem aparar as pontas, e por `ILIKE`, onde `%`/`_` no nome viram curinga):
+  // o saldo conferido na devolução podia não ser o que a tela mostrava.
+  const rows = await tx.$queryRaw<{ saldo: bigint }[]>`
+    SELECT COALESCE(SUM(
+             CASE WHEN type::text = 'SAIDA' THEN quantity
+                  WHEN type::text IN ('RETORNO', 'QUEBRA', 'ESTORNO_SAIDA') THEN -quantity
+                  ELSE 0 END
+           ), 0)::bigint AS saldo
+    FROM plastic_crate_movements
+    WHERE "tenantId" = ${tenantId} AND "customerName" IS NOT NULL
+      AND lower(btrim("customerName")) = lower(btrim(${customerName}))
+  `;
+  return Number(rows[0]?.saldo ?? 0);
 }
 
 /**

@@ -22,7 +22,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { startOfDayTz } from "@/lib/tz";
+import { fiadoAtrasado } from "@/lib/fiado/atraso";
 import { paginaDaUrl } from "@/lib/paginacao";
 import {
   PrecoResumo,
@@ -75,9 +75,8 @@ export default async function FiadoPage({
 
   // Vencida = tem data de vencimento no passado e ainda deve. Comparar por dia
   // brasileiro: `new Date()` puro faria uma conta vencer às 21h do dia anterior.
-  const hoje = startOfDayTz(agora);
   const estaVencida = (c: (typeof contas)[number]) =>
-    c.status === "EM_ABERTO" && c.dueDate !== null && c.dueDate < hoje;
+    c.status === "EM_ABERTO" && fiadoAtrasado(c, agora);
 
   // Cor do saldo — só estado: verde quitada, vermelho vencida, amarelo em aberto.
   const corDoSaldo = (c: (typeof contas)[number]) =>
@@ -127,7 +126,7 @@ export default async function FiadoPage({
               <b>
                 {vencidas} conta{vencidas > 1 ? "s" : ""}
               </b>{" "}
-              passou do vencimento.
+              em atraso (passou do vencimento, ou está sem vencimento há mais de 30 dias).
             </span>
           </Card>
         )}

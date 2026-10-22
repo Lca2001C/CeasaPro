@@ -9,7 +9,14 @@ import {
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
-import { addOneMonth, computeStatus, inicioDoPeriodoPago } from "@/lib/billing/status";
+import {
+  addOneMonth,
+  ancoraDoVencimento,
+  computeStatus,
+  diaCivil,
+  inicioDoPeriodoPago,
+  subOneMonth,
+} from "@/lib/billing/status";
 import { gt, gte, money, toNumber, type Decimal } from "@/lib/money";
 import {
   appUrl,
@@ -313,10 +320,64 @@ function isUsable(charge: SubscriptionPayment | null, now = new Date()): boolean
 function periodoSemOEstornado(
   currentPeriodEnd: Date,
   payment: { periodStart: Date | null; periodEnd: Date | null },
+  diaAncora: number | null,
 ): Date {
   if (!payment.periodStart || !payment.periodEnd) return currentPeriodEnd;
-  const duracao = payment.periodEnd.getTime() - payment.periodStart.getTime();
-  return new Date(currentPeriodEnd.getTime() - duracao);
+  // O estornado é o último período: o vencimento volta exatamente ao início dele.
+  if (payment.periodEnd.getTime() === currentPeriodEnd.getTime()) return payment.periodStart;
+  // Um do meio: os meses pagos depois dele recuam UM MÊS na âncora. Descontar
+  // a duração em milissegundos errava quando os meses têm tamanhos diferentes
+  // (tirar janeiro, 31 dias, de um vencimento em 31/03 dava 28/02... ou 03/03).
+  return subOneMonth(currentPeriodEnd, ancoraDoVencimento(currentPeriodEnd, diaAncora));
+}
+
+/**
+ * O dia âncora de uma assinatura anterior à coluna `diaAncora`, pelo histórico.
+ *
+ * O vencimento atual não basta: um 28 pode ser um 31 que deslizou (o cálculo
+ * antigo partia do vencimento já ajustado). Os pagamentos APROVADOS guardam o
+ * período de cada um; encadeados de trás para frente (o início de um é o fim do
+ * anterior), o primeiro da cadeia é o que recomeçou no dia do pagamento — e o
+ * dia dele é a âncora.
+ *
+ * Só responde quando a cadeia é conclusiva: o último elo termina exatamente no
+ * vencimento atual, e nenhum pagamento aprovado da empresa ficou sem período
+ * gravado (cobrança antiga, de antes de `periodStart` existir, deixaria a
+ * cadeia começar no meio). Fora disso, `null`, e quem chama usa o dia do
+ * vencimento atual — o resultado de antes da coluna. Nada é chutado.
+ */
+async function diaAncoraDoHistorico(
+  tx: Prisma.TransactionClient,
+  tenantId: string,
+  currentPeriodEnd: Date,
+  // O pagamento sendo aprovado: já está APROVADO e ainda sem período gravado.
+  semOPagamento: string,
+): Promise<number | null> {
+  const aprovados = await tx.subscriptionPayment.findMany({
+    where: { tenantId, status: "APROVADO", id: { not: semOPagamento } },
+    select: { periodStart: true, periodEnd: true },
+  });
+  if (aprovados.length === 0) return null;
+  if (aprovados.some((p) => !p.periodStart || !p.periodEnd)) return null;
+  const porFim = new Map(aprovados.map((p) => [p.periodEnd!.getTime(), p.periodStart!]));
+  const primeiro = porFim.get(currentPeriodEnd.getTime());
+  if (!primeiro) return null;
+  const elos: { inicio: Date; fim: Date }[] = [{ inicio: primeiro, fim: currentPeriodEnd }];
+  // Cada passo anda um período para trás; o tamanho da lista limita o laço.
+  for (let i = 0; i < aprovados.length; i++) {
+    const inicio = elos[elos.length - 1]!.inicio;
+    const anterior = porFim.get(inicio.getTime());
+    if (!anterior) break;
+    elos.push({ inicio: anterior, fim: inicio });
+  }
+  const ancora = diaCivil(elos[elos.length - 1]!.inicio);
+  // Cada elo tem de ser UM MÊS, pela regra antiga (do dia de partida) ou pela
+  // âncora. Um elo que não fecha (período gravado à mão) torna a cadeia
+  // inconclusiva — e então não se chuta.
+  const umMes = (e: { inicio: Date; fim: Date }) =>
+    addOneMonth(e.inicio).getTime() === e.fim.getTime() ||
+    addOneMonth(e.inicio, ancora).getTime() === e.fim.getTime();
+  return elos.every(umMes) ? ancora : null;
 }
 
 /**
@@ -1146,8 +1207,12 @@ export const BillingService = {
       }
 
       // Guarda contra corrida: só um webhook concorrente consegue a transição.
+      // A condição é o status LIDO, não "diferente do novo": `isReversal` foi
+      // decidido por essa leitura. Um "approved" e um "refunded" lidos como
+      // PENDENTE, com a aprovação commitando antes, gravavam ESTORNADO sem
+      // reverter o mês. Assim o segundo não casa e a reconciliação relê.
       const { count } = await tx.subscriptionPayment.updateMany({
-        where: { id: payment.id, status: { not: newStatus } },
+        where: { id: payment.id, status: payment.status },
         data: {
           status: newStatus,
           statusDetail: mp.statusDetail ?? payment.statusDetail,
@@ -1218,11 +1283,26 @@ export const BillingService = {
             pelaDataDoPagamento.getTime() === quandoPagou.getTime()
               ? inicioDoPeriodoPago(sub, now)
               : pelaDataDoPagamento;
-          const periodEnd = addOneMonth(periodStart);
+          // O dia âncora do vencimento. O período que recomeça no dia do
+          // pagamento (primeiro pagamento, ou depois de ficar sem acesso) faz
+          // desse dia a nova âncora. Na renovação ela é mantida — e é dela, não
+          // do vencimento já ajustado, que sai o próximo: 31/01 → 28/02 → 31/03.
+          const recomecou =
+            !sub.activatedAt || periodStart.getTime() !== sub.currentPeriodEnd.getTime();
+          // Gravada, vale se o vencimento cai nela (`ancoraDoVencimento`: um
+          // vencimento corrigido à mão manda). Sem gravada, o histórico.
+          const diaAncora = recomecou
+            ? diaCivil(periodStart)
+            : sub.diaAncora != null
+              ? ancoraDoVencimento(sub.currentPeriodEnd, sub.diaAncora)
+              : ((await diaAncoraDoHistorico(tx, payment.tenantId, sub.currentPeriodEnd, payment.id)) ??
+                diaCivil(periodStart));
+          const periodEnd = addOneMonth(periodStart, diaAncora);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
             data: {
               status: "ATIVO",
+              diaAncora,
               // Volta ao cálculo automático: um pagamento aprovado encerra
               // qualquer bloqueio manual herdado de estorno/chargeback anterior.
               statusSource: "AUTO",
@@ -1277,6 +1357,10 @@ export const BillingService = {
             tenantId: payment.tenantId,
             referenceMonth: payment.referenceMonth,
             uncreditedReason: "DUPLICADO",
+            // O duplicado já DEVOLVIDO (o super-admin seguiu o aviso e
+            // reembolsou; o webhook levou a linha a ESTORNADO) não paga mês
+            // nenhum. Promovê-lo mantinha o acesso de quem levou chargeback.
+            status: { not: "ESTORNADO" },
             id: { not: payment.id },
           },
           orderBy: { createdAt: "asc" },
@@ -1354,7 +1438,7 @@ export const BillingService = {
         } else if (
           sub &&
           mp.status !== "charged_back" &&
-          periodoSemOEstornado(sub.currentPeriodEnd, payment) > now &&
+          periodoSemOEstornado(sub.currentPeriodEnd, payment, sub.diaAncora) > now &&
           (await tx.subscriptionPayment.findFirst({
             where: {
               tenantId: payment.tenantId,
@@ -1378,7 +1462,7 @@ export const BillingService = {
             Chargeback continua bloqueando sempre: é contestação, e quem decide
             é o super-admin.
           */
-          const fim = periodoSemOEstornado(sub.currentPeriodEnd, payment);
+          const fim = periodoSemOEstornado(sub.currentPeriodEnd, payment, sub.diaAncora);
           await tx.tenantSubscription.update({
             where: { id: sub.id },
             data: { currentPeriodEnd: fim },
@@ -1418,7 +1502,7 @@ export const BillingService = {
               // estornar agosto com setembro já quitado devolvia o vencimento a
               // 10/08. Descontar a duração do período estornado dá o mesmo
               // resultado quando ele é o último, e o certo quando não é.
-              currentPeriodEnd: periodoSemOEstornado(sub.currentPeriodEnd, payment),
+              currentPeriodEnd: periodoSemOEstornado(sub.currentPeriodEnd, payment, sub.diaAncora),
             },
           });
           await audit(
@@ -1988,9 +2072,15 @@ export const BillingService = {
       // Sai na primeira linha quando não há agendamento: nenhuma consulta a mais
       // para as assinaturas comuns, que são a esmagadora maioria.
       if (await PlanoService.aplicarTrocaProgramada(sub, now)) planosTrocados++;
+      // A troca (ou o descarte) do agendamento grava a linha e muda o
+      // `updatedAt`: com a leitura antiga, `gravarStatusCalculado` não casava e
+      // o status do dia da virada ficava para o cron seguinte.
+      const atual = sub.pendingPlanId
+        ? ((await prisma.tenantSubscription.findUnique({ where: { id: sub.id } })) ?? sub)
+        : sub;
 
-      const effective = computeStatus(sub, now);
-      if (effective !== sub.status && (await gravarStatusCalculado(sub, effective))) {
+      const effective = computeStatus(atual, now);
+      if (effective !== atual.status && (await gravarStatusCalculado(atual, effective))) {
         updated++;
       }
     }
@@ -2004,26 +2094,30 @@ export const BillingService = {
    * pedido. Quem cancelou no meio do mês pago pode desfazer com `reativarAssinatura`.
    */
   async cancelarAssinatura(ctx: TenantCtx) {
-    const sub = await prisma.tenantSubscription.findUnique({
-      where: { tenantId: ctx.tenantId },
-    });
-    if (!sub) throw new NotFoundError("Assinatura não encontrada");
-    if (sub.cancelledAt) {
-      throw new BusinessRuleError("Esta assinatura já está cancelada.");
-    }
-
     const agora = new Date();
-    const antes = computeStatus(sub, agora);
-    if (antes === "SUSPENSO" || antes === "BLOQUEADO" || antes === "CANCELADO") {
-      throw new BusinessRuleError("Esta assinatura já está encerrada.");
-    }
+    // Leitura e escrita sob a trava da assinatura: lida fora, um chargeback
+    // (BLOQUEADO/MANUAL) que commitasse no meio era sobrescrito pelo status
+    // calculado aqui, com `statusSource: AUTO`.
+    const { sub, depois, baixadas } = await prisma.$transaction(async (tx) => {
+      await travarAssinatura(tx, { tenantId: ctx.tenantId });
+      const sub = await tx.tenantSubscription.findUnique({
+        where: { tenantId: ctx.tenantId },
+      });
+      if (!sub) throw new NotFoundError("Assinatura não encontrada");
+      if (sub.cancelledAt) {
+        throw new BusinessRuleError("Esta assinatura já está cancelada.");
+      }
 
-    const depois = computeStatus(
-      { ...sub, cancelledAt: agora, statusSource: "AUTO" },
-      agora,
-    );
+      const antes = computeStatus(sub, agora);
+      if (antes === "SUSPENSO" || antes === "BLOQUEADO" || antes === "CANCELADO") {
+        throw new BusinessRuleError("Esta assinatura já está encerrada.");
+      }
 
-    const baixadas = await prisma.$transaction(async (tx) => {
+      const depois = computeStatus(
+        { ...sub, cancelledAt: agora, statusSource: "AUTO" },
+        agora,
+      );
+
       const abertas = await baixarPendentes(tx, { tenantId: ctx.tenantId });
       await tx.tenantSubscription.update({
         where: { id: sub.id },
@@ -2061,7 +2155,7 @@ export const BillingService = {
         },
         tx,
       );
-      return abertas;
+      return { sub, depois, baixadas: abertas };
     });
 
     // Quem pediu para parar de pagar não pode ter um QR ainda pagável no app do
@@ -2088,25 +2182,27 @@ export const BillingService = {
    * vencimento o caminho é pagar de novo em `/assinatura`.
    */
   async reativarAssinatura(ctx: TenantCtx) {
-    const sub = await prisma.tenantSubscription.findUnique({
-      where: { tenantId: ctx.tenantId },
-    });
-    if (!sub) throw new NotFoundError("Assinatura não encontrada");
-    if (!sub.cancelledAt) {
-      throw new BusinessRuleError("A assinatura não está cancelada.");
-    }
-
     const agora = new Date();
-    const depois = computeStatus({ ...sub, cancelledAt: null }, agora);
-    if (depois === "SUSPENSO" || depois === "BLOQUEADO" || depois === "CANCELADO") {
-      throw new BusinessRuleError(
-        "O período pago já acabou. Contrate de novo em Assinatura.",
-      );
-    }
-
     // Regra 5: a mudança e o registro dela commitam juntos. Separados, uma
     // falha entre os dois deixava a assinatura reativada sem rastro na auditoria.
-    await prisma.$transaction(async (tx) => {
+    // A leitura também fica sob a trava (ver `cancelarAssinatura`).
+    const depois = await prisma.$transaction(async (tx) => {
+      await travarAssinatura(tx, { tenantId: ctx.tenantId });
+      const sub = await tx.tenantSubscription.findUnique({
+        where: { tenantId: ctx.tenantId },
+      });
+      if (!sub) throw new NotFoundError("Assinatura não encontrada");
+      if (!sub.cancelledAt) {
+        throw new BusinessRuleError("A assinatura não está cancelada.");
+      }
+
+      const depois = computeStatus({ ...sub, cancelledAt: null }, agora);
+      if (depois === "SUSPENSO" || depois === "BLOQUEADO" || depois === "CANCELADO") {
+        throw new BusinessRuleError(
+          "O período pago já acabou. Contrate de novo em Assinatura.",
+        );
+      }
+
       await tx.tenantSubscription.update({
         where: { id: sub.id },
         data: {
@@ -2130,6 +2226,7 @@ export const BillingService = {
         },
         tx,
       );
+      return depois;
     });
 
     return { status: depois };

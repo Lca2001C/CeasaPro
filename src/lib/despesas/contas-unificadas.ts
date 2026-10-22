@@ -1,4 +1,4 @@
-import { money, sub, toDecimal, type Numeric } from "@/lib/money";
+import { add, money, sub, toDecimal, type Decimal, type Numeric } from "@/lib/money";
 import { endOfDayTz, parseFormDateTz, startOfDayTz } from "@/lib/tz";
 import type { DespesaFiltro } from "@/lib/validations/despesa";
 
@@ -40,6 +40,33 @@ export interface HigienizacaoParaLista {
   sentDate: Date;
   paidDate: Date | null;
   createdAt: Date;
+  /**
+   * Um item por pagamento (`crate_cleaning_payments`). Necessário quando a lista
+   * filtra as pagas pela data de pagamento: `paidAmount` é acumulado e
+   * `paidDate` é só a do último, o que jogava o lote inteiro no mês do último
+   * pagamento — a lista não fechava com o cartão "Pagas" nem com o relatório.
+   */
+  pagamentos?: { amount: Numeric; paidAt: Date }[];
+}
+
+/** O lote filtrado pela data de pagamento, com o pago dentro do período. */
+function pagoNoPeriodo(
+  lote: HigienizacaoParaLista,
+  filtro: DespesaFiltro,
+): { valor: Decimal; ultimo: Date | null } | null {
+  if (filtro.dateField !== "paidDate" || !lote.pagamentos) return null;
+  const from = filtro.from ? parseFormDateTz(filtro.from) : null;
+  const to = filtro.to ? endOfDayTz(parseFormDateTz(filtro.to)) : null;
+  if (!from && !to) return null;
+  let valor = toDecimal(0);
+  let ultimo: Date | null = null;
+  for (const p of lote.pagamentos) {
+    if (from && p.paidAt < from) continue;
+    if (to && p.paidAt > to) continue;
+    valor = add(valor, p.amount);
+    if (!ultimo || p.paidAt > ultimo) ultimo = p.paidAt;
+  }
+  return { valor, ultimo };
 }
 
 export interface DespesaParaLista {
@@ -113,6 +140,7 @@ export function linhasDeHigienizacao(
   const jaPagou = toDecimal(lote.paidAmount).greaterThan(0);
   const hoje = startOfDayTz(agora);
   const vencida = temSaldo && lote.sentDate < hoje;
+  const noPeriodo = pagoNoPeriodo(lote, filtro);
 
   const pendente: ContaUnificada = {
     id: lote.id,
@@ -135,14 +163,14 @@ export function linhasDeHigienizacao(
     id: lote.id,
     origem: "higienizacao",
     description: `Higienização — ${lote.cleanerName}`,
-    amount: toDecimal(lote.paidAmount).toFixed(2),
+    amount: (noPeriodo?.valor ?? toDecimal(lote.paidAmount)).toFixed(2),
     type: "VARIAVEL",
     status: "PAGO",
     paymentMethod: null,
     recurring: false,
     categoryName: "Higienização",
     dueDate: lote.sentDate.toISOString(),
-    paidDate: lote.paidDate?.toISOString() ?? null,
+    paidDate: (noPeriodo ? noPeriodo.ultimo : lote.paidDate)?.toISOString() ?? null,
     vencida: false,
     supplierName: null,
     purchaseId: null,
@@ -161,7 +189,13 @@ export function linhasDeHigienizacao(
     else if (jaPagou) candidatas.push(paga);
   }
 
-  return candidatas.filter(() => higienizacaoPassaNoFiltro(lote, filtro));
+  return candidatas.filter((c) =>
+    // Paga filtrada pela data de pagamento: entra se houve pagamento no período.
+    c.status === "PAGO" && noPeriodo
+      ? noPeriodo.valor.greaterThan(0) &&
+        higienizacaoPassaNoFiltro(lote, { ...filtro, from: undefined, to: undefined })
+      : higienizacaoPassaNoFiltro(lote, filtro),
+  );
 }
 
 function higienizacaoPassaNoFiltro(lote: HigienizacaoParaLista, filtro: DespesaFiltro): boolean {

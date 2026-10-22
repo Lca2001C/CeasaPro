@@ -82,6 +82,14 @@ function recebimentoNoFiado(): BusinessRuleError {
   );
 }
 
+// A perda já entrou no resultado do mês da baixa; cancelar a venda por baixo
+// deixaria a perda de uma venda que não existe mais.
+function fiadoBaixado(): BusinessRuleError {
+  return new BusinessRuleError(
+    "O fiado desta venda foi baixado como perda. Desfaça a baixa antes de cancelar a venda.",
+  );
+}
+
 /** Nome do índice único que garante uma venda por chave de idempotência. */
 const INDICE_IDEMPOTENCIA = "sales_tenantId_idempotencyKey_key";
 
@@ -534,13 +542,7 @@ export const VendasService = {
       throw new BusinessRuleError(foraDoPrazoDeDesfazer("cancelar esta venda"));
     }
     if ((venda.creditAccount?.payments.length ?? 0) > 0) throw recebimentoNoFiado();
-    // A perda já entrou no resultado do mês da baixa; cancelar a venda por
-    // baixo deixaria a perda de uma venda que não existe mais.
-    if (venda.creditAccount?.status === "PERDA") {
-      throw new BusinessRuleError(
-        "O fiado desta venda foi baixado como perda. Desfaça a baixa antes de cancelar a venda.",
-      );
-    }
+    if (venda.creditAccount?.status === "PERDA") throw fiadoBaixado();
     const productIds = [...new Set(venda.items.map((it) => it.productId))].sort();
 
     // Quantas caixas voltam ao estoque é decidido DENTRO da transação (abaixo),
@@ -643,11 +645,21 @@ export const VendasService = {
       // Se não casar, a exceção desfaz a transação inteira: nem a venda fica
       // cancelada nem o estoque volta.
       if (venda.creditAccount) {
+        // `writtenOffAt: null` refaz do mesmo jeito a checagem da baixa como
+        // perda: a baixa feita em outra tela entre a leitura e aqui tinha
+        // `paidAmount` zero, casava, e a perda sumia do mês junto com a conta.
         const apagada = await tx.creditAccount.updateMany({
-          where: { id: venda.creditAccount.id, paidAmount: 0 },
+          where: { id: venda.creditAccount.id, paidAmount: 0, writtenOffAt: null },
           data: { deletedAt: new Date() },
         });
-        if (apagada.count !== 1) throw recebimentoNoFiado();
+        if (apagada.count !== 1) {
+          const atual = await tx.creditAccount.findFirst({
+            where: { id: venda.creditAccount.id },
+            select: { writtenOffAt: true },
+          });
+          if (atual?.writtenOffAt) throw fiadoBaixado();
+          throw recebimentoNoFiado();
+        }
       }
 
       await audit(

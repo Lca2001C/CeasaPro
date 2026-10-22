@@ -7,6 +7,7 @@ import { Loader2, PackageMinus, PackagePlus, Warehouse } from "lucide-react";
 import { toast } from "sonner";
 import {
   ativarEstoqueEmbalagem,
+  desfazerBaixaEmbalagem,
   desfazerEntradaEmbalagem,
   registrarBaixaEmbalagem,
   registrarEntradaEmbalagem,
@@ -54,6 +55,7 @@ export function EstoqueTipo({
   // Chave por conteúdo: o reenvio da MESMA entrada devolve a gravada.
   const chaveEntrada: RefDeChave = useRef(null);
   const [baixando, setBaixando] = useState(false);
+  const chaveBaixa: RefDeChave = useRef(null);
   const [motivo, setMotivo] = useState("");
   const [quantidade, setQuantidade] = useState("");
   const [custo, setCusto] = useState("");
@@ -100,14 +102,27 @@ export function EstoqueTipo({
     if (!qtd || qtd <= 0) return toast.error("Informe quantas saíram.");
     if (motivo.trim().length < 3) return toast.error("Diga o motivo da baixa.");
     start(async () => {
+      const corpo = { packagingTypeId: id, quantity: qtd, motivo: motivo.trim() };
       const res = await chamarAction(() =>
-        registrarBaixaEmbalagem({ packagingTypeId: id, quantity: qtd, motivo: motivo.trim() }),
+        registrarBaixaEmbalagem({ ...corpo, idempotencyKey: chavePorConteudo(chaveBaixa, corpo) }),
       );
       if (!res.ok) {
         toast.error(mensagemDoErro(res.error));
         return;
       }
-      toast.success(`-${qtd} ${nome}. O custo entra nas contas do mês.`);
+      const baixaId = res.data.id;
+      // Lançou errado? Desfazer fica à mão (a regra de 24 h vale no servidor).
+      toast.success(`-${qtd} ${nome}. O custo entra nas contas do mês.`, {
+        action: {
+          label: "Desfazer",
+          onClick: async () => {
+            const r = await chamarAction(() => desfazerBaixaEmbalagem({ id: baixaId }));
+            if (r.ok) toast.success("Baixa desfeita.");
+            else toast.error(r.error.message);
+            router.refresh();
+          },
+        },
+      });
       setBaixando(false);
       setQuantidade("");
       setMotivo("");

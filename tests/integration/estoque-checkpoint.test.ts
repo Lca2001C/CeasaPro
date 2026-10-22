@@ -235,8 +235,8 @@ describe("checkpoint do custo médio dá o MESMO resultado que o repasse inteiro
   it("checkpoint POSITIVO dentro de um ciclo que recomeçou num saldo negativo", async () => {
     // Entrada 10 a R$ 5, saída 11 (saldo -1: o ciclo recomeça ali), entrada 4 a
     // R$ 7 — CHECKPOINT (saldo 3, mas o ciclo acumulou 4) — saída 2, entrada 10
-    // a R$ 9. Semeado com o saldo real (3), a entrada seguinte pesava diferente:
-    // R$ 8,8182 com checkpoint contra R$ 8,6667 sem.
+    // a R$ 9. Sobram 1 a R$ 7 e 10 a R$ 9: R$ 97 / 11 = R$ 8,8182, com e sem
+    // checkpoint (a conta que contava o ciclo a partir do zero dava R$ 8,6667).
     const [tomate] = produtos;
     const inicio = Date.now() - 20 * 24 * 3600 * 1000;
     const em = (s: number) => new Date(inicio + s * 1000);
@@ -261,6 +261,7 @@ describe("checkpoint do custo médio dá o MESMO resultado que o repasse inteiro
     const comCheckpoint = await retrato();
     await prisma.stockCostCheckpoint.deleteMany({ where: { tenantId } });
     expect(comCheckpoint).toEqual(await retrato());
+    expect(comCheckpoint.custos[tomate!]).toBe("8.8182");
   });
 
   it("sem movimento depois do checkpoint, a última entrada e a última data vêm dele", async () => {

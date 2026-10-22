@@ -100,7 +100,10 @@ export default async function DashboardPage({
     ]);
   const hoje = startOfDayTz(new Date());
   const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
-  const margemTone = s.margemLiquidaMes.isNegative() ? "destructive" : "success";
+  // Sem faturamento a margem vale 0 (`margemLiquida`), mas o prejuízo continua
+  // prejuízo: 0% em verde com o "Sobrou" negativo ao lado.
+  const margemTone =
+    s.margemLiquidaMes.isNegative() || s.lucroMes.isNegative() ? "destructive" : "success";
 
   return (
     <div className="flex flex-col gap-4">
@@ -364,6 +367,9 @@ function Financeiro({
   // A venda de embalagem é receita fora do "Vendi": aparece numa linha
   // própria, para o resultado fechar com o que entrou no caixa.
   const temEmbalagens = s.embalagensMes.greaterThan(0);
+  // O custo aparece sozinho: a baixa de embalagem (sem venda no mês) também
+  // entra no lucro, e sem a linha o "Sobrou" não fechava com as de cima.
+  const temCustoEmbalagens = s.custoEmbalagensMes.greaterThan(0);
   return (
     <>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
@@ -441,7 +447,7 @@ function Financeiro({
                 ? [["Vendi em embalagens", Number(s.embalagensMes)] as [string, number]]
                 : []),
               ["Custo da mercadoria vendida", -Number(s.cmvMes)],
-              ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
+              ...(temCustoEmbalagens
                 ? [["Custo das embalagens (vendidas e baixadas)", -Number(s.custoEmbalagensMes)] as [string, number]]
                 : []),
               ...(Number(s.perdasEstoqueMes) !== 0
@@ -478,7 +484,7 @@ function Financeiro({
                 cor: COR_SERIE.compras,
                 prefixo: "− ",
               },
-              ...(temEmbalagens && Number(s.custoEmbalagensMes) > 0
+              ...(temCustoEmbalagens
                 ? [
                     {
                       rotulo: "Custo das embalagens (vendidas e baixadas)",

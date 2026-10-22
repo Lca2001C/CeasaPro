@@ -280,6 +280,14 @@ export interface ResumoHigienizacao {
   saldoAberto: Prisma.Decimal;
   /** Quantos lotes ainda devem. */
   abertoCount: number;
+  /**
+   * Parte de `saldoAberto` de lotes ENVIADOS na janela — o "a pagar no mês".
+   * O envio é o vencimento do lote, como o `dueDate` da despesa: sem o recorte,
+   * o lote de setembro em aberto aparecia no "a pagar" de outubro (e também
+   * nas vencidas), enquanto a despesa de setembro só aparecia nas vencidas.
+   */
+  saldoAbertoNoPeriodo: Prisma.Decimal;
+  abertoNoPeriodoCount: number;
   /** Parte de `saldoAberto` de lotes enviados antes de `hoje`. */
   vencido: Prisma.Decimal;
   vencidoCount: number;
@@ -296,6 +304,8 @@ export interface ResumoHigienizacao {
 export const HIGIENIZACAO_ZERADA: ResumoHigienizacao = Object.freeze({
   saldoAberto: new Prisma.Decimal(0),
   abertoCount: 0,
+  saldoAbertoNoPeriodo: new Prisma.Decimal(0),
+  abertoNoPeriodoCount: 0,
   vencido: new Prisma.Decimal(0),
   vencidoCount: 0,
   pagaNoPeriodo: new Prisma.Decimal(0),
@@ -336,6 +346,8 @@ export async function resumoDaHigienizacao(
       {
         saldo_aberto: Prisma.Decimal | string;
         aberto_count: number;
+        aberto_periodo: Prisma.Decimal | string;
+        aberto_periodo_count: number;
         vencido: Prisma.Decimal | string;
         vencido_count: number;
         enviada: Prisma.Decimal | string;
@@ -345,6 +357,8 @@ export async function resumoDaHigienizacao(
       SELECT
         COALESCE(SUM("totalAmount" - "paidAmount") FILTER (WHERE "totalAmount" > "paidAmount"), 0) AS saldo_aberto,
         COUNT(*) FILTER (WHERE "totalAmount" > "paidAmount")::int AS aberto_count,
+        COALESCE(SUM("totalAmount" - "paidAmount") FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" >= ${janela.inicio} AND "sentDate" <= ${janela.fim}), 0) AS aberto_periodo,
+        COUNT(*) FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" >= ${janela.inicio} AND "sentDate" <= ${janela.fim})::int AS aberto_periodo_count,
         COALESCE(SUM("totalAmount" - "paidAmount") FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" < ${hoje}), 0) AS vencido,
         COUNT(*) FILTER (WHERE "totalAmount" > "paidAmount" AND "sentDate" < ${hoje})::int AS vencido_count,
         COALESCE(SUM("totalAmount") FILTER (WHERE "sentDate" >= ${janela.inicio} AND "sentDate" <= ${janela.fim}), 0) AS enviada,
@@ -369,6 +383,8 @@ export async function resumoDaHigienizacao(
   return {
     saldoAberto: dec(l?.saldo_aberto),
     abertoCount: Number(l?.aberto_count ?? 0),
+    saldoAbertoNoPeriodo: dec(l?.aberto_periodo),
+    abertoNoPeriodoCount: Number(l?.aberto_periodo_count ?? 0),
     vencido: dec(l?.vencido),
     vencidoCount: Number(l?.vencido_count ?? 0),
     pagaNoPeriodo: dec(p?.paga),
@@ -413,7 +429,9 @@ function whereDaHigienizacao(
     const range: Prisma.DateTimeFilter = {};
     if (from) range.gte = from;
     if (to) range.lte = endOfDayTz(to);
-    if (campo === "paidDate") e.push({ paidDate: range });
+    // A linha paga é decidida pelos pagamentos do período (`pagoNoPeriodo`):
+    // o lote com pagamento antigo e o último fora dele também entra.
+    if (campo === "paidDate") e.push({ OR: [{ paidDate: range }, { payments: { some: { paidAt: range } } }] });
     else if (campo === "createdAt") e.push({ createdAt: range });
     else e.push({ sentDate: range });
   }
@@ -430,6 +448,8 @@ async function higienizacoesFiltradas(
   const where = whereDaHigienizacao(filtro, agora);
   if (!where) return [];
   const db = getTenantPrisma(tenantId);
+  // Os pagamentos só importam quando o período é pela data de pagamento.
+  const porPagamento = filtro.dateField === "paidDate" && Boolean(filtro.from || filtro.to);
   const lotes = await db.crateCleaning.findMany({
     where,
     select: {
@@ -440,9 +460,16 @@ async function higienizacoesFiltradas(
       sentDate: true,
       paidDate: true,
       createdAt: true,
+      ...(porPagamento ? { payments: { select: { amount: true, paidAt: true } } } : {}),
     },
   });
-  const linhas = lotes.flatMap((lote) => linhasDeHigienizacao(lote, filtro, agora));
+  const linhas = lotes.flatMap((lote) =>
+    linhasDeHigienizacao(
+      { ...lote, pagamentos: "payments" in lote ? lote.payments : undefined },
+      filtro,
+      agora,
+    ),
+  );
   const pagas = filtro.status === "PAGO";
   return linhas.sort((a, b) => {
     const dataA = pagas ? a.paidDate : a.dueDate;
@@ -831,11 +858,12 @@ export const DespesasService = {
       porTipoAnterior.map((g) => ({ type: g.type, amount: g._sum.amount ?? 0 })),
     );
 
-    // Higienização: saldo em aberto soma no "a pagar" (e no vencido, se o
-    // envio é de antes de hoje); "pagas" soma os PAGAMENTOS feitos no mês, não
-    // o acumulado do lote — ver `resumoDaHigienizacao`.
-    const aPagarValor = money(toDecimal(aPagar._sum.amount ?? 0).plus(hig.saldoAberto));
-    const aPagarCount = aPagar._count._all + hig.abertoCount;
+    // Higienização: o saldo em aberto dos lotes ENVIADOS no mês soma no "a
+    // pagar" (o envio faz o papel do vencimento), e o de envio antes de hoje
+    // no vencido; "pagas" soma os PAGAMENTOS feitos no mês, não o acumulado do
+    // lote — ver `resumoDaHigienizacao`.
+    const aPagarValor = money(toDecimal(aPagar._sum.amount ?? 0).plus(hig.saldoAbertoNoPeriodo));
+    const aPagarCount = aPagar._count._all + hig.abertoNoPeriodoCount;
     const pagasValor = money(toDecimal(pagas._sum.amount ?? 0).plus(hig.pagaNoPeriodo));
     const pagasCount = pagas._count._all + hig.pagaCount;
     const variaveis = money(doMes.variaveis.plus(hig.enviadaNoPeriodo));

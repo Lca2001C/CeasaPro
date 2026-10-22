@@ -248,6 +248,7 @@ export default async function FiadoDetailPage({
                   accountId={conta.id}
                   customerName={conta.customerName}
                   saldo={formatBRL(conta.saldo)}
+                  semVenda={!conta.saleId}
                 />
               )}
             </CardContent>

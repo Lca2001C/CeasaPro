@@ -50,6 +50,7 @@ export const GET = withTenantRoute({
       toVencimento: period.toVencimento,
       dateField: input.campo,
       agruparPorCategoria: input.agrupar === "categoria",
+      modules: ctx.session.modules,
     });
     const isPdf = input.format === "pdf";
     const buffer = isPdf ? await toPdf(result) : await toExcel(result);

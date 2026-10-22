@@ -188,31 +188,39 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
   ),
   marcado AS (
     SELECT mov.*,
-           MAX(CASE WHEN saldo <= 0 THEN seq END) OVER (PARTITION BY "productId") AS zerou_em
+           MAX(CASE WHEN saldo <= 0 THEN seq END) OVER (PARTITION BY "productId") AS zerou_em,
+           SUM(q) OVER (PARTITION BY "productId") AS saldo_final
     FROM mov
   ),
+  -- Tudo pelo saldo REAL (o acumulado de \`mov\`). A primeira entrada do ciclo
+  -- primeiro cobre o buraco do saldo negativo (as unidades vendidas a mais já
+  -- saíram pela média antiga): ela pesa só o que sobra depois dela. Contar o
+  -- ciclo a partir de zero pesava as entradas por unidades que não existem —
+  -- −1, +4 a R$ 7, −2, +10 a R$ 9 dava R$ 8,67 em vez de R$ 8,82 (1 a R$ 7 e
+  -- 10 a R$ 9). Sem saldo negativo as duas contas são iguais.
   ciclo AS (
     SELECT "productId", seq, q, c,
-           SUM(q) OVER (PARTITION BY "productId" ORDER BY seq) AS sc,
-           SUM(q) OVER (PARTITION BY "productId") AS q_ciclo
+           saldo AS sc,
+           CASE WHEN seq = COALESCE(zerou_em, 0) + 1 THEN saldo ELSE q END AS q_efetiva,
+           saldo_final AS q_ciclo
     FROM marcado
     WHERE seq > COALESCE(zerou_em, 0)
   ),
   entradas AS (
-    SELECT "productId", seq, q, c, sc, q_ciclo,
+    SELECT "productId", seq, q, q_efetiva, c, sc, q_ciclo,
            COALESCE(LEAD(sc - q) OVER (PARTITION BY "productId" ORDER BY seq), q_ciclo) AS antes_da_proxima
     FROM ciclo
     WHERE q > 0
   ),
   pesos AS (
-    SELECT "productId", q, c, q_ciclo,
+    SELECT "productId", q_efetiva, c, q_ciclo,
            SUM(CASE WHEN antes_da_proxima = sc THEN 0 ELSE LN(antes_da_proxima / sc) END)
              OVER (PARTITION BY "productId" ORDER BY seq DESC) AS ln_peso
     FROM entradas
   ),
   medio AS (
     SELECT "productId",
-           SUM(q * COALESCE(c, 0) * CASE WHEN ln_peso < -40 THEN 0 ELSE EXP(ln_peso) END)
+           SUM(q_efetiva * COALESCE(c, 0) * CASE WHEN ln_peso < -40 THEN 0 ELSE EXP(ln_peso) END)
              / MAX(q_ciclo) AS custo
     FROM pesos
     GROUP BY "productId"

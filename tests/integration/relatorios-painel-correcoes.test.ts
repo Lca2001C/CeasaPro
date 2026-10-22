@@ -537,8 +537,10 @@ describe("higienização paga em parcelas de meses diferentes (regressão)", () 
     const resumo = await DespesasService.resumoMes(tenantId, undefined, new Date(), [
       "higienizacao",
     ]);
-    expect(Number(resumo.aPagar)).toBe(50);
-    expect(resumo.aPagarCount).toBe(1);
+    // Enviado no mês passado: o saldo é vencido, não "a pagar NO MÊS" — como a
+    // despesa comum de vencimento no mês passado (auditoria 22/10).
+    expect(Number(resumo.aPagar)).toBe(0);
+    expect(resumo.aPagarCount).toBe(0);
     expect(Number(resumo.vencidas)).toBe(50);
     expect(resumo.vencidasCount).toBe(1);
     expect(Number(resumo.pagas)).toBe(30);
