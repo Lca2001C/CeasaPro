@@ -1116,6 +1116,9 @@ model Expense {
 
   @@index([tenantId, dueDate])
   @@index([tenantId, status])
+  /// Contas PENDENTE por vencimento — o filtro de avisos, contas a pagar e
+  /// próximas contas do Início (várias consultas por abertura).
+  @@index([tenantId, status, dueDate])
   @@index([tenantId, type])
   @@index([tenantId, paidDate])
   @@index([tenantId, recurring])

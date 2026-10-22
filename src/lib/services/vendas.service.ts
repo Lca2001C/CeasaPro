@@ -328,9 +328,11 @@ export const VendasService = {
     const db = getTenantPrisma(tenantId);
     return db.sale.findMany({
       where: this.filtroDoHistorico(opts, agora),
+      // Só o que a lista mostra: nome e foto do produto, e as formas de
+      // pagamento. A conta do fiado não era lida pela tela e custava uma ida a
+      // mais ao banco a cada abertura do histórico.
       include: {
-        items: { include: { product: true } },
-        creditAccount: true,
+        items: { include: { product: { select: { name: true, imageKey: true } } } },
         payments: true,
       },
       orderBy: { saleDate: "desc" },

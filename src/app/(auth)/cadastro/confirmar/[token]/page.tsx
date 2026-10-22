@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { CheckCircle2, TriangleAlert, UserPlus } from "lucide-react";
+import { CheckCircle2, LogIn, TriangleAlert } from "lucide-react";
 import { SignupService } from "@/lib/services/signup.service";
 import { TRIAL_DAYS } from "@/lib/billing/status";
 import { AppError } from "@/lib/http/app-error";
@@ -131,15 +131,21 @@ export default async function ConfirmarPage({
                 Já tenho conta
               </Link>
             ) : (
+              /*
+                O caso mais comum de link inválido é o e-mail JÁ confirmado por
+                outro caminho (Google, "esqueci minha senha"), que zera o token.
+                Entrar vem primeiro; refazer o cadastro de um e-mail que já tem
+                conta só reenviaria um link.
+              */
               <>
                 <Button asChild size="lg" className="w-full">
-                  <Link href="/cadastro">
-                    <UserPlus className="size-4" />
-                    Fazer o cadastro
+                  <Link href="/login">
+                    <LogIn className="size-4" />
+                    Entrar
                   </Link>
                 </Button>
-                <Link href="/login" className={linkDiscreto}>
-                  Já tenho conta
+                <Link href="/cadastro" className={linkDiscreto}>
+                  Ainda não tenho conta
                 </Link>
               </>
             )}

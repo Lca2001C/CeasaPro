@@ -6,6 +6,7 @@ import { resolverLoginGoogle } from "@/lib/services/google-login.service";
 import { cleanupTenants } from "../helpers/factory";
 import { emailIdentity } from "@/lib/email-identity";
 import type { GoogleProfile } from "@/lib/auth/google-oauth";
+import { NOME_EMPRESA_PADRAO } from "@/lib/tenant-defaults";
 
 /**
  * Login com Google sem falar com o Google: o perfil já veio verificado.
@@ -67,6 +68,29 @@ describe("resolverLoginGoogle", () => {
     expect(user.tenant?.subscription?.status).toBe("TRIAL");
     expect(user.tenant?.subscription?.trialEndsAt).not.toBeNull();
     expect(user.tenant?.onboardingCompletedAt).toBeNull();
+    // A empresa nasce com o nome padrão (o Início pede o nome dela); o nome
+    // da pessoa fica no usuário, não no topo do app nem no comprovante.
+    expect(user.tenant?.tradeName).toBe(NOME_EMPRESA_PADRAO);
+    expect(user.name).toBe(p.name);
+  });
+
+  it("e-mail ligado a OUTRO Google: diz isso, em vez de 'tente de novo'", async () => {
+    const tenant = await prisma.tenant.create({ data: { tradeName: "Outro Google", status: "ACTIVE" } });
+    tenants.push(tenant.id);
+    const p = perfil();
+    await prisma.user.create({
+      data: {
+        tenantId: tenant.id,
+        name: "Dono",
+        email: p.email,
+        passwordHash: await hashPassword("senha1234"),
+        role: "OWNER",
+        googleSub: `sub-antigo-${uniq()}`,
+      },
+    });
+
+    const res = await resolverLoginGoogle(p, { ip: null });
+    expect(res).toEqual({ ok: false, code: "google-outra-conta" });
   });
 
   it("entra na conta existente pelo e-mail e grava o googleSub", async () => {

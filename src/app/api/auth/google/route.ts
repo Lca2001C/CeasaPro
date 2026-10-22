@@ -25,13 +25,16 @@ export async function GET(req: NextRequest) {
     return Response.redirect(new URL(loginComErroGoogle("google-indisponivel"), req.url));
   }
 
-  const ip = (await clientIp()) ?? "unknown";
-  const rl = await rateLimitDb(`login-google:${ip}`, {
-    limit: 10,
-    windowMs: 15 * 60 * 1000,
-  });
-  if (!rl.ok) {
-    return Response.redirect(new URL(loginComErroGoogle("google-falhou"), req.url));
+  // Folgado como o balde só por IP do login: o Wi-Fi do CEASA põe dezenas de
+  // boxes atrás de um IP, e com 10 em 15 min o 11º via "tente de novo" — o que
+  // só piorava. Com IP desconhecido fica de fora (todo mundo no mesmo balde).
+  const ip = await clientIp();
+  const rl = ip
+    ? await rateLimitDb(`login-google:${ip}`, { limit: 60, windowMs: 15 * 60 * 1000 })
+    : null;
+  if (rl && !rl.ok) {
+    const code = rl.indisponivel ? "google-falhou" : "google-muitas-tentativas";
+    return Response.redirect(new URL(loginComErroGoogle(code), req.url));
   }
 
   const next = safeRedirectPath(req.nextUrl.searchParams.get("next"), "");

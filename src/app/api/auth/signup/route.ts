@@ -55,20 +55,32 @@ export async function POST(req: Request) {
   // tentativas cada — quem quisesse inundar a caixa de alguém (ou varrer
   // cadastros) só precisava mudar a etiqueta, e o limite que existia para
   // proteger aquela caixa não protegia nada.
-  const byIp = await rateLimitDb(`signup:ip:${ip}`, { limit: 5, windowMs: 60 * 60 * 1000 });
-  const byEmail = await rateLimitDb(`signup:email:${emailIdentity(input.email)}`, {
-    limit: 3,
-    windowMs: 60 * 60 * 1000,
-  });
+  //
+  // O limite por IP é folgado (20/h): o Wi-Fi do CEASA e a rede da operadora
+  // põem dezenas de boxes atrás de um IP só, e com 5/h o sexto box da mesma
+  // hora via "verifique seu e-mail" para uma conta que nunca foi criada. Com IP
+  // desconhecido fica de fora (todo mundo cairia no mesmo balde), como no login.
+  const janela = 60 * 60 * 1000;
+  const [byIp, byEmail] = await Promise.all([
+    ip === "unknown"
+      ? Promise.resolve(null)
+      : rateLimitDb(`signup:ip:${ip}`, { limit: 20, windowMs: janela }),
+    rateLimitDb(`signup:email:${emailIdentity(input.email)}`, { limit: 3, windowMs: janela }),
+  ]);
   // Banco fora: o genérico diria que o cadastro seguiu, e nada foi criado.
   // 503 não distingue e-mail nenhum, então não reabre a enumeração.
-  if (byIp.indisponivel || byEmail.indisponivel) {
-    return respostaDeLimite(byIp.indisponivel ? byIp : byEmail);
+  if (byIp?.indisponivel) return respostaDeLimite(byIp);
+  if (byEmail.indisponivel) return respostaDeLimite(byEmail);
+  // Limite da REDE: diz que foi limite. Não revela nada sobre o e-mail, e o
+  // genérico aqui mandava a pessoa esperar um link de uma conta não criada.
+  if (byIp && !byIp.ok) {
+    logger.warn({ ip, scope: "ip" }, "Rate limit em /api/auth/signup");
+    return respostaDeLimite(byIp);
   }
-  if (!byIp.ok || !byEmail.ok) {
-    logger.warn({ ip, scope: byIp.ok ? "email" : "ip" }, "Rate limit em /api/auth/signup");
-    // Também genérico: dizer "muitas tentativas" já confirmaria que houve
-    // tentativa anterior naquele e-mail.
+  if (!byEmail.ok) {
+    logger.warn({ ip, scope: "email" }, "Rate limit em /api/auth/signup");
+    // Genérico: dizer "muitas tentativas" confirmaria que houve tentativa
+    // anterior naquele e-mail.
     return generic;
   }
 
@@ -85,6 +97,12 @@ export async function POST(req: Request) {
         logger.info(
           { link: `/cadastro/confirmar/${res.devToken}` },
           "[DEV] Link de confirmação de cadastro",
+        );
+      }
+      if (res.devResetToken) {
+        logger.info(
+          { link: `/recuperar-senha/${res.devResetToken}` },
+          "[DEV] Link de confirmar e criar senha (cadastro pendente)",
         );
       }
       if (process.env.NODE_ENV === "production" && !hasConfiguredAppUrl()) {

@@ -105,7 +105,9 @@ export const FiadoService = {
       ...(status === "TODAS" ? {} : { status }),
       ...(search ? { customerName: { contains: search, mode: "insensitive" as const } } : {}),
     };
-    const [contas, total, caixasPorCliente] = await Promise.all([
+    // As contas abertas das abas paginadas entram no MESMO `Promise.all`: lidas
+    // depois dele, eram uma rodada a mais em série a cada abertura de "Pagas".
+    const [contas, total, caixasPorCliente, abertasDaBusca] = await Promise.all([
       db.creditAccount.findMany({
         where,
         include: { sale: SALE_RESUMO },
@@ -116,6 +118,15 @@ export const FiadoService = {
       }),
       paginada ? db.creditAccount.count({ where }) : Promise.resolve(null),
       opts.caixas === false ? SEM_CAIXAS : CaixasService.saldoPorCliente(tenantId),
+      paginada
+        ? db.creditAccount.findMany({
+            where: {
+              status: "EM_ABERTO",
+              ...(search ? { customerName: { contains: search, mode: "insensitive" as const } } : {}),
+            },
+            select: { customerName: true, totalAmount: true, paidAmount: true, dueDate: true, createdAt: true },
+          })
+        : Promise.resolve(null),
     ]);
     const withSaldo = contas.map((c) => ({
       ...c,
@@ -139,16 +150,8 @@ export const FiadoService = {
     // rua. Nas abas paginadas as contas abertas são lidas à parte (respeitando
     // só a busca) — a página de "Todas" tem só um pedaço delas; em "Em aberto"
     // a lista já é o conjunto inteiro.
-    const emAberto = paginada
-      ? (
-          await db.creditAccount.findMany({
-            where: {
-              status: "EM_ABERTO",
-              ...(search ? { customerName: { contains: search, mode: "insensitive" } } : {}),
-            },
-            select: { customerName: true, totalAmount: true, paidAmount: true, dueDate: true, createdAt: true },
-          })
-        ).map((c) => ({
+    const emAberto = abertasDaBusca
+      ? abertasDaBusca.map((c) => ({
           customerName: c.customerName,
           dueDate: c.dueDate,
           createdAt: c.createdAt,

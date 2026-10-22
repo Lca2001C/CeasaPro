@@ -26,6 +26,10 @@ function resumo(id: string): string {
   return (h >>> 0).toString(36) + ":" + id.length.toString(36);
 }
 const INTERVALO_MS = 5 * 60_000;
+/** Espera a tela aberta assentar antes da primeira leitura (ver o efeito abaixo). */
+const ATRASO_PRIMEIRA_CARGA_MS = 2_500;
+/** Voltar à aba recarrega no máximo uma vez por minuto. */
+const RECARGA_MINIMA_MS = 60_000;
 
 /** Evento para uma tela pedir ao sino que releia (ex.: retirada marcada). */
 export const EVENTO_ATUALIZAR_NOTIFICACOES = "ceasapro:notificacoes";
@@ -75,7 +79,9 @@ export function SinoNotificacoes({ avisoAssinatura }: { avisoAssinatura?: string
 
   const novas = todas.filter((n) => !vistas.has(resumo(n.id))).length;
 
+  const ultimaCarga = useRef(0);
   const carregar = useCallback(async () => {
+    ultimaCarga.current = Date.now();
     const res = await chamarAction(() => listarNotificacoes());
     if (res.ok) setItens(res.data);
   }, []);
@@ -83,15 +89,26 @@ export function SinoNotificacoes({ avisoAssinatura }: { avisoAssinatura?: string
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- leitura única do armazenamento do aparelho
     setVistas(lerVistas());
-    void carregar();
+    // A primeira carga espera a tela: em produção o pool é de uma conexão por
+    // instância, e as ~11 consultas do sino entravam na fila na frente das da
+    // página que a pessoa acabou de abrir.
+    const primeira = setTimeout(() => void carregar(), ATRASO_PRIMEIRA_CARGA_MS);
     const t = setInterval(() => void carregar(), INTERVALO_MS);
+    // Voltar à aba recarrega no máximo uma vez por minuto: trocar de app no
+    // balcão a cada venda refazia a leitura inteira toda vez.
     const aoVoltar = () => {
-      if (document.visibilityState === "visible") void carregar();
+      if (
+        document.visibilityState === "visible" &&
+        Date.now() - ultimaCarga.current >= RECARGA_MINIMA_MS
+      ) {
+        void carregar();
+      }
     };
     document.addEventListener("visibilitychange", aoVoltar);
     const aoPedir = () => void carregar();
     window.addEventListener(EVENTO_ATUALIZAR_NOTIFICACOES, aoPedir);
     return () => {
+      clearTimeout(primeira);
       clearInterval(t);
       document.removeEventListener("visibilitychange", aoVoltar);
       window.removeEventListener(EVENTO_ATUALIZAR_NOTIFICACOES, aoPedir);

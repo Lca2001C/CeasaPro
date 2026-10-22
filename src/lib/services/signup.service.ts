@@ -14,7 +14,11 @@ import {
   sendEmail,
   verifyEmailEmail,
   signupAttemptOnExistingAccountEmail,
+  signupPendingAccountEmail,
 } from "@/lib/email";
+import { issueResetToken } from "@/lib/auth/password-reset";
+import { RESET_TOKEN_TTL_MINUTES } from "@/lib/auth/reset-token";
+import { emailIdentity } from "@/lib/email-identity";
 import { BusinessRuleError } from "@/lib/http/app-error";
 import {
   provisionTenant,
@@ -59,10 +63,54 @@ export interface SignupResult {
   userId?: string;
   /** Token cru, apenas em desenvolvimento (o link vai para o log). */
   devToken?: string;
+  /** Link de criar senha da conta pendente, só em desenvolvimento (log). */
+  devResetToken?: string;
+}
+
+/**
+ * A conta deste e-mail é um cadastro público que nunca foi confirmado? Só aí
+ * (conta ativa, `emailVerifiedAt` nulo, sem teste concedido nem pagamento) o
+ * novo cadastro reenvia a confirmação em vez de dizer "você já tem conta".
+ */
+async function contaPendente(email: string) {
+  return prisma.user.findFirst({
+    where: {
+      deletedAt: null,
+      active: true,
+      emailVerifiedAt: null,
+      OR: [{ email }, { emailIdentity: emailIdentity(email) }],
+      tenant: { subscription: { trialEndsAt: null, activatedAt: null } },
+    },
+    select: { id: true, email: true },
+  });
 }
 
 /** Nada é criado; o aviso vai para quem é dono do endereço. */
 async function avisarContaExistente(email: string, ip: string | null): Promise<SignupResult> {
+  // Cadastro ainda não confirmado (a confirmação caiu no spam, a pessoa
+  // desistiu e cadastrou de novo): manda o link de confirmar e criar a senha.
+  // A senha digitada agora é descartada — gravá-la deixaria quem só conhece o
+  // e-mail escolher a senha da conta que o dono vai confirmar.
+  const pendente = await contaPendente(email);
+  if (pendente) {
+    const { raw } = await issueResetToken(pendente.id);
+    const { subject, html } = signupPendingAccountEmail({
+      link: absoluteUrl(`/recuperar-senha/${raw}`),
+      trialDays: TRIAL_DAYS,
+      expiresInMinutes: RESET_TOKEN_TTL_MINUTES,
+    });
+    const sent = await sendEmail(pendente.email, subject, html, {
+      tags: [{ name: "tipo", value: "cadastro-pendente" }],
+    });
+    if (!sent.ok) {
+      logger.error({ err: sent.error }, "Falha ao reenviar a confirmação de cadastro pendente");
+    }
+    logger.info({ ip }, "Cadastro em e-mail com conta pendente — link de confirmação reenviado");
+    return {
+      outcome: "email_already_in_use",
+      ...(process.env.NODE_ENV !== "production" ? { devResetToken: raw } : {}),
+    };
+  }
   const { subject, html } = signupAttemptOnExistingAccountEmail({
     loginUrl: absoluteUrl("/login"),
     forgotUrl: absoluteUrl("/recuperar-senha"),

@@ -200,6 +200,56 @@ describe("POST /api/auth/signup (via SignupService)", () => {
   });
 });
 
+/**
+ * Cadastro refeito num e-mail que ainda não confirmou.
+ *
+ * A confirmação caiu no spam e a pessoa cadastrou de novo: antes ela recebia
+ * "você já tem conta, entre" e, sem lembrar a senha da primeira vez, ficava sem
+ * saída. Agora recebe o link de confirmar e criar a senha.
+ */
+describe("cadastro refeito em conta ainda não confirmada", () => {
+  it("emite o link de criar senha e não troca a senha nem cria empresa", async () => {
+    const input = entrada();
+    const primeiro = await registrar(input);
+    const sensiveis = { passwordHash: false, resetTokenHash: false } as const;
+    const antes = await prisma.user.findUniqueOrThrow({
+      where: { id: primeiro.userId! },
+      omit: sensiveis,
+    });
+
+    const segundo = await SignupService.register(
+      { ...input, password: "outrasenha99" },
+      { ip: "203.0.113.12" },
+    );
+
+    expect(segundo.outcome).toBe("email_already_in_use");
+    expect(segundo.devResetToken).toBeTruthy();
+    const depois = await prisma.user.findUniqueOrThrow({
+      where: { id: primeiro.userId! },
+      omit: sensiveis,
+    });
+    // A senha de quem refez o cadastro NÃO entra: só o dono da caixa escolhe.
+    expect(depois.passwordHash).toBe(antes.passwordHash);
+    expect(depois.resetTokenHash).not.toBeNull();
+  });
+
+  it("conta já confirmada continua recebendo o aviso de conta existente", async () => {
+    const input = entrada();
+    const primeiro = await registrar(input);
+    await SignupService.confirmEmail(primeiro.devToken!);
+
+    const segundo = await SignupService.register(input, { ip: "203.0.113.13" });
+
+    expect(segundo.outcome).toBe("email_already_in_use");
+    expect(segundo.devResetToken).toBeUndefined();
+    const user = await prisma.user.findUniqueOrThrow({
+      where: { id: primeiro.userId! },
+      omit: { resetTokenHash: false },
+    });
+    expect(user.resetTokenHash).toBeNull();
+  });
+});
+
 describe("Confirmação do e-mail libera o teste grátis", () => {
   it("confirma, marca TRIAL e concede exatamente 7 dias", async () => {
     const res = await registrar(entrada());

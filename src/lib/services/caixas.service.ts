@@ -1,3 +1,4 @@
+import { cache } from "react";
 import type { Prisma, PlasticCrateMovement, PlasticCrateMovementType } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
@@ -415,6 +416,8 @@ function mexeNoHigienizador(input: MovimentoCaixaInterno): boolean {
   return input.type === "QUEBRA" && !input.customerName && Boolean(input.cleanerName);
 }
 
+const saldoDaRequisicao = cache((tenantId: string) => lerSaldoCom(prisma, tenantId));
+
 export const CaixasService = {
   /**
    * Toma o lock de caixas da empresa numa transação já aberta, sem ler saldo.
@@ -428,8 +431,14 @@ export const CaixasService = {
     await travarCaixasDaEmpresa(tx, tenantId);
   },
 
+  /**
+   * Saldo para MOSTRAR. Memorizado por requisição (`cache()`): a tela de caixas
+   * e embalagens lia o livro-razão inteiro duas vezes (aba Caixas e o saldo do
+   * tipo "Caixa plástica" em Embalagens). Quem decide em cima do saldo usa
+   * `getSaldoInTx`, lido dentro da transação e depois do lock.
+   */
   async getSaldo(tenantId: string): Promise<CrateSaldo> {
-    return lerSaldoCom(prisma, tenantId);
+    return saldoDaRequisicao(tenantId);
   },
 
   /**

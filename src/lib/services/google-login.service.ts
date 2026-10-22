@@ -12,14 +12,17 @@ import { ADMIN_PLAN_SLUG } from "@/lib/services/plano.service";
 import {
   provisionTenant,
   liberarEmailDeContaExcluida,
+  ehColisaoDeIdentidadeDeEmail,
 } from "@/lib/services/tenant-provisioning";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
 import type { GoogleProfile } from "@/lib/auth/google-oauth";
 import { emailIdentity } from "@/lib/email-identity";
+import { NOME_EMPRESA_PADRAO } from "@/lib/tenant-defaults";
+import type { Prisma } from "@prisma/client";
 
 export type GoogleLoginResult =
   | { ok: true; userId: string; role: "OWNER" | "SUPER_ADMIN"; criado: boolean }
-  | { ok: false; code: "google-falhou" | "google-inativo" };
+  | { ok: false; code: "google-falhou" | "google-inativo" | "google-outra-conta" };
 
 /**
  * Resolve a conta depois que o Google já confirmou a identidade.
@@ -37,7 +40,7 @@ export type GoogleLoginResult =
  */
 export async function resolverLoginGoogle(
   perfil: GoogleProfile,
-  ctx: { ip: string | null },
+  ctx: { ip: string | null; repetindo?: boolean },
 ): Promise<GoogleLoginResult> {
   const porGoogle = await prisma.user.findFirst({
     where: { googleSub: perfil.sub, deletedAt: null },
@@ -78,7 +81,9 @@ export async function resolverLoginGoogle(
   if (porEmail) {
     if (!porEmail.active) return { ok: false, code: "google-inativo" };
     if (porEmail.googleSub && porEmail.googleSub !== perfil.sub) {
-      return { ok: false, code: "google-falhou" };
+      // O Google já comprovou a identidade: dizer qual é o problema não abre
+      // brecha, e "tente de novo" mandava a pessoa repetir o mesmo erro.
+      return { ok: false, code: "google-outra-conta" };
     }
     // Linha de cadastro público que nunca confirmou o e-mail: até este instante
     // NINGUÉM provou ser dono do endereço. Qualquer pessoa pode ter se cadastrado
@@ -94,36 +99,54 @@ export async function resolverLoginGoogle(
     // Google prova quem é o dono. Sem isto, o impostor seguia entrando com a
     // senha dele e lendo a empresa que a vítima passou a usar.
     const pendente = !porEmail.emailVerifiedAt || !porEmail.senhaComprovada;
-    await prisma.user.update({
-      where: { id: porEmail.id },
-      data: pendente
-        ? {
-            googleSub: perfil.sub,
-            emailVerifiedAt: porEmail.emailVerifiedAt ?? new Date(),
-            passwordHash: await hashPassword(randomBytes(32).toString("hex")),
-            // A senha agora é aleatória e ninguém a conhece: não há o que comprovar.
-            senhaComprovada: true,
-            // Tokens em aberto também são do impostor: o de confirmação nasceu do
-            // cadastro dele e o de recuperação ele pode ter pedido antes.
-            verifyTokenHash: null,
-            verifyTokenExpiresAt: null,
-            resetTokenHash: null,
-            resetTokenExpiresAt: null,
-          }
-        : { googleSub: perfil.sub },
-    });
-    if (pendente) {
+    if (!pendente) {
+      await prisma.user.update({ where: { id: porEmail.id }, data: { googleSub: perfil.sub } });
+      return { ok: true, userId: porEmail.id, role: porEmail.role, criado: false };
+    }
+    // Argon2 fora da transação: é lento e não precisa segurar conexão.
+    const passwordHash = await hashPassword(randomBytes(32).toString("hex"));
+    // Uma transação só (regra 5): descartar a senha, derrubar as sessões e
+    // conceder o teste. Separados, uma queda no meio deixava a senha trocada e
+    // o teste sem conceder — a pessoa entrava e caía em /conta/suspensa.
+    await prisma.$transaction(async (tx) => {
+      await tx.user.update({
+        where: { id: porEmail.id },
+        data: {
+          googleSub: perfil.sub,
+          emailVerifiedAt: porEmail.emailVerifiedAt ?? new Date(),
+          passwordHash,
+          // A senha agora é aleatória e ninguém a conhece: não há o que comprovar.
+          senhaComprovada: true,
+          // Tokens em aberto também são do impostor: o de confirmação nasceu do
+          // cadastro dele e o de recuperação ele pode ter pedido antes.
+          verifyTokenHash: null,
+          verifyTokenExpiresAt: null,
+          resetTokenHash: null,
+          resetTokenExpiresAt: null,
+        },
+      });
       // Sessão que ele já tenha aberto (refresh de 30 dias) cai junto.
-      await revokeAllForUser(porEmail.id, "PASSWORD");
+      await revokeAllForUser(porEmail.id, "PASSWORD", tx);
       // O teste grátis é do cadastro público, e é este login que faz o papel do
       // clique no e-mail de confirmação. Empresa cadastrada pelo admin nasce
       // SUSPENSA de propósito (admin.service.ts:134) e não passa por aqui.
-      await concederTrialSePendente(porEmail.id);
-    }
+      await concederTrialSePendente(porEmail.id, tx);
+    });
     return { ok: true, userId: porEmail.id, role: porEmail.role, criado: false };
   }
 
-  const criado = await criarEmpresaPeloGoogle(perfil, ctx.ip);
+  let criado: { tenantId: string; userId: string } | null;
+  try {
+    criado = await criarEmpresaPeloGoogle(perfil, ctx.ip);
+  } catch (e) {
+    // Duas abas voltando do Google ao mesmo tempo: a outra criou a conta
+    // primeiro (índice único da identidade do e-mail). Resolve de novo — agora
+    // ela existe e esta aba entra nela, em vez de mostrar "falhou".
+    if (ehColisaoDeIdentidadeDeEmail(e) && !ctx.repetindo) {
+      return resolverLoginGoogle(perfil, { ...ctx, repetindo: true });
+    }
+    throw e;
+  }
   if (!criado) return { ok: false, code: "google-falhou" };
   return { ok: true, userId: criado.userId, role: "OWNER", criado: true };
 }
@@ -181,7 +204,11 @@ async function criarEmpresaPeloGoogle(
   const now = new Date();
   const trialEndsAt = trialEndFrom(now);
   const passwordHash = await hashPassword(randomBytes(32).toString("hex"));
-  const tradeName = perfil.name.slice(0, 120);
+  // O nome padrão, e não o da pessoa: é ele que faz o Início pedir o nome da
+  // empresa (`empresaSemNome`), como no cadastro por e-mail. Com o nome da
+  // pessoa, "João Silva" ia para o topo do app e para o comprovante, e o
+  // onboarding vinha preenchido com ele. O nome da pessoa fica no usuário.
+  const tradeName = NOME_EMPRESA_PADRAO;
 
   const criado = await prisma.$transaction(async (tx) => {
     const { tenantId, userId } = await provisionTenant(tx, {
@@ -236,8 +263,11 @@ async function criarEmpresaPeloGoogle(
 }
 
 /** Cadastro público que ainda não clicou no e-mail: o Google vale como confirmação. */
-async function concederTrialSePendente(userId: string): Promise<void> {
-  const user = await prisma.user.findUnique({
+async function concederTrialSePendente(
+  userId: string,
+  tx: Prisma.TransactionClient,
+): Promise<void> {
+  const user = await tx.user.findUnique({
     where: { id: userId },
     select: {
       tenantId: true,
@@ -250,17 +280,20 @@ async function concederTrialSePendente(userId: string): Promise<void> {
   if (!sub || sub.trialEndsAt || sub.activatedAt) return;
 
   const trialEndsAt = trialEndFrom(new Date());
-  await prisma.tenantSubscription.updateMany({
+  await tx.tenantSubscription.updateMany({
     where: { tenantId: user.tenantId, trialEndsAt: null, activatedAt: null },
     data: { status: "TRIAL", trialEndsAt },
   });
-  await audit({
-    tenantId: user.tenantId,
-    userId,
-    actorEmail: user.email,
-    action: "UPDATE",
-    entity: "TenantSubscription",
-    entityId: user.tenantId,
-    newData: { status: "TRIAL", origem: "google" },
-  });
+  await audit(
+    {
+      tenantId: user.tenantId,
+      userId,
+      actorEmail: user.email,
+      action: "UPDATE",
+      entity: "TenantSubscription",
+      entityId: user.tenantId,
+      newData: { status: "TRIAL", origem: "google" },
+    },
+    tx,
+  );
 }

@@ -110,6 +110,11 @@ export function LoginForm({ trialDays }: { trialDays: number }) {
           >
             Esqueci minha senha
           </Link>
+          {/* A conta criada pelo Google tem senha aleatória: o e-mail e senha
+              responde "incorretos" sem dizer o porquê. */}
+          <p className="text-center text-xs text-muted-foreground">
+            Criou a conta pelo Google? Use o botão do Google acima.
+          </p>
         </form>
 
         {/* Quem ainda não é cliente chega aqui com frequência: `/` redireciona

@@ -73,3 +73,50 @@ export function GradeSkeleton({ cartoes = 9 }: { cartoes?: number }) {
     </div>
   );
 }
+
+/**
+ * Contorno do Início. A tela soma dezenas de consultas (resumo, avisos, contas,
+ * cotações) antes de aparecer; sem contorno, o toque em "Início" ficava sem
+ * resposta até tudo terminar. Reserva os três cartões de ação e os números.
+ */
+export function InicioSkeleton() {
+  return (
+    <div role="status" aria-label="Carregando" className="flex flex-col gap-4">
+      <div className="mb-1 flex flex-col gap-2" aria-hidden="true">
+        <Skeleton className="h-7 w-40 max-w-full" />
+        <Skeleton className="h-4 w-56 max-w-full" />
+      </div>
+      <Skeleton className="h-10 w-full max-w-sm rounded-full" aria-hidden="true" />
+      <div className="grid grid-cols-1 gap-2 sm:grid-cols-3" aria-hidden="true">
+        {Array.from({ length: 3 }, (_, i) => (
+          <Skeleton key={i} className="h-16 w-full" />
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-hidden="true">
+        {Array.from({ length: 4 }, (_, i) => (
+          <Skeleton key={i} className="h-24 w-full" />
+        ))}
+      </div>
+      <Skeleton className="h-40 w-full" aria-hidden="true" />
+    </div>
+  );
+}
+
+/**
+ * Contorno do PDV: busca e grade de produtos. Herdar o `ListaSkeleton` de
+ * `/vendas` desenhava uma lista com filtros e a tela "pulava" quando a grade
+ * chegava.
+ */
+export function PdvSkeleton() {
+  return (
+    <div role="status" aria-label="Carregando" className="flex flex-col gap-4">
+      <Skeleton className="h-7 w-32" aria-hidden="true" />
+      <Skeleton className="h-12 w-full" aria-hidden="true" />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4" aria-hidden="true">
+        {Array.from({ length: 8 }, (_, i) => (
+          <Skeleton key={i} className="h-28 w-full" />
+        ))}
+      </div>
+    </div>
+  );
+}

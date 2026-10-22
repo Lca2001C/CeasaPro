@@ -29,7 +29,7 @@ test.describe("Autenticação e proteção de rotas", () => {
     await expect(google).toHaveAttribute("href", "/api/auth/google");
 
     await page.goto("/cadastro");
-    await expect(page.getByRole("link", { name: "Entrar com Google" })).toBeVisible();
+    await expect(page.getByRole("link", { name: "Continuar com Google" })).toBeVisible();
 
     // Sem cookie de state o callback não troca code com o Google — cai no login.
     const res = await request.get("/api/auth/google/callback?code=x&state=y", {

@@ -34,7 +34,14 @@ function LogoGoogle() {
  * Link de navegação (não fetch): o OAuth começa num GET que responde 302.
  * Sem JS, o CSP não precisa liberar o domínio do Google no `script-src`.
  */
-export function BotaoGoogle({ next }: { next?: string | null }) {
+export function BotaoGoogle({
+  next,
+  rotulo = "Entrar com Google",
+}: {
+  next?: string | null;
+  /** No cadastro, "Continuar com Google": quem quer se cadastrar não procura "Entrar". */
+  rotulo?: string;
+}) {
   const href = next
     ? `/api/auth/google?next=${encodeURIComponent(next)}`
     : "/api/auth/google";
@@ -44,7 +51,7 @@ export function BotaoGoogle({ next }: { next?: string | null }) {
       className="inline-flex h-14 w-full items-center justify-center gap-3 rounded-full border border-input bg-superficie px-6 text-base font-semibold text-foreground shadow-suave hover:bg-secondary motion-safe:transition-colors motion-safe:active:scale-[0.99]"
     >
       <LogoGoogle />
-      Entrar com Google
+      {rotulo}
     </a>
   );
 }

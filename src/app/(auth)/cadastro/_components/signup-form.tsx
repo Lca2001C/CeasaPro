@@ -138,6 +138,12 @@ export function SignupForm({
               Não achou? Confira a caixa de spam / lixo eletrônico. O link vale por 24 horas.
             </p>
           </div>
+          {/* Quem tem conta Google não precisa esperar o e-mail: o Google já
+              comprova o endereço e o teste começa na hora. */}
+          <div className="flex w-full flex-col gap-2">
+            <p className="text-sm text-muted-foreground">Não quer esperar o e-mail?</p>
+            <BotaoGoogle rotulo="Continuar com Google" />
+          </div>
           <Button asChild variant="outline" size="lg" className="w-full">
             <Link href="/login">Ir para o login</Link>
           </Button>
@@ -150,8 +156,20 @@ export function SignupForm({
     <Card>
       <CardContent className="p-5 sm:p-7">
         <h2 className="mb-5 text-xl font-bold tracking-tight">Crie sua conta</h2>
-        <div className="mb-5">
-          <BotaoGoogle />
+        <div className="mb-5 flex flex-col gap-2">
+          <BotaoGoogle rotulo="Continuar com Google" />
+          {/* O Google também cria a conta: o aviso dos termos vale para ele. */}
+          <p className="text-center text-xs text-muted-foreground">
+            Ao continuar você aceita os{" "}
+            <Link href="/termos" className="underline hover:text-foreground">
+              Termos de Uso
+            </Link>{" "}
+            e a{" "}
+            <Link href="/privacidade" className="underline hover:text-foreground">
+              Política de Privacidade
+            </Link>
+            .
+          </p>
         </div>
         <div className="mb-5 flex items-center gap-3 text-sm text-muted-foreground">
           <span className="h-px flex-1 bg-border" />

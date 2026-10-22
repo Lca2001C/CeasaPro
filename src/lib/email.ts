@@ -103,6 +103,17 @@ export async function sendEmail(
   const mailer = getTransporter();
 
   if (!mailer) {
+    // Em produção, sem SMTP, nenhum e-mail sai — e responder "ok" fazia o
+    // cadastro mostrar "verifique seu e-mail" para um link que nunca chegava,
+    // sem nenhum alarme. Falha de verdade, com log de erro: quem chama já
+    // trata `ok: false`. Fora de produção continua o no-op (dev e testes).
+    if (process.env.NODE_ENV === "production") {
+      logger.error(
+        { to: recipients.length, subject },
+        "E-mail NÃO enviado: SMTP_USER/SMTP_PASSWORD ausentes em produção",
+      );
+      return { ok: false, error: "SMTP não configurado" };
+    }
     logger.info(
       { to: recipients, subject },
       "[DEV] E-mail nao enviado (SMTP_USER/SMTP_PASSWORD ausentes)",
@@ -313,7 +324,7 @@ export function verifyEmailEmail(args: {
         <p><a href="${href}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Confirmar e comecar o teste</a></p>
         <p style="color:#666;font-size:13px">Se o botao nao funcionar, copie e cole este endereco no navegador:</p>
         <p style="font-size:13px;word-break:break-all"><a href="${href}" style="color:#1a7a3f">${href}</a></p>
-        <p style="color:#666;font-size:13px">O link vale por ${args.expiresInHours} horas e pode ser usado uma unica vez. Os ${args.trialDays} dias comecam a contar quando voce confirmar.</p>
+        <p style="color:#666;font-size:13px">O link vale por ${args.expiresInHours} horas. Os ${args.trialDays} dias comecam a contar quando voce confirmar.</p>
       </div>`,
   };
 }
@@ -341,6 +352,40 @@ export function signupAttemptOnExistingAccountEmail(args: {
         <p><a href="${escapeHtml(args.loginUrl)}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Entrar no CeasaPro</a></p>
         <p style="color:#666;font-size:13px">Nao lembra a senha? Redefina em <a href="${escapeHtml(args.forgotUrl)}" style="color:#1a7a3f">Esqueci minha senha</a>.</p>
         <p style="color:#666;font-size:13px">Se nao foi voce, pode ignorar este e-mail — nenhuma conta nova foi criada e nada mudou na sua.</p>
+      </div>`,
+  };
+}
+
+/**
+ * Alguém refez o cadastro num e-mail cuja conta ainda NÃO foi confirmada.
+ *
+ * O caso comum: a confirmação caiu no spam, a pessoa desistiu de procurar e
+ * cadastrou de novo. Mandar "você já tem conta, entre" a deixava sem saída se
+ * não lembrasse a senha digitada da primeira vez. Aqui vai o link de criar a
+ * senha (o mesmo do "esqueci minha senha"): abri-lo comprova o e-mail e libera
+ * o teste (`consumeResetToken`). Não revela nada — chega só a quem é dono da caixa.
+ */
+export function signupPendingAccountEmail(args: {
+  link: string;
+  trialDays: number;
+  expiresInMinutes: number;
+}): { subject: string; html: string } {
+  const href = escapeHtml(args.link);
+  const validade =
+    args.expiresInMinutes % 60 === 0
+      ? `${args.expiresInMinutes / 60} hora${args.expiresInMinutes > 60 ? "s" : ""}`
+      : `${args.expiresInMinutes} minutos`;
+  return {
+    subject: "CeasaPro - Confirme seu e-mail",
+    html: `
+      <div style="font-family:sans-serif;max-width:480px;margin:auto">
+        <h2 style="color:#1a7a3f">CeasaPro</h2>
+        <p>Voce ja tinha comecado um cadastro com este e-mail, mas ele ainda nao foi confirmado.</p>
+        <p>Toque no botao para confirmar e criar sua senha. Os <strong>${args.trialDays} dias de teste</strong> comecam na hora.</p>
+        <p><a href="${href}" style="display:inline-block;background:#1a7a3f;color:#fff;padding:12px 20px;border-radius:8px;text-decoration:none">Confirmar e criar minha senha</a></p>
+        <p style="color:#666;font-size:13px">Se o botao nao funcionar, copie e cole este endereco no navegador:</p>
+        <p style="font-size:13px;word-break:break-all"><a href="${href}" style="color:#1a7a3f">${href}</a></p>
+        <p style="color:#666;font-size:13px">O link vale por ${escapeHtml(validade)}. Se nao foi voce, pode ignorar este e-mail.</p>
       </div>`,
   };
 }

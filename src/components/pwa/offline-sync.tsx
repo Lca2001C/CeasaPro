@@ -22,6 +22,12 @@ import { avaliarSnapshot } from "@/lib/pwa/snapshot";
  */
 
 const INTERVALO_MINIMO_MS = 5 * 60 * 1000;
+/**
+ * O snapshot são ~25 consultas. Disparado na montagem, ele entrava na fila da
+ * única conexão da instância junto com a tela que acabou de abrir — a pessoa
+ * esperava por uma cópia offline que nem pediu. Espera a tela assentar.
+ */
+const ATRASO_MS = 4_000;
 
 function passouDoIntervalo(): boolean {
   try {
@@ -53,7 +59,8 @@ export function OfflineSync() {
     // `AbortController` para não gravar snapshot de uma navegação abandonada.
     const controller = new AbortController();
 
-    (async () => {
+    const timer = setTimeout(() => void sincronizar(), ATRASO_MS);
+    async function sincronizar() {
       try {
         const res = await fetch("/api/pwa/snapshot", {
           signal: controller.signal,
@@ -74,9 +81,12 @@ export function OfflineSync() {
       } catch {
         // Rede caiu, aba fechou, cota estourou: nada a fazer e nada a avisar.
       }
-    })();
+    }
 
-    return () => controller.abort();
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
   }, []);
 
   return null;
