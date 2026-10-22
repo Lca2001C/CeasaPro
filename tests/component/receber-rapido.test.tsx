@@ -84,10 +84,13 @@ describe("ReceberRapido dentro do link do card", () => {
     await user.selectOptions(within(dialogo).getByLabelText("Forma de recebimento"), "PIX");
     await user.click(within(dialogo).getByRole("button", { name: "Confirmar" }));
 
+    // Com a chave de idempotência: o reenvio depois de um timeout devolve o
+    // recebimento já gravado em vez de lançar de novo.
     expect(apiPost).toHaveBeenCalledWith("/api/fiado/pagamento", {
       accountId: "conta-1",
       amount: 100,
       method: "PIX",
+      idempotencyKey: expect.any(String),
     });
     expect(linkDoCard).not.toHaveBeenCalled();
   });

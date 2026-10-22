@@ -38,12 +38,12 @@ describe("SideNav", () => {
     expect(atuais.map((l) => l.textContent)).toEqual(["Vender (PDV)"]);
   });
 
-  it("no detalhe de uma venda, só 'Vendas'", () => {
+  it("no detalhe de uma venda, só 'Vendas e clientes'", () => {
     rota.atual = "/vendas/xyz";
     render(<SideNav modules={[]} />);
     const atuais = screen
       .getAllByRole("link")
       .filter((l) => l.getAttribute("aria-current") === "page");
-    expect(atuais.map((l) => l.textContent)).toEqual(["Vendas"]);
+    expect(atuais.map((l) => l.textContent)).toEqual(["Vendas e clientes"]);
   });
 });

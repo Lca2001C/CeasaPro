@@ -17,6 +17,9 @@ const sessao = vi.hoisted(() => ({
 vi.mock("@/lib/auth/session", () => ({
   requireTenant: async () => ({ session: sessao.atual, tenantId: "t1" }),
 }));
+// A página confere a sessão no banco (fora do grupo `(app)`, não tem o layout
+// que faz isso). Aqui a sessão é válida: o assunto é o aviso do nome.
+vi.mock("@/lib/auth/revogacao", () => ({ sessaoAindaValida: async () => true }));
 vi.mock("@/lib/services/billing.service", () => ({
   BillingService: {
     mpConfigured: () => true,
