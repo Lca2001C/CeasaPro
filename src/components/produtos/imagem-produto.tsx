@@ -7,7 +7,7 @@ import { buscarFotosDoBanco, enviarFotoProduto } from "@/actions/produtos.action
 import { chamarAction } from "@/lib/http/chamar-action";
 import { comprimirFoto } from "@/lib/imagem/comprimir";
 import { cn } from "@/lib/cn";
-import { Button } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
 export interface FotoEscolhida {
@@ -18,9 +18,10 @@ export interface FotoEscolhida {
 /**
  * "Imagem do produto": Câmera, Galeria ou Banco.
  *
- * - **Câmera** e **Galeria** são `<input type="file">`. O `capture="environment"`
- *   abre a câmera traseira nativa do celular — não depende de `getUserMedia`
- *   nem do `Permissions-Policy: camera=()` do site, que continua fechado.
+ * - **Câmera** e **Galeria** são o próprio `<input type="file">` por cima do
+ *   rótulo. Um input escondido aberto por `.click()` não entrega o arquivo em
+ *   vários celulares. O `capture="environment"` abre a câmera traseira nativa
+ *   — não depende de `getUserMedia` nem do `Permissions-Policy: camera=()`.
  * - A foto é comprimida no aparelho e enviada na hora; o formulário guarda só a
  *   chave devolvida. Enquanto envia, `onEnviando(true)` segura o Salvar.
  * - **Banco** busca as fotos da plataforma pelo nome digitado no produto.
@@ -105,24 +106,45 @@ export function ImagemProduto({
       )}
 
       <div className="grid grid-cols-3 gap-2">
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          disabled={!disponivel || enviando}
-          onClick={() => cameraRef.current?.click()}
+        <label
+          className={cn(
+            buttonVariants({ variant: "outline" }),
+            "relative h-11 cursor-pointer overflow-hidden",
+            (!disponivel || enviando) && "pointer-events-none opacity-50",
+          )}
         >
+          <input
+            ref={cameraRef}
+            type="file"
+            accept="image/*,image/heic,image/heif,.heic,.heif"
+            capture="environment"
+            className="absolute inset-0 z-10 cursor-pointer opacity-0"
+            disabled={!disponivel || enviando}
+            onChange={aoEscolherArquivo}
+            aria-label="Tirar foto com a câmera"
+            data-testid="foto-camera"
+          />
           <Camera /> Câmera
-        </Button>
-        <Button
-          type="button"
-          variant="outline"
-          className="h-11"
-          disabled={!disponivel || enviando}
-          onClick={() => galeriaRef.current?.click()}
+        </label>
+        <label
+          className={cn(
+            buttonVariants({ variant: "outline" }),
+            "relative h-11 cursor-pointer overflow-hidden",
+            (!disponivel || enviando) && "pointer-events-none opacity-50",
+          )}
         >
+          <input
+            ref={galeriaRef}
+            type="file"
+            accept="image/*,image/heic,image/heif,.heic,.heif"
+            className="absolute inset-0 z-10 cursor-pointer opacity-0"
+            disabled={!disponivel || enviando}
+            onChange={aoEscolherArquivo}
+            aria-label="Escolher foto da galeria"
+            data-testid="foto-galeria"
+          />
           <ImageIcon /> Galeria
-        </Button>
+        </label>
         <Button
           type="button"
           variant="outline"
@@ -137,26 +159,6 @@ export function ImagemProduto({
           <Database /> Banco
         </Button>
       </div>
-
-      <input
-        ref={cameraRef}
-        type="file"
-        accept="image/*"
-        capture="environment"
-        className="hidden"
-        onChange={aoEscolherArquivo}
-        aria-label="Tirar foto com a câmera"
-        data-testid="foto-camera"
-      />
-      <input
-        ref={galeriaRef}
-        type="file"
-        accept="image/*"
-        className="hidden"
-        onChange={aoEscolherArquivo}
-        aria-label="Escolher foto da galeria"
-        data-testid="foto-galeria"
-      />
 
       {!disponivel && (
         <p className="text-xs text-muted-foreground">

@@ -81,6 +81,36 @@ interface FotoAberta {
   liberar: () => void;
 }
 
+async function devolverBitmap(bitmap: ImageBitmap): Promise<FotoAberta> {
+  // Foto gigante: reduz já na decodificação para não estourar a memória do
+  // canvas no celular (iPhone recusa canvas acima de ~16 MP).
+  if (Math.max(bitmap.width, bitmap.height) > IMAGEM_LADO_MAX * 2) {
+    const escala = (IMAGEM_LADO_MAX * 2) / Math.max(bitmap.width, bitmap.height);
+    try {
+      const menor = await createImageBitmap(bitmap, {
+        resizeWidth: Math.round(bitmap.width * escala),
+        resizeHeight: Math.round(bitmap.height * escala),
+        resizeQuality: "high",
+      });
+      bitmap.close();
+      return {
+        imagem: menor,
+        largura: menor.width,
+        altura: menor.height,
+        liberar: () => menor.close(),
+      };
+    } catch {
+      // sem suporte a resize: usa o bitmap inteiro
+    }
+  }
+  return {
+    imagem: bitmap,
+    largura: bitmap.width,
+    altura: bitmap.height,
+    liberar: () => bitmap.close(),
+  };
+}
+
 /**
  * Decodifica a foto. `createImageBitmap` com `imageOrientation: "from-image"`
  * respeita a rotação EXIF, mas falha no Safari antigo do iPhone e em alguns
@@ -91,35 +121,16 @@ async function abrirFoto(arquivo: File): Promise<FotoAberta> {
   if (typeof createImageBitmap === "function") {
     try {
       const bitmap = await createImageBitmap(arquivo, { imageOrientation: "from-image" });
-      // Foto gigante: reduz já na decodificação para não estourar a memória do
-      // canvas no celular (iPhone recusa canvas acima de ~16 MP).
-      if (Math.max(bitmap.width, bitmap.height) > IMAGEM_LADO_MAX * 2) {
-        const escala = (IMAGEM_LADO_MAX * 2) / Math.max(bitmap.width, bitmap.height);
-        try {
-          const menor = await createImageBitmap(bitmap, {
-            resizeWidth: Math.round(bitmap.width * escala),
-            resizeHeight: Math.round(bitmap.height * escala),
-            resizeQuality: "high",
-          });
-          bitmap.close();
-          return {
-            imagem: menor,
-            largura: menor.width,
-            altura: menor.height,
-            liberar: () => menor.close(),
-          };
-        } catch {
-          // sem suporte a resize: usa o bitmap inteiro
-        }
-      }
-      return {
-        imagem: bitmap,
-        largura: bitmap.width,
-        altura: bitmap.height,
-        liberar: () => bitmap.close(),
-      };
+      return devolverBitmap(bitmap);
     } catch {
-      // segue para o <img>
+      try {
+        // Sem `imageOrientation`: Safari antigo e Android com JPEG da câmera
+        // recusam o dicionário de opções, mas abrem o arquivo sozinhos.
+        const bitmap = await createImageBitmap(arquivo);
+        return devolverBitmap(bitmap);
+      } catch {
+        // segue para o <img>
+      }
     }
   }
 

@@ -117,7 +117,7 @@ test.describe.serial("fotos de produto no R2", () => {
     request,
   }) => {
     const dialogo = await abrirNovoProduto(page, NOME_GALERIA);
-    await expect(dialogo.getByRole("button", { name: /Galeria/ })).toBeEnabled();
+    await expect(dialogo.getByTestId("foto-galeria")).toBeEnabled();
     await dialogo.getByTestId("foto-galeria").setInputFiles(await fotoDeTeste(page));
 
     // Prévia aparece e o Salvar só libera depois do envio.

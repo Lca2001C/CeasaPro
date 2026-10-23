@@ -81,6 +81,13 @@ export function ProdutoModal({
           // No celular, tela cheia: teclado aberto + 6 campos não cabem num cartão.
           "max-sm:left-0 max-sm:top-0 max-sm:h-[100dvh] max-sm:max-h-[100dvh] max-sm:w-full max-sm:max-w-none max-sm:translate-x-0 max-sm:translate-y-0 max-sm:rounded-none",
         )}
+        onInteractOutside={(e) => {
+          // Câmera/galeria do celular roubam o foco: o Radix trata como clique
+          // fora e desmonta o formulário antes da foto chegar.
+          e.preventDefault();
+        }}
+        onFocusOutside={(e) => e.preventDefault()}
+        onPointerDownOutside={(e) => e.preventDefault()}
       >
         <DialogHeader className="border-b px-4 py-4">
           <DialogTitle>{produto ? "Editar produto" : "Novo Produto"}</DialogTitle>

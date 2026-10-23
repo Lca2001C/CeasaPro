@@ -173,8 +173,8 @@ describe("ProdutoModal — cadastro", () => {
 
   it("sem armazenamento, os botões de foto ficam desabilitados com aviso", () => {
     abrir();
-    expect(screen.getByRole("button", { name: /Câmera/ })).toBeDisabled();
-    expect(screen.getByRole("button", { name: /Galeria/ })).toBeDisabled();
+    expect(screen.getByTestId("foto-camera")).toBeDisabled();
+    expect(screen.getByTestId("foto-galeria")).toBeDisabled();
     expect(screen.getByRole("button", { name: /Banco/ })).toBeDisabled();
     expect(screen.getByText(/envio de fotos ainda não está disponível/)).toBeInTheDocument();
   });

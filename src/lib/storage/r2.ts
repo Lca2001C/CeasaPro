@@ -76,8 +76,9 @@ export async function putObject(key: string, body: Uint8Array, contentType: stri
     // O código do R2 (SignatureDoesNotMatch, AccessDenied, NoSuchBucket…) diz
     // se é credencial, permissão ou bucket — sem ele, o erro era invisível.
     const corpo = await res.text().catch(() => "");
+    const codigo = corpo.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? null;
     logger.error(
-      { status: res.status, codigo: corpo.match(/<Code>([^<]+)<\/Code>/)?.[1] ?? null },
+      { status: res.status, codigo },
       "R2: falha ao gravar foto",
     );
     throw new AppError("STORAGE_FALHA", "Não foi possível enviar a foto. Tente de novo.", 502);
