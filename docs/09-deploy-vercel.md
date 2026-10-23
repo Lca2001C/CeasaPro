@@ -192,6 +192,8 @@ Settings → **Environment Variables**. Marque **Production** (e Preview, se voc
 
 **Opcionais (têm default no código):** `ACCESS_TOKEN_TTL` (15m), `REFRESH_TOKEN_TTL_DAYS` (30), `SMTP_HOST` (smtp.gmail.com), `SMTP_PORT` (465), `EMAIL_REPLY_TO`, `LOG_LEVEL`.
 
+**Cache (opcional, recomendado):** `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN` (as duas ou nenhuma). Sem elas toda tela lê do Postgres, como antes. Ver §6 "Cache (Upstash Redis)".
+
 **Fotos de produto (opcional):** `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` (as cinco ou nenhuma). Sem elas o cadastro funciona e os botões de foto ficam desabilitados. Ver [07](07-instalacao-e-deploy.md).
 
 **Não configure:**
@@ -219,6 +221,8 @@ Ao criar a variável, a Vercel oferece **Plain Text** (você relê o valor no pa
 | `MERCADOPAGO_WEBHOOK_SECRET` | **Sensitive** | Valida a assinatura do webhook |
 | `SMTP_PASSWORD` | **Sensitive** | Senha de app do Gmail — envia e-mail em seu nome |
 | `CRON_SECRET` | **Sensitive** | Bearer que libera `/api/cron/billing` |
+| `UPSTASH_REDIS_REST_TOKEN` | **Sensitive** | Lê e grava o cache e os contadores de login |
+| `UPSTASH_REDIS_REST_URL` | Plain (recomendado) | Só o endereço; sem o token não abre nada |
 | `NEXT_PUBLIC_APP_URL` | **Plain** (obrigatório) | Público por definição |
 | `NEXT_PUBLIC_MERCADOPAGO_PUBLIC_KEY` | **Plain** (obrigatório) | A própria Mercado Pago a chama de *public* key |
 | `NEXT_PUBLIC_SUPPORT_WHATSAPP` | **Plain** (obrigatório) | Aparece no botão flutuante |
@@ -499,6 +503,16 @@ O código já vem integrado e fica **desligado** sem DSN.
 4. Em Alerts, crie a regra "um problema novo" → e-mail. Erro inesperado no servidor chega com a tag `errorId` — o mesmo `ref:` que o cliente vê na tela.
 
 Só erros: sem tracing, sem replay e sem dado de cliente (cookies, cabeçalhos, corpo da requisição e variáveis da pilha desligados em `src/lib/observabilidade/sentry.ts`). Para a pilha do navegador vir legível: em Settings → Auth Tokens crie um token (escopo de release/source map) e ponha na Vercel `SENTRY_AUTH_TOKEN`, `SENTRY_ORG` (o slug da organização) e `SENTRY_PROJECT` (o slug do projeto). O build envia os source maps e os apaga da saída publicada. Sem os três, a pilha vem minificada e o build não muda.
+
+### Cache (Upstash Redis)
+
+Fica **desligado** sem as duas variáveis. Ligado, tira do Postgres as leituras que se repetem em toda navegação: a conferência de sessão e o cabeçalho do layout, o resumo do Início, as telas de cotação, o CeasaNews, o banco de fotos e os contadores de rate limit do login. Regras em `docs/CONTEXTO-AGENTE.md` §13b.
+
+1. Vercel → Project → **Storage** → **Upstash for Redis** (Marketplace) → criar banco na região **São Paulo (`sa-east-1`)**, a mesma da função e do Neon. Ou crie direto em console.upstash.com → Redis → região `sa-east-1`.
+2. Copie **REST URL** e **REST Token** para `UPSTASH_REDIS_REST_URL` e `UPSTASH_REDIS_REST_TOKEN`. Se a integração da Vercel criou `KV_REST_API_URL`/`KV_REST_API_TOKEN`, elas também valem — não precisa renomear. Faça redeploy.
+3. Eviction **desligado** (o padrão do Upstash). Um banco serve preview e produção: as chaves levam o prefixo do ambiente (`cp:production:`, `cp:preview:`).
+
+Redis fora do ar não derruba nada: a leitura cai no Postgres em até ~150 ms e o log mostra `Cache indisponível`. O rate limit do login também cai no Postgres e continua recusando se o banco falhar.
 
 ### Site fora do ar (monitor externo)
 

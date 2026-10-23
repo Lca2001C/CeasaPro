@@ -59,6 +59,7 @@ Siga na ordem. Pule o passo que não se aplica, mas não o reordene.
 - Ação é botão escrito e colorido: Editar = `info`, Excluir/Remover = `destructive`, Pagar/Vender/Salvar = `success`.
 - Componente `"use client"` não importa `@/lib/money` nem módulo com `node:crypto`/`jose` (ver skill `dinheiro-e-estoque`).
 - Página que lê a mesma coisa duas vezes na requisição: `cache()` do React, só em leitura.
+- Leitura pesada e repetida entre aberturas (painel, lista global): `lembrar({ chave, versoes: [versao.tenant(tenantId)], ttlSeg }, fn)` de `src/lib/cache/cache.ts`. Chave sempre com o `tenantId`; dia na chave se o número muda à meia-noite. Nunca em escrita nem em saldo usado para gravar. Escrita fora dos wrappers chama `invalidarTenant` (CONTEXTO-AGENTE §13b).
 
 ### 7. Navegação
 

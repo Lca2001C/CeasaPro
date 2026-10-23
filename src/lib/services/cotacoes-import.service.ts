@@ -13,6 +13,7 @@ import { serieDaFonte } from "@/lib/cotacoes/serie";
 import { normalizarEmbalagem } from "@/lib/cotacoes/embalagem";
 import { audit } from "@/lib/audit";
 import { esquecerUnidadesDoBoletim } from "./cotacoes.service";
+import { invalidarGlobal } from "@/lib/cache/cache";
 
 // Reexportada para não quebrar quem já a importava daqui. A definição saiu
 // deste arquivo e mora em `lib/cotacoes/serie.ts` — o comentário lá explica
@@ -374,6 +375,7 @@ export const CotacoesImportService = {
     }
 
     esquecerUnidadesDoBoletim(centralCode);
+    await invalidarGlobal("cotacoes");
 
     const runId = await registrarRun(
       centralCode,
@@ -483,6 +485,7 @@ export const CotacoesImportService = {
       );
       return { cotacoesApagadas: cotacoes.count, registroId: registro.id };
     });
+    if (r.cotacoesApagadas > 0) await invalidarGlobal("cotacoes");
 
     logger.warn(
       { centralCode, quoteDate: diaIso, cotacoes: r.cotacoesApagadas, por: autor.email ?? null },

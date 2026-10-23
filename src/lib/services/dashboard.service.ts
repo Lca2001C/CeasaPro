@@ -7,6 +7,7 @@ import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
 import { APP_TIME_ZONE, isoDateTz, startOfNextMonthTz } from "@/lib/tz";
 import { isModuleEnabled } from "@/lib/plan/modules";
+import { chaveDeModulos, lembrar, versao } from "@/lib/cache/cache";
 import { ORIGEM_BAIXA_EMBALAGEM, ORIGEM_BAIXA_EMBALAGEM_DESFEITA } from "@/lib/estoque/origens";
 import { linhasVendidas, resumirPor, type LinhaVendida } from "@/lib/reports/linhas-vendidas";
 import { HIGIENIZACAO_ZERADA, resumoDaHigienizacao } from "./despesas.service";
@@ -105,6 +106,23 @@ export const DashboardService = {
    *   valor do estoque ele tira das posições, e o a pagar de `ContasPagarService`).
    */
   async getSummary(
+    tenantId: string,
+    modules?: string[],
+    parte?: "geral" | "financeiro" | "resumo",
+  ): Promise<DashboardSummary> {
+    // O dia entra na chave: na virada da meia-noite o "hoje" muda sem escrita.
+    return lembrar(
+      {
+        chave: `dash:${tenantId}:${parte ?? "tudo"}:${isoDateTz()}:${chaveDeModulos(modules)}`,
+        versoes: [versao.tenant(tenantId)],
+        ttlSeg: 60,
+      },
+      () => this.calcularSummary(tenantId, modules, parte),
+    );
+  },
+
+  /** `getSummary` sem cache — o cálculo de fato. */
+  async calcularSummary(
     tenantId: string,
     modules?: string[],
     parte?: "geral" | "financeiro" | "resumo",

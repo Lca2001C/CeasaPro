@@ -9,6 +9,7 @@ import {
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { revokeAllForTenant } from "@/lib/auth/refresh";
+import { invalidarTenant } from "@/lib/cache/cache";
 import {
   addOneMonth,
   ancoraDoVencimento,
@@ -1586,6 +1587,7 @@ export const BillingService = {
     }
 
     if (!resultado.aplicado) return "ignorado";
+    await invalidarTenant(payment.tenantId);
 
     if (resultado.outrasPendentes?.length) {
       await cancelarNoGateway(resultado.outrasPendentes, {
@@ -2082,6 +2084,9 @@ export const BillingService = {
       const effective = computeStatus(atual, now);
       if (effective !== atual.status && (await gravarStatusCalculado(atual, effective))) {
         updated++;
+        await invalidarTenant(atual.tenantId);
+      } else if (atual !== sub) {
+        await invalidarTenant(atual.tenantId);
       }
     }
     return { total: subs.length, updated, planosTrocados };

@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { sessaoAindaValida } from "@/lib/auth/revogacao";
+import { sessaoAindaValidaParaLeitura } from "@/lib/auth/revogacao";
 import { rotaDeSessaoRevogada } from "@/lib/auth/renovacao";
 import { AdminShell } from "@/components/layout/admin-shell";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
@@ -15,7 +15,7 @@ export default async function AdminLayout({
   if (session.mustChangePassword) redirect("/alterar-senha");
   if (session.role !== "SUPER_ADMIN") redirect("/dashboard");
   // Redireciona, não lança — mesmo motivo do layout `(app)`.
-  if (!(await sessaoAindaValida(session))) redirect(rotaDeSessaoRevogada("/admin"));
+  if (!(await sessaoAindaValidaParaLeitura(session))) redirect(rotaDeSessaoRevogada("/admin"));
 
   // Depois dos redirecionamentos: contar notificacoes de quem nem vai ver o
   // painel seria consulta jogada fora em todo acesso indevido.

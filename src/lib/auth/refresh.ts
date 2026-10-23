@@ -3,6 +3,7 @@ import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { audit } from "@/lib/audit";
 import { logger } from "@/lib/logger";
+import { invalidar, versao } from "@/lib/cache/cache";
 
 const refreshDays = Number(process.env.REFRESH_TOKEN_TTL_DAYS ?? "30");
 
@@ -259,6 +260,7 @@ async function revogarFamilia(familyId: string): Promise<void> {
     where: { familyId, revokedAt: null },
     data: { revokedAt: new Date(), revokedReason: "REUSE" },
   });
+  await invalidar(versao.sessaoFamilia(familyId));
 }
 
 /**
@@ -338,6 +340,7 @@ export async function revokeRefreshToken(
     where: { familyId: token.familyId, revokedAt: null },
     data: { revokedAt: new Date(), revokedReason: motivo },
   });
+  await invalidar(versao.sessaoFamilia(token.familyId));
 }
 
 /**
@@ -380,6 +383,10 @@ export async function revokeAllForUser(
   };
   if (tx) await executar(tx);
   else await prisma.$transaction(executar);
+  // Com `tx`, isto roda antes do commit: um layout que releia nesse meio-tempo
+  // guarda o estado antigo na versão nova por até `TTL_DA_SESSAO_SEG` (30 s).
+  // A escrita não depende disso — os wrappers conferem no banco.
+  await invalidar(versao.sessaoUsuario(userId));
 }
 
 /** Revoga todas as sessões de uma empresa (bloqueio imediato pelo super-admin). */
@@ -401,6 +408,7 @@ export async function revokeAllForTenant(
   };
   if (tx) await executar(tx);
   else await prisma.$transaction(executar);
+  await invalidar(versao.sessaoTenant(tenantId));
 }
 
 /**

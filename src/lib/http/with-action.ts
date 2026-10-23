@@ -6,6 +6,7 @@ import { ForbiddenError, PaymentRequiredError } from "./app-error";
 import { ok, toActionResult, type ActionResult } from "./action-result";
 import { clientIp } from "./request";
 import { assertSessaoValida } from "@/lib/auth/revogacao";
+import { invalidarTenant } from "@/lib/cache/cache";
 
 export interface TenantCtx {
   session: Session;
@@ -54,12 +55,18 @@ export function withTenantAction<I, O>(opts: {
       if (opts.module) requireModule(session.modules, opts.module);
       const input = (opts.schema ? opts.schema.parse(raw) : (raw as I)) as I;
       const ip = await clientIp();
-      const data = await opts.handler(input, {
-        session,
-        tenantId,
-        userId: session.sub,
-        ip,
-      });
+      let data: O;
+      try {
+        data = await opts.handler(input, {
+          session,
+          tenantId,
+          userId: session.sub,
+          ip,
+        });
+      } finally {
+        // Também quando o handler lança: ele pode ter gravado antes do erro.
+        await invalidarTenant(tenantId);
+      }
       return ok(data);
     } catch (e) {
       return toActionResult(e);

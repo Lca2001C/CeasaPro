@@ -19,6 +19,13 @@
  *
  * Mesma forma e mesmo raciocínio de `no-outbound-email.ts`.
  */
+// O cliente Upstash fala REST por `fetch`: com o `.env` do desenvolvedor, a
+// suíte bateria no Redis de verdade. Teste de cache usa `clienteEmMemoria`.
+delete process.env.UPSTASH_REDIS_REST_URL;
+delete process.env.UPSTASH_REDIS_REST_TOKEN;
+delete process.env.KV_REST_API_URL;
+delete process.env.KV_REST_API_TOKEN;
+
 const fetchOriginal = globalThis.fetch;
 
 const LOCAIS = /^(localhost|127\.0\.0\.1|\[::1\]|0\.0\.0\.0)(:|$)/i;

@@ -6,6 +6,7 @@ import { FEEDS, type FeedDeNoticias } from "@/lib/noticias/fontes";
 import { lerFeed } from "@/lib/noticias/parse";
 import { chaveDoTitulo, classificar } from "@/lib/noticias/filtro";
 import { AdminNotificationsService } from "./admin-notifications.service";
+import { invalidarGlobal, lembrar, versao } from "@/lib/cache/cache";
 
 /**
  * CeasaNews: coleta e leitura das notícias.
@@ -32,6 +33,28 @@ export const IDADE_MAXIMA_MS = 2 * 60 * 60 * 1000;
 const INTERVALO_SEM_SUCESSO_MS = 10 * 60 * 1000;
 /** Item com data no futuro (fuso errado do feed) entra como "agora". */
 const FOLGA_DE_FUTURO_MS = 10 * 60 * 1000;
+
+function listarDoBanco(tema: NoticiaTema | undefined, agora: Date): Promise<NoticiaDaTela[]> {
+  return prisma.noticia.findMany({
+    where: {
+      publicadaEm: { gte: new Date(agora.getTime() - DIAS_NA_TELA * 86_400_000) },
+      ...(tema ? { temas: { has: tema } } : {}),
+    },
+    orderBy: [{ publicadaEm: "desc" }, { pontuacao: "desc" }],
+    take: LIMITE_NA_TELA,
+    select: {
+      id: true,
+      titulo: true,
+      resumo: true,
+      url: true,
+      fonte: true,
+      publicadaEm: true,
+      imagemUrl: true,
+      temas: true,
+      pontuacao: true,
+    },
+  });
+}
 
 export interface NoticiaDaTela {
   id: string;
@@ -191,6 +214,7 @@ export const NoticiasService = {
     await prisma.noticiaColeta.deleteMany({
       where: { createdAt: { lt: new Date(agora.getTime() - DIAS_DE_GUARDA * 86_400_000) } },
     });
+    await invalidarGlobal("noticias");
 
     const falhas = resultados.filter((r) => !r.ok);
     const interrompida = falhas.length > 0 && falhas.every((r) => r.semTempo);
@@ -273,26 +297,12 @@ export const NoticiasService = {
   },
 
   async listar(opts: { tema?: NoticiaTema; agora?: Date } = {}): Promise<NoticiaDaTela[]> {
-    const agora = opts.agora ?? new Date();
-    return prisma.noticia.findMany({
-      where: {
-        publicadaEm: { gte: new Date(agora.getTime() - DIAS_NA_TELA * 86_400_000) },
-        ...(opts.tema ? { temas: { has: opts.tema } } : {}),
-      },
-      orderBy: [{ publicadaEm: "desc" }, { pontuacao: "desc" }],
-      take: LIMITE_NA_TELA,
-      select: {
-        id: true,
-        titulo: true,
-        resumo: true,
-        url: true,
-        fonte: true,
-        publicadaEm: true,
-        imagemUrl: true,
-        temas: true,
-        pontuacao: true,
-      },
-    });
+    // Com `agora` explícito (testes, simulação) a janela é outra: lê do banco.
+    if (opts.agora) return listarDoBanco(opts.tema, opts.agora);
+    return lembrar(
+      { chave: `noticias:${opts.tema ?? "todas"}`, versoes: [versao.global("noticias")], ttlSeg: 600 },
+      () => listarDoBanco(opts.tema, new Date()),
+    );
   },
 
   /** Para o super-admin: a última coleta de cada feed. */

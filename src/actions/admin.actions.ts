@@ -4,6 +4,7 @@ import { z } from "zod";
 import { withAdminAction } from "@/lib/http/with-action";
 import { AdminService } from "@/lib/services/admin.service";
 import { AdminNotificationsService } from "@/lib/services/admin-notifications.service";
+import { invalidarTenant } from "@/lib/cache/cache";
 import {
   novaEmpresaSchema,
   tenantStatusSchema,
@@ -19,18 +20,29 @@ export const criarEmpresa = withAdminAction({
 
 export const alterarStatusEmpresa = withAdminAction({
   schema: tenantStatusSchema,
-  handler: (input, ctx) => AdminService.setTenantStatus(input, ctx),
+  handler: async (input, ctx) => {
+    const out = await AdminService.setTenantStatus(input, ctx);
+    await invalidarTenant(input.tenantId);
+    return out;
+  },
 });
 
 export const excluirEmpresa = withAdminAction({
   schema: z.string().min(1),
-  handler: (id, ctx) => AdminService.deleteTenant(id, ctx),
+  handler: async (id, ctx) => {
+    const out = await AdminService.deleteTenant(id, ctx);
+    await invalidarTenant(id);
+    return out;
+  },
 });
 
 export const alterarMensalidade = withAdminAction({
   schema: monthlyAmountSchema,
-  handler: (input, ctx) =>
-    AdminService.updateMonthlyAmount(input.tenantId, input.monthlyAmount, ctx),
+  handler: async (input, ctx) => {
+    const out = await AdminService.updateMonthlyAmount(input.tenantId, input.monthlyAmount, ctx);
+    await invalidarTenant(input.tenantId);
+    return out;
+  },
 });
 
 /**

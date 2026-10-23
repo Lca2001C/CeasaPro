@@ -11,7 +11,7 @@ import {
   sugerirUnidade,
 } from "@/lib/cotacoes/embalagem";
 import { variacaoPercentual } from "@/lib/cotacoes/variacao";
-import { APP_TIME_ZONE, addDaysTz, startOfDayTz } from "@/lib/tz";
+import { APP_TIME_ZONE, addDaysTz, isoDateTz, startOfDayTz } from "@/lib/tz";
 
 /** Janela das compras que entram em "comprei acima do boletim". */
 const JANELA_DE_COMPRAS_DIAS = 30;
@@ -20,6 +20,7 @@ import { serieDaFonte } from "@/lib/cotacoes/serie";
 import type { TenantCtx } from "@/lib/http/with-action";
 import { VendasService } from "./vendas.service";
 import { cache } from "react";
+import { invalidarTenant, lembrar, versao } from "@/lib/cache/cache";
 
 /**
  * Leitura das cotações e gestão dos vínculos.
@@ -1185,6 +1186,59 @@ export const CotacoesService = {
   },
 };
 
+/*
+  As leituras das telas de cotação, no Redis. A chave junta a versão da empresa
+  (vínculo, produto, estoque, central escolhida) e a do boletim (importação ou
+  remoção), e o dia: "há quantos dias sem boletim" muda sem escrita nenhuma.
+  `comprasAcimaDoBoletim` com `agora` explícito (testes) lê do banco.
+*/
+const TTL_COTACOES_SEG = 300;
+const versoesDaEmpresa = (tenantId: string) => [versao.tenant(tenantId), versao.global("cotacoes")];
+
+const semCache = {
+  getPainel: CotacoesService.getPainel,
+  getMeusProdutos: CotacoesService.getMeusProdutos,
+  precosDoBoletimPorProduto: CotacoesService.precosDoBoletimPorProduto,
+  comprasAcimaDoBoletim: CotacoesService.comprasAcimaDoBoletim,
+  listarCentrais: CotacoesService.listarCentrais,
+};
+
+CotacoesService.getPainel = (tenantId) =>
+  lembrar(
+    { chave: `cot:painel:${tenantId}:${isoDateTz()}`, versoes: versoesDaEmpresa(tenantId), ttlSeg: TTL_COTACOES_SEG },
+    () => semCache.getPainel.call(CotacoesService, tenantId),
+  );
+
+CotacoesService.getMeusProdutos = (tenantId) =>
+  lembrar(
+    { chave: `cot:meus:${tenantId}`, versoes: versoesDaEmpresa(tenantId), ttlSeg: TTL_COTACOES_SEG },
+    () => semCache.getMeusProdutos.call(CotacoesService, tenantId),
+  );
+
+CotacoesService.precosDoBoletimPorProduto = (tenantId) =>
+  lembrar(
+    { chave: `cot:precos:${tenantId}`, versoes: versoesDaEmpresa(tenantId), ttlSeg: TTL_COTACOES_SEG },
+    () => semCache.precosDoBoletimPorProduto.call(CotacoesService, tenantId),
+  );
+
+CotacoesService.comprasAcimaDoBoletim = (tenantId, agora) =>
+  agora
+    ? semCache.comprasAcimaDoBoletim.call(CotacoesService, tenantId, agora)
+    : lembrar(
+        {
+          chave: `cot:acima:${tenantId}:${isoDateTz()}`,
+          versoes: versoesDaEmpresa(tenantId),
+          ttlSeg: TTL_COTACOES_SEG,
+        },
+        () => semCache.comprasAcimaDoBoletim.call(CotacoesService, tenantId),
+      );
+
+CotacoesService.listarCentrais = () =>
+  lembrar(
+    { chave: "cot:centrais", versoes: [versao.global("cotacoes")], ttlSeg: 600 },
+    () => semCache.listarCentrais.call(CotacoesService),
+  );
+
 /**
  * Quantos boletins o minigráfico do cartão resume.
  *
@@ -1313,7 +1367,7 @@ async function autoVincularIdenticos(
   });
   if (novos.length === 0) return 0;
 
-  return prisma.$transaction(async (tx) => {
+  const gravados = await prisma.$transaction(async (tx) => {
     const r = await tx.tenantCeasaLink.createMany({
       data: novos.map(({ productId, ceasaProductId, unit }) => ({
         tenantId,
@@ -1341,6 +1395,9 @@ async function autoVincularIdenticos(
     }
     return r.count;
   });
+  // Roda também na LEITURA de `/cotacoes`, fora dos wrappers.
+  if (gravados > 0) await invalidarTenant(tenantId);
+  return gravados;
 }
 
 /**

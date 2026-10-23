@@ -1,18 +1,20 @@
 import { createHash } from "node:crypto";
 import { prisma } from "@/lib/db/prisma";
-import { logger } from "@/lib/logger";
+import { describeError, logger } from "@/lib/logger";
+import { chaveDeCache, comTeto } from "@/lib/cache/cache";
+import { clienteDeCache, type ClienteDeCache } from "@/lib/cache/cliente";
 
 /**
- * Rate limit persistido no Postgres — janela fixa, compartilhado entre instâncias.
+ * Rate limit compartilhado entre instâncias — janela fixa, no Redis (Upstash)
+ * quando configurado e no Postgres quando não há Redis ou ele falha.
  *
  * Por que não em memória: em serverless cada request pode ser atendido por uma
  * instância diferente (ou por um processo recém-iniciado), então um contador em
- * processo não segura força bruta no login. O contador vive no banco que a
- * aplicação já usa, sem adicionar fornecedor nem dependência.
+ * processo não segura força bruta no login.
  *
  * Use aqui **só** o que precisa resistir a ataque (rotas de autenticação). Para
- * conter abuso acidental por empresa, o contador em memória de `rate-limit.ts`
- * continua sendo a escolha certa: não paga ida ao banco a cada request.
+ * conter abuso acidental por empresa, `rateLimitCompartilhado` de
+ * `rate-limit.ts` basta: é best-effort e nunca vai ao Postgres.
  */
 
 export interface RateLimitResult {
@@ -66,6 +68,26 @@ function hashKey(key: string): string {
 }
 
 /**
+ * O contador no Redis, quando há Redis: é o caminho de toda tentativa de login,
+ * e cada ida ao Postgres aqui disputava o pool pequeno com as telas.
+ *
+ * `undefined` = sem Redis ou ele falhou, e quem chama segue para o Postgres. O
+ * fail-closed continua do mesmo jeito: só recusa por indisponibilidade quando
+ * o BANCO também falha. Na troca de um para o outro a janela recomeça — um
+ * punhado de tentativas a mais durante um incidente do Redis.
+ */
+async function noRedis<T>(op: (c: ClienteDeCache, chave: string) => Promise<T>, key: string): Promise<T | undefined> {
+  const c = clienteDeCache();
+  if (!c) return undefined;
+  try {
+    return await comTeto(op(c, chaveDeCache(`rl:${hashKey(key)}`)));
+  } catch (e) {
+    logger.warn({ err: describeError(e) }, "Rate limit no Redis indisponível — usando o Postgres");
+    return undefined;
+  }
+}
+
+/**
  * Consome uma unidade da janela e diz se a requisição passa.
  *
  * O incremento é feito num único `INSERT ... ON CONFLICT`, atômico no banco:
@@ -92,6 +114,13 @@ export async function rateLimitDb(
   key: string,
   opts: { limit: number; windowMs: number },
 ): Promise<RateLimitResult> {
+  const noCache = await noRedis((c, k) => c.consumirJanela(k, opts.windowMs), key);
+  if (noCache) {
+    return noCache.count > opts.limit
+      ? { ok: false, retryAfterMs: Math.max(0, noCache.restanteMs) }
+      : { ok: true, retryAfterMs: 0 };
+  }
+
   try {
     return await consumirJanela(key, opts);
   } catch {
@@ -154,6 +183,13 @@ export async function consultarLimiteDb(
   key: string,
   opts: { limit: number },
 ): Promise<RateLimitResult> {
+  const noCache = await noRedis((c, k) => c.consultarJanela(k), key);
+  if (noCache) {
+    return noCache.count >= opts.limit
+      ? { ok: false, retryAfterMs: noCache.restanteMs }
+      : { ok: true, retryAfterMs: 0 };
+  }
+
   for (let tentativa = 0; ; tentativa++) {
     try {
       const rows = await prisma.$queryRaw<{ count: number; expiresAt: Date }[]>`
@@ -192,6 +228,7 @@ export async function consultarLimiteDb(
  * Nunca lança nem desce de zero.
  */
 export async function devolverUnidadeDb(key: string): Promise<void> {
+  if ((await noRedis((c, k) => c.devolverUnidade(k).then(() => true), key)) === true) return;
   try {
     await prisma.$executeRaw`
       UPDATE "rate_limits" SET "count" = GREATEST("count" - 1, 0)
@@ -215,6 +252,7 @@ export async function registrarFalhaDb(
   key: string,
   opts: { limit: number; windowMs: number },
 ): Promise<void> {
+  if (await noRedis((c, k) => c.consumirJanela(k, opts.windowMs), key)) return;
   try {
     await consumirJanela(key, opts);
   } catch (e) {
@@ -237,6 +275,7 @@ export async function registrarFalhaDb(
  * significa que a janela expira sozinha mais tarde.
  */
 export async function resetRateLimit(key: string): Promise<void> {
+  if ((await noRedis((c, k) => c.del(k).then(() => true), key)) === true) return;
   try {
     await prisma.rateLimit.deleteMany({ where: { keyHash: hashKey(key) } });
   } catch (e) {

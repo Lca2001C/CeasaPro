@@ -1,8 +1,9 @@
 import { redirect } from "next/navigation";
 import { getSession } from "@/lib/auth/session";
-import { sessaoAindaValida } from "@/lib/auth/revogacao";
+import { sessaoAindaValidaParaLeitura } from "@/lib/auth/revogacao";
 import { rotaDeSessaoRevogada } from "@/lib/auth/renovacao";
 import { prisma } from "@/lib/db/prisma";
+import { lembrar, versao } from "@/lib/cache/cache";
 import { accessDecision, billingNotice } from "@/lib/billing/status";
 import { formatDate } from "@/lib/format";
 import { AppShell } from "@/components/layout/app-shell";
@@ -22,7 +23,7 @@ export default async function AppLayout({
   // JWT ainda vivo: redireciona, NÃO lança. Exceção aqui não tem boundary que a
   // pegue (o `error.tsx` do grupo não cobre o próprio layout) e o proxy devolve
   // o `/login` para cá enquanto o access cookie existir. Ver `sessaoAindaValida`.
-  if (!(await sessaoAindaValida(session))) redirect(rotaDeSessaoRevogada("/dashboard"));
+  if (!(await sessaoAindaValidaParaLeitura(session))) redirect(rotaDeSessaoRevogada("/dashboard"));
   // Assinatura bloqueada não lê dado da empresa.
   //
   // Isto ESPELHA o proxy, que já decide o mesmo — e é justamente esse o ponto:
@@ -41,14 +42,19 @@ export default async function AppLayout({
   if (session.role === "SUPER_ADMIN" && !session.tenantId) redirect("/admin");
   if (!session.tenantId) redirect("/login");
 
-  const tenant = await prisma.tenant.findUnique({
-    where: { id: session.tenantId },
-    select: {
-      tradeName: true,
-      onboardingCompletedAt: true,
-      subscription: { select: { trialEndsAt: true, cancelledAt: true, currentPeriodEnd: true } },
-    },
-  });
+  const tenantId = session.tenantId;
+  const tenant = await lembrar(
+    { chave: `layout:${tenantId}`, versoes: [versao.tenant(tenantId)], ttlSeg: 300 },
+    () =>
+      prisma.tenant.findUnique({
+        where: { id: tenantId },
+        select: {
+          tradeName: true,
+          onboardingCompletedAt: true,
+          subscription: { select: { trialEndsAt: true, cancelledAt: true, currentPeriodEnd: true } },
+        },
+      }),
+  );
 
   // O onboarding deixou de ser obrigatório.
   //

@@ -2,6 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/db/prisma";
 import { UnauthorizedError } from "@/lib/http/app-error";
 import type { Session } from "./session";
+import { lembrar, versao } from "@/lib/cache/cache";
 
 /**
  * A sessão ainda vale AGORA — não só quando o token foi emitido?
@@ -87,6 +88,36 @@ export function sessaoConfere(
  * Falha de BANCO continua lançando: aí o "Tentar de novo" é a resposta certa.
  */
 export async function sessaoAindaValida(session: Session): Promise<boolean> {
+  return sessaoConfere(session, await lerEstadoDaSessao(session));
+}
+
+/** Quanto o layout confia no estado lido, se nenhuma revogação trocar a versão. */
+export const TTL_DA_SESSAO_SEG = 30;
+
+/**
+ * `sessaoAindaValida` para os LAYOUTS — com o estado do banco no Redis.
+ *
+ * O layout roda em toda navegação e esta consulta era a primeira ida ao banco
+ * de cada tela no celular. A chave muda com as versões que toda revogação
+ * incrementa (usuário, empresa, linhagem do aparelho): logout, troca de senha,
+ * bloqueio e exclusão valem na hora, e o TTL cobre a revogação que rodou dentro
+ * de uma transação (versão trocada antes do commit).
+ *
+ * Os wrappers de escrita NÃO usam isto: "revogado não escreve" continua
+ * conferido no banco, sem cache no meio.
+ */
+export async function sessaoAindaValidaParaLeitura(session: Session): Promise<boolean> {
+  const versoes = [versao.sessaoUsuario(session.sub)];
+  if (session.tenantId) versoes.push(versao.sessaoTenant(session.tenantId));
+  if (session.fid) versoes.push(versao.sessaoFamilia(session.fid));
+  const estado = await lembrar(
+    { chave: `sess:${session.sub}:${session.fid ?? "-"}`, versoes, ttlSeg: TTL_DA_SESSAO_SEG },
+    () => lerEstadoDaSessao(session),
+  );
+  return sessaoConfere(session, estado);
+}
+
+async function lerEstadoDaSessao(session: Session): Promise<EstadoDaSessaoNoBanco | undefined> {
   const linhas = await prisma.$queryRaw<EstadoDaSessaoNoBanco[]>`
     SELECT u."sessionEpoch" AS ue,
            u.active         AS ativo,
@@ -102,5 +133,5 @@ export async function sessaoAindaValida(session: Session): Promise<boolean> {
     LEFT JOIN tenants t ON t.id = u."tenantId"
     WHERE u.id = ${session.sub}
   `;
-  return sessaoConfere(session, linhas[0]);
+  return linhas[0];
 }

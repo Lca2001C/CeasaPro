@@ -36,6 +36,7 @@ Violar qualquer uma destas é regressão grave:
 3. **Dinheiro é `Decimal`**, nunca `number`/`Float`. Helpers em `src/lib/money.ts`. Quantidade: 3 casas; dinheiro: 2.
 4. **Estoque e caixas plásticas são livros-razão.** Não existe coluna de saldo mutável. Saldo = soma de movimentos (`stock_movements`, `plastic_crate_movements`).
 5. **Operações que tocam 2+ tabelas** rodam em `prisma.$transaction`, com `audit()` **dentro** da transação.
+5b. **Escrita de dado da empresa fora de `withTenantAction`/`withTenantRoute`** (webhook, cron, action do admin, gravação feita numa leitura) chama `invalidarTenant(tenantId)` (`src/lib/cache/cache.ts`) depois de gravar. Boletim, CeasaNews e banco de fotos: `invalidarGlobal(...)`. Sem isso o Início mostra o número antigo até o TTL.
 6. **PDV (`/vendas/nova`) é sagrado.** Não quebrar fluxo de venda no balcão (busca, carrinho, pagamento, fiado).
 7. **Gating de módulo e cobrança no servidor.** Esconder do menu é só UX. Proxy + `requireModule` / `accessDecision` são a barreira real.
 8. **Fuso `America/Sao_Paulo`** via `src/lib/tz.ts`. Nunca `setHours` / `toISOString().slice(0,10)` / `DATE_TRUNC` sem o fuso. `parseFormDateTz` **lança** `ValidationError` para data que não existe (`2026-02-31`) — nunca cai em `new Date(v)`.
@@ -54,6 +55,7 @@ Violar qualquer uma destas é regressão grave:
 | App | **Next.js 16** App Router + React 19 + TypeScript. Um único full-stack. |
 | UI | Tailwind 4, componentes estilo shadcn + Radix, lucide-react, sonner |
 | Dados | Prisma 6 + PostgreSQL (Neon em produção). **Não subir Prisma para v7** sem migrar config. |
+| Cache | Upstash Redis (REST, `@upstash/redis`), **desligado sem `UPSTASH_REDIS_REST_URL` + `_TOKEN`**. Só leitura com TTL curto + rate limit de login (`src/lib/cache/`, §13b) |
 | Auth | JWT com **jose** (não NextAuth). Senha **Argon2id**. Google OAuth (PKCE, redirect no servidor). |
 | Pagamento | Mercado Pago: PIX próprio + Payment Brick (crédito/débito). |
 | E-mail | nodemailer / SMTP Gmail |
@@ -424,6 +426,13 @@ UI: tokens em `globals.css`. Variantes de botão: `default` (verde), `success`, 
 ## 13b. Desempenho
 
 - **O custo do app é o NÚMERO de idas ao banco por tela**, não uma consulta lenta: em produção o pool é pequeno (`connection_limit`) e cada `include` do Prisma é mais uma volta. Antes de acrescentar leitura numa tela, veja se ela já foi lida (layout, serviço vizinho). Leitura repetida na mesma requisição → `cache()` do React, **só em caminho de leitura** (ação que muda o dado lê por conta própria). Ver `getInteresses`, `centralParaLeitura`.
+- **Cache no Upstash Redis** (`src/lib/cache/`), entre requisições e instâncias. `lembrar({ chave, versoes, ttlSeg }, fn)`:
+  - **Só leitura, nunca fonte.** Escrita, saldo usado numa escrita, decisão de segurança e o PDV (`/vendas/nova`, exceto a referência do boletim) leem do banco. Não grave saldo no Redis.
+  - **Invalidação por versão:** a chave leva `v:t:<empresa>` (e/ou `v:g:cotacoes|noticias|catalogo`). Os wrappers de escrita da empresa incrementam a versão depois do handler (também quando ele lança; GET de rota não). Fora deles, ver §3 regra 5b. Leitura que depende do dia leva `isoDateTz()` na chave.
+  - **Fail-open:** sem env, com erro ou com mais de 150 ms, é só `fn()`. O valor volta pelo codec (`Decimal`/`Date`/`bigint` preservados).
+  - **Onde está:** sessão dos layouts (`sessaoAindaValidaParaLeitura`, 30 s, versões de usuário/empresa/linhagem que toda revogação incrementa — os wrappers continuam com `sessaoAindaValida` no banco), cabeçalho do layout `(app)`, `DashboardService.getSummary` (60 s; `calcularSummary` é o cálculo sem cache), `CotacoesService` (`getPainel`, `getMeusProdutos`, `precosDoBoletimPorProduto`, `comprasAcimaDoBoletim`, `listarCentrais`), `NoticiasService.listar`, `CatalogoImagensService.buscar`/`paraIlustrar`.
+  - **Rate limit:** `rate-limit-db.ts` conta no Redis e cai no Postgres se ele falhar (o fail-closed é do banco). O throttle por empresa das rotas (`rateLimitCompartilhado`) cai no contador em memória.
+  - **Testes:** `tests/setup/no-outbound-http.ts` apaga as variáveis do Upstash; teste de cache usa `definirClienteDeCache(clienteEmMemoria())`.
 - **Função e banco na mesma região:** Vercel em `gru1` (`vercel.json`, exige o plano Pro) e Neon em `sa-east-1`. Em continentes diferentes cada ida ao banco custa ~120 ms e nenhuma otimização de consulta compensa.
 - **Medir:** `PRISMA_CONTAR_CONSULTAS=1 npm run dev` imprime uma linha por consulta. Em produção, consulta acima de `PRISMA_SLOW_MS` (padrão 300 ms) vira log `Consulta lenta`, e o Neon tem `pg_stat_statements` ativo (`SELECT … FROM pg_stat_statements ORDER BY total_exec_time DESC`).
 - **`getSummary` recebe a aba** (`geral`/`financeiro`/`resumo`); sem ela calcula tudo.

@@ -23,7 +23,12 @@ vi.mock("@/lib/auth/session", () => ({ getSession: () => getSession() }));
 vi.mock("@/lib/auth/revogacao", async () => {
   const real =
     await vi.importActual<typeof import("@/lib/auth/revogacao")>("@/lib/auth/revogacao");
-  return { ...real, sessaoAindaValida: (s: unknown) => sessaoAindaValida(s) };
+  // Os layouts usam a versão com cache; a decisão é a mesma.
+  return {
+    ...real,
+    sessaoAindaValida: (s: unknown) => sessaoAindaValida(s),
+    sessaoAindaValidaParaLeitura: (s: unknown) => sessaoAindaValida(s),
+  };
 });
 // O resto do layout não interessa aqui: se a renderização passar do ponto de
 // conferência, estes mocks são chamados e o teste enxerga.

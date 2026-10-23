@@ -2,12 +2,13 @@ import type { ZodType } from "zod";
 import { requireTenant, requireSuperAdmin, type Session } from "@/lib/auth/session";
 import { accessDecision } from "@/lib/billing/status";
 import { requireModule, type OptionalModuleKey } from "@/lib/plan/modules";
-import { rateLimit } from "@/lib/security/rate-limit";
+import { rateLimitCompartilhado } from "@/lib/security/rate-limit";
 import { AppError, ForbiddenError, PaymentRequiredError } from "./app-error";
 import { errorResponse } from "./error-response";
 import { clientIp } from "./request";
 import { assertSessaoValida } from "@/lib/auth/revogacao";
 import { assertMesmaOrigem } from "./mesma-origem";
+import { invalidarTenant } from "@/lib/cache/cache";
 
 export interface RouteTenantCtx {
   session: Session;
@@ -53,7 +54,7 @@ export function withTenantRoute<I, O>(opts: {
       await assertSessaoValida(session);
       assertPasswordReady(session);
       // Proteção contra abuso de requisições (por empresa).
-      const rl = rateLimit(`route:${tenantId}`, { limit: 120, windowMs: 60_000 });
+      const rl = await rateLimitCompartilhado(`route:${tenantId}`, { limit: 120, windowMs: 60_000 });
       if (!rl.ok) {
         throw new AppError(
           "RATE_LIMIT",
@@ -70,7 +71,13 @@ export function withTenantRoute<I, O>(opts: {
       if (opts.module) requireModule(session.modules, opts.module);
       const input = await parseInput(req, opts.schema, opts.source ?? "json");
       const ip = await clientIp();
-      const out = await opts.handler(input, { session, tenantId, userId: session.sub, ip, req });
+      let out: O | Response;
+      try {
+        out = await opts.handler(input, { session, tenantId, userId: session.sub, ip, req });
+      } finally {
+        // GET é leitura (exports de relatório): não esfria o cache da empresa.
+        if (req.method !== "GET" && req.method !== "HEAD") await invalidarTenant(tenantId);
+      }
       if (out instanceof Response) return out; // handlers de export devolvem arquivo
       return Response.json({ ok: true, data: out });
     } catch (e) {

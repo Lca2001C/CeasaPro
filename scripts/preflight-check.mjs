@@ -169,6 +169,17 @@ const ENV_RULES = [
     optional: true,
   },
   {
+    name: "UPSTASH_REDIS_REST_URL",
+    description: "Cache Upstash Redis (opcional; sem ele tudo lê do Postgres)",
+    optional: true,
+    validate: (v) => (v.startsWith("https://") ? null : "deveria começar com https://"),
+  },
+  {
+    name: "UPSTASH_REDIS_REST_TOKEN",
+    description: "Token REST do Upstash",
+    optional: true,
+  },
+  {
     name: "CRON_SECRET",
     description: "Protege /api/cron/billing",
     prodOnly: true,
@@ -209,6 +220,12 @@ function checkEnv() {
   const googleSecret = process.env.GOOGLE_CLIENT_SECRET?.trim();
   if (Boolean(googleId) !== Boolean(googleSecret)) {
     fail("GOOGLE_CLIENT_ID e GOOGLE_CLIENT_SECRET precisam existir juntas (ou nenhuma)");
+  }
+  if (
+    Boolean(process.env.UPSTASH_REDIS_REST_URL?.trim()) !==
+    Boolean(process.env.UPSTASH_REDIS_REST_TOKEN?.trim())
+  ) {
+    fail("UPSTASH_REDIS_REST_URL e UPSTASH_REDIS_REST_TOKEN precisam existir juntas (ou nenhuma)");
   }
 
   // Flags que ABREM uma exceção de segurança. Nenhum é exigido, e o padrão de

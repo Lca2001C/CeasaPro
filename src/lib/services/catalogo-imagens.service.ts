@@ -6,6 +6,10 @@ import { normalizarNome, primeiraPalavra } from "@/lib/cotacoes/nome";
 import { deleteObject, publicUrl } from "@/lib/storage/r2";
 import { ProdutoImagemService } from "./produto-imagem.service";
 import type { AdminCtx } from "@/lib/http/with-action";
+import { invalidarGlobal, lembrar, versao } from "@/lib/cache/cache";
+
+/** Só o super-admin muda o banco de fotos, e cada mudança troca a versão. */
+const TTL_SEG = 600;
 
 /**
  * Banco de fotos da plataforma ("Banco" no cadastro de produto).
@@ -44,12 +48,18 @@ function filtroDeBusca(q: string | undefined) {
 export const CatalogoImagensService = {
   /** O que a empresa vê no "Banco": só as ativas. */
   async buscar(q?: string): Promise<FotoDoCatalogo[]> {
-    const rows = await prisma.catalogoImagem.findMany({
-      where: { ativo: true, ...filtroDeBusca(q) },
-      orderBy: { nome: "asc" },
-      take: 60,
-    });
-    return rows.map(paraTela);
+    const termo = normalizarNome(q ?? "");
+    return lembrar(
+      { chave: `catalogo:buscar:${termo}`, versoes: [versao.global("catalogo")], ttlSeg: TTL_SEG },
+      async () => {
+        const rows = await prisma.catalogoImagem.findMany({
+          where: { ativo: true, ...filtroDeBusca(q) },
+          orderBy: { nome: "asc" },
+          take: 60,
+        });
+        return rows.map(paraTela);
+      },
+    );
   },
 
   /**
@@ -59,18 +69,23 @@ export const CatalogoImagensService = {
    * "Batata-doce" na família "batata". Sem R2 configurado, lista vazia.
    */
   async paraIlustrar(): Promise<{ chave: string; url: string }[]> {
-    const rows = await prisma.catalogoImagem.findMany({
-      where: { ativo: true },
-      orderBy: { nome: "asc" },
-      select: { nome: true, imageKey: true },
-    });
-    const porChave = new Map<string, string>();
-    for (const r of rows) {
-      const chave = primeiraPalavra(r.nome);
-      const url = publicUrl(r.imageKey);
-      if (chave && url && !porChave.has(chave)) porChave.set(chave, url);
-    }
-    return [...porChave].map(([chave, url]) => ({ chave, url }));
+    return lembrar(
+      { chave: "catalogo:ilustrar", versoes: [versao.global("catalogo")], ttlSeg: TTL_SEG },
+      async () => {
+        const rows = await prisma.catalogoImagem.findMany({
+          where: { ativo: true },
+          orderBy: { nome: "asc" },
+          select: { nome: true, imageKey: true },
+        });
+        const porChave = new Map<string, string>();
+        for (const r of rows) {
+          const chave = primeiraPalavra(r.nome);
+          const url = publicUrl(r.imageKey);
+          if (chave && url && !porChave.has(chave)) porChave.set(chave, url);
+        }
+        return [...porChave].map(([chave, url]) => ({ chave, url }));
+      },
+    );
   },
 
   async listarAdmin(q?: string): Promise<(FotoDoCatalogo & { emUso: number })[]> {
@@ -95,6 +110,7 @@ export const CatalogoImagensService = {
     const foto = await prisma.catalogoImagem.create({
       data: { nome: input.nome, slug: normalizarNome(input.nome), imageKey },
     });
+    await invalidarGlobal("catalogo");
     await audit({
       userId: ctx.userId,
       actorEmail: ctx.session.email,
@@ -114,6 +130,7 @@ export const CatalogoImagensService = {
       where: { id: input.id },
       data: { nome: input.nome, slug: normalizarNome(input.nome), ativo: input.ativo },
     });
+    await invalidarGlobal("catalogo");
     await audit({
       userId: ctx.userId,
       actorEmail: ctx.session.email,
@@ -144,6 +161,7 @@ export const CatalogoImagensService = {
       );
     }
     await prisma.catalogoImagem.delete({ where: { id } });
+    await invalidarGlobal("catalogo");
     await deleteObject(foto.imageKey);
     await audit({
       userId: ctx.userId,
