@@ -432,7 +432,24 @@ npm run preflight
 
 Só siga se a saída for **Tudo certo. Pronto para o deploy.** Avisos de variável antiga (`MP_*`, `JWT_ACCESS_SECRET`) significam que alguém ainda configurou o nome velho — apague no painel.
 
-### 4.4 DNS, HTTPS e cookies
+### 4.4 Login com Google
+
+O app manda ao Google, como `redirect_uri`, **exatamente** `$APP_URL/api/auth/google/callback` (`googleCallbackUrl`, `src/lib/auth/google-oauth.ts`). Hoje: `https://www.ceasapro.com.br/api/auth/google/callback` — o domínio sem `www` redireciona (308) para o com `www` antes de chegar ao app.
+
+Console Google Cloud → **APIs e serviços → Credenciais** → o ID do cliente OAuth (tipo *Aplicativo da Web*):
+
+| Campo | Valor |
+|---|---|
+| Origens JavaScript autorizadas | `https://www.ceasapro.com.br` (sem barra no fim) |
+| URIs de redirecionamento autorizados | `https://www.ceasapro.com.br/api/auth/google/callback` — caminho inteiro, sem barra no fim |
+
+Colocar só o domínio (`https://www.ceasapro.com.br/`) no campo de redirecionamento dá **Erro 400: redirect_uri_mismatch** no celular de quem tenta entrar. O Google compara texto exato (esquema, `www`, caminho, barra final). A mudança leva alguns minutos para valer.
+
+Para conferir sem celular, o `Location` de `curl -sI https://www.ceasapro.com.br/api/auth/google` mostra o `redirect_uri` que o app está mandando.
+
+Na **Tela de consentimento OAuth**, o app precisa estar **Em produção** (não "Teste"): em teste só os e-mails da lista de testadores entram; os outros recebem "acesso bloqueado". Com os escopos `openid email profile` não há verificação do Google a pedir.
+
+### 4.5 DNS, HTTPS e cookies
 
 O app marca o cookie `Secure` quando o proxy manda `x-forwarded-proto: https` (a Vercel faz isso). Se o domínio customizado ficar em HTTP ou num redirect mal configurado, o login "não pega". Sempre acesse pelo `https://`.
 
@@ -537,6 +554,7 @@ Settings → **Pause project** (plano adequado) ou proteja com senha. O cron par
 | `too many connections` | Sem `connection_limit=1` | Ajuste a `DATABASE_URL` |
 | E-mail não sai | Senha de app inválida / `EMAIL_FROM` diferente do `SMTP_USER` | Gere a senha de app com a verificação em duas etapas ligada; o From tem que ser o próprio endereço do `SMTP_USER` |
 | Função excede o tempo limite | Projeto no Hobby (corta em ~10 s), ou rota longa nova sem `maxDuration` | Plano Pro e `export const maxDuration = 60` na rota (§3.3) |
+| Google: "Erro 400: redirect_uri_mismatch" | O URI de redirecionamento no Google Cloud não é igual, letra por letra, a `$APP_URL/api/auth/google/callback` | §4.4 |
 | Argon2 falha no build | Binário nativo | Confirme Node 22 e runtime `nodejs` (as rotas já estão marcadas) |
 
 ---

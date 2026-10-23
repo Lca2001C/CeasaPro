@@ -13,6 +13,7 @@ import { APP_TIME_ZONE, startOfDayTz } from "@/lib/tz";
 import { whereFiadoAtrasado } from "@/lib/fiado/atraso";
 import {
   PAYMENT_METHOD_LABELS,
+  SALE_UNIT_LABELS,
   EXPENSE_TYPE_LABELS,
   EXPENSE_STATUS_LABELS,
   EXPENSE_PAYMENT_METHOD_LABELS,
@@ -22,6 +23,7 @@ import {
   CRATE_CLEANING_STATUS_LABELS,
 } from "@/lib/labels";
 import type { ReportKind, ReportResult } from "./report.types";
+import { nomeDoCliente, vendasDoCliente } from "./vendas-do-cliente";
 import { REPORT_LABELS } from "./report.types";
 
 interface Params {
@@ -50,6 +52,11 @@ interface Params {
    * higienização enviada — só com o módulo, como "Contas do mês" do Início.
    */
   modules?: string[];
+  /**
+   * Cliente do relatório de vendas (o nome; a identidade é `chaveDoCliente`).
+   * Com ele, o relatório vira o EXTRATO do cliente, com os itens de cada venda.
+   */
+  cliente?: string;
 }
 
 /** Como o período aparece no título e na coluna de data do relatório. */
@@ -102,6 +109,61 @@ const porNome = (l: LinhaVendida) => l.productName;
 const porNomeAsc = (a: { name: string }, b: { name: string }) =>
   a.name.localeCompare(b.name, "pt-BR");
 
+/**
+ * Extrato de um cliente: as vendas do período com os itens de cada uma.
+ *
+ * Uma linha por item, pelo `lineTotal` (já líquido do desconto da linha), e o
+ * desconto da VENDA numa linha própria, negativa — assim as linhas de cada
+ * venda somam exatamente o `totalAmount` dela, que é o que o total soma.
+ * Nenhuma conta nova: só leitura do que a venda gravou.
+ */
+async function extratoDoCliente(
+  tenantId: string,
+  cliente: string,
+  base: Pick<ReportResult, "period" | "generatedAt">,
+): Promise<ReportResult> {
+  const [vendas, nome] = await Promise.all([
+    vendasDoCliente(tenantId, cliente, base.period.from, base.period.to),
+    nomeDoCliente(tenantId, cliente),
+  ]);
+  const rows: Record<string, unknown>[] = [];
+  for (const v of vendas) {
+    for (const it of v.items) {
+      rows.push({
+        saleDate: v.saleDate,
+        product: it.product.name,
+        quantity: it.quantity,
+        unit: SALE_UNIT_LABELS[it.product.saleUnit] ?? it.product.saleUnit,
+        unitPrice: it.unitPrice,
+        lineTotal: it.lineTotal,
+      });
+    }
+    if (v.discountAmount.greaterThan(0)) {
+      rows.push({
+        saleDate: v.saleDate,
+        product: v.discountReason
+          ? `Desconto da venda (${v.discountReason})`
+          : "Desconto da venda",
+        lineTotal: sub(0, v.discountAmount),
+      });
+    }
+  }
+  return {
+    ...base,
+    title: `Vendas de ${nome}`,
+    columns: [
+      { key: "saleDate", label: "Data", format: "date" },
+      { key: "product", label: "Produto" },
+      { key: "quantity", label: "Qtd", align: "right", format: "qty" },
+      { key: "unit", label: "Un." },
+      { key: "unitPrice", label: "Preço", align: "right", format: "money" },
+      { key: "lineTotal", label: "Total", align: "right", format: "money" },
+    ],
+    rows,
+    totals: { product: "TOTAL", lineTotal: add(...vendas.map((v) => v.totalAmount)) },
+  };
+}
+
 export async function buildReport(kind: ReportKind, p: Params): Promise<ReportResult> {
   const db = getTenantPrisma(p.tenantId);
   const base = {
@@ -112,6 +174,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
 
   switch (kind) {
     case "VENDAS": {
+      if (p.cliente?.trim()) return extratoDoCliente(p.tenantId, p.cliente, base);
       const vendas = await db.sale.findMany({
         where: { saleDate: { gte: p.from, lte: p.to }, cancelledAt: null },
         orderBy: { saleDate: "asc" },

@@ -190,6 +190,7 @@ Rotas `/relatorios` (central) e `/relatorios/[tipo]` (visualização). Exportaç
 - Todos com **filtro por período** (hoje, 7 dias, este mês, mês passado) e ações **Imprimir / PDF** (impressão do navegador) e **Baixar Excel** (.xlsx real via `exceljs`).
 - **Básicos** (sempre disponíveis): Vendas, Compras, Fiado, Despesas, Estoque.
 - **Avançados** (módulo `relatorios_avancados`): Lucro por produto, Mais vendidos, Clientes inadimplentes, Fornecedores, Fluxo de caixa, Caixas plásticas, Higienização, Venda de embalagens.
+- **Relatório de vendas por cliente:** o seletor "Cliente" transforma o relatório no extrato do cliente, com os itens de cada venda, e libera o período "Todo o período". Abaixo da tabela, cada venda tem o **comprovante** em PDF e Excel. A ficha do cliente (`/vendas/clientes/[chave]`) oferece "Todas as vendas" (extrato do histórico inteiro) e o comprovante de cada compra.
 - Cada exportação registra um histórico em `report_exports` (metadados; o arquivo é reproduzível a qualquer momento).
 
 ## Atividades (auditoria da empresa)

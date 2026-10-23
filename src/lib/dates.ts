@@ -14,7 +14,9 @@ export type PeriodPreset =
   | "semana"
   | "mes"
   | "mes_passado"
-  | "personalizado";
+  | "personalizado"
+  /** Histórico inteiro — só a tela oferece no extrato de um cliente. */
+  | "tudo";
 
 export interface Period {
   from: Date;
@@ -74,7 +76,21 @@ function parseEntrada(v: string | Date): Date | null {
   return parseIsoDateTz(v);
 }
 
-const PRESETS: readonly PeriodPreset[] = ["hoje", "semana", "mes", "mes_passado", "personalizado"];
+const PRESETS: readonly PeriodPreset[] = [
+  "hoje",
+  "semana",
+  "mes",
+  "mes_passado",
+  "personalizado",
+  "tudo",
+];
+
+/**
+ * Início do "Todo o período". Anterior a qualquer lançamento do sistema: o
+ * extrato do cliente pega o histórico inteiro sem precisar consultar a data da
+ * primeira venda.
+ */
+const INICIO_DO_HISTORICO = { ano: 2000, mes: 1, dia: 1 };
 
 /** O preset veio da URL: qualquer texto. Desconhecido vale "mes", o padrão. */
 function presetValido(v: unknown): PeriodPreset {
@@ -133,6 +149,11 @@ export function resolvePeriod(input?: {
       to = endOfDay(personalizado?.to ?? now);
       break;
     }
+    case "tudo":
+      from = startOfDay(
+        zonedTimeToUtc(INICIO_DO_HISTORICO.ano, INICIO_DO_HISTORICO.mes, INICIO_DO_HISTORICO.dia),
+      );
+      break;
     case "mes":
     default:
       from = startOfDay(startOfMonth(now));

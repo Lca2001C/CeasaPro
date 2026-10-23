@@ -19,21 +19,34 @@ const CAMPOS_DATA = [
   { value: "createdAt", label: "Por cadastro" },
 ];
 
+/** "Todo o período": só no extrato de um cliente (ver `presetDoRelatorio`). */
+const PRESET_TUDO = { value: "tudo", label: "Todo o período" };
+
 export function ReportToolbar({
   kind,
   mostrarOpcoesDeDespesa = false,
   permiteEscolherData = false,
+  clientes,
 }: {
   kind: string;
   /** Habilita o agrupamento por categoria (relatórios de despesa). */
   mostrarOpcoesDeDespesa?: boolean;
   /** Habilita a escolha do critério de data (só o relatório de despesas). */
   permiteEscolherData?: boolean;
+  /**
+   * Clientes do filtro (só o relatório de vendas). Com um escolhido, o
+   * relatório vira o extrato dele, com os itens de cada venda.
+   */
+  clientes?: { chave: string; nome: string }[];
 }) {
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
-  const preset = params.get("preset") ?? "mes";
+  const cliente = params.get("cliente") ?? "";
+  // Sem cliente, "tudo" não vale (o servidor também cai em "mes").
+  const presetDaUrl = params.get("preset") ?? "mes";
+  const preset = presetDaUrl === "tudo" && !cliente ? "mes" : presetDaUrl;
+  const presets = cliente ? [...PRESETS, PRESET_TUDO] : PRESETS;
   const campo = params.get("campo") ?? "dueDate";
   const agrupar = params.get("agrupar") ?? "";
 
@@ -60,6 +73,7 @@ export function ReportToolbar({
     }
     if (permiteEscolherData && campo !== "dueDate") q.set("campo", campo);
     if (mostrarOpcoesDeDespesa && agrupar) q.set("agrupar", agrupar);
+    if (clientes && cliente) q.set("cliente", cliente);
     return `/api/reports/${kind}/export?${q.toString()}`;
   };
 
@@ -72,13 +86,37 @@ export function ReportToolbar({
             onChange={(e) => atualizar({ preset: e.target.value })}
             aria-label="Período"
           >
-            {PRESETS.map((p) => (
+            {presets.map((p) => (
               <option key={p.value} value={p.value}>
                 {p.label}
               </option>
             ))}
           </Select>
         </div>
+
+        {clientes && (
+          <div className="w-full sm:w-56">
+            <Select
+              value={cliente}
+              // Tirar o cliente com "Todo o período" escolhido volta ao mês:
+              // o histórico inteiro só existe no extrato de um cliente.
+              onChange={(e) =>
+                atualizar({
+                  cliente: e.target.value,
+                  ...(!e.target.value && preset === "tudo" ? { preset: "mes" } : {}),
+                })
+              }
+              aria-label="Cliente"
+            >
+              <option value="">Todos os clientes</option>
+              {clientes.map((c) => (
+                <option key={c.chave} value={c.chave}>
+                  {c.nome}
+                </option>
+              ))}
+            </Select>
+          </div>
+        )}
 
         {permiteEscolherData && (
           <div className="w-full sm:w-44">

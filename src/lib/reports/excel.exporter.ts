@@ -102,6 +102,13 @@ export async function toExcel(r: ReportResult): Promise<Buffer> {
   titleRow.font = { bold: true, size: 14 };
   ws.addRow([`Período: ${formatDate(r.period.from)} a ${formatDate(r.period.to)}`]);
   ws.addRow([`Gerado em: ${formatDate(r.generatedAt)}`]);
+  // Identificação do comprovante. O valor passa por `celulaExcel` como texto:
+  // é nome de cliente digitado no balcão, e não pode virar fórmula.
+  for (const l of r.cabecalho ?? []) {
+    const linha = ws.addRow([]);
+    escrever(linha, [{ value: l.rotulo }, celulaExcel(l.valor, "text")]);
+    linha.getCell(1).font = { bold: true };
+  }
   ws.addRow([]);
 
   const header = ws.addRow(r.columns.map((c) => c.label));

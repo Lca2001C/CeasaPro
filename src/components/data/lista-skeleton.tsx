@@ -92,6 +92,19 @@ export function InicioSkeleton() {
           <Skeleton key={i} className="h-16 w-full" />
         ))}
       </div>
+      <ConteudoDoInicioSkeleton />
+    </div>
+  );
+}
+
+/**
+ * Contorno só dos números e listas do Início — o que chega por streaming
+ * depois do cabeçalho, das abas e dos botões (que saem na hora). Também é o
+ * que aparece ao trocar entre Visão Geral e Financeiro.
+ */
+export function ConteudoDoInicioSkeleton() {
+  return (
+    <div role="status" aria-label="Carregando" className="flex flex-col gap-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4" aria-hidden="true">
         {Array.from({ length: 4 }, (_, i) => (
           <Skeleton key={i} className="h-24 w-full" />

@@ -57,7 +57,7 @@ Violar qualquer uma destas é regressão grave:
 | Auth | JWT com **jose** (não NextAuth). Senha **Argon2id**. Google OAuth (PKCE, redirect no servidor). |
 | Pagamento | Mercado Pago: PIX próprio + Payment Brick (crédito/débito). |
 | E-mail | nodemailer / SMTP Gmail |
-| Relatórios | exceljs + impressão do navegador |
+| Relatórios | exceljs (Excel) + pdfmake (PDF no servidor) + impressão do navegador |
 | Erros | Sentry (`@sentry/nextjs`), **desligado sem `SENTRY_DSN`**. Só erros, sem tracing e sem dado de cliente (`src/lib/observabilidade/sentry.ts`). Source maps sobem no build só com `SENTRY_AUTH_TOKEN` + `SENTRY_ORG` + `SENTRY_PROJECT` (`next.config.ts`) e são apagados da saída |
 | Testes | Vitest (unit + integration) + Playwright (e2e) |
 
@@ -325,6 +325,8 @@ Notícias que mexem no mercado de hortifruti (CEASAs, preços, clima, frete, saf
 ### Relatórios (`/relatorios`, `GET /api/reports/[type]/export`)
 
 Filtro de período. Imprimir/PDF e Excel. Tipos em `src/lib/reports/report.types.ts`. Básicos sempre; avançados atrás de `relatorios_avancados`; os de módulo opcional (caixas, higienização, embalagens, papelão) pedem **também** o módulo dono (`modulosDoRelatorio`, conferido na página e na exportação). Novo relatório: tipo + `buildReport` — o hub/export entram sozinhos. `FIADO_PERDAS` (básico) lista baixas e recuperações por data; `EMBALAGENS` tem custo e lucro por venda. "Contas pagas" soma o pago ao higienizador **sem gate de módulo**, como o fluxo de caixa (dinheiro pago é fato).
+
+**Vendas por cliente.** O relatório `VENDAS` aceita `cliente` (o nome; a identidade é `chaveDoCliente`, a mesma da aba Clientes): vira o **extrato** do cliente, uma linha por item (`lineTotal`) mais a linha negativa "Desconto da venda" — as linhas de cada venda somam o `totalAmount` dela (`src/lib/reports/vendas-do-cliente.ts`). O preset `tudo` ("Todo o período") só vale nesse caso (`presetDoRelatorio`); nos outros cai em "mes". **Comprovante de uma venda:** `GET /api/vendas/[id]/comprovante?format=pdf|excel` (`buildComprovanteVenda`, núcleo, sem gate; venda de outra empresa é 404), com a identificação no `ReportResult.cabecalho`. Os botões (`BotoesDeExportacao`) ficam no relatório filtrado e na ficha do cliente. Resposta e registro em `report_exports` passam por `respostaDeArquivo`.
 
 ### Atividades (removida)
 

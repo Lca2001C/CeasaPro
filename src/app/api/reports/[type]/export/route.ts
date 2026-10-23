@@ -5,12 +5,14 @@ import { requireModule } from "@/lib/plan/modules";
 import { resolvePeriod, type PeriodPreset } from "@/lib/dates";
 import { isoDateTz } from "@/lib/tz";
 import { buildReport } from "@/lib/reports/report.service";
-import { toExcel } from "@/lib/reports/excel.exporter";
-import { toPdf } from "@/lib/reports/pdf.exporter";
-import { REPORT_TYPES, modulosDoRelatorio, type ReportKind } from "@/lib/reports/report.types";
-import { prisma } from "@/lib/db/prisma";
-import { logger } from "@/lib/logger";
-import type { ReportFormat, ReportType } from "@prisma/client";
+import {
+  REPORT_TYPES,
+  modulosDoRelatorio,
+  presetDoRelatorio,
+  type ReportKind,
+} from "@/lib/reports/report.types";
+import { respostaDeArquivo, trechoDeNomeDeArquivo } from "@/lib/reports/arquivo-exportado";
+import type { ReportType } from "@prisma/client";
 
 export const runtime = "nodejs";
 // PDF/Excel de período longo passa dos ~10 s padrão da função.
@@ -24,6 +26,8 @@ const querySchema = z.object({
   // Só o relatório de despesas usa: por qual data filtrar e se agrupa por categoria.
   campo: z.enum(["dueDate", "paidDate", "createdAt"]).optional(),
   agrupar: z.enum(["categoria"]).optional(),
+  // Só o relatório de vendas usa: o extrato de um cliente (pelo nome).
+  cliente: z.string().trim().max(120).optional(),
 });
 
 export const GET = withTenantRoute({
@@ -38,8 +42,9 @@ export const GET = withTenantRoute({
     // o módulo dono dos dados (barreira de servidor).
     for (const modulo of modulosDoRelatorio(kind)) requireModule(ctx.session.modules, modulo);
 
+    const cliente = kind === "VENDAS" && input.cliente ? input.cliente : undefined;
     const period = resolvePeriod({
-      preset: (input.preset as PeriodPreset) ?? "mes",
+      preset: (presetDoRelatorio(kind, input.preset, cliente) as PeriodPreset) ?? "mes",
       from: input.from,
       to: input.to,
     });
@@ -51,39 +56,23 @@ export const GET = withTenantRoute({
       dateField: input.campo,
       agruparPorCategoria: input.agrupar === "categoria",
       modules: ctx.session.modules,
+      cliente,
     });
-    const isPdf = input.format === "pdf";
-    const buffer = isPdf ? await toPdf(result) : await toExcel(result);
-    const extension = isPdf ? "pdf" : "xlsx";
+
     // Dia civil do início do período — e o período é sempre válido: data
     // impossível no filtro cai no preset padrão em `resolvePeriod` (era 500).
-    const fileName = `${kind.toLowerCase()}-${isoDateTz(period.from)}.${extension}`;
-    const format: ReportFormat = isPdf ? "PDF" : "EXCEL";
-    const contentType = isPdf
-      ? "application/pdf"
-      : "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
-
-    // Historico de exportacoes (best-effort: nao bloqueia o download).
-    prisma.reportExport
-      .create({
-        data: {
-          tenantId: ctx.tenantId,
-          userId: ctx.userId,
-          type: kind as ReportType,
-          format,
-          status: "CONCLUIDO",
-          periodStart: period.from,
-          periodEnd: period.to,
-          rowCount: result.rows.length,
-          fileName,
-        },
-      })
-      .catch((e) => logger.error({ err: String(e) }, "Falha ao registrar report_export"));
-
-    return new Response(new Uint8Array(buffer), {
-      headers: {
-        "Content-Type": contentType,
-        "Content-Disposition": `attachment; filename="${fileName}"`,
+    const nomeBase = cliente
+      ? `${kind.toLowerCase()}-${trechoDeNomeDeArquivo(cliente)}-${isoDateTz(period.from)}`
+      : `${kind.toLowerCase()}-${isoDateTz(period.from)}`;
+    return respostaDeArquivo({
+      result,
+      formato: input.format,
+      nomeBase,
+      registro: {
+        tenantId: ctx.tenantId,
+        userId: ctx.userId,
+        type: kind as ReportType,
+        ...(cliente ? { filters: { cliente } } : {}),
       },
     });
   },

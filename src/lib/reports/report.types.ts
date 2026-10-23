@@ -16,6 +16,25 @@ export interface ReportResult {
   rows: Record<string, unknown>[];
   totals?: Record<string, unknown>;
   generatedAt: Date;
+  /**
+   * Linhas de identificação entre o título e a tabela (cliente, pagamento,
+   * situação) — o comprovante de uma venda. Ausente nos relatórios de período.
+   */
+  cabecalho?: { rotulo: string; valor: string }[];
+}
+
+/**
+ * "Todo o período" só vale no extrato de um cliente (relatório de vendas com
+ * cliente). Nos outros, o histórico inteiro seria consulta pesada que a tela
+ * não oferece — a URL editada cai no padrão, como qualquer preset inválido.
+ */
+export function presetDoRelatorio(
+  kind: ReportKind,
+  preset: string | undefined,
+  cliente: string | undefined,
+): string | undefined {
+  if (preset === "tudo" && !(kind === "VENDAS" && cliente)) return "mes";
+  return preset;
 }
 
 export const REPORT_TYPES = [

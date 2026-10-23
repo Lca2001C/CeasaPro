@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/cn";
 import { CheckboxRetirada } from "../../_components/checkbox-retirada";
+import { BotoesDeExportacao } from "@/components/relatorios/botoes-de-exportacao";
 
 export const dynamic = "force-dynamic";
 
@@ -64,6 +65,21 @@ export default async function ClientePage({ params }: { params: Promise<{ chave:
         />
       </div>
 
+      {/* Extrato de todas as compras (histórico inteiro), com os itens de cada
+          venda — o relatório de vendas filtrado por este cliente. */}
+      <Card className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <span className="min-w-0 text-sm">
+          <span className="block font-semibold">Todas as vendas</span>
+          <span className="block text-muted-foreground">
+            Extrato com os itens de cada compra, desde a primeira.
+          </span>
+        </span>
+        <BotoesDeExportacao
+          urlBase={`/api/reports/vendas/export?preset=tudo&cliente=${encodeURIComponent(cliente.nome)}`}
+          rotulo={`todas as vendas de ${cliente.nome}`}
+        />
+      </Card>
+
       <section className="flex flex-col gap-2">
         <h2 className="text-base font-semibold">Histórico de compras</h2>
         {cliente.vendas.map((v) => {
@@ -110,9 +126,14 @@ export default async function ClientePage({ params }: { params: Promise<{ chave:
                 })}
               </ul>
 
-              {!cancelada && (
-                <div className="flex justify-end">
-                  {v.retirarDepois ? (
+              {/* Comprovante desta venda (a cancelada sai marcada como tal). */}
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <BotoesDeExportacao
+                  urlBase={`/api/vendas/${v.id}/comprovante`}
+                  rotulo={`comprovante da venda de ${formatDateTime(v.saleDate)}`}
+                />
+                {!cancelada &&
+                  (v.retirarDepois ? (
                     <CheckboxRetirada
                       vendaId={v.id}
                       retirado={v.retiradoEm !== null}
@@ -122,9 +143,8 @@ export default async function ClientePage({ params }: { params: Promise<{ chave:
                     <span className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <PackageCheck className="size-4" /> Levou na hora
                     </span>
-                  )}
-                </div>
-              )}
+                  ))}
+              </div>
             </Card>
           );
         })}

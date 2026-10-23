@@ -1,5 +1,5 @@
 import Link from "next/link";
-import type { ReactNode } from "react";
+import { cache, Suspense, type ReactNode } from "react";
 import { OfflineSync } from "@/components/pwa/offline-sync";
 import {
   AlertTriangle,
@@ -51,6 +51,7 @@ import { Button } from "@/components/ui/button";
 import { ConviteTour } from "@/components/tour/convite-tour";
 import { CardDeResumo } from "@/components/ui/card-de-resumo";
 import { ListaDeAcoes, LinhaDeAcao } from "@/components/ui/linha-de-acao";
+import { ConteudoDoInicioSkeleton } from "@/components/data/lista-skeleton";
 
 export const dynamic = "force-dynamic";
 
@@ -75,38 +76,19 @@ export default async function DashboardPage({
 }) {
   const { aba: abaUrl } = await searchParams;
   const aba: Aba = abaUrl === "financeiro" ? "financeiro" : "geral";
+  // Sessão do cookie (JWT): nenhuma consulta. Tudo o que vai ao banco fica
+  // abaixo, em `Suspense`.
   const { tenantId, session } = await requireTenant();
   const temCotacoes = isModuleEnabled(session.modules, "cotacoes");
   const ehGeral = aba === "geral";
-  const [s, avisos, contas, proximas, cadastro, cotacoes, comparacao, financeiro] =
-    await Promise.all([
-      DashboardService.getSummary(tenantId, session.modules, aba),
-      AvisosService.get(tenantId, session.modules),
-      // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
-      // em "quanto tenho que pagar", não em módulos.
-      ContasPagarService.get(tenantId, session.modules),
-      DespesasService.proximasContas(tenantId),
-      ConfigService.pendenciasDoCadastro(tenantId),
-      /*
-        Cotações é módulo PAGO e o Início não é protegido por rota — o gate tem de
-        ser aqui, como em `ContasPagarService`. Sem ele, quem não contratou veria
-        preços no painel e cairia no paywall ao tocar. `isModuleEnabled` é
-        fail-closed (sem a lista, responde não), então o custo do esquecimento
-        seria mostrar demais, nunca de menos.
-      */
-      temCotacoes && ehGeral ? CotacoesAlertasService.getInteresses(tenantId) : null,
-      // A última compra contra o boletim. Mesmo gate, mesma razão.
-      temCotacoes && ehGeral ? CotacoesService.comprasAcimaDoBoletim(tenantId) : null,
-      ehGeral ? null : PainelFinanceiroService.get(tenantId, undefined, session.modules),
-    ]);
-  const agora = new Date();
-  const hoje = startOfDayTz(agora);
-  const lucroTone = s.lucroMes.isNegative() ? "destructive" : "success";
-  // Sem faturamento a margem vale 0 (`margemLiquida`), mas o prejuízo continua
-  // prejuízo: 0% em verde com o "Sobrou" negativo ao lado.
-  const margemTone =
-    s.margemLiquidaMes.isNegative() || s.lucroMes.isNegative() ? "destructive" : "success";
 
+  /*
+    O que não depende de dado — cabeçalho, abas e os três botões — sai NA HORA.
+    Antes a página esperava todas as consultas (dezenas, numa conexão só em
+    produção) para mostrar qualquer coisa, inclusive o botão "Nova venda". O
+    conteúdo de cada aba chega por streaming; o `key` faz a troca de aba mostrar
+    o contorno imediatamente, em vez de manter a aba antiga congelada.
+  */
   return (
     <div className="flex flex-col gap-4">
       {/*
@@ -122,7 +104,9 @@ export default async function DashboardPage({
         sistema mostra "Minha empresa" no topo e no comprovante da mensalidade,
         e isso é mais urgente que aprender a usar as telas.
       */}
-      {cadastro.mostrar && <CompletarCadastroCard faltando={cadastro.faltando} />}
+      <Suspense fallback={null}>
+        <CadastroPendente tenantId={tenantId} />
+      </Suspense>
 
       {/* Convite ao tour guiado. Some depois de aceito ou dispensado — a
           discussão de por que é um cartão, e não um painel, está no componente. */}
@@ -130,12 +114,9 @@ export default async function DashboardPage({
 
       <div className="flex items-center justify-between gap-3">
         <h1 className="text-xl font-bold">Início</h1>
-        {avisos.length > 0 && (
-          <Badge variant="warning" className="gap-1">
-            <Bell className="size-3" />
-            {avisos.length}
-          </Badge>
-        )}
+        <Suspense fallback={null}>
+          <SeloDeAvisos tenantId={tenantId} modules={session.modules} />
+        </Suspense>
       </div>
 
       {/* As duas abas. Visual de aba, mas são links: cada uma é uma URL. */}
@@ -193,137 +174,230 @@ export default async function DashboardPage({
         </Button>
       </div>
 
-      {ehGeral ? (
-        <>
-          {/*
-            Os quatro números do dia a dia. "Hoje vendi" é o destaque — o número
-            que o dono abre o app para ver —; os outros três abrem a tela deles.
-            O fechamento do mês está na aba Financeiro.
-          */}
-          <div className="grid gap-3 sm:grid-cols-3" data-tour="dashboard-numeros">
-            <CardDeResumo
-              destaque
-              className="sm:col-span-3"
-              rotulo="Hoje vendi"
-              valor={formatBRL(s.hojeVendi)}
-              dica={`No mês: ${valorExibivel(formatBRL(s.mesVendi))}`}
-              icone={<ShoppingCart />}
-              explicacao={Explica.explicarHojeVendi(s)}
-            />
-            <CardDeResumo
-              rotulo="Clientes me devem"
-              valor={formatBRL(s.aReceber)}
-              dica="Fiado a receber"
-              icone={<HandCoins />}
-              tom="warning"
-              tomDoValor={s.aReceber.greaterThan(0) ? "warning" : undefined}
-              explicacao={Explica.explicarAReceber(s)}
-            />
-            <CardDeResumo
-              rotulo="Tenho em estoque"
-              valor={formatBRL(s.estoqueValor)}
-              dica="Valor da mercadoria"
-              icone={<Package />}
-              explicacao={Explica.explicarEstoque(s)}
-            />
-            <CardDeResumo
-              rotulo="Sobrou no mês"
-              valor={formatBRL(s.lucroMes)}
-              dica="Lucro líquido"
-              icone={<TrendingUp />}
-              tom={lucroTone}
-              tomDoValor={lucroTone}
-              explicacao={{
-                ...Explica.explicarLucro(s, agora),
-                link: { href: "/dashboard?aba=financeiro", rotulo: "Ver o Financeiro" },
-              }}
-            />
-          </div>
-
-          <Atalhos temCotacoes={temCotacoes} />
-
-          {avisos.length > 0 && (
-            <ListaDeAcoes titulo="Precisa de atenção">
-              {avisos.map((aviso) => (
-                <LinhaDeAcao
-                  key={aviso.tipo}
-                  href={aviso.href}
-                  icone={<AlertTriangle />}
-                  tom="warning"
-                  titulo={aviso.label}
-                  // Aviso sem dinheiro (cotação) não ganha valor: `formatBRL(null)`
-                  // escreveria "R$ 0,00", que leria como "não tem nada a pagar".
-                  complemento={
-                    aviso.total !== null ? valorExibivel(formatBRL(aviso.total)) : undefined
-                  }
-                />
-              ))}
-            </ListaDeAcoes>
-          )}
-
-          {/* Contas a pagar reunidas: despesas + higienização, com as três mais
-              próximas clicáveis. Responde "o que eu preciso resolver hoje?". */}
-          {/* `data-tour`: âncoras do tour guiado (ver `lib/tour/roteiro`). */}
-          <div data-tour="dashboard-a-pagar">
-            <ContasAPagarCard
-              contas={contas}
-              proximas={proximas.itens.map((c) => ({
-                id: c.id,
-                description: c.description,
-                amount: c.amount.toString(),
-                dueDate: c.dueDate?.toISOString() ?? null,
-                categoryName: c.category?.name ?? null,
-                vencida: c.dueDate !== null && c.dueDate < hoje,
-              }))}
-              totalProximas={proximas.total.toString()}
-              countProximas={proximas.count}
-            />
-          </div>
-
-          {/* Depois dos números do dia: é referência para a compra de amanhã —
-              o comerciante sai para o CEASA de madrugada, e escondê-la atrás de
-              um toque significa, na prática, que ele vai sem saber. */}
-          {cotacoes && cotacoes.itens.length > 0 && (
-            <CotacoesInteresseCard
-              interesses={cotacoes}
-              agora={new Date()}
-              comparacao={comparacao ?? undefined}
-            />
-          )}
-
-          <div className="grid gap-3 md:grid-cols-2">
-            <ProductList
-              title="Mais vendidos"
-              icon={<ShoppingCart className="size-4" />}
-              rows={s.topVendidos}
-              mode="quantity"
-            />
-            <ProductList
-              title="Mais lucrativos"
-              icon={<TrendingUp className="size-4" />}
-              rows={s.topLucrativos}
-              mode="profit"
-            />
-            <ProductList
-              title="Com prejuízo"
-              icon={<TrendingDown className="size-4" />}
-              rows={s.produtosComPrejuizo}
-              mode="profit"
-              tone="destructive"
-            />
-            <EstoqueParado linhas={s.estoqueParado} cotacoes={cotacoes} />
-          </div>
-        </>
-      ) : (
-        <Financeiro
-          s={s}
-          financeiro={financeiro!}
-          lucroTone={lucroTone}
-          margemTone={margemTone}
-          agora={agora}
-        />
-      )}
+      <Suspense key={aba} fallback={<ConteudoDoInicioSkeleton />}>
+        {ehGeral ? (
+          <VisaoGeral tenantId={tenantId} modules={session.modules} temCotacoes={temCotacoes} />
+        ) : (
+          <AbaFinanceiro tenantId={tenantId} modules={session.modules} />
+        )}
+      </Suspense>
     </div>
+  );
+}
+
+type Modulos = Parameters<typeof AvisosService.get>[1];
+
+/**
+ * Avisos lidos UMA vez por requisição: o selo do cabeçalho e a lista da Visão
+ * Geral estão em `Suspense` diferentes e pediam a mesma coisa.
+ */
+const avisosDaRequisicao = cache((tenantId: string, modules: Modulos) =>
+  AvisosService.get(tenantId, modules),
+);
+
+async function CadastroPendente({ tenantId }: { tenantId: string }) {
+  const cadastro = await ConfigService.pendenciasDoCadastro(tenantId);
+  return cadastro.mostrar ? <CompletarCadastroCard faltando={cadastro.faltando} /> : null;
+}
+
+async function SeloDeAvisos({ tenantId, modules }: { tenantId: string; modules: Modulos }) {
+  const avisos = await avisosDaRequisicao(tenantId, modules);
+  if (avisos.length === 0) return null;
+  return (
+    <Badge variant="warning" className="gap-1">
+      <Bell className="size-3" />
+      {avisos.length}
+    </Badge>
+  );
+}
+
+/** O resultado do mês é prejuízo? Decide a cor de "Sobrou" e da margem. */
+function tonsDoResultado(s: Resumo) {
+  const lucroTone: "success" | "destructive" = s.lucroMes.isNegative()
+    ? "destructive"
+    : "success";
+  // Sem faturamento a margem vale 0 (`margemLiquida`), mas o prejuízo continua
+  // prejuízo: 0% em verde com o "Sobrou" negativo ao lado.
+  const margemTone: "success" | "destructive" =
+    s.margemLiquidaMes.isNegative() || s.lucroMes.isNegative() ? "destructive" : "success";
+  return { lucroTone, margemTone };
+}
+
+/** A aba Visão Geral: o balcão — números do dia, avisos, contas e produtos. */
+async function VisaoGeral({
+  tenantId,
+  modules,
+  temCotacoes,
+}: {
+  tenantId: string;
+  modules: Modulos;
+  temCotacoes: boolean;
+}) {
+  const [s, avisos, contas, proximas, cotacoes, comparacao] = await Promise.all([
+    DashboardService.getSummary(tenantId, modules, "geral"),
+    avisosDaRequisicao(tenantId, modules),
+    // "Tudo a pagar": despesas + higienização somadas, porque o cliente pensa
+    // em "quanto tenho que pagar", não em módulos.
+    ContasPagarService.get(tenantId, modules),
+    DespesasService.proximasContas(tenantId),
+    /*
+      Cotações é módulo PAGO e o Início não é protegido por rota — o gate tem de
+      ser aqui, como em `ContasPagarService`. Sem ele, quem não contratou veria
+      preços no painel e cairia no paywall ao tocar. `isModuleEnabled` é
+      fail-closed (sem a lista, responde não), então o custo do esquecimento
+      seria mostrar demais, nunca de menos.
+    */
+    temCotacoes ? CotacoesAlertasService.getInteresses(tenantId) : null,
+    // A última compra contra o boletim. Mesmo gate, mesma razão.
+    temCotacoes ? CotacoesService.comprasAcimaDoBoletim(tenantId) : null,
+  ]);
+  const agora = new Date();
+  const hoje = startOfDayTz(agora);
+  const { lucroTone } = tonsDoResultado(s);
+
+  return (
+    <>
+    {/*
+      Os quatro números do dia a dia. "Hoje vendi" é o destaque — o número
+      que o dono abre o app para ver —; os outros três abrem a tela deles.
+      O fechamento do mês está na aba Financeiro.
+    */}
+    <div className="grid gap-3 sm:grid-cols-3" data-tour="dashboard-numeros">
+      <CardDeResumo
+        destaque
+        className="sm:col-span-3"
+        rotulo="Hoje vendi"
+        valor={formatBRL(s.hojeVendi)}
+        dica={`No mês: ${valorExibivel(formatBRL(s.mesVendi))}`}
+        icone={<ShoppingCart />}
+        explicacao={Explica.explicarHojeVendi(s)}
+      />
+      <CardDeResumo
+        rotulo="Clientes me devem"
+        valor={formatBRL(s.aReceber)}
+        dica="Fiado a receber"
+        icone={<HandCoins />}
+        tom="warning"
+        tomDoValor={s.aReceber.greaterThan(0) ? "warning" : undefined}
+        explicacao={Explica.explicarAReceber(s)}
+      />
+      <CardDeResumo
+        rotulo="Tenho em estoque"
+        valor={formatBRL(s.estoqueValor)}
+        dica="Valor da mercadoria"
+        icone={<Package />}
+        explicacao={Explica.explicarEstoque(s)}
+      />
+      <CardDeResumo
+        rotulo="Sobrou no mês"
+        valor={formatBRL(s.lucroMes)}
+        dica="Lucro líquido"
+        icone={<TrendingUp />}
+        tom={lucroTone}
+        tomDoValor={lucroTone}
+        explicacao={{
+          ...Explica.explicarLucro(s, agora),
+          link: { href: "/dashboard?aba=financeiro", rotulo: "Ver o Financeiro" },
+        }}
+      />
+    </div>
+
+    <Atalhos temCotacoes={temCotacoes} />
+
+    {avisos.length > 0 && (
+      <ListaDeAcoes titulo="Precisa de atenção">
+        {avisos.map((aviso) => (
+          <LinhaDeAcao
+            key={aviso.tipo}
+            href={aviso.href}
+            icone={<AlertTriangle />}
+            tom="warning"
+            titulo={aviso.label}
+            // Aviso sem dinheiro (cotação) não ganha valor: `formatBRL(null)`
+            // escreveria "R$ 0,00", que leria como "não tem nada a pagar".
+            complemento={
+              aviso.total !== null ? valorExibivel(formatBRL(aviso.total)) : undefined
+            }
+          />
+        ))}
+      </ListaDeAcoes>
+    )}
+
+    {/* Contas a pagar reunidas: despesas + higienização, com as três mais
+        próximas clicáveis. Responde "o que eu preciso resolver hoje?". */}
+    {/* `data-tour`: âncoras do tour guiado (ver `lib/tour/roteiro`). */}
+    <div data-tour="dashboard-a-pagar">
+      <ContasAPagarCard
+        contas={contas}
+        proximas={proximas.itens.map((c) => ({
+          id: c.id,
+          description: c.description,
+          amount: c.amount.toString(),
+          dueDate: c.dueDate?.toISOString() ?? null,
+          categoryName: c.category?.name ?? null,
+          vencida: c.dueDate !== null && c.dueDate < hoje,
+        }))}
+        totalProximas={proximas.total.toString()}
+        countProximas={proximas.count}
+      />
+    </div>
+
+    {/* Depois dos números do dia: é referência para a compra de amanhã —
+        o comerciante sai para o CEASA de madrugada, e escondê-la atrás de
+        um toque significa, na prática, que ele vai sem saber. */}
+    {cotacoes && cotacoes.itens.length > 0 && (
+      <CotacoesInteresseCard
+        interesses={cotacoes}
+        agora={new Date()}
+        comparacao={comparacao ?? undefined}
+      />
+    )}
+
+    <div className="grid gap-3 md:grid-cols-2">
+      <ProductList
+        title="Mais vendidos"
+        icon={<ShoppingCart className="size-4" />}
+        rows={s.topVendidos}
+        mode="quantity"
+      />
+      <ProductList
+        title="Mais lucrativos"
+        icon={<TrendingUp className="size-4" />}
+        rows={s.topLucrativos}
+        mode="profit"
+      />
+      <ProductList
+        title="Com prejuízo"
+        icon={<TrendingDown className="size-4" />}
+        rows={s.produtosComPrejuizo}
+        mode="profit"
+        tone="destructive"
+      />
+      <EstoqueParado linhas={s.estoqueParado} cotacoes={cotacoes} />
+    </div>
+    </>
+  );
+}
+
+/**
+ * A aba Financeiro. Só o que ela mostra: o resumo do mês e a série dos
+ * gráficos — contas a pagar e próximas contas são da Visão Geral, e lê-las
+ * aqui era tempo de resposta jogado fora.
+ */
+async function AbaFinanceiro({ tenantId, modules }: { tenantId: string; modules: Modulos }) {
+  const [s, financeiro] = await Promise.all([
+    DashboardService.getSummary(tenantId, modules, "financeiro"),
+    PainelFinanceiroService.get(tenantId, undefined, modules),
+  ]);
+  const { lucroTone, margemTone } = tonsDoResultado(s);
+  return (
+    <Financeiro
+      s={s}
+      financeiro={financeiro}
+      lucroTone={lucroTone}
+      margemTone={margemTone}
+      agora={new Date()}
+    />
   );
 }
 

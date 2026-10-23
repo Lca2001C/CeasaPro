@@ -64,6 +64,13 @@ export async function toPdf(r: ReportResult): Promise<Buffer> {
       style: "meta",
     },
     { text: `Gerado em: ${formatDate(r.generatedAt)}`, style: "meta" },
+    // Identificação do comprovante (cliente, pagamento, situação).
+    ...(r.cabecalho ?? []).map(
+      (l): Content => ({
+        text: [{ text: `${l.rotulo}: `, bold: true }, l.valor],
+        margin: [0, 2, 0, 0],
+      }),
+    ),
     { text: " ", margin: [0, 4] },
     {
       table: {

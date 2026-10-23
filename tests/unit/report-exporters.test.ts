@@ -168,3 +168,39 @@ describe("toPdf", () => {
     expect(buf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
   });
 });
+
+/**
+ * Comprovante de venda: a identificação (cliente, pagamento, situação) vai num
+ * `cabecalho` entre o título e a tabela. Sem ele, o arquivo é o de sempre.
+ */
+describe("cabeçalho do comprovante", () => {
+  const comprovante: ReportResult = {
+    ...relatorio,
+    title: "Venda — Mercadinho A",
+    cabecalho: [
+      { rotulo: "Cliente", valor: "Mercadinho A" },
+      // Nome digitado no balcão não pode virar fórmula no Excel.
+      { rotulo: "Pagamento", valor: "=1+1" },
+    ],
+  };
+
+  it("Excel: as linhas entram depois do 'gerado em', com o valor como texto", async () => {
+    const buf = await toExcel(comprovante);
+    const wb = new ExcelJS.Workbook();
+    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    const ws = wb.getWorksheet("Relatório")!;
+    expect(ws.getRow(4).getCell(1).value).toBe("Cliente");
+    expect(ws.getRow(4).getCell(2).value).toBe("Mercadinho A");
+    expect(ws.getRow(5).getCell(1).value).toBe("Pagamento");
+    const pagamento = ws.getRow(5).getCell(2);
+    expect(pagamento.formula).toBeUndefined();
+    expect(String(pagamento.value)).toContain("1+1");
+    // A tabela continua depois do bloco: linha em branco e o cabeçalho.
+    expect(ws.getRow(7).getCell(1).value).toBe("Cliente");
+  });
+
+  it("PDF com cabeçalho é válido", async () => {
+    const buf = await toPdf(comprovante);
+    expect(buf.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+  });
+});
