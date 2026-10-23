@@ -25,6 +25,8 @@ export function CustosDaCarga({
   titulo = "Custos desta carga inicial",
   descricao,
   idPrefixo = "produto",
+  semCusto = false,
+  onSemCusto,
   children,
 }: {
   quantidade: number;
@@ -38,6 +40,9 @@ export function CustosDaCarga({
   descricao?: string;
   /** Prefixo dos `id` dos campos: a lista do Estoque tem um card por produto. */
   idPrefixo?: string;
+  /** Só o cadastro do produto oferece pular o custo. A entrada rápida vira compra. */
+  semCusto?: boolean;
+  onSemCusto?: (marcado: boolean) => void;
   children?: ReactNode;
 }) {
   const custo = calcularCustoDaCarga(quantidade, mercadoria, descarga);
@@ -56,40 +61,68 @@ export function CustosDaCarga({
           {titulo}
         </h3>
         <p className="mt-1 text-xs text-muted-foreground">
-          {descricao ??
-            `Quanto custou cada ${uma} que já está no box. É com esse custo que o sistema calcula o lucro das primeiras vendas.`}
+          {semCusto
+            ? `As ${varias} entram no estoque. Lucro, margem, CMV e valor em estoque não usam esta carga, e uma compra seguinte não espalha o preço nela.`
+            : (descricao ??
+              `Quanto custou cada ${uma} que já está no box. É com esse custo que o sistema calcula o lucro das primeiras vendas.`)}
         </p>
       </div>
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${idPrefixo}-custo-mercadoria`}>Custo da mercadoria (R$ por {uma})</Label>
-        <CurrencyInput
-          id={`${idPrefixo}-custo-mercadoria`}
-          placeholder="R$ 0,00"
-          value={mercadoria}
-          onChange={(v) => onMercadoria(v ?? null)}
-        />
-        <span className="text-xs text-muted-foreground">Produção + embalagem + transporte</span>
-      </div>
+      {onSemCusto && (
+        <label className="flex items-start gap-3 rounded-md border bg-background p-3 text-sm">
+          <input
+            type="checkbox"
+            className="mt-0.5 size-5 shrink-0"
+            checked={semCusto}
+            onChange={(e) => onSemCusto(e.target.checked)}
+          />
+          <span>
+            <span className="font-medium">Não cadastrar o custo agora</span>
+            <span className="mt-1 block text-xs text-muted-foreground">
+              A quantidade entra no estoque. Lucro, margem, CMV e valor em estoque não usam esta
+              carga.
+            </span>
+          </span>
+        </label>
+      )}
 
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor={`${idPrefixo}-custo-descarga`}>Custo de descarregamento (R$ por {uma})</Label>
-        <CurrencyInput
-          id={`${idPrefixo}-custo-descarga`}
-          placeholder="R$ 0,00"
-          value={descarga}
-          onChange={(v) => onDescarga(v ?? null)}
-        />
-        <span className="text-xs text-muted-foreground">
-          Em geral R$ 0,50 (caixa leve) ou R$ 1,00 (caixa pesada, de 20 kg ou mais)
-        </span>
-      </div>
+      {!semCusto && (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${idPrefixo}-custo-mercadoria`}>
+              Custo da mercadoria (R$ por {uma})
+            </Label>
+            <CurrencyInput
+              id={`${idPrefixo}-custo-mercadoria`}
+              placeholder="R$ 0,00"
+              value={mercadoria}
+              onChange={(v) => onMercadoria(v ?? null)}
+            />
+            <span className="text-xs text-muted-foreground">Produção + embalagem + transporte</span>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor={`${idPrefixo}-custo-descarga`}>
+              Custo de descarregamento (R$ por {uma})
+            </Label>
+            <CurrencyInput
+              id={`${idPrefixo}-custo-descarga`}
+              placeholder="R$ 0,00"
+              value={descarga}
+              onChange={(v) => onDescarga(v ?? null)}
+            />
+            <span className="text-xs text-muted-foreground">
+              Em geral R$ 0,50 (caixa leve) ou R$ 1,00 (caixa pesada, de 20 kg ou mais)
+            </span>
+          </div>
+        </>
+      )}
 
       {children}
 
       {erro && <span className="text-xs text-destructive">{erro}</span>}
 
-      {custo.custoUnitario != null && (
+      {!semCusto && custo.custoUnitario != null && (
         <dl className="flex flex-col gap-1 rounded-md border bg-background p-2 text-xs">
           <div className="flex justify-between gap-2">
             <dt>

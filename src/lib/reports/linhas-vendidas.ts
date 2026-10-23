@@ -24,7 +24,12 @@ export interface LinhaVendida {
   quantity: Prisma.Decimal;
   /** Receita da linha, com o desconto da venda rateado. */
   receita: Prisma.Decimal;
-  /** Custo da linha: quantidade × custo gravado na venda. */
+  /**
+   * Parte da receita que entra no lucro. Quantidade vendida sem custo fica
+   * de fora — o dinheiro continua em `receita`.
+   */
+  receitaNoLucro: Prisma.Decimal;
+  /** Custo da linha: só as unidades que tinham custo na hora da venda. */
   custo: Prisma.Decimal;
 }
 
@@ -36,8 +41,9 @@ interface LinhaCrua {
   customerName: string | null;
   recipientType: string | null;
   quantity: Prisma.Decimal | string;
+  quantidadeComCusto: Prisma.Decimal | string;
   lineTotal: Prisma.Decimal | string;
-  custo: Prisma.Decimal | string;
+  custo: Prisma.Decimal | string | null;
   totalAmount: Prisma.Decimal | string;
 }
 
@@ -62,8 +68,11 @@ export async function linhasVendidas(
            s."customerName" AS "customerName",
            COALESCE(si."recipientType", pr."recipientType")::text AS "recipientType",
            si.quantity AS quantity,
+           COALESCE(si."quantidadeComCusto", si.quantity) AS "quantidadeComCusto",
            si."lineTotal" AS "lineTotal",
-           si.quantity * si."unitCostAtSale" AS custo,
+           CASE WHEN si."unitCostAtSale" IS NULL THEN 0
+                ELSE COALESCE(si."quantidadeComCusto", si.quantity) * si."unitCostAtSale"
+           END AS custo,
            s."totalAmount" AS "totalAmount"
     FROM sale_items si
     JOIN sales s ON s.id = si."saleId"
@@ -88,6 +97,9 @@ export async function linhasVendidas(
       toDecimal(linhas[0]!.totalAmount as Prisma.Decimal.Value),
     );
     linhas.forEach((l, i) => {
+      const quantity = toDecimal(l.quantity as Prisma.Decimal.Value);
+      const comCusto = toDecimal(l.quantidadeComCusto as Prisma.Decimal.Value);
+      const receita = receitas[i]!;
       saida.push({
         saleId: l.saleId,
         productId: l.productId,
@@ -95,9 +107,10 @@ export async function linhasVendidas(
         saleDate: l.saleDate,
         customerName: l.customerName,
         recipientType: l.recipientType,
-        quantity: toDecimal(l.quantity as Prisma.Decimal.Value),
-        receita: receitas[i]!,
-        custo: toDecimal(l.custo as Prisma.Decimal.Value),
+        quantity,
+        receita,
+        receitaNoLucro: quantity.isZero() ? toDecimal(0) : receita.mul(comCusto).div(quantity),
+        custo: toDecimal((l.custo ?? 0) as Prisma.Decimal.Value),
       });
     });
   }
@@ -110,6 +123,7 @@ export interface ResumoPorChave {
   name: string;
   qtd: Prisma.Decimal;
   receita: Prisma.Decimal;
+  receitaNoLucro: Prisma.Decimal;
   custo: Prisma.Decimal;
   lucro: Prisma.Decimal;
 }
@@ -132,6 +146,7 @@ export function resumirPor(
   }
   return [...grupos.entries()].map(([chave, g]) => {
     const receita = money(add(...g.map((l) => l.receita)));
+    const receitaNoLucro = money(add(...g.map((l) => l.receitaNoLucro)));
     const custo = money(add(...g.map((l) => l.custo)));
     return {
       chave,
@@ -139,8 +154,9 @@ export function resumirPor(
       name: g[0]!.productName,
       qtd: add(...g.map((l) => l.quantity)),
       receita,
+      receitaNoLucro,
       custo,
-      lucro: FinancialCalc.lucroBruto(receita, custo),
+      lucro: FinancialCalc.lucroBruto(receitaNoLucro, custo),
     };
   });
 }

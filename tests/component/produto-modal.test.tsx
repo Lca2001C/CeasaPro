@@ -7,8 +7,8 @@ import userEvent from "@testing-library/user-event";
  *
  * - Embalagem de produto com histórico: o servidor recusa trocar (o histórico
  *   seria relido na unidade nova), então a tela trava o campo e explica.
- * - Estoque inicial pede o custo: sem ele a entrada valeria R$ 0 e o lucro das
- *   primeiras vendas sairia inflado.
+ * - Estoque inicial pede o custo, com a opção de não cadastrar. Sem a opção,
+ *   a entrada valeria R$ 0 e o lucro das primeiras vendas sairia inflado.
  * - Sem armazenamento configurado, os botões de foto ficam desabilitados e o
  *   cadastro segue.
  */
@@ -145,6 +145,26 @@ describe("ProdutoModal — cadastro", () => {
     await user.click(screen.getByRole("button", { name: "Salvar Produto" }));
     await waitFor(() => expect(criarProduto).toHaveBeenCalledTimes(1));
     expect(criarProduto.mock.calls[0]![0].custoInicial).toBeNull();
+  });
+
+  it("dá para gravar o estoque sem custo, e o custo deixa de ser obrigatório", async () => {
+    const user = userEvent.setup();
+    abrir();
+    await user.type(screen.getByLabelText(/Nome do Produto/), "Uva");
+    await user.type(screen.getByLabelText("Estoque Inicial"), "60");
+    await user.click(screen.getByRole("checkbox", { name: /Não cadastrar o custo agora/ }));
+
+    expect(screen.queryByLabelText(/Custo da mercadoria/)).toBeNull();
+    expect(screen.getByText(/compra seguinte não espalha o preço/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Salvar Produto" }));
+    await waitFor(() => expect(criarProduto).toHaveBeenCalledTimes(1));
+    expect(criarProduto.mock.calls[0]![0]).toMatchObject({
+      name: "Uva",
+      estoqueInicial: 60,
+      custoInicial: null,
+      semCustoInicial: true,
+    });
   });
 
   it("Seus produtos: famílias pela primeira palavra e filtro pelo nome digitado", async () => {

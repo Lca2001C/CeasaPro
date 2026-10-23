@@ -3,6 +3,10 @@ import { randomUUID } from "node:crypto";
 import { prisma } from "@/lib/db/prisma";
 import { ProdutosService, SOURCE_ESTOQUE_INICIAL } from "@/lib/services/produtos.service";
 import { EstoqueService } from "@/lib/services/estoque.service";
+import { ComprasService } from "@/lib/services/compras.service";
+import { VendasService } from "@/lib/services/vendas.service";
+import { DashboardService } from "@/lib/services/dashboard.service";
+import { isoDateTz } from "@/lib/tz";
 import { prefixoDaEmpresa } from "@/lib/imagem/formato";
 import { produtoSchema } from "@/lib/validations/produto";
 import { createTestTenant, cleanupTenants, makeCtx } from "../helpers/factory";
@@ -77,6 +81,84 @@ describe("estoque inicial", () => {
       ProdutosService.create({ ...base, name: "Pepino", estoqueInicial: 5 }, ctx),
     ).rejects.toThrow(/custou/);
     expect(await prisma.product.count({ where: { tenantId, name: "Pepino" } })).toBe(0);
+  });
+
+  it("com a opção, grava a quantidade e deixa o custo nulo", async () => {
+    const r = produtoSchema.safeParse({
+      ...base,
+      name: "Uva",
+      estoqueInicial: 60,
+      semCustoInicial: true,
+    });
+    expect(r.success).toBe(true);
+    const p = await ProdutosService.create(
+      { ...base, name: "Uva", estoqueInicial: 60, semCustoInicial: true },
+      ctx,
+    );
+    const mov = await prisma.stockMovement.findFirstOrThrow({ where: { productId: p.id } });
+    expect(mov.sourceType).toBe(SOURCE_ESTOQUE_INICIAL);
+    expect(Number(mov.quantity)).toBe(60);
+    expect(mov.unitCost).toBeNull();
+
+    const pos = (await EstoqueService.getPositions(tenantId)).find((x) => x.productId === p.id)!;
+    expect(Number(pos.quantity)).toBe(60);
+    expect(pos.avgCost).toBeNull();
+    expect(Number(pos.value)).toBe(0);
+    expect(Number(pos.quantidadeSemCusto)).toBe(60);
+  });
+});
+
+describe("estoque sem custo não entra no lucro", () => {
+  it("compra seguinte não herda a quantidade, e a venda dela fica fora do CMV", async () => {
+    const p = await ProdutosService.create(
+      { ...base, name: "Banana", estoqueInicial: 60, semCustoInicial: true },
+      ctx,
+    );
+    await ComprasService.registrarCompra(
+      {
+        supplierId: null,
+        purchaseDate: isoDateTz(),
+        freight: 0,
+        items: [{ productId: p.id, quantity: 10, unitPrice: 20 }],
+      },
+      ctx,
+    );
+
+    const antes = (await EstoqueService.getPositions(tenantId)).find((x) => x.productId === p.id)!;
+    expect(Number(antes.quantity)).toBe(70);
+    expect(Number(antes.avgCost)).toBe(20);
+    expect(Number(antes.value)).toBe(200);
+    expect(Number(antes.quantidadeSemCusto)).toBe(60);
+
+    await EstoqueService.atualizarCheckpoints(tenantId, new Date());
+    const comCheckpoint = (await EstoqueService.getPositions(tenantId)).find(
+      (x) => x.productId === p.id,
+    )!;
+    expect(Number(comCheckpoint.avgCost)).toBe(20);
+    expect(Number(comCheckpoint.value)).toBe(200);
+
+    const venda = await VendasService.registrarVenda(
+      {
+        paymentMethod: "DINHEIRO",
+        items: [{ productId: p.id, quantity: 15, unitPrice: 30 }],
+      },
+      ctx,
+    );
+    expect(venda.items[0]!.unitCostAtSale).toBeNull();
+    expect(Number(venda.items[0]!.quantidadeComCusto)).toBe(0);
+
+    const depois = (await EstoqueService.getPositions(tenantId)).find((x) => x.productId === p.id)!;
+    expect(Number(depois.quantity)).toBe(55);
+    expect(Number(depois.value)).toBe(200);
+    expect(Number(depois.quantidadeSemCusto)).toBe(45);
+
+    const painel = await DashboardService.calcularSummary(tenantId, ctx.session.modules);
+    expect(Number(painel.mesVendi)).toBe(450);
+    expect(Number(painel.cmvMes)).toBe(0);
+    expect(Number(painel.vendasSemCustoMes)).toBe(450);
+    expect(painel.vendasSemCusto).toBe(1);
+    expect(Number(painel.lucroBrutoMes)).toBe(0);
+    expect(Number(painel.margemLiquidaMes)).toBe(0);
   });
 });
 

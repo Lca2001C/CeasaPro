@@ -1,7 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db/prisma";
 import { getTenantPrisma } from "@/lib/db/tenant-prisma";
-import { toDecimal, money } from "@/lib/money";
+import { toDecimal, money, sub } from "@/lib/money";
 import { FinancialCalc } from "./financial-calc.service";
 import { EstoqueService } from "./estoque.service";
 import { startOfDay, startOfMonth, addDays, endOfDay } from "@/lib/dates";
@@ -64,6 +64,13 @@ export interface DashboardSummary {
   custoEmbalagensMes: Prisma.Decimal;
   /** Vendas de embalagem do mês sem custo conhecido (tipo sem controle de estoque). */
   embalagensSemCusto: number;
+  /**
+   * Receita de mercadoria vendida a partir de estoque sem custo. Está em
+   * "Vendi" e fora do lucro, da margem e do CMV.
+   */
+  vendasSemCustoMes: Prisma.Decimal;
+  /** Quantas vendas do mês têm alguma quantidade sem custo. */
+  vendasSemCusto: number;
   /**
    * Perdas e acertos de estoque do mês, pelo custo do movimento: quebra,
    * doação e acerto para baixo menos o acerto para cima. Ajuste desfeito fica
@@ -236,11 +243,37 @@ export const DashboardService = {
         _sum: { totalAmount: true },
         where: { saleDate: { gte: monthStart, lte: ateAgora }, cancelledAt: null },
       }),
-      !lucro ? pula([] as { cmv: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ cmv: Prisma.Decimal | string }[]>`
-        SELECT COALESCE(SUM(si.quantity * si."unitCostAtSale"), 0) AS cmv
-        FROM sale_items si
-        JOIN sales s ON s.id = si."saleId"
-        WHERE si."tenantId" = ${tenantId} AND s."saleDate" >= ${monthStart} AND s."saleDate" <= ${ateAgora} AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
+      !lucro
+        ? pula([] as { cmv: Prisma.Decimal | string; receita_sem_custo: Prisma.Decimal | string; vendas_sem_custo: number }[])
+        : prisma.$queryRaw<{ cmv: Prisma.Decimal | string; receita_sem_custo: Prisma.Decimal | string; vendas_sem_custo: number }[]>`
+        WITH linhas AS (
+          SELECT s.id AS sale_id,
+                 s."totalAmount" AS total,
+                 si."lineTotal" AS linha,
+                 CASE WHEN si.quantity = 0 THEN 0
+                      ELSE si."lineTotal"
+                           * (si.quantity - COALESCE(si."quantidadeComCusto", si.quantity))
+                           / si.quantity
+                 END AS sem,
+                 CASE WHEN si."unitCostAtSale" IS NULL THEN 0
+                      ELSE COALESCE(si."quantidadeComCusto", si.quantity) * si."unitCostAtSale"
+                 END AS cmv
+          FROM sale_items si
+          JOIN sales s ON s.id = si."saleId"
+          WHERE si."tenantId" = ${tenantId}
+            AND s."saleDate" >= ${monthStart} AND s."saleDate" <= ${ateAgora}
+            AND s."deletedAt" IS NULL AND s."cancelledAt" IS NULL
+        ),
+        por_venda AS (
+          SELECT sale_id, MAX(total) AS total, SUM(linha) AS linhas, SUM(sem) AS sem,
+                 BOOL_OR(sem > 0) AS tem_sem
+          FROM linhas
+          GROUP BY sale_id
+        )
+        SELECT COALESCE((SELECT SUM(cmv) FROM linhas), 0) AS cmv,
+               COALESCE(SUM(CASE WHEN linhas = 0 THEN 0 ELSE total * sem / linhas END), 0) AS receita_sem_custo,
+               COALESCE(SUM(CASE WHEN tem_sem THEN 1 ELSE 0 END), 0)::int AS vendas_sem_custo
+        FROM por_venda
       `,
       !fin ? pula([] as { type: string; total: Prisma.Decimal | string }[]) : prisma.$queryRaw<{ type: string; total: Prisma.Decimal | string }[]>`
         SELECT type::text AS type, COALESCE(SUM(amount), 0) AS total
@@ -395,6 +428,10 @@ export const DashboardService = {
     const porProduto = porProdutoDoMes(linhasDoMes);
     const vendasMesTotal = toDecimal(vendasMes._sum.totalAmount ?? 0);
     const cmvMes = toDecimal((cmvRows[0]?.cmv ?? 0) as Prisma.Decimal.Value);
+    const receitaSemCusto = money(
+      toDecimal((cmvRows[0]?.receita_sem_custo ?? 0) as Prisma.Decimal.Value),
+    );
+    const vendasSemCusto = Number(cmvRows[0]?.vendas_sem_custo ?? 0);
     const despesasFixasMes = sumExpenseByType(despRows, "FIXA");
     let despesasVariaveisMes = sumExpenseByType(despRows, "VARIAVEL");
 
@@ -428,11 +465,13 @@ export const DashboardService = {
       toDecimal((recuperadoRows[0]?.total ?? 0) as Prisma.Decimal.Value),
     );
     const faturamentoMes = FinancialCalc.faturamento(vendasMesTotal, embalagens);
+    // "Vendi" continua com o dinheiro todo. Lucro e margem usam só o que tem custo.
+    const baseDoLucro = sub(faturamentoMes, receitaSemCusto);
     const perdasEstoque = money(
       toDecimal((perdaEstoqueRows[0]?.total ?? 0) as Prisma.Decimal.Value),
     );
     const lucroBrutoMes = FinancialCalc.lucroBruto(
-      faturamentoMes,
+      baseDoLucro,
       FinancialCalc.custoDoVendido(cmvMes, custoEmbalagens, perdasEstoque),
     );
     const lucroMes = FinancialCalc.lucroLiquido(
@@ -477,12 +516,14 @@ export const DashboardService = {
       embalagensMes: embalagens,
       custoEmbalagensMes: custoEmbalagens,
       embalagensSemCusto: Number(linhaEmb?.sem_custo ?? 0),
+      vendasSemCustoMes: receitaSemCusto,
+      vendasSemCusto,
       perdasEstoqueMes: perdasEstoque,
       perdasFiadoMes: perdasFiado,
       recuperadoFiadoMes: recuperadoFiado,
       despesasLucroMes: despesasLucro,
       lucroMes,
-      margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, faturamentoMes),
+      margemLiquidaMes: FinancialCalc.margemLiquida(lucroMes, baseDoLucro),
       despesasFixasMes,
       despesasVariaveisMes,
       higienizacaoMes: money(higEnviadaMes),

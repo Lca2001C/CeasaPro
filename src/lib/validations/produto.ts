@@ -55,11 +55,22 @@ export const produtoSchema = z
       .refine(temAteQuatroCasas, "Use no máximo 4 casas decimais")
       .nullable()
       .optional(),
+    /**
+     * O dono marcou "Não cadastrar o custo agora". A quantidade entra; o
+     * `unitCost` fica nulo e não vira R$ 0 no lucro.
+     */
+    semCustoInicial: z.boolean().optional(),
   })
-  .refine((v) => !(v.estoqueInicial && v.estoqueInicial > 0) || v.custoInicial != null, {
-    path: ["custoInicial"],
-    message: "Informe quanto custou cada unidade do estoque inicial",
-  });
+  .refine(
+    (v) =>
+      !(v.estoqueInicial && v.estoqueInicial > 0) ||
+      v.semCustoInicial === true ||
+      v.custoInicial != null,
+    {
+      path: ["custoInicial"],
+      message: "Informe quanto custou cada unidade do estoque inicial",
+    },
+  );
 export type ProdutoInput = z.infer<typeof produtoSchema>;
 
 /** Edição: o estoque inicial só existe no cadastro. Depois, compra ou ajuste. */

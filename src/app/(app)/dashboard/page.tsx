@@ -643,6 +643,12 @@ function Financeiro({
               embalagens e registre as entradas com o custo.
             </p>
           )}
+          {s.vendasSemCusto > 0 && (
+            <p className="mt-3 text-sm text-muted-foreground">
+              {s.vendasSemCusto} venda(s) de mercadoria sem custo neste mês: o dinheiro entrou em
+              Vendi e ficou fora do lucro, da margem e do CMV.
+            </p>
+          )}
         </CartaoGrafico>
 
         <CartaoGrafico

@@ -26,10 +26,12 @@ function resumo(o: {
   fixas?: number;
   perdasFiado?: number;
   recuperado?: number;
+  vendasSemCusto?: number;
 }): DashboardSummary {
   const faturamento = FinancialCalc.faturamento(o.mesVendi, o.embalagens ?? 0);
+  const baseDoLucro = faturamento.minus(o.vendasSemCusto ?? 0);
   const lucroBruto = FinancialCalc.lucroBruto(
-    faturamento,
+    baseDoLucro,
     FinancialCalc.custoDoVendido(o.cmv, o.custoEmbalagens ?? 0, o.perdasEstoque ?? 0),
   );
   const lucro = FinancialCalc.lucroLiquido(lucroBruto, o.contas, o.perdasFiado ?? 0, o.recuperado ?? 0);
@@ -47,12 +49,14 @@ function resumo(o: {
     embalagensMes: D(o.embalagens ?? 0),
     custoEmbalagensMes: D(o.custoEmbalagens ?? 0),
     embalagensSemCusto: 0,
+    vendasSemCustoMes: D(o.vendasSemCusto ?? 0),
+    vendasSemCusto: 0,
     perdasEstoqueMes: D(o.perdasEstoque ?? 0),
     perdasFiadoMes: D(o.perdasFiado ?? 0),
     recuperadoFiadoMes: D(o.recuperado ?? 0),
     despesasLucroMes: D(o.contas),
     lucroMes: lucro,
-    margemLiquidaMes: FinancialCalc.margemLiquida(lucro, faturamento),
+    margemLiquidaMes: FinancialCalc.margemLiquida(lucro, baseDoLucro),
     despesasFixasMes: D(fixas),
     despesasVariaveisMes: D(o.contas - fixas),
     higienizacaoMes: D(o.higienizacao ?? 0),

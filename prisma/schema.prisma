@@ -901,7 +901,12 @@ model SaleItem {
   /// Desconto desta linha. `lineTotal` já vem líquido (qtd × preço − desconto).
   discountAmount Decimal        @default(0) @db.Decimal(14, 2)
   lineTotal      Decimal        @db.Decimal(14, 2)
-  unitCostAtSale Decimal        @default(0) @db.Decimal(14, 4)
+  /// Nulo: esta linha saiu de estoque sem custo e fica fora do CMV. Zero é
+  /// custo de verdade (mercadoria lançada a R$ 0).
+  unitCostAtSale Decimal?       @default(0) @db.Decimal(14, 4)
+  /// Quantas unidades desta linha tinham custo. Nulo = a linha inteira (venda
+  /// antiga). Zero = nenhuma.
+  quantidadeComCusto Decimal?   @db.Decimal(14, 3)
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
   product        Product        @relation(fields: [productId], references: [id])
@@ -1035,6 +1040,9 @@ model StockCostCheckpoint {
   /// sem isto, o checkpoint dentro de um ciclo que começou num saldo negativo
   /// dava outro custo que o repasse completo.
   deslocamento       Decimal  @default(0) @db.Decimal(14, 3)
+  /// Quantidade do saldo que entrou sem custo e ainda não foi consumida.
+  /// Zero em checkpoint antigo: o repasse de quem sempre teve custo não muda.
+  saldoSemCusto      Decimal  @default(0) @db.Decimal(14, 3)
   /// Custo da última entrada coberta: o custo de referência sem saldo.
   ultimoCustoEntrada Decimal? @db.Decimal(14, 4)
   ultimoMovedAt      DateTime

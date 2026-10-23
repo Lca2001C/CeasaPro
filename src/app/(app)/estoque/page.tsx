@@ -92,6 +92,7 @@ export default async function EstoquePage({
   const nivelDe = (p: (typeof todas)[number]) => nivelEstoque(p.quantity, p.minStock);
   const comSaldo = todas.filter((p) => nivelDe(p) !== "zerado");
   const valorTotal = add(...comSaldo.map((p) => p.value));
+  const temSemCusto = comSaldo.some((p) => p.quantidadeSemCusto.greaterThan(0));
   const acabando = comSaldo.filter((p) => nivelDe(p) === "acabando");
 
   const posicoes = todas
@@ -217,7 +218,11 @@ export default async function EstoquePage({
               value={String(comSaldo.length)}
               hint={comSaldo.length === 1 ? "item" : "itens"}
             />
-            <StatCard label="Valor em estoque" value={formatBRL(valorTotal)} />
+            <StatCard
+              label="Valor em estoque"
+              value={formatBRL(valorTotal)}
+              hint={temSemCusto ? "Não inclui quantidade sem custo" : undefined}
+            />
           </div>
 
           {acabando.length > 0 && (
@@ -341,9 +346,9 @@ export default async function EstoquePage({
                           Custo médio
                         </span>
                         <span className="text-sm font-medium tabular-nums [overflow-wrap:anywhere]">
-                          {formatBRL(p.avgCost)}
+                          {p.avgCost == null ? "Sem custo" : formatBRL(p.avgCost)}
                         </span>
-                        {unidade && (
+                        {unidade && p.avgCost != null && (
                           <span className="block text-[11px] text-muted-foreground">
                             por {unidade.toLowerCase()}
                           </span>
@@ -354,8 +359,13 @@ export default async function EstoquePage({
                           Valor
                         </span>
                         <span className="text-sm font-semibold tabular-nums [overflow-wrap:anywhere]">
-                          {formatBRL(p.value)}
+                          {p.avgCost == null ? "Sem custo" : formatBRL(p.value)}
                         </span>
+                        {p.avgCost != null && p.quantidadeSemCusto.greaterThan(0) && (
+                          <span className="block text-[11px] text-muted-foreground">
+                            {formatQty(p.quantidadeSemCusto)} sem custo
+                          </span>
+                        )}
                       </div>
                     </div>
 
@@ -396,7 +406,9 @@ export default async function EstoquePage({
                         entityLabel={`o produto ${p.name}`}
                         aviso={
                           Number(p.quantity) > 0
-                            ? `Ainda há ${formatQty(p.quantity)} em estoque: esse saldo será baixado como perda do mês.`
+                            ? p.avgCost == null
+                              ? `Ainda há ${formatQty(p.quantity)} em estoque. Esse saldo sai, e como não há custo, não entra nas perdas do mês.`
+                              : `Ainda há ${formatQty(p.quantity)} em estoque: esse saldo será baixado como perda do mês.`
                             : undefined
                         }
                       />

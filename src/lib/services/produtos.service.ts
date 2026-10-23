@@ -8,7 +8,7 @@ import { CotacoesService } from "./cotacoes.service";
 import { describeError, logger } from "@/lib/logger";
 import { formatQty } from "@/lib/format";
 import { Prisma } from "@prisma/client";
-import { saldoECustoMedio } from "./estoque.service";
+import { partirQuantidade, saldoECustoMedio } from "./estoque.service";
 import { ORIGEM_PRODUTO_EXCLUIDO } from "@/lib/estoque/origens";
 import { HORAS_PARA_DESFAZER } from "@/lib/desfazer/prazo";
 import { isModuleEnabled } from "@/lib/plan/modules";
@@ -87,7 +87,8 @@ export const ProdutosService = {
     const db = getTenantPrisma(ctx.tenantId);
     const imageKey = await ProdutoImagemService.validarChave(ctx.tenantId, input.imageKey);
     const estoqueInicial = input.estoqueInicial ?? 0;
-    if (estoqueInicial > 0 && input.custoInicial == null) {
+    const semCusto = input.semCustoInicial === true && estoqueInicial > 0;
+    if (estoqueInicial > 0 && !semCusto && input.custoInicial == null) {
       throw new BusinessRuleError("Informe quanto custou cada unidade do estoque inicial.");
     }
 
@@ -114,7 +115,8 @@ export const ProdutosService = {
             productId: product.id,
             type: "ENTRADA",
             quantity: estoqueInicial,
-            unitCost: input.custoInicial ?? 0,
+            // Nulo de propósito: R$ 0 entraria na média e o lucro sairia inteiro.
+            unitCost: semCusto ? null : input.custoInicial,
             reason: "Estoque inicial (cadastro do produto)",
             sourceType: SOURCE_ESTOQUE_INICIAL,
             sourceId: product.id,
@@ -132,7 +134,9 @@ export const ProdutosService = {
           entityId: product.id,
           newData: {
             ...product,
-            ...(estoqueInicial > 0 ? { estoqueInicial, custoInicial: input.custoInicial } : {}),
+            ...(estoqueInicial > 0
+              ? { estoqueInicial, custoInicial: semCusto ? null : input.custoInicial }
+              : {}),
           },
           ip: ctx.ip,
         },
@@ -237,16 +241,26 @@ export const ProdutosService = {
 
       // Saldo que sobrou sai pelo livro-razão (acerto para baixo, pelo custo
       // médio da hora) — entra nas perdas do mês em vez de sumir sem registro.
-      const { saldo: saldos, custo: custos } = await saldoECustoMedio(tx, ctx.tenantId, [id]);
+      const { saldo: saldos, custo: custos, semCusto } = await saldoECustoMedio(tx, ctx.tenantId, [id]);
       const saldo = saldos.get(id) ?? new Prisma.Decimal(0);
       if (saldo.greaterThan(0)) {
+        const media = custos.get(id);
+        const { comCusto } = partirQuantidade(saldo, semCusto.get(id) ?? new Prisma.Decimal(0));
+        // A perda do mês lê quantidade × unitCost. A parte sem custo não tem
+        // valor: o unitCost da linha inteira carrega só o que tinha preço.
+        const unitCost =
+          comCusto.lessThanOrEqualTo(0) || media == null
+            ? null
+            : comCusto.equals(saldo)
+              ? media
+              : comCusto.mul(media).div(saldo).toDecimalPlaces(4);
         await tx.stockMovement.create({
           data: {
             tenantId: ctx.tenantId,
             productId: id,
             type: "AJUSTE",
             quantity: saldo.neg(),
-            unitCost: custos.get(id) ?? new Prisma.Decimal(0),
+            unitCost,
             reason: `Baixa do saldo (${formatQty(saldo)}) na exclusão do produto`,
             sourceType: ORIGEM_PRODUTO_EXCLUIDO,
           },

@@ -135,6 +135,7 @@ function FormularioProduto({
   const [maisOpcoes, setMaisOpcoes] = useState(false);
   const [custoMercadoria, setCustoMercadoria] = useState<number | null>(null);
   const [custoDescarga, setCustoDescarga] = useState<number | null>(null);
+  const [semCusto, setSemCusto] = useState(false);
 
   const {
     register,
@@ -157,6 +158,7 @@ function FormularioProduto({
           sackCapacity: produto.sackCapacity,
           estoqueInicial: null,
           custoInicial: null,
+          semCustoInicial: false,
         }
       : {
           name: "",
@@ -167,6 +169,7 @@ function FormularioProduto({
           imageKey: null,
           estoqueInicial: null,
           custoInicial: null,
+          semCustoInicial: false,
           recipientType: null,
           qtyPerRecipient: null,
           sackCapacity: null,
@@ -183,6 +186,12 @@ function FormularioProduto({
     setValue("custoInicial", calcularCustoDaCarga(1, mercadoria, descarga).custoUnitario, {
       shouldValidate: Boolean(errors.custoInicial),
     });
+  }
+
+  function mudarSemCusto(marcado: boolean) {
+    setSemCusto(marcado);
+    setValue("semCustoInicial", marcado, { shouldValidate: Boolean(errors.custoInicial) });
+    if (marcado) mudarCustos(null, null);
   }
 
   function preencherCom(p: ProdutoSugerido) {
@@ -322,7 +331,10 @@ function FormularioProduto({
                     value={field.value}
                     onChange={(v) => {
                       field.onChange(v ?? null);
-                      if (!v) mudarCustos(null, null);
+                      if (!v) {
+                        mudarCustos(null, null);
+                        mudarSemCusto(false);
+                      }
                     }}
                     onBlur={field.onBlur}
                   />
@@ -340,7 +352,9 @@ function FormularioProduto({
             descarga={custoDescarga}
             onMercadoria={(v) => mudarCustos(v, custoDescarga)}
             onDescarga={(v) => mudarCustos(custoMercadoria, v)}
-            erro={errors.custoInicial?.message}
+            semCusto={semCusto}
+            onSemCusto={mudarSemCusto}
+            erro={semCusto ? undefined : errors.custoInicial?.message}
           />
         )}
 

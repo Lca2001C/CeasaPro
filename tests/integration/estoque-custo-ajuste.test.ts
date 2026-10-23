@@ -82,7 +82,7 @@ describe("custo médio é PONDERADO pela quantidade (regressão)", () => {
     const posicao = (await EstoqueService.getPositions(tenantId)).find(
       (p) => p.productId === productId,
     )!;
-    expect(posicao.avgCost.toFixed(2)).toBe("1.98");
+    expect(posicao.avgCost!.toFixed(2)).toBe("1.98");
   });
 
   // O estrago real: este valor é gravado na venda e vira a base do lucro.
@@ -249,7 +249,7 @@ describe("custo médio é do estoque ATUAL, não do histórico inteiro (regress�
 
     expect(Number(await custoAtual()).toFixed(2)).toBe("120.00");
     const p = await posicao();
-    expect(p.avgCost.toFixed(2)).toBe("120.00");
+    expect(p.avgCost!.toFixed(2)).toBe("120.00");
     // O cartão fecha com a conta de cabeça: 100 × 120 (antes: custo 85 e valor 12.000).
     expect(p.value.toFixed(2)).toBe("12000.00");
 
@@ -272,7 +272,7 @@ describe("custo médio é do estoque ATUAL, não do histórico inteiro (regress�
     expect(p.value.toFixed(2)).toBe("0.00");
     expect((await EstoqueService.getTotalValue(tenantId)).toFixed(2)).toBe("0.00");
     // Sem saldo, a referência é a última entrada (é o que um acerto para mais herda).
-    expect(p.avgCost.toFixed(2)).toBe("120.00");
+    expect(p.avgCost!.toFixed(2)).toBe("120.00");
   });
 
   it("o saldo só-quantidade do PDV bate com a posição da tela de Estoque", async () => {

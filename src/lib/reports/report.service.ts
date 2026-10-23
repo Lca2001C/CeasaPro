@@ -480,6 +480,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
       // total alguns centavos longe do painel (3 × R$ 0,3333 = R$ 0,99 contra
       // R$ 1,00), e a diferença crescia com o número de produtos.
       const receitaTotal = money(add(...vendidas.map((l) => l.receita)));
+      const receitaNoLucro = money(add(...vendidas.map((l) => l.receitaNoLucro)));
       const custoTotal = money(add(...vendidas.map((l) => l.custo)));
       const mapped = resumirPor(vendidas, porNome)
         .sort((a, b) => b.lucro.comparedTo(a.lucro) || porNomeAsc(a, b))
@@ -504,7 +505,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
           name: "TOTAL",
           receita: receitaTotal,
           custo: custoTotal,
-          lucro: FinancialCalc.lucroBruto(receitaTotal, custoTotal),
+          lucro: FinancialCalc.lucroBruto(receitaNoLucro, custoTotal),
         },
       };
     }
@@ -594,7 +595,7 @@ export async function buildReport(kind: ReportKind, p: Params): Promise<ReportRe
             compras: g.compras,
             receita,
             custo,
-            lucro: FinancialCalc.lucroBruto(receita, custo),
+            lucro: v?.lucro ?? toDecimal(0),
           };
         })
         .sort((a, b) => b.lucro.comparedTo(a.lucro) || b.compras.comparedTo(a.compras));

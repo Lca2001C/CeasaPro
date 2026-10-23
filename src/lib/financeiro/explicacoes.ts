@@ -90,6 +90,16 @@ function parcelasDoFaturamento(s: DashboardSummary): ParcelaExplicada[] {
   return [
     parcela("Vendi (mercadoria)", s.mesVendi, "+"),
     ...(naoZero(s.embalagensMes) ? [parcela("Vendi em embalagens", s.embalagensMes, "+")] : []),
+    ...(naoZero(s.vendasSemCustoMes)
+      ? [
+          parcela(
+            "Vendas sem custo",
+            s.vendasSemCustoMes,
+            "−",
+            "Mercadoria cadastrada sem custo. O dinheiro está em Vendi e fica fora do lucro, da margem e do CMV.",
+          ),
+        ]
+      : []),
   ];
 }
 
@@ -149,6 +159,7 @@ const FORA_DO_LUCRO = [
   "Contas geradas por compra (mercadoria, frete, embalagem): o custo delas já está no custo da mercadoria.",
   "Fiado recebido de vendas antigas: a venda já contou no mês em que foi feita.",
   "Vendas e lançamentos cancelados.",
+  "Venda de mercadoria que estava no estoque sem custo: o dinheiro entra em Vendi e fica fora do lucro, da margem e do CMV.",
 ];
 
 // ─────────────────────────────── Cada card ───────────────────────────────
@@ -242,6 +253,7 @@ export function explicarEstoque(s: DashboardSummary): Explicacao {
     foraDaConta: [
       "Produto zerado ou negativo (vale zero).",
       "Produto excluído.",
+      "Quantidade cadastrada sem custo: entra na contagem do estoque e não neste valor.",
       "O preço de VENDA: o card mostra quanto a mercadoria custou, não quanto vai render.",
     ],
     link: { href: "/estoque", rotulo: "Ver o estoque" },
@@ -269,7 +281,7 @@ export function explicarLucro(s: DashboardSummary, agora: Date): Explicacao {
 }
 
 export function explicarMargem(s: DashboardSummary, agora: Date): Explicacao {
-  const faturamento = add(s.mesVendi, s.embalagensMes);
+  const faturamento = sub(add(s.mesVendi, s.embalagensMes), s.vendasSemCustoMes);
   const semVenda = faturamento.lessThanOrEqualTo(0);
   return {
     titulo: "Sobrou em %",
@@ -278,14 +290,17 @@ export function explicarMargem(s: DashboardSummary, agora: Date): Explicacao {
     parcelas: [],
     total: null,
     formula: semVenda
-      ? ["Ainda não há venda no mês: sem venda, não dá para calcular a porcentagem, e o card mostra 0%."]
+      ? ["Ainda não há venda com custo no mês: sem ela, não dá para calcular a porcentagem, e o card mostra 0%."]
       : [
           `Sobrou no mês: ${formatBRL(s.lucroMes)}`,
-          `Vendi no mês${naoZero(s.embalagensMes) ? " (mercadoria + embalagem)" : ""}: ${formatBRL(faturamento)}`,
+          `Vendi no mês${naoZero(s.embalagensMes) ? " (mercadoria + embalagem)" : ""}${naoZero(s.vendasSemCustoMes) ? ", sem a venda que está sem custo" : ""}: ${formatBRL(faturamento)}`,
           `${formatBRL(s.lucroMes)} ÷ ${formatBRL(faturamento)} × 100 = ${formatQty(s.margemLiquidaMes)}%`,
         ],
-    entra: ["O mesmo \"Sobrou no mês\" e o mesmo total vendido dos outros cards."],
-    foraDaConta: ["As compras do mês (entram só pelo custo do que foi vendido)."],
+    entra: ["O mesmo \"Sobrou no mês\" e o mesmo total vendido dos outros cards, sem a mercadoria que está sem custo."],
+    foraDaConta: [
+      "As compras do mês (entram só pelo custo do que foi vendido).",
+      "Venda de mercadoria cadastrada sem custo.",
+    ],
   };
 }
 
@@ -321,6 +336,7 @@ export function explicarGanhei(s: DashboardSummary, agora: Date): Explicacao {
       "As contas do mês (descontadas em \"Sobrou no mês\").",
       "O valor das compras do mês.",
       "Vendas canceladas.",
+      "Venda de mercadoria cadastrada sem custo (o dinheiro fica em Vendi).",
     ],
     link: { href: "/relatorios/lucro_produto", rotulo: "Ver o lucro por produto" },
   };

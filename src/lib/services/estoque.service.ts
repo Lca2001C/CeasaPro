@@ -28,8 +28,11 @@ export interface StockPosition {
   name: string;
   saleUnit: string;
   quantity: Prisma.Decimal;
-  avgCost: Prisma.Decimal;
+  /** Nulo quando há saldo e nenhuma unidade tem custo. */
+  avgCost: Prisma.Decimal | null;
   value: Prisma.Decimal;
+  /** Quantidade que entrou sem custo e ainda está no box. */
+  quantidadeSemCusto: Prisma.Decimal;
   lastMovementAt: Date | null;
   /** Alerta de estoque do produto (nulo = limite padrão). */
   minStock: Prisma.Decimal | null;
@@ -57,8 +60,11 @@ export interface StockPosition {
  *   - quando o saldo chega a zero (ou abaixo), a média recomeça: a próxima
  *     entrada vale pelo próprio custo. Mercadoria que já saiu não pesa mais.
  *
- * O valor do estoque é `saldo × média` — o cartão do produto fecha com a conta
- * que o operador faz de cabeça, e com saldo zero o valor é zero.
+ * O valor do estoque é `saldo com custo × média`. Entrada sem custo (estoque
+ * inicial que o dono optou por não precificar) soma na quantidade e fica fora
+ * da média e do valor: não entra como R$ 0 e uma compra seguinte não espalha
+ * o preço dela em cima dessa quantidade. Saída come esse saldo primeiro; só
+ * o que passar disso mexe na média e no valor. Com saldo zero, o valor é zero.
  *
  * ## Por que mudou (duas vezes)
  *
@@ -134,8 +140,8 @@ export interface StockPosition {
 function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
   const porProduto = filtrarProdutos ? ` AND "productId" = ANY($2::text[])` : "";
   return `
-  WITH ck AS (
-    SELECT "productId", "ateCreatedAt", saldo, custo, deslocamento, "ultimoCustoEntrada", "ultimoMovedAt"
+  WITH RECURSIVE ck AS (
+    SELECT "productId", "ateCreatedAt", saldo, custo, deslocamento, "saldoSemCusto", "ultimoCustoEntrada", "ultimoMovedAt"
     FROM stock_cost_checkpoints
     WHERE "tenantId" = $1${porProduto}
   ),
@@ -167,23 +173,60 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
           AND estorno."sourceId" =
             CASE WHEN m."sourceType" = '${ORIGEM_AJUSTE}' THEN m.id ELSE m."sourceId" END
       )
-    -- Semente em DUAS linhas, para reproduzir o repasse completo também quando
-    -- o ciclo recomeçou num saldo negativo: a primeira (deslocamento, <= 0)
-    -- marca onde o ciclo zerou; a segunda é o que o ciclo acumulou desde então,
-    -- pela média. Uma linha só com o saldo REAL pesava as entradas seguintes
+    -- Semente em até TRÊS linhas. A primeira (deslocamento, <= 0) marca onde o
+    -- ciclo zerou; a segunda é o que o ciclo acumulou COM custo, pela média.
+    -- A terceira é a quantidade sem custo, que não entra na média. Com
+    -- saldoSemCusto = 0 (todo checkpoint antigo) a terceira some e a segunda
+    -- volta a ser saldo - deslocamento: o repasse de quem sempre teve custo
+    -- não muda. Uma linha só com o saldo REAL pesava as entradas seguintes
     -- por outra quantidade (q_ciclo != saldo) e mudava o custo em silêncio.
     UNION ALL
     SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '', 0, deslocamento, NULL::numeric FROM ck
     UNION ALL
-    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '~', 0, saldo - deslocamento, custo
+    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '~', 0,
+           saldo - deslocamento - "saldoSemCusto", custo
     FROM ck
-    WHERE saldo - deslocamento <> 0
+    WHERE saldo - deslocamento - "saldoSemCusto" <> 0
+    UNION ALL
+    SELECT "productId", "ultimoMovedAt", "ateCreatedAt", '!', 0, "saldoSemCusto", NULL::numeric
+    FROM ck
+    WHERE "saldoSemCusto" <> 0
+  ),
+  -- Entrada sem custo soma na quantidade e num saldo à parte. A saída come
+  -- esse saldo primeiro: só o que sobra (qc) entra no repasse da média. Com
+  -- todo movimento precificado, qc = q e a conta de baixo é a de antes.
+  ordenado AS (
+    SELECT b.*,
+           ROW_NUMBER() OVER (PARTITION BY b."productId" ORDER BY b.ordem, b."createdAt", b.id) AS n
+    FROM base b
+  ),
+  camada AS (
+    SELECT o.*,
+           CASE WHEN o.q > 0 AND o.c IS NULL THEN o.q ELSE 0::numeric END AS sem_custo,
+           CASE WHEN o.q > 0 AND o.c IS NULL THEN 0::numeric ELSE o.q END AS qc
+    FROM ordenado o
+    WHERE o.n = 1
+    UNION ALL
+    SELECT o.*,
+           CASE
+             WHEN o.q > 0 AND o.c IS NULL THEN c.sem_custo + o.q
+             WHEN o.q < 0 THEN GREATEST(c.sem_custo + o.q, 0::numeric)
+             ELSE c.sem_custo
+           END,
+           CASE
+             WHEN o.q > 0 AND o.c IS NULL THEN 0::numeric
+             WHEN o.q < 0 THEN o.q + LEAST(-o.q, c.sem_custo)
+             ELSE o.q
+           END
+    FROM ordenado o
+    JOIN camada c ON c."productId" = o."productId" AND o.n = c.n + 1
   ),
   mov AS (
-    SELECT "productId", "movedAt", ordem, q, c,
+    SELECT "productId", "movedAt", ordem, qc AS q, c,
            ROW_NUMBER() OVER w AS seq,
-           SUM(q) OVER w AS saldo
-    FROM base
+           SUM(qc) OVER w AS saldo
+    FROM camada
+    WHERE NOT (qc = 0 AND q <> 0)
     WINDOW w AS (PARTITION BY "productId" ORDER BY ordem, "createdAt", id)
   ),
   marcado AS (
@@ -210,7 +253,7 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
     SELECT "productId", seq, q, q_efetiva, c, sc, q_ciclo,
            COALESCE(LEAD(sc - q) OVER (PARTITION BY "productId" ORDER BY seq), q_ciclo) AS antes_da_proxima
     FROM ciclo
-    WHERE q > 0
+    WHERE q > 0 AND c IS NOT NULL
   ),
   pesos AS (
     SELECT "productId", q_efetiva, c, q_ciclo,
@@ -226,9 +269,9 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
     GROUP BY "productId"
   ),
   ultima_mov AS (
-    SELECT DISTINCT ON ("productId") "productId", COALESCE(c, 0) AS custo
+    SELECT DISTINCT ON ("productId") "productId", c AS custo
     FROM mov
-    WHERE q > 0 AND ordem = 1
+    WHERE q > 0 AND ordem = 1 AND c IS NOT NULL
     ORDER BY "productId", seq DESC
   ),
   -- A semente não é entrada de verdade: sem entrada nova, vale a do checkpoint.
@@ -238,28 +281,50 @@ function sqlCustoEstoque(filtrarProdutos: boolean, ate?: string): string {
     FROM ultima_mov u
     FULL JOIN ck ON ck."productId" = u."productId"
   ),
-  saldo AS (
-    SELECT "productId", SUM(q) AS quantidade, MAX("movedAt") AS ultimo_mov
-    FROM mov
-    GROUP BY "productId"
-  ),
   -- Saldo real na linha onde o ciclo atual começou (<= 0; 0 sem recomeço).
   desloc AS (
     SELECT "productId", saldo AS deslocamento
     FROM marcado
     WHERE seq = zerou_em
   ),
+  -- Quantidade cheia (com e sem custo) e o saldo sem custo que sobrou.
+  cheio AS (
+    SELECT "productId", SUM(q) AS quantidade, MAX("movedAt") AS ultimo_mov
+    FROM camada
+    GROUP BY "productId"
+  ),
+  sem_final AS (
+    SELECT DISTINCT ON ("productId") "productId", sem_custo
+    FROM camada
+    ORDER BY "productId", n DESC
+  ),
+  com_custo AS (
+    SELECT "productId", SUM(qc) AS quantidade
+    FROM camada
+    GROUP BY "productId"
+  ),
   resultado AS (
-    SELECT s."productId", s.quantidade, s.ultimo_mov,
+    SELECT ch."productId",
+           ch.quantidade,
+           ch.ultimo_mov,
            COALESCE(d.deslocamento, 0) AS deslocamento,
-           ROUND(CASE WHEN s.quantidade > 0 THEN m.custo ELSE u.custo END, 4) AS custo,
-           -- Só para gravar o checkpoint: a média sem arredondar e a última entrada.
-           CASE WHEN s.quantidade > 0 THEN m.custo END AS custo_bruto,
+           GREATEST(COALESCE(sf.sem_custo, 0), 0) AS saldo_sem_custo,
+           COALESCE(cc.quantidade, 0) AS quantidade_com_custo,
+           -- Com saldo e sem nenhuma unidade precificada, o custo é nulo — não
+           -- a última entrada, e não R$ 0. Sem saldo, vale a última entrada.
+           ROUND(CASE
+             WHEN COALESCE(cc.quantidade, 0) > 0 THEN m.custo
+             WHEN ch.quantidade > 0 THEN NULL
+             ELSE u.custo
+           END, 4) AS custo,
+           CASE WHEN COALESCE(cc.quantidade, 0) > 0 THEN m.custo END AS custo_bruto,
            u.custo AS ultimo_custo_entrada
-    FROM saldo s
-    LEFT JOIN medio m ON m."productId" = s."productId"
-    LEFT JOIN ultima u ON u."productId" = s."productId"
-    LEFT JOIN desloc d ON d."productId" = s."productId"
+    FROM cheio ch
+    LEFT JOIN com_custo cc ON cc."productId" = ch."productId"
+    LEFT JOIN sem_final sf ON sf."productId" = ch."productId"
+    LEFT JOIN medio m ON m."productId" = ch."productId"
+    LEFT JOIN ultima u ON u."productId" = ch."productId"
+    LEFT JOIN desloc d ON d."productId" = ch."productId"
   )`;
 }
 
@@ -276,9 +341,18 @@ export const IDADE_MINIMA_CHECKPOINT_MS = 7 * 24 * 60 * 60 * 1000;
  * tela de Estoque (`nivelEstoque` trata ≤ 0 como "zerado" e não soma), então o
  * cartão do painel e a tela dão o mesmo número.
  */
-function valorDaLinha(quantidade: Prisma.Decimal, custo: Prisma.Decimal): Prisma.Decimal {
-  if (quantidade.lessThanOrEqualTo(0)) return new Prisma.Decimal(0);
+function valorDaLinha(quantidade: Prisma.Decimal, custo: Prisma.Decimal | null): Prisma.Decimal {
+  if (custo == null || quantidade.lessThanOrEqualTo(0)) return new Prisma.Decimal(0);
   return FinancialCalc.valorTotalEstoque([{ quantidade, custoUnitario: custo }]);
+}
+
+/** Quanto de uma saída sai do saldo sem custo, e quanto ainda tem preço. */
+export function partirQuantidade(
+  quantidade: Prisma.Decimal,
+  semCusto: Prisma.Decimal,
+): { comCusto: Prisma.Decimal; semCusto: Prisma.Decimal } {
+  const sem = Prisma.Decimal.min(Prisma.Decimal.max(semCusto, 0), Prisma.Decimal.max(quantidade, 0));
+  return { semCusto: sem, comCusto: quantidade.minus(sem) };
 }
 
 /** Executor mínimo aceito — o cliente base ou um `tx` de transação. */
@@ -320,29 +394,71 @@ export async function saldoECustoMedio(
   tx: CustoTxClient,
   tenantId: string,
   productIds: string[],
-): Promise<{ saldo: Map<string, Prisma.Decimal>; custo: Map<string, Prisma.Decimal> }> {
+): Promise<{
+  saldo: Map<string, Prisma.Decimal>;
+  custo: Map<string, Prisma.Decimal>;
+  /** Quantidade ainda sem custo. Chave ausente = zero. */
+  semCusto: Map<string, Prisma.Decimal>;
+}> {
   const saldo = new Map<string, Prisma.Decimal>();
   const custo = new Map<string, Prisma.Decimal>();
-  if (productIds.length === 0) return { saldo, custo };
+  const semCusto = new Map<string, Prisma.Decimal>();
+  if (productIds.length === 0) return { saldo, custo, semCusto };
   const rows = await tx.$queryRawUnsafe<
-    { productId: string; quantidade: Prisma.Decimal | string; custo: Prisma.Decimal | string | null }[]
+    {
+      productId: string;
+      quantidade: Prisma.Decimal | string;
+      quantidade_com_custo: Prisma.Decimal | string;
+      saldo_sem_custo: Prisma.Decimal | string;
+      custo: Prisma.Decimal | string | null;
+    }[]
   >(
     `${sqlCustoEstoque(true)}
-     SELECT "productId", quantidade, custo FROM resultado`,
+     SELECT "productId", quantidade, quantidade_com_custo, saldo_sem_custo, custo FROM resultado`,
     tenantId,
     productIds,
   );
   for (const r of rows) {
-    saldo.set(r.productId, toDecimal(r.quantidade as Prisma.Decimal.Value));
-    if (r.custo !== null) custo.set(r.productId, toDecimal(r.custo as Prisma.Decimal.Value));
+    const cheio = toDecimal(r.quantidade as Prisma.Decimal.Value);
+    const comCusto = toDecimal(r.quantidade_com_custo as Prisma.Decimal.Value);
+    saldo.set(r.productId, cheio);
+    semCusto.set(r.productId, toDecimal(r.saldo_sem_custo as Prisma.Decimal.Value));
+    // Com saldo precificado, a média. Sem saldo nenhum, a última entrada (o
+    // acerto para cima herda). Saldo só sem custo não entra no mapa: herdar
+    // R$ 0 precificaria a carga que o dono deixou de fora.
+    if (r.custo !== null && (comCusto.greaterThan(0) || cheio.lessThanOrEqualTo(0))) {
+      custo.set(r.productId, toDecimal(r.custo as Prisma.Decimal.Value));
+    }
   }
-  return { saldo, custo };
+  return { saldo, custo, semCusto };
 }
 
 /** O movimento TIRA do estoque? (`AJUSTE` negativo é acerto de inventário para baixo.) */
 function retiraDoEstoque(input: AjusteEstoqueInput): boolean {
   if (input.type === "QUEBRA" || input.type === "DOACAO") return true;
   return input.type === "AJUSTE" && input.quantity < 0;
+}
+
+/**
+ * Custo gravado num ajuste. Entrada usa o preço digitado ou a média (nulo se
+ * ainda não há custo — não vira R$ 0). Saída come o saldo sem custo primeiro:
+ * o `unitCost` da linha, vezes a quantidade, é só o valor da parte precificada,
+ * porque a perda do mês lê `quantidade × unitCost`.
+ */
+function custoDoMovimentoManual(
+  input: AjusteEstoqueInput,
+  semCusto: Prisma.Decimal,
+  media: Prisma.Decimal | undefined,
+): Prisma.Decimal | null {
+  if (!retiraDoEstoque(input)) {
+    if (input.unitCost != null) return toDecimal(input.unitCost);
+    return media ?? null;
+  }
+  const qtd = toDecimal(input.quantity).abs();
+  const { comCusto } = partirQuantidade(qtd, semCusto);
+  if (comCusto.lessThanOrEqualTo(0) || media == null) return null;
+  if (comCusto.equals(qtd)) return media;
+  return comCusto.mul(media).div(qtd).toDecimalPlaces(4);
 }
 
 /** Saldo do produto lido DENTRO da transação, depois do lock. */
@@ -369,7 +485,9 @@ export const EstoqueService = {
         name: string;
         saleUnit: string;
         quantity: Prisma.Decimal | string;
-        custo: Prisma.Decimal | string;
+        quantidade_com_custo: Prisma.Decimal | string | null;
+        saldo_sem_custo: Prisma.Decimal | string | null;
+        custo: Prisma.Decimal | string | null;
         lastmovementat: Date | null;
         minStock: Prisma.Decimal | string | null;
       }[]
@@ -379,7 +497,9 @@ export const EstoqueService = {
               p.name AS name,
               p."saleUnit"::text AS "saleUnit",
               COALESCE(r.quantidade, 0) AS quantity,
-              COALESCE(r.custo, 0) AS custo,
+              r.quantidade_com_custo AS quantidade_com_custo,
+              r.saldo_sem_custo AS saldo_sem_custo,
+              r.custo AS custo,
               r.ultimo_mov AS lastmovementat,
               p."minStock" AS "minStock"
        FROM products p
@@ -390,16 +510,18 @@ export const EstoqueService = {
     );
     return rows.map((r) => {
       const quantity = toDecimal(r.quantity as Prisma.Decimal.Value);
-      const custo = toDecimal(r.custo as Prisma.Decimal.Value);
+      const comCusto = toDecimal((r.quantidade_com_custo ?? 0) as Prisma.Decimal.Value);
+      const custo = r.custo == null ? null : toDecimal(r.custo as Prisma.Decimal.Value);
+      const semPreco = quantity.greaterThan(0) && (custo == null || comCusto.lessThanOrEqualTo(0));
       return {
         productId: r.productId,
         name: r.name,
         saleUnit: r.saleUnit,
         quantity,
-        avgCost: money(custo),
-        // Com o custo de 4 casas, não com o de tela (2 casas): é o mesmo
-        // número que a venda grava em `unitCostAtSale`.
-        value: valorDaLinha(quantity, custo),
+        avgCost: semPreco ? null : money(custo ?? 0),
+        // O valor é só das unidades com custo. A quantidade sem custo fica de fora.
+        value: valorDaLinha(comCusto, custo),
+        quantidadeSemCusto: toDecimal((r.saldo_sem_custo ?? 0) as Prisma.Decimal.Value),
         lastMovementAt: r.lastmovementat,
         minStock: r.minStock == null ? null : toDecimal(r.minStock as Prisma.Decimal.Value),
       };
@@ -465,11 +587,14 @@ export const EstoqueService = {
 
   async getTotalValue(tenantId: string): Promise<Prisma.Decimal> {
     const rows = await prisma.$queryRawUnsafe<
-      { quantity: Prisma.Decimal | string; custo: Prisma.Decimal | string }[]
+      {
+        quantity: Prisma.Decimal | string | null;
+        custo: Prisma.Decimal | string | null;
+      }[]
     >(
       `${sqlCustoEstoque(false)}
-       SELECT COALESCE(r.quantidade, 0) AS quantity,
-              COALESCE(r.custo, 0) AS custo
+       SELECT COALESCE(r.quantidade_com_custo, 0) AS quantity,
+              r.custo AS custo
        FROM products p
        LEFT JOIN resultado r ON r."productId" = p.id
        WHERE p."tenantId" = $1 AND p."deletedAt" IS NULL`,
@@ -479,8 +604,8 @@ export const EstoqueService = {
       add(
         ...rows.map((r) =>
           valorDaLinha(
-            toDecimal(r.quantity as Prisma.Decimal.Value),
-            toDecimal(r.custo as Prisma.Decimal.Value),
+            toDecimal((r.quantity ?? 0) as Prisma.Decimal.Value),
+            r.custo == null ? null : toDecimal(r.custo as Prisma.Decimal.Value),
           ),
         ),
       ),
@@ -645,15 +770,19 @@ export const EstoqueService = {
       const product = travado[0];
       if (!product) throw new NotFoundError("Produto não encontrado");
 
-      // Saldo, para o ajuste não levar o estoque a negativo.
+      // Saldo, para o ajuste não levar o estoque a negativo. O custo médio vem
+      // da mesma consulta: saída come primeiro o saldo sem custo, e o valor
+      // gravado na perda é só da parte que tinha preço.
       //
       // Não havia validação nenhuma aqui: `QUEBRA`/`DOACAO` de 999999 numa
       // posição de 10 unidades era aceita, o saldo virava −999989, o valor de
       // estoque ficava negativo no painel e o PDV passava a recusar toda venda
       // daquele produto. E não existia caminho de volta: `ajusteEstoqueSchema`
       // só aceitava quantidade positiva e `AJUSTE` sempre SOMA.
+      const posicao = await saldoECustoMedio(tx, ctx.tenantId, [input.productId]);
+      const saldo = posicao.saldo.get(input.productId) ?? new Prisma.Decimal(0);
+      const media = posicao.custo.get(input.productId);
       if (retiraDoEstoque(input)) {
-        const saldo = await saldoNaTransacao(tx, ctx.tenantId, input.productId);
         const pedido = toDecimal(input.quantity).abs();
         if (passaDoEstoque(saldo, pedido)) {
           throw new BusinessRuleError(
@@ -668,11 +797,13 @@ export const EstoqueService = {
       // (acerto para cima, que pondera a média). Na saída (quebra, doação,
       // acerto para baixo) a mercadoria sai pela média: aceitar o digitado
       // deixava a API lançar R$ 99.999 de perda no lucro — ou zerá-la — sem o
-      // estoque ter perdido mais que a média.
-      const custos = await custoMedioPonderado(tx, ctx.tenantId, [input.productId]);
-      const media = custos.get(input.productId) ?? new Prisma.Decimal(0);
-      const unitCost =
-        input.unitCost != null && !retiraDoEstoque(input) ? toDecimal(input.unitCost) : media;
+      // estoque ter perdido mais que a média. A parte sem custo sai primeiro
+      // e não lança valor.
+      const unitCost = custoDoMovimentoManual(
+        input,
+        posicao.semCusto.get(input.productId) ?? new Prisma.Decimal(0),
+        media,
+      );
 
       const movement = await tx.stockMovement.create({
         data: {
@@ -722,15 +853,16 @@ export const EstoqueService = {
     return db.$executeRawUnsafe(
       `${sqlCustoEstoque(false, corte)}
        INSERT INTO stock_cost_checkpoints
-         (id, "tenantId", "productId", "ateCreatedAt", saldo, custo, deslocamento, "ultimoCustoEntrada", "ultimoMovedAt", "updatedAt")
+         (id, "tenantId", "productId", "ateCreatedAt", saldo, custo, deslocamento, "saldoSemCusto", "ultimoCustoEntrada", "ultimoMovedAt", "updatedAt")
        SELECT gen_random_uuid()::text, $1, r."productId", ${corte},
-              r.quantidade, r.custo_bruto, r.deslocamento, r.ultimo_custo_entrada, r.ultimo_mov, now()
+              r.quantidade, r.custo_bruto, r.deslocamento, r.saldo_sem_custo, r.ultimo_custo_entrada, r.ultimo_mov, now()
        FROM resultado r
        ON CONFLICT ("tenantId", "productId") DO UPDATE SET
          "ateCreatedAt" = EXCLUDED."ateCreatedAt",
          saldo = EXCLUDED.saldo,
          custo = EXCLUDED.custo,
          deslocamento = EXCLUDED.deslocamento,
+         "saldoSemCusto" = EXCLUDED."saldoSemCusto",
          "ultimoCustoEntrada" = EXCLUDED."ultimoCustoEntrada",
          "ultimoMovedAt" = EXCLUDED."ultimoMovedAt",
          "updatedAt" = now()

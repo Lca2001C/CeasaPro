@@ -71,7 +71,7 @@ async function retrato() {
   const posicoes = (await EstoqueService.getPositions(tenantId)).map((p) => ({
     id: p.productId,
     quantidade: p.quantity.toString(),
-    custo: p.avgCost.toString(),
+    custo: p.avgCost!.toString(),
     valor: p.value.toString(),
     ultimo: p.lastMovementAt?.toISOString() ?? null,
   }));
@@ -296,7 +296,7 @@ describe("checkpoint do custo médio dá o MESMO resultado que o repasse inteiro
       { paymentMethod: "DINHEIRO", items: [{ productId: produtos[2]!, quantity: 1, unitPrice: 10 }] },
       ctx(),
     );
-    expect(venda.items[0]!.unitCostAtSale.toString()).toBe(esperado.toString());
+    expect(venda.items[0]!.unitCostAtSale!.toString()).toBe(esperado.toString());
 
     // E o estado depois da venda também bate com o repasse inteiro.
     const comCheckpoint = await retrato();

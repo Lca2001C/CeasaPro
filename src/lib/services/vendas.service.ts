@@ -15,7 +15,7 @@ import { passaDoEstoque } from "@/lib/estoque/nivel";
 import { ComprasService, type UltimaCompraDoProduto } from "./compras.service";
 import { FinancialCalc } from "./financial-calc.service";
 import { CaixasService } from "./caixas.service";
-import { saldoECustoMedio } from "./estoque.service";
+import { partirQuantidade, saldoECustoMedio } from "./estoque.service";
 import { ORIGEM_VENDA, ORIGEM_VENDA_CANCELADA } from "@/lib/estoque/origens";
 import {
   HORAS_PARA_DESFAZER,
@@ -144,6 +144,44 @@ export function ajustarParcelasAoTotal(
  * venda, fora da transação e sem auditoria; se esse update falhasse, a tela
  * respondia erro com a venda já gravada, e a retentativa duplicava a baixa.
  */
+/**
+ * Custo da linha. A quantidade sem custo sai primeiro e grava `unitCostAtSale`
+ * nulo (ou, na mistura, só a parte que tinha preço). `quantidade × unitCost`
+ * deixaria de ser o CMV: por isso `quantidadeComCusto` guarda quantas unidades
+ * entram na conta. Linha antiga, sem a coluna, continua valendo a quantidade
+ * inteira.
+ */
+function custoDaLinhaVendida(
+  productId: string,
+  quantidade: Prisma.Decimal,
+  costMap: Map<string, Prisma.Decimal>,
+  semRestante: Map<string, Prisma.Decimal>,
+): { unitCostAtSale: Prisma.Decimal | null; quantidadeComCusto: Prisma.Decimal } {
+  const havia = semRestante.get(productId) ?? new Prisma.Decimal(0);
+  const { comCusto, semCusto } = partirQuantidade(quantidade, havia);
+  semRestante.set(productId, havia.minus(semCusto));
+  const media = costMap.get(productId);
+  return {
+    unitCostAtSale: comCusto.greaterThan(0) ? (media ?? new Prisma.Decimal(0)) : null,
+    quantidadeComCusto: comCusto,
+  };
+}
+
+function devolucaoDaLinha(it: {
+  quantity: Prisma.Decimal;
+  unitCostAtSale: Prisma.Decimal | null;
+  quantidadeComCusto: Prisma.Decimal | null;
+}): { quantity: Prisma.Decimal; unitCost: Prisma.Decimal | null }[] {
+  const qtd = toDecimal(it.quantity);
+  const com = it.quantidadeComCusto == null ? qtd : toDecimal(it.quantidadeComCusto);
+  const sem = qtd.minus(com);
+  const partes: { quantity: Prisma.Decimal; unitCost: Prisma.Decimal | null }[] = [];
+  if (com.greaterThan(0)) partes.push({ quantity: com, unitCost: it.unitCostAtSale });
+  if (sem.greaterThan(0)) partes.push({ quantity: sem, unitCost: null });
+  if (partes.length === 0) partes.push({ quantity: qtd, unitCost: it.unitCostAtSale });
+  return partes;
+}
+
 export interface OpcoesDaVenda {
   observacaoDoFiado?: string | null;
 }
@@ -585,16 +623,18 @@ export const VendasService = {
       `;
 
       await tx.stockMovement.createMany({
-        data: venda.items.map((it) => ({
-          tenantId: ctx.tenantId,
-          productId: it.productId,
-          type: "AJUSTE" as const,
-          quantity: it.quantity,
-          unitCost: it.unitCostAtSale,
-          reason: "Devolução por cancelamento de venda",
-          sourceType: ORIGEM_VENDA_CANCELADA,
-          sourceId: venda.id,
-        })),
+        data: venda.items.flatMap((it) =>
+          devolucaoDaLinha(it).map((parte) => ({
+            tenantId: ctx.tenantId,
+            productId: it.productId,
+            type: "AJUSTE" as const,
+            quantity: parte.quantity,
+            unitCost: parte.unitCost,
+            reason: "Devolução por cancelamento de venda",
+            sourceType: ORIGEM_VENDA_CANCELADA,
+            sourceId: venda.id,
+          })),
+        ),
       });
 
       // Só volta para o estoque de caixas o que ainda está com o cliente: se ele
@@ -852,11 +892,14 @@ export const VendasService = {
       //
       // Uma consulta para os dois (ver `saldoECustoMedio`): eram duas
       // varreduras do mesmo livro-razão com os produtos travados.
-      const { saldo: available, custo: costMap } = await saldoECustoMedio(
+      const { saldo: available, custo: costMap, semCusto } = await saldoECustoMedio(
         tx,
         ctx.tenantId,
         productIds,
       );
+      // A saída come o saldo sem custo primeiro. Duas linhas do mesmo produto
+      // na mesma venda repartem esse saldo na ordem do carrinho.
+      const semRestante = new Map(semCusto);
 
       // 2. Valida disponibilidade (quantidade pedida por produto)
       const requested = new Map<string, Prisma.Decimal>();
@@ -977,7 +1020,7 @@ export const VendasService = {
               crateQty: i.crateQty ?? 0,
               discountAmount: money(toDecimal(i.discountAmount ?? 0)),
               lineTotal: lineTotals[idx]!,
-              unitCostAtSale: costMap.get(i.productId) ?? new Prisma.Decimal(0),
+              ...custoDaLinhaVendida(i.productId, toDecimal(i.quantity), costMap, semRestante),
             })),
           },
           payments: {
