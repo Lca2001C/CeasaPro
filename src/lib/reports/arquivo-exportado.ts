@@ -4,6 +4,7 @@ import { logger } from "@/lib/logger";
 import { toExcel } from "./excel.exporter";
 import { toPdf } from "./pdf.exporter";
 import type { ReportResult } from "./report.types";
+import { empresaSemNome } from "@/lib/tenant-defaults";
 
 /**
  * Trecho seguro de nome de arquivo a partir de um texto livre (nome de
@@ -40,7 +41,17 @@ export async function respostaDeArquivo(args: {
   };
 }): Promise<Response> {
   const isPdf = args.formato === "pdf";
-  const buffer = isPdf ? await toPdf(args.result) : await toExcel(args.result);
+  // O nome da empresa vai no topo do arquivo — é ele que o cliente do box vê
+  // no comprovante. O nome de partida ("Minha empresa") não identifica ninguém.
+  const tenant = await prisma.tenant.findUnique({
+    where: { id: args.registro.tenantId },
+    select: { tradeName: true },
+  });
+  const result: ReportResult = {
+    ...args.result,
+    empresa: args.result.empresa ?? (empresaSemNome(tenant?.tradeName) ? undefined : tenant?.tradeName),
+  };
+  const buffer = isPdf ? await toPdf(result) : await toExcel(result);
   const fileName = `${args.nomeBase}.${isPdf ? "pdf" : "xlsx"}`;
   const format: ReportFormat = isPdf ? "PDF" : "EXCEL";
   const contentType = isPdf

@@ -99,7 +99,7 @@ export async function toExcel(r: ReportResult): Promise<Buffer> {
   const ws = wb.addWorksheet("Relatório");
 
   const titleRow = ws.addRow([r.title]);
-  titleRow.font = { bold: true, size: 14 };
+  titleRow.font = { bold: true, size: 14, color: { argb: "FF1A7A3F" } };
   ws.addRow([`Período: ${formatDate(r.period.from)} a ${formatDate(r.period.to)}`]);
   ws.addRow([`Gerado em: ${formatDate(r.generatedAt)}`]);
   // Identificação do comprovante. O valor passa por `celulaExcel` como texto:
@@ -112,10 +112,12 @@ export async function toExcel(r: ReportResult): Promise<Buffer> {
   ws.addRow([]);
 
   const header = ws.addRow(r.columns.map((c) => c.label));
-  header.font = { bold: true };
+  // As cores da marca, como no PDF; e o cabeçalho fica fixo ao rolar a lista.
+  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
   header.eachCell((cell) => {
-    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFEFEFEF" } };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1A7A3F" } };
   });
+  ws.views = [{ state: "frozen", ySplit: header.number }];
 
   for (const row of r.rows) {
     escrever(
@@ -133,6 +135,9 @@ export async function toExcel(r: ReportResult): Promise<Buffer> {
       ),
     );
     totalsRow.font = { bold: true };
+    totalsRow.eachCell((cell) => {
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFECFDF3" } };
+    });
   }
 
   r.columns.forEach((c, i) => {

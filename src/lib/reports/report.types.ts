@@ -21,6 +21,8 @@ export interface ReportResult {
    * situação) — o comprovante de uma venda. Ausente nos relatórios de período.
    */
   cabecalho?: { rotulo: string; valor: string }[];
+  /** Nome da empresa no topo do arquivo exportado (o nome padrão fica de fora). */
+  empresa?: string;
 }
 
 /**
