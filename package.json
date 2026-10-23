@@ -48,6 +48,7 @@
     "driver.js": "^1.8.0",
     "exceljs": "^4.4.0",
     "fast-xml-parser": "^5.11.2",
+    "heic2any": "^0.0.4",
     "jose": "^6.2.3",
     "lucide-react": "^1.23.0",
     "mercadopago": "^3.2.0",

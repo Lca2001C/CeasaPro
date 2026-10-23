@@ -1,5 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { detectarFormato, IMAGEM_MAX_BYTES, prefixoDaEmpresa } from "@/lib/imagem/formato";
+import {
+  classificarFoto,
+  detectarFormato,
+  IMAGEM_MAX_BYTES,
+  prefixoDaEmpresa,
+} from "@/lib/imagem/formato";
 import { nivelEstoque } from "@/lib/estoque/nivel";
 import { situacaoDaCompra } from "@/lib/despesas/situacao-compra";
 
@@ -25,6 +30,25 @@ describe("detectarFormato", () => {
     expect(detectarFormato(new TextEncoder().encode("<html><script>"))).toBeNull();
     expect(detectarFormato(new TextEncoder().encode("GIF89a"))).toBeNull();
     expect(detectarFormato(new Uint8Array())).toBeNull();
+  });
+
+  it("classifica o que o celular entregou, mesmo com o tipo mentindo", () => {
+    expect(classificarFoto(bytes(0xff, 0xd8, 0xff), "application/octet-stream")).toBe("image/jpeg");
+    expect(classificarFoto(bytes(0x47, 0x49, 0x46, 0x38, 0x39, 0x61))).toBe("image/gif");
+    expect(classificarFoto(bytes(0x42, 0x4d))).toBe("image/bmp");
+    const heic = new Uint8Array(24);
+    heic.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x68, 0x65, 0x69, 0x63], 0);
+    expect(classificarFoto(heic, "")).toBe("image/heic");
+    const avif = new Uint8Array(24);
+    avif.set([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70, 0x61, 0x76, 0x69, 0x66], 0);
+    expect(classificarFoto(avif)).toBe("image/avif");
+    // mif1 + marca compatível heic (o iPhone às vezes grava assim).
+    const heif = new Uint8Array(24);
+    heif.set(
+      [0, 0, 0, 0x1c, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x69, 0x66, 0x31, 0, 0, 0, 0, 0x68, 0x65, 0x69, 0x63],
+      0,
+    );
+    expect(classificarFoto(heif)).toBe("image/heic");
   });
 
   it("o teto é de 1 MB e o prefixo separa a empresa", () => {

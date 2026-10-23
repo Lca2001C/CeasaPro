@@ -5,7 +5,7 @@ import { Camera, Database, ImageIcon, Loader2, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { buscarFotosDoBanco, enviarFotoProduto } from "@/actions/produtos.actions";
 import { chamarAction } from "@/lib/http/chamar-action";
-import { comprimirFoto } from "@/lib/imagem/comprimir";
+import { comprimirFoto, copiarFoto } from "@/lib/imagem/comprimir";
 import { cn } from "@/lib/cn";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,10 +20,12 @@ export interface FotoEscolhida {
  *
  * - **Câmera** e **Galeria** são o próprio `<input type="file">` por cima do
  *   rótulo. Um input escondido aberto por `.click()` não entrega o arquivo em
- *   vários celulares. O `capture="environment"` abre a câmera traseira nativa
- *   — não depende de `getUserMedia` nem do `Permissions-Policy: camera=()`.
- * - A foto é comprimida no aparelho e enviada na hora; o formulário guarda só a
- *   chave devolvida. Enquanto envia, `onEnviando(true)` segura o Salvar.
+ *   vários celulares. A câmera pede JPEG (o iPhone converte na hora). A galeria
+ *   aceita qualquer foto, inclusive HEIC. `capture="environment"` abre a
+ *   câmera traseira — sem `getUserMedia`.
+ * - Toda foto é reduzida no aparelho (lado de 1024 px, ~100 KB) e enviada na
+ *   hora. O banco grava só a chave, nunca os bytes. Enquanto envia,
+ *   `onEnviando(true)` segura o Salvar.
  * - **Banco** busca as fotos da plataforma pelo nome digitado no produto.
  *
  * `disponivel = false` quando o servidor não tem armazenamento configurado: os
@@ -49,13 +51,14 @@ export function ImagemProduto({
   const [bancoAberto, setBancoAberto] = useState(false);
 
   async function aoEscolherArquivo(e: React.ChangeEvent<HTMLInputElement>) {
-    const arquivo = e.target.files?.[0];
-    // Limpa o input: escolher a MESMA foto de novo precisa disparar o change.
-    e.target.value = "";
-    if (!arquivo) return;
+    const bruto = e.target.files?.[0];
+    if (!bruto) return;
     setEnviando(true);
     onEnviando(true);
     try {
+      // Copia antes de zerar o input: a câmera do Android revoga o blob no clear.
+      const arquivo = await copiarFoto(bruto);
+      e.target.value = "";
       const { base64, previa: dataUrl } = await comprimirFoto(arquivo);
       setPrevia(dataUrl);
       const res = await chamarAction(() => enviarFotoProduto({ base64 }));
@@ -70,6 +73,7 @@ export function ImagemProduto({
       setPrevia(null);
       toast.error(err instanceof Error ? err.message : "Não foi possível usar esta foto.");
     } finally {
+      e.target.value = "";
       setEnviando(false);
       onEnviando(false);
     }
@@ -116,7 +120,7 @@ export function ImagemProduto({
           <input
             ref={cameraRef}
             type="file"
-            accept="image/*,image/heic,image/heif,.heic,.heif"
+            accept="image/jpeg"
             capture="environment"
             className="absolute inset-0 z-10 cursor-pointer opacity-0"
             disabled={!disponivel || enviando}
@@ -136,7 +140,7 @@ export function ImagemProduto({
           <input
             ref={galeriaRef}
             type="file"
-            accept="image/*,image/heic,image/heif,.heic,.heif"
+            accept="image/*,.heic,.heif"
             className="absolute inset-0 z-10 cursor-pointer opacity-0"
             disabled={!disponivel || enviando}
             onChange={aoEscolherArquivo}

@@ -6,7 +6,7 @@ import { ImageIcon, Loader2, Plus } from "lucide-react";
 import { toast } from "sonner";
 import { criarFotoDoBanco } from "@/actions/admin-imagens.actions";
 import { chamarAction } from "@/lib/http/chamar-action";
-import { comprimirFoto } from "@/lib/imagem/comprimir";
+import { comprimirFoto, copiarFoto } from "@/lib/imagem/comprimir";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -22,11 +22,12 @@ export function NovaFoto() {
   const [salvando, setSalvando] = useState(false);
 
   async function escolher(e: React.ChangeEvent<HTMLInputElement>) {
-    const arquivo = e.target.files?.[0];
-    e.target.value = "";
-    if (!arquivo) return;
+    const bruto = e.target.files?.[0];
+    if (!bruto) return;
     setPreparando(true);
     try {
+      const arquivo = await copiarFoto(bruto);
+      e.target.value = "";
       setFoto(await comprimirFoto(arquivo));
       // Sugestão de nome a partir do arquivo ("tomate-italiano.jpg") — só se o
       // campo AINDA estiver vazio. A compressão leva um instante, e quem
@@ -40,6 +41,7 @@ export function NovaFoto() {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Não foi possível usar esta foto.");
     } finally {
+      e.target.value = "";
       setPreparando(false);
     }
   }

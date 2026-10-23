@@ -1,4 +1,37 @@
-import { IMAGEM_LADO_MAX, IMAGEM_MAX_BYTES } from "./formato";
+import { classificarFoto, IMAGEM_LADO_MAX, IMAGEM_MAX_BYTES } from "./formato";
+
+/**
+ * Copia a foto para a memória ANTES de limpar o `<input>`.
+ *
+ * No Android, a câmera devolve um blob `content://`. Zerar `input.value` na
+ * hora revoga esse blob e a decodificação falha — a galeria não sofre isso,
+ * porque o arquivo dela já está no disco do aparelho. O tipo também mente:
+ * vários celulares mandam JPEG com `application/octet-stream`, e o iPhone
+ * manda HEIC. Aqui o tipo passa a ser o dos bytes.
+ */
+export async function copiarFoto(arquivo: File): Promise<File> {
+  const bytes = await arquivo.arrayBuffer();
+  if (bytes.byteLength === 0) {
+    throw new Error("A câmera não entregou a foto. Tire outra.");
+  }
+  const u8 = new Uint8Array(bytes);
+  const tipo = classificarFoto(u8, arquivo.type);
+  const nome = tipo === "image/heic" ? arquivo.name || "foto.heic" : arquivo.name || "foto.jpg";
+  return new File([bytes], nome, { type: tipo });
+}
+
+/** HEIC/HEIF do iPhone → JPEG, só quando a foto é desse tipo. O decodificador não entra no carregamento da tela. */
+async function heicParaJpeg(arquivo: File): Promise<File> {
+  try {
+    const { default: heic2any } = await import("heic2any");
+    const saida = await heic2any({ blob: arquivo, toType: "image/jpeg", quality: 0.82 });
+    const blob = Array.isArray(saida) ? saida[0] : saida;
+    if (!blob || blob.size === 0) throw new Error("vazio");
+    return new File([blob], "foto.jpg", { type: "image/jpeg" });
+  } catch {
+    throw new Error("Não foi possível abrir esta foto. Tente outra.");
+  }
+}
 
 /**
  * Reduz a foto NO APARELHO antes de enviar.
@@ -12,13 +45,11 @@ import { IMAGEM_LADO_MAX, IMAGEM_MAX_BYTES } from "./formato";
  * Só roda no navegador.
  */
 export async function comprimirFoto(arquivo: File): Promise<{ base64: string; previa: string }> {
-  // A câmera de alguns Android entrega o arquivo com `type` vazio: só recusa o
-  // que se declara outra coisa. Quem decide de verdade é a decodificação.
-  if (arquivo.type && !arquivo.type.startsWith("image/")) {
-    throw new Error("Escolha uma foto.");
-  }
-
-  const fonte = await abrirFoto(arquivo);
+  // Um só caminho: classifica pelos bytes, HEIC vira JPEG, e todo o resto
+  // entra no funil (lado de 1024 px, alvo ~400 KB). O Postgres guarda a chave.
+  const copia = await copiarFoto(arquivo);
+  const legivel = copia.type === "image/heic" ? await heicParaJpeg(copia) : copia;
+  const fonte = await abrirFoto(legivel);
   let blob: Blob | null = null;
   try {
     // Vai diminuindo lado e qualidade até caber. Foto de câmera de 50 MP, PNG
@@ -119,17 +150,21 @@ async function devolverBitmap(bitmap: ImageBitmap): Promise<FotoAberta> {
  */
 async function abrirFoto(arquivo: File): Promise<FotoAberta> {
   if (typeof createImageBitmap === "function") {
-    try {
-      const bitmap = await createImageBitmap(arquivo, { imageOrientation: "from-image" });
-      return devolverBitmap(bitmap);
-    } catch {
+    // Reduz JÁ na decodificação. Foto de câmera de 12–48 MP estoura a memória
+    // do celular se o bitmap inteiro nascer primeiro; a galeria costuma vir menor.
+    const tentativas: ImageBitmapOptions[] = [
+      { imageOrientation: "from-image", resizeWidth: IMAGEM_LADO_MAX, resizeQuality: "high" },
+      { resizeWidth: IMAGEM_LADO_MAX, resizeQuality: "high" },
+      { imageOrientation: "from-image" },
+      {},
+    ];
+    for (const opcoes of tentativas) {
       try {
-        // Sem `imageOrientation`: Safari antigo e Android com JPEG da câmera
-        // recusam o dicionário de opções, mas abrem o arquivo sozinhos.
-        const bitmap = await createImageBitmap(arquivo);
-        return devolverBitmap(bitmap);
+        const bitmap = await createImageBitmap(arquivo, opcoes);
+        if (bitmap.width > 0 && bitmap.height > 0) return devolverBitmap(bitmap);
+        bitmap.close();
       } catch {
-        // segue para o <img>
+        // opção que este aparelho não aceita: tenta a próxima
       }
     }
   }
